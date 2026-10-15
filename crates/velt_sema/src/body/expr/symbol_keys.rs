@@ -145,6 +145,20 @@ impl FnCx<'_, '_> {
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
+        // `"toString" in r` on a record that may have no prototype: tested at run time.
+        if let (true, InKey::Str(k)) = (self.cx.null_proto_records, &key) {
+            let target = match super::in_keys::OBJECT_PROTOTYPE.contains(&k.as_str()) {
+                true => Some(self.trial_expr(rhs).ty),
+                false => None,
+            };
+            let str_ = self.cx.ty.str_;
+            if target
+                .and_then(|t| self.record_args(t))
+                .is_some_and(|(k, _)| k == str_)
+            {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
         let s = self.expr(rhs, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);

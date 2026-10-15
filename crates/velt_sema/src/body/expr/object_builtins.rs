@@ -237,18 +237,59 @@ impl FnCx<'_, '_> {
         let [arg] = args else {
             return self.arity_error("Array.isArray", 1, args, span);
         };
+        let json = |s: &Self, t: TyId| matches!(s.cx.ty.kind(t), TyKind::Adt(d, _) if s.cx.is_json_value(*d));
+        if let Some(t) = self.trial_type(arg) {
+            let nullable = self.cx.ty.opt_payload(t);
+            if json(self, nullable.unwrap_or(t)) {
+                // `v.isArray()`, or `v?.isArray() ?? false` for a `JsonValue | null`.
+                let call = synth(
+                    ast::ExprKind::Call {
+                        callee: Box::new(synth(
+                            ast::ExprKind::Member {
+                                object: Box::new(arg.clone()),
+                                prop: ast::Ident {
+                                    name: "isArray".to_string(),
+                                    span,
+                                },
+                                optional: nullable.is_some(),
+                            },
+                            span,
+                        )),
+                        type_args: vec![],
+                        args: vec![],
+                        optional: false,
+                    },
+                    span,
+                );
+                let e = match nullable {
+                    None => call,
+                    Some(_) => synth(
+                        ast::ExprKind::Binary {
+                            op: ast::BinaryOp::Nullish,
+                            lhs: Box::new(call),
+                            rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Bool(false)), span)),
+                        },
+                        span,
+                    ),
+                };
+                return self.expr(&e, None, Want::Move);
+            }
+            let members = self
+                .cx
+                .union_members(nullable.unwrap_or(t))
+                .unwrap_or_default();
+            if members.iter().any(|m| json(self, *m)) {
+                let tn = self.cx.display(t);
+                self.cx.err(
+                    format!("`Array.isArray` of a `{tn}` is not supported yet: test the `JsonValue` member with `isArray()`"),
+                    arg.span,
+                );
+                return self.error_expr(span);
+            }
+        }
         let s = self.expr(arg, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
-        }
-        if let TyKind::Adt(d, _) = self.cx.ty.kind(s.ty) {
-            if self.cx.is_json_value(*d) {
-                let m = ast::Ident {
-                    name: "isArray".to_string(),
-                    span,
-                };
-                return self.method_call_on(s, &m, &[], &[], None, span);
-            }
         }
         let pred = |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), TyKind::Array(_));
         self.type_test(s, &pred, false, span).expr
@@ -259,6 +300,32 @@ impl FnCx<'_, '_> {
         let [a, b] = args else {
             return self.arity_error("Object.is", 2, args, span);
         };
+        // Against `null` or `undefined`, SameValue is `===`.
+        let nothing = |e: &ast::Expr| {
+            matches!(&strip_parens(e).kind, ast::ExprKind::Lit(ast::Lit::Null))
+                || matches!(&strip_parens(e).kind, ast::ExprKind::Ident(i) if i.name == "undefined")
+        };
+        if nothing(a) && nothing(b) {
+            // `Object.is(null, null)`: `null` is itself, and not `undefined`.
+            let same = matches!(
+                (&strip_parens(a).kind, &strip_parens(b).kind),
+                (ast::ExprKind::Lit(_), ast::ExprKind::Lit(_))
+                    | (ast::ExprKind::Ident(_), ast::ExprKind::Ident(_))
+            );
+            let b = self.cx.ty.bool_;
+            return self.mk(H::Lit(hir::Lit::Bool(same)), b, span);
+        }
+        if nothing(a) || nothing(b) {
+            let eq = synth(
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::StrictEq,
+                    lhs: Box::new(a.clone()),
+                    rhs: Box::new(b.clone()),
+                },
+                span,
+            );
+            return self.expr(&eq, None, Want::Move);
+        }
         let (l, r) = self.operands(a, b, None, Want::Borrow);
         if self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return self.error_expr(span);
@@ -621,7 +688,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type `e` checks to, without keeping anything of the check (`None`: it has errors).
-    fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
+    pub(super) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
@@ -1125,6 +1192,46 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `X.prototype.m` read as a value (not called through `.call`): not supported yet
+    /// (`None`: `object` is not `X.prototype`).
+    pub(crate) fn prototype_method_value(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Member {
+            object: o,
+            prop: p,
+            optional: false,
+        } = &object.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(id) = &o.kind else {
+            return None;
+        };
+        if p.name != "prototype" || self.is_local_name(&id.name) {
+            return None;
+        }
+        let item = self.cx.lookup_item_at(self.module, &id.name, id.span);
+        let known = match item {
+            Some(Item::Def(d)) => self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class),
+            None => matches!(id.name.as_str(), "Array" | "Promise"),
+            _ => false,
+        };
+        if !known {
+            return None;
+        }
+        let what = format!("{}.prototype.{}", id.name, prop.name);
+        let mut d = Diagnostic::error(format!("`{what}` as a value is not supported yet"), span);
+        if id.name == "Object" && matches!(prop.name.as_str(), "hasOwnProperty" | "toString") {
+            d = d.with_note(format!("call it directly: `{what}.call(o, ...)`"));
+        }
+        self.cx.error(d);
+        Some(self.error_expr(span))
+    }
+
     /// `X.prototype` as a value: `Object.prototype`, a class's, or a built-in collection's
     /// (`None`: `object` is not a name of one of them).
     pub(crate) fn prototype_member(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {
@@ -1234,7 +1341,6 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
-        self.cx.null_proto_records = true;
         let empty = synth(ast::ExprKind::Object(vec![]), span);
         let h = self.expr(&empty, Some(record), Want::Move);
         let mut lets = vec![];

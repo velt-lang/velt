@@ -341,6 +341,14 @@ export function __recordIn<V>(key: string, r: Record<string, V>): bool {
 }
 
 /**
+ * `k in r` in a program that calls `Object.create(null)` (sema calls this instead of
+ * `__recordIn` there): a record made by it inherits nothing from `Object.prototype`.
+ */
+export function __recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || (!r.__isNullProto() && __objectPrototypeKey(key));
+}
+
+/**
  * `{ [key]: value }` with a key known only at run time: the parser writes the property as a
  * spread of this call (a one-entry record). Where a `Record` is built, sema sets the entry
  * directly instead.

@@ -63,6 +63,17 @@ impl FnCx<'_, '_> {
         if v != error {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
+        // `{ ...r, a: 1 }` spreading a record: its value type (the first such record's).
+        let spread_v = props.iter().find_map(|p| match p {
+            ast::ObjectProp::Spread(e) if computed_entry(e).is_none() => self
+                .trial_type(e)
+                .and_then(|t| self.record_args(t))
+                .map(|(_, v)| v),
+            _ => None,
+        });
+        if let Some(v) = spread_v {
+            return self.record_literal_with(d, k, v, props, vec![], span);
+        }
         if !props.iter().any(|p| !is_spread(p)) {
             // Only spreads (`{ ...a, ...b }` where a `Record` of unknown value type is built).
             self.cx.error(

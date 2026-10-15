@@ -182,6 +182,9 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The program calls `Object.create(null)`: a record may have no prototype (its map is
+    /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
+    pub null_proto_records: bool,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

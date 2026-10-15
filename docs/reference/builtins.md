@@ -24,6 +24,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
+| `Object.keys/values/entries/fromEntries/is/assign/freeze/hasOwn/getPrototypeOf/create(null)`, `Object.prototype.hasOwnProperty.call`, `Object.prototype.toString.call`, `Array.isArray` | JavaScript's object built-ins, on Velt's objects ([Types](types.md#object-built-ins)) |
 | `sleep(ms)`, `yieldNow()`, `spawn(p, options?)`, `Promise.all/race/allSettled/any/withResolvers`, `new Promise((resolve, reject) => …)` | async ([Async](async.md)) |
 | `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback may return a promise (`() => save(doc)`, `async () => { … }`) or nothing (`() => console.log("x")`) ([velt:timers](../std/timers.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |

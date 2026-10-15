@@ -245,6 +245,11 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        if !optional {
+            if let Some(h) = self.prototype_method_value(object, prop, span) {
+                return h;
+            }
+        }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
                 if matches!(

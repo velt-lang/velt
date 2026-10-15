@@ -1,0 +1,20 @@
+// What Velt's fixed object layouts can't do as Node does: "not supported yet" (tsc accepts all).
+const shared = { a: 1 };
+const f1 = Object.freeze(shared);
+function bump(o: { a: number }): void {
+  o.a++;
+}
+bump(Object.freeze({ a: 1 }));
+const target = { a: 1 };
+Object.assign(target, { b: 2 });
+const withProto = Object.create({ x: 1 });
+const untyped = Object.create(null);
+const has = Object.prototype.hasOwnProperty;
+console.log(Object.getPrototypeOf(new Date(0)));
+const maybe: { a: number } | null = null;
+console.log(Object.getPrototypeOf(maybe));
+console.log(Object.prototype.toString.call(Object.prototype));
+console.log(Object.isFrozen(target), Object.seal(target));
+const dict: Record<string, number> = Object.create(null);
+console.log(structuredClone(dict));
+console.log(Date.prototype);

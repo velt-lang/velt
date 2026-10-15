@@ -267,7 +267,7 @@ impl FnCx<'_, '_> {
                     format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
                     found.span,
                 )
-                .with_note(format!("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling; keep it `{f}`, or `Readonly<T>`")),
+                .with_note("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling: pass it where a `Readonly<T>` is expected"),
             );
             return;
         }
