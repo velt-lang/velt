@@ -119,7 +119,11 @@ fn await_only_program() -> Program {
     let seq = {
         let f = FB::new("seq", pi);
         let d = |ms, v| await_(call(delayed, vec![int(ms, t.i64), v], pi), t.i64);
-        let sum = bin(velt_sema::hir::BinOp::Add, d(1, int(1, t.i64)), d(2, int(41, t.i64)));
+        let sum = bin(
+            velt_sema::hir::BinOp::Add,
+            d(1, int(1, t.i64)),
+            d(2, int(41, t.i64)),
+        );
         pb.add_fn(f.build_async(vec![ret(Some(sum))]))
     };
     let f = FB::new("main", pv);
@@ -135,13 +139,22 @@ fn unobservable_await_steps_are_not_lowered() {
     let tick = |v: &vir::Program| v.externs.iter().any(|e| e.symbol == "velt_rt_await_tick");
     let p = await_only_program();
     let v = lower_ok(&p);
-    assert!(!tick(&v), "unobservable await steps were lowered
-{v}");
-    assert_eq!(run(&p).stdout, "42
-");
+    assert!(
+        !tick(&v),
+        "unobservable await steps were lowered
+{v}"
+    );
+    assert_eq!(
+        run(&p).stdout,
+        "42
+"
+    );
     let started = lower_ok(&sequential_program());
-    assert!(tick(&started), "a program that starts a promise lost its steps
-{started}");
+    assert!(
+        tick(&started),
+        "a program that starts a promise lost its steps
+{started}"
+    );
 }
 
 /// ```text
