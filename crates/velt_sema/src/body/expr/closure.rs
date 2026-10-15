@@ -319,6 +319,9 @@ impl FnCx<'_, '_> {
         let mutated = mutated_captures(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
+        if declared_err.is_none() {
+            self.provisional_slot(span, &frame.uncaught);
+        }
         let err = self.closure_error(def, declared_err, &frame, clause);
         let fn_ty = self.closure_type(ptys.clone(), body_ret, err, is_async);
         let ret = if is_async {

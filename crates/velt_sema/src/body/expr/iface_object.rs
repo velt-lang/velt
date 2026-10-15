@@ -109,6 +109,20 @@ impl FnCx<'_, '_> {
     pub(super) fn iface_object(
         &mut self,
         props: &[ast::ObjectProp],
+        target: (DefId, Vec<TyId>, TyId),
+        span: Span,
+    ) -> hir::Expr {
+        // What its methods throw counts for the interface's slots until its implementation
+        // exists (`Ctx::provisional_slots`).
+        let mark = self.cx.provisional_slots.len();
+        let h = self.iface_object_members(props, target, span);
+        self.cx.provisional_slots.truncate(mark);
+        h
+    }
+
+    fn iface_object_members(
+        &mut self,
+        props: &[ast::ObjectProp],
         (iface, iargs, dyn_ty): (DefId, Vec<TyId>, TyId),
         span: Span,
     ) -> hir::Expr {
@@ -211,7 +225,7 @@ impl FnCx<'_, '_> {
                 (Written::Set(arrow), Some(slot), _) => {
                     let m = &methods[slot];
                     let exp = self.method_fn_type(m);
-                    let h = self.expr(arrow, Some(exp), Want::Move);
+                    let h = self.slot_value(arrow, exp, (iface, slot));
                     let h = self.fit_fn(h, m);
                     values.push((format!("set {}", key.name), h));
                     slots[slot] = Some(Slot::Call(index));
@@ -227,14 +241,14 @@ impl FnCx<'_, '_> {
                 (Written::Get(arrow), Some(slot), _) if methods[slot].is_getter => {
                     let m = &methods[slot];
                     let exp = self.method_fn_type(m);
-                    let h = self.expr(arrow, Some(exp), Want::Move);
+                    let h = self.slot_value(arrow, exp, (iface, slot));
                     let h = self.fit_fn(h, m);
                     values.push((key.name.clone(), h));
                     slots[slot] = Some(Slot::Call(index));
                 }
                 (Written::Get(arrow), None, Some(fi)) => {
                     let exp = self.fn_type(vec![], fields[fi].1, None);
-                    let h = self.expr(arrow, Some(exp), Want::Move);
+                    let h = self.slot_value(arrow, exp, (iface, n_methods + fi));
                     let fty = self.fn_type(vec![], fields[fi].1, self.fn_throws(h.ty));
                     let h = self.coerce(h, fty);
                     values.push((key.name.clone(), h));
@@ -254,7 +268,10 @@ impl FnCx<'_, '_> {
                         continue;
                     }
                     let exp = self.method_fn_type(m);
-                    let h = self.prop_value(&key, v, Some(exp));
+                    let h = match v {
+                        Some(v) => self.slot_value(v, exp, (iface, slot)),
+                        None => self.prop_value(&key, v, Some(exp)),
+                    };
                     let h = self.fit_fn(h, m);
                     values.push((key.name.clone(), h));
                     slots[slot] = Some(Slot::Call(index));
@@ -465,6 +482,23 @@ impl FnCx<'_, '_> {
             dyn_ty,
             span,
         )
+    }
+
+    /// The value `e` written for slot `slot` of `iface` (expected type `exp`).
+    fn slot_value(&mut self, e: &ast::Expr, exp: TyId, (iface, slot): (DefId, usize)) -> hir::Expr {
+        let slot = Some((iface, slot as u32, e.span));
+        let saved = std::mem::replace(&mut self.literal_slot, slot);
+        let h = self.expr(e, Some(exp), Want::Move);
+        self.literal_slot = saved;
+        h
+    }
+
+    /// A closure written at `span` throws what `srcs` throw: for the interface slot it fills, if
+    /// it is a value of an object literal implementing an interface ([`Self::slot_value`]).
+    pub(super) fn provisional_slot(&mut self, span: Span, srcs: &[crate::defs::ThrowSrc]) {
+        if let Some((iface, slot, _)) = self.literal_slot.filter(|l| l.2 == span) {
+            self.cx.provisional_slots.push((iface, slot, srcs.to_vec()));
+        }
     }
 
     /// `(params) => ret throws err` (`err` unknown: `error`, so a closure's comes from its body).

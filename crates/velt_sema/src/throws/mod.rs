@@ -38,6 +38,8 @@ use crate::hir::{DefId, TyId};
 struct Visited {
     /// Functions whose bodies' sources are counted (in their own generic context).
     fns: HashSet<DefId>,
+    /// Entries of `Ctx::provisional_slots` counted.
+    provisional: HashSet<usize>,
     inits: InitsSeen,
 }
 
@@ -152,9 +154,21 @@ fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
     if let Some(b) = group.bound {
         return b.decl.ty;
     }
+    // The methods of object literals being checked, not yet implementations (read before any
+    // body is checked here: one may add an implementation, which renumbers the groups).
+    let mut provisional: Vec<Vec<ThrowSrc>> = vec![];
+    for (k, (i, s, srcs)) in cx.provisional_slots.clone().into_iter().enumerate() {
+        if cx.throw_groups().slot_group(i, s) == Some(g) && visited.provisional.insert(k) {
+            provisional.push(srcs);
+        }
+    }
     let mut acc = None;
     for m in group.members {
         let t = own_now(cx, m, visited).filter(|t| !cx.mentions_params(*t));
+        acc = cx.join_errors(acc, t);
+    }
+    for srcs in provisional {
+        let t = srcs_now_in(cx, &srcs, visited).filter(|t| !cx.mentions_params(*t));
         acc = cx.join_errors(acc, t);
     }
     acc

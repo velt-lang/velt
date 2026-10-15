@@ -125,6 +125,9 @@ pub(crate) struct Ctx<'m> {
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
     pub literal_hosts: crate::body::literal_hosts::LiteralHosts,
+    /// What the methods of the object literals being checked throw, by interface slot, before
+    /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
+    pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
@@ -281,6 +284,7 @@ impl<'m> Ctx<'m> {
             fn_values: vec![],
             groups: None,
             literal_hosts: Default::default(),
+            provisional_slots: vec![],
             throw_checks: vec![],
             iface_generators: vec![],
             nested: vec![],

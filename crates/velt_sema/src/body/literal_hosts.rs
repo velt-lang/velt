@@ -7,7 +7,11 @@
 //! is checked, so the bodies that may add one are checked first, whatever the declaration order:
 //! before the other bodies (`driver::check_bodies`), and on demand when an error type is read
 //! earlier (`Ctx::throw_groups`). Which bodies may is read from the syntax: those with an object
-//! literal holding a method, a getter or setter, or a function value.
+//! literal holding a method, a getter or setter, or a value that may be a function.
+//!
+//! A literal in a body still being checked (the catching function holds one too, or its method
+//! calls the catching function) is not an implementation yet; while its methods' error types are
+//! computed, what they throw counts for their interface slots (`Ctx::provisional_slots`).
 
 use velt_syntax::ast;
 use velt_syntax::visit::{walk_fn, Visit};
@@ -20,8 +24,6 @@ use crate::hir::DefId;
 pub(crate) struct LiteralHosts {
     /// The bodies not yet made sure of, in checking order.
     pending: std::collections::VecDeque<DefId>,
-    /// Set while [`ensure_all`] runs: the bodies it checks read error types from what is known.
-    running: bool,
 }
 
 /// Records the function bodies that may hold such literals (before bodies are checked).
@@ -42,19 +44,19 @@ pub(crate) fn find(cx: &mut Ctx) {
     cx.literal_hosts.pending = pending;
 }
 
-/// Checks every recorded body not checked yet (bodies being checked are left to finish).
+/// Checks every recorded body not checked yet. A body checked here that reads error types
+/// itself calls this again, which checks the bodies after it first; bodies being checked are
+/// left to finish (what their literals' methods throw is known meanwhile from
+/// `Ctx::provisional_slots`).
 pub(crate) fn ensure_all(cx: &mut Ctx) {
-    if cx.literal_hosts.running || cx.literal_hosts.pending.is_empty() {
-        return;
-    }
-    cx.literal_hosts.running = true;
     while let Some(d) = cx.literal_hosts.pending.pop_front() {
         super::ensure_body(cx, d);
     }
-    cx.literal_hosts.running = false;
 }
 
-/// Finds an object literal that may implement an interface with methods.
+/// Finds an object literal that may implement an interface with methods: one with a member
+/// that may hold a function (a method, an accessor, a function value, or a name or call that
+/// may give one, `{ read: boom }`, `{ read }`).
 struct Finder(bool);
 
 impl<'a> Visit<'a> for Finder {
@@ -63,14 +65,22 @@ impl<'a> Visit<'a> for Finder {
             return;
         };
         self.0 |= props.iter().any(|p| match p {
-            ast::ObjectProp::KeyValue(_, v) => {
-                matches!(
-                    &v.kind,
-                    ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_)
-                ) || super::expr::is_accessor(p).is_some()
-            }
-            ast::ObjectProp::Method(_) => true,
-            _ => false,
+            ast::ObjectProp::KeyValue(_, v) => !matches!(
+                &v.kind,
+                ast::ExprKind::Lit(_)
+                    | ast::ExprKind::Template { .. }
+                    | ast::ExprKind::Array(_)
+                    | ast::ExprKind::Object(_)
+                    | ast::ExprKind::StructLit { .. }
+                    | ast::ExprKind::Unary { .. }
+                    | ast::ExprKind::Binary { .. }
+                    | ast::ExprKind::Update { .. }
+                    | ast::ExprKind::New { .. }
+                    | ast::ExprKind::InstanceOf { .. }
+                    | ast::ExprKind::Jsx(_)
+            ),
+            ast::ObjectProp::Shorthand(_) | ast::ObjectProp::Method(_) => true,
+            ast::ObjectProp::Spread(_) => false,
         });
     }
 }
