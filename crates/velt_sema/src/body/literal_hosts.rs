@@ -63,10 +63,12 @@ impl<'a> Visit<'a> for Finder {
             return;
         };
         self.0 |= props.iter().any(|p| match p {
-            ast::ObjectProp::KeyValue(_, v) => matches!(
-                &v.kind,
-                ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_)
-            ) || super::expr::is_accessor(p).is_some(),
+            ast::ObjectProp::KeyValue(_, v) => {
+                matches!(
+                    &v.kind,
+                    ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_)
+                ) || super::expr::is_accessor(p).is_some()
+            }
             ast::ObjectProp::Method(_) => true,
             _ => false,
         });
