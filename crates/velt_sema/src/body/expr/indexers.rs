@@ -121,7 +121,8 @@ impl FnCx<'_, '_> {
                 let v = self.expr(value, None, Want::Move);
                 self.bind_temp(NEW, v, &mut stmts);
                 let args = [idx, name_ref(NEW, span)];
-                let call = self.method_call_on(recv, &ident(SET_INDEX, span), &[], &args, None, span);
+                let call =
+                    self.method_call_on(recv, &ident(SET_INDEX, span), &[], &args, None, span);
                 self.pop_scope();
                 self.temps_then(stmts, call, span)
             }
