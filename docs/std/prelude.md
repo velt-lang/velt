@@ -7,8 +7,9 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
 `AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
-`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
+`TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), and `DOMException`
+([Errors](#errors)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
@@ -328,6 +329,27 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 - `class Error { message: string; name: string }`, the base class of thrown errors (`String(e)` is
   `"<name>: <message>"`), and its subclasses `TypeError`, `RangeError`, `SyntaxError`,
   `ReferenceError`, `EvalError` and `URIError` ([Errors](../reference/errors.md)).
+- `DOMException`, a global as in Node: the error web APIs throw (`btoa` and `atob` throw one
+  named `InvalidCharacterError`). `new DOMException(message = "", name = "Error")`; `e.name` is
+  the name, `e.code` the legacy code Node gives it (`5` for `InvalidCharacterError`, `20` for
+  `AbortError`, `25` for `DataCloneError`, …, 0 for a name without one), and the codes are also
+  static constants (`DOMException.ABORT_ERR`). It extends `Error`, so `String(e)` is
+  `"<name>: <message>"`; `console.log(e)` prints `DOMException [<name>]: <message>`, Node's
+  first line (Node adds the stack); `JSON.stringify(e)` writes `{"message":"…"}`, as for the
+  other errors (Node writes `{}`). Node's second form, `new DOMException(message, { name,
+  cause })`, is not supported: pass the name as a string.
+
+```ts
+try {
+  btoa("€");
+} catch (e) {
+  console.log(e instanceof DOMException, e.name, e.code, String(e));
+  // true InvalidCharacterError 5 InvalidCharacterError: Invalid character
+}
+const abort = new DOMException("This operation was aborted", "AbortError");
+console.log(abort.code == DOMException.ABORT_ERR); // true
+```
+
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
