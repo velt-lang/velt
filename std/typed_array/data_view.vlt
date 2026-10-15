@@ -40,7 +40,7 @@ export class DataView {
    */
   constructor(buffer: ArrayBuffer, byteOffset: number = 0, byteLength?: number) {
     const off = toIndex(byteOffset);
-    const total = buffer.byteLength;
+    const total = buffer.bytes.length as usize;
     if (off < 0 || (off as usize) > total) {
       throw new RangeError(`Start offset ${byteOffset} is outside the bounds of the buffer`);
     }
@@ -64,13 +64,13 @@ export class DataView {
   }
 
   /** Where the view starts in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the view in bytes. */
-  get byteLength(): usize {
-    return this.len;
+  get byteLength(): number {
+    return this.len as number;
   }
 
   // The position in the buffer of `size` bytes at `offset` in the view (a `RangeError` outside it).
@@ -83,40 +83,48 @@ export class DataView {
   }
 
   /** The signed byte at `byteOffset`. */
-  getInt8(byteOffset: number): i8 {
+  getInt8(byteOffset: number): number {
     return this.buf.bytes[this.at(byteOffset, 1)] as i8;
   }
 
   /** The byte at `byteOffset`. */
-  getUint8(byteOffset: number): u8 {
+  getUint8(byteOffset: number): number {
     return this.buf.bytes[this.at(byteOffset, 1)];
   }
 
   /** The 16-bit signed integer at `byteOffset`. */
-  getInt16(byteOffset: number, littleEndian: bool = false): i16 {
-    return this.getUint16(byteOffset, littleEndian) as i16;
+  getInt16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian) as i16;
   }
 
   /** The 16-bit unsigned integer at `byteOffset`. */
-  getUint16(byteOffset: number, littleEndian: bool = false): u16 {
+  getUint16(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint16(byteOffset, littleEndian);
+  }
+
+  private uint16(byteOffset: number, littleEndian: bool): u16 {
     const x = load16(this.buf.bytes, this.at(byteOffset, 2));
     return littleEndian ? x : swap16(x);
   }
 
   /** The 32-bit signed integer at `byteOffset`. */
-  getInt32(byteOffset: number, littleEndian: bool = false): i32 {
-    return this.getUint32(byteOffset, littleEndian) as i32;
+  getInt32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian) as i32;
   }
 
   /** The 32-bit unsigned integer at `byteOffset`. */
-  getUint32(byteOffset: number, littleEndian: bool = false): u32 {
+  getUint32(byteOffset: number, littleEndian: bool = false): number {
+    return this.uint32(byteOffset, littleEndian);
+  }
+
+  private uint32(byteOffset: number, littleEndian: bool): u32 {
     const x = load32(this.buf.bytes, this.at(byteOffset, 4));
     return littleEndian ? x : swap32(x);
   }
 
   /** The 32-bit float at `byteOffset`. */
-  getFloat32(byteOffset: number, littleEndian: bool = false): f32 {
-    return f32FromBits(this.getUint32(byteOffset, littleEndian));
+  getFloat32(byteOffset: number, littleEndian: bool = false): number {
+    return f32FromBits(this.uint32(byteOffset, littleEndian));
   }
 
   /** The 64-bit float (number) at `byteOffset`. */
