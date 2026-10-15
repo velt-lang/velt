@@ -406,10 +406,14 @@ impl FnLower<'_, '_> {
                 }
                 let next = self.on_key(key, name);
                 let fty = self.cx.member_ty(ty, i as u32);
-                if self.cx.any_boxable(fty) {
+                let f = &self.cx.adt_def(d).fields[i];
+                // A left-out optional field `q?: T` is JavaScript's `undefined`; one that keeps
+                // a present `null` apart (`q?: T | null`, a presence flag) comes later.
+                let (optional, presence) = (f.optional, f.presence);
+                if self.cx.any_boxable(fty) && !presence {
                     let fp = self.field_place(&vp, ty, i as u32);
                     let v = self.share_value(Operand::Copy(fp), fty);
-                    self.any_box_into(v, fty, &outp);
+                    self.any_box_with(v, fty, &outp, optional);
                     self.ret_status(ST_OK);
                 } else {
                     self.ret_status(ST_UNSUPPORTED);

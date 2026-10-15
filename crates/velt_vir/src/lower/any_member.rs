@@ -109,8 +109,9 @@ impl FnLower<'_, '_> {
         self.any_box_with(v, t, out, false);
     }
 
-    /// `any_box_into`; `std_result`: the value is a standard library function's result, whose
-    /// `T | null` is JavaScript's `undefined` when absent (`Map.get`, `find`), as sema does.
+    /// `any_box_into`; `std_result`: an absent `T | null` is JavaScript's `undefined`: the
+    /// result of a standard library function (`Map.get`, `find`, as sema does) or a left-out
+    /// optional field.
     pub(super) fn any_box_with(&mut self, v: Operand, t: TyId, out: &Place, std_result: bool) {
         if self.cx.is_dynamic(t) {
             self.assign(out.clone(), Rvalue::Use(v));
