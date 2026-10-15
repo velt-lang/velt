@@ -1,0 +1,2 @@
+any_member_write.vlt:8:3: error: assigning to a member of an `any` is not supported yet (#924)
+any_member_write.vlt:10:15: error: an `unknown` value must be narrowed before use

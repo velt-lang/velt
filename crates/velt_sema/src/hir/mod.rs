@@ -38,7 +38,7 @@ use std::collections::HashMap;
 
 use velt_common::Span;
 
-pub use fields::{FieldDef, FieldInit};
+pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{FloatTy, IntTy, SimdTy};
@@ -143,6 +143,11 @@ pub struct Program {
     /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
     /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
     pub unknown: Option<DefId>,
+    /// The methods and accessors of each struct / class / object type by name, own ones before
+    /// inherited ones, when the program reads or calls a member of an `any`
+    /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
+    /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
+    pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

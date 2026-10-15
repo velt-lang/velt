@@ -22,6 +22,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let recv = match self.dynamic_method_call(recv, prop, args, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
         // `x.toFixed(2)`: a number's method (`literal_locals`).

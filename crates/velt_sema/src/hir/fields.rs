@@ -1,7 +1,7 @@
 //! A type's fields: `FieldDef`, and `FieldInit`, an initializer a class gives a field it
-//! inherits.
+//! inherits; `DynMember`, a method or accessor found by name through `any`.
 
-use super::{Expr, TyId};
+use super::{DefId, Expr, TyId};
 
 #[derive(Clone, Debug)]
 pub struct FieldDef {
@@ -37,4 +37,25 @@ pub struct FieldInit {
     /// same `at`.
     pub at: u32,
     pub init: Expr,
+}
+
+/// A method or accessor of a struct / class / object type, found by name when a member of an
+/// `any` holding such a value is read or called (`Program::dyn_members`).
+#[derive(Clone, Debug)]
+pub struct DynMember {
+    /// The member's name (`size`, `get`); never an ES private `#name`.
+    pub name: String,
+    pub kind: DynMemberKind,
+    /// The method's `Def::Fn` (`this` first).
+    pub def: DefId,
+    /// The type declaring it, in terms of the type's own parameters (`Base<T>` for a method a
+    /// class inherits from `Base<T>`): its type arguments are the method's leading ones.
+    pub owner: TyId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynMemberKind {
+    Method,
+    Getter,
+    Setter,
 }
