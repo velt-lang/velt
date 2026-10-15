@@ -311,7 +311,7 @@ impl Loader<'_, '_> {
             modules.iter().any(|m| m.is_std && m.path == *module)
                 && modules.iter().filter(|m| !m.is_std).any(|m| {
                     let src = &sm.get(m.file).src;
-                    words.iter().any(|w| globals::mentions_word(src, w))
+                    words.iter().any(|w| globals::mentions_word(src, &m.ast, w))
                 })
         };
         let (wanted, rest): (Vec<_>, Vec<_>) =

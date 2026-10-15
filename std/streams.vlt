@@ -33,6 +33,14 @@ export interface QueuingStrategy {
   highWaterMark?: number;
 }
 
+// A source's `pull` and `cancel`, as the controller keeps them.
+type PullCallback<R> =
+  | ((controller: ReadableStreamDefaultController<R>) => void throws Error)
+  | ((controller: ReadableStreamDefaultController<R>) => Promise<void, Error>);
+type CancelCallback =
+  | ((reason: CancelReason) => void throws Error)
+  | ((reason: CancelReason) => Promise<void, Error>);
+
 // The states of a stream.
 const READABLE: u8 = 0;
 const CLOSED: u8 = 1;
@@ -61,7 +69,11 @@ function invalidState(what: string): TypeError {
  * constructor either.
  */
 export class ReadableStreamDefaultController<R> {
-  private source: UnderlyingSource<R>;
+  // The source's `pull` and `cancel`, dropped once the stream is closed or errored (the spec's
+  // ClearAlgorithms), so a source whose callbacks hold the controller is freed with the stream.
+  // `start` is not kept at all.
+  private pullFn: PullCallback<R> | null;
+  private cancelFn: CancelCallback | null;
   // The chunks not read yet: `queue[head..]`.
   private queue: R[] = [];
   private head: usize = 0;
@@ -83,7 +95,8 @@ export class ReadableStreamDefaultController<R> {
   private bytes: bool = false;
 
   private constructor(source: UnderlyingSource<R>, hwm: number) {
-    this.source = source;
+    this.pullFn = source.pull;
+    this.cancelFn = source.cancel;
     this.hwm = hwm;
   }
 
@@ -142,26 +155,23 @@ export class ReadableStreamDefaultController<R> {
 
   // ─── the stream's side (std only) ───
 
-  // A new stream's state: runs `start`, then pulls a microtask after it settles.
+  // A new stream's state: runs `start`, then pulls a microtask after it settles. A `start` that
+  // throws makes the constructor throw, as in JS.
   private static make<R>(
     source: UnderlyingSource<R>,
     hwm: number,
-  ): ReadableStreamDefaultController<R> {
+  ): ReadableStreamDefaultController<R> throws Error {
     const c = new ReadableStreamDefaultController<R>(source, hwm);
     const start = source.start;
     if (start == null) {
       queueMicrotask(() => c.begun());
       return c;
     }
-    try {
-      const p = start(c);
-      if (p == null) {
-        queueMicrotask(() => c.begun());
-      } else {
-        p.then(() => c.begun(), (e) => c.error(e));
-      }
-    } catch (e) {
-      queueMicrotask(() => c.error(e));
+    const p = start(c);
+    if (p == null) {
+      queueMicrotask(() => c.begun());
+    } else {
+      p.then(() => c.begun(), (e) => c.error(e));
     }
     return c;
   }
@@ -214,7 +224,7 @@ export class ReadableStreamDefaultController<R> {
       this.pullFrom(it).then(() => this.pulled(), (e) => this.fail(e));
       return;
     }
-    const pull = this.source.pull;
+    const pull = this.pullFn;
     if (pull == null) {
       queueMicrotask(() => this.pulled());
       return;
@@ -252,8 +262,16 @@ export class ReadableStreamDefaultController<R> {
     }
   }
 
+  // The spec's ClearAlgorithms: the source's callbacks are not called again.
+  private clearCallbacks() {
+    this.pullFn = null;
+    this.cancelFn = null;
+    this.iter = null;
+  }
+
   private finishClose() {
     this.state = CLOSED;
+    this.clearCallbacks();
     const requests = this.requests;
     this.requests = [];
     for (const r of requests) {
@@ -272,6 +290,7 @@ export class ReadableStreamDefaultController<R> {
     }
     this.state = ERRORED;
     this.stored = e;
+    this.clearCallbacks();
     this.queue = [];
     this.head = 0;
     const requests = this.requests;
@@ -289,9 +308,9 @@ export class ReadableStreamDefaultController<R> {
   // `reader.read()`, done at once as in JS (a queued chunk is taken, a pull started); the
   // promise settles with the chunk, or when one arrives.
   private read(): Promise<ReadableStreamReadResult<R>, Error> {
-    const stored = this.stored;
-    if (this.state == ERRORED && stored != null) {
-      return Promise.reject<ReadableStreamReadResult<R>>(stored);
+    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
+    if (this.state == ERRORED && this.stored != null) {
+      return Promise.reject<ReadableStreamReadResult<R>>(this.stored);
     }
     if (this.queued() > 0) {
       const chunk = this.dequeue();
@@ -315,7 +334,7 @@ export class ReadableStreamDefaultController<R> {
     return promise;
   }
 
-  // Rejects the waiting reads: their reader released the stream.
+  // Rejects the waiting reads and `reader.closed`: their reader released the stream.
   private release() {
     this.locked = false;
     const requests = this.requests;
@@ -323,13 +342,17 @@ export class ReadableStreamDefaultController<R> {
     for (const r of requests) {
       r.reject(invalidState("Releasing reader"));
     }
+    const waits = this.closeWaits;
+    this.closeWaits = [];
+    for (const w of waits) {
+      w.reject(invalidState("Reader released"));
+    }
   }
 
   // `reader.closed`: settles when the stream closes or errors.
   private closed(): Promise<void, Error> {
-    const stored = this.stored;
-    if (this.state == ERRORED && stored != null) {
-      return Promise.reject<void>(stored);
+    if (this.state == ERRORED && this.stored != null) {
+      return Promise.reject<void>(this.stored);
     }
     if (this.state == CLOSED) {
       return Promise.resolve();
@@ -342,21 +365,20 @@ export class ReadableStreamDefaultController<R> {
   // The spec's `ReadableStreamCancel`, done at once as in JS: the stream closes, its queue is
   // dropped and the source's `cancel` is called; the promise settles when that has finished.
   private cancel(reason: CancelReason): Promise<void, Error> {
-    const stored = this.stored;
-    if (this.state == ERRORED && stored != null) {
-      return Promise.reject<void>(stored);
+    if (this.state == ERRORED && this.stored != null) {
+      return Promise.reject<void>(this.stored);
     }
     if (this.state == CLOSED) {
       return Promise.resolve();
     }
     this.queue = [];
     this.head = 0;
-    this.finishClose();
     const it = this.iter;
+    const cancel = this.cancelFn;
+    this.finishClose();
     if (it != null) {
       return finished(it.return());
     }
-    const cancel = this.source.cancel;
     if (cancel == null) {
       return Promise.resolve();
     }
@@ -389,13 +411,17 @@ export class ReadableStream<R> {
    * A stream reading from `source`; `strategy.highWaterMark` is how many chunks it queues ahead
    * of the reads (default 1).
    */
-  constructor(source: UnderlyingSource<R> = {}, strategy: QueuingStrategy = {}) {
-    this.ctl = ReadableStreamDefaultController.make<R>(source, strategy.highWaterMark ?? 1);
+  constructor(source: UnderlyingSource<R> = {}, strategy: QueuingStrategy = {}) throws Error {
+    const hwm = strategy.highWaterMark ?? 1;
+    if (!(hwm >= 0)) {
+      throw new RangeError(`The property 'strategy.highWaterMark' is invalid. Received ${hwm}`);
+    }
+    this.ctl = ReadableStreamDefaultController.make<R>(source, hwm);
   }
 
   /** A stream of the values `src` yields (an async generator, any async iterable). */
   static from<T, E>(src: AsyncIterable<T, E>): ReadableStream<T> {
-    const s = new ReadableStream<T>();
+    const s = new ReadableStream<T>({}, { highWaterMark: 0 });
     s.ctl.iter = relay(src);
     return s;
   }
@@ -496,11 +522,14 @@ export class ReadableStreamDefaultReader<R> {
     return c.cancel(reason);
   }
 
-  /** Settles when the stream closes (or rejects when it errors). */
+  /**
+   * Settles when the stream closes (or rejects when it errors); rejects with `TypeError:
+   * Invalid state: Reader released` once the reader let go of the stream.
+   */
   get closed(): Promise<void, Error> {
     const c = this.ctl;
     if (c == null) {
-      return Promise.reject<void>(invalidState("The reader is not attached to a stream"));
+      return Promise.reject<void>(invalidState("Reader released"));
     }
     return c.closed();
   }
@@ -520,7 +549,14 @@ class StreamIterator<R> implements AsyncIterator<R, Error> {
   }
 
   async next(): Promise<IteratorResult<R>> throws Error {
-    const r = await this.reader.read();
+    let r: IteratorResult<R>;
+    try {
+      r = await this.reader.read();
+    } catch (e) {
+      // The loop ends with the error; the stream is released, as in JS.
+      this.reader.releaseLock();
+      throw e;
+    }
     if (r.done) {
       this.reader.releaseLock();
     }

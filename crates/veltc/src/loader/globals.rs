@@ -18,7 +18,8 @@
 //! `Response` its `bytes()`). It is loaded once the program has loaded std module `<module>`
 //! (`std/fetch/response`) and a non-std module mentions one of the words (`bytes`): a method
 //! whose result type lives in modules that most users of the class never need. A word written
-//! `.name` matches only a property access (`res.body`, not `{ body: … }`).
+//! `.name` matches only a read of the property (`res.body`, `res["body"]`, `const { body } =
+//! res`; not `{ body: … }`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -154,17 +155,78 @@ fn has_regex(module: &ast::Module) -> bool {
     find.0
 }
 
-/// Whether `src` mentions a conditional global's word: `name` as a whole identifier, or for
-/// `.name` a property access (`.name` not followed by an identifier character).
-pub(super) fn mentions_word(src: &str, word: &str) -> bool {
-    let Some(prop) = word.strip_prefix('.') else {
-        return mentions(src, word);
-    };
-    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-    src.match_indices(word).any(|(at, _)| {
-        let after = src[at + 1 + prop.len()..].chars().next();
-        !after.is_some_and(ident)
-    })
+/// Whether module `module` (source `src`) uses a conditional global's word: mentions `name` as
+/// a whole identifier, or for `.name` reads property `name` ([`reads_property`]).
+pub(super) fn mentions_word(src: &str, module: &ast::Module, word: &str) -> bool {
+    match word.strip_prefix('.') {
+        Some(prop) => mentions(src, prop) && reads_property(module, prop),
+        None => mentions(src, word),
+    }
+}
+
+/// Whether `module` reads property `prop`: `x.prop`, `x["prop"]`, or a destructuring pattern
+/// with the key `prop` (`const { prop } = x`, and in parameters, `for…of` and `catch`). An
+/// object literal's `{ prop: … }` is not a read.
+fn reads_property(module: &ast::Module, prop: &str) -> bool {
+    struct Find<'p> {
+        prop: &'p str,
+        found: bool,
+    }
+    impl Find<'_> {
+        fn pattern(&mut self, p: &ast::Pattern) {
+            match &p.kind {
+                ast::PatternKind::Ident(_) | ast::PatternKind::Wildcard => {}
+                ast::PatternKind::Object { fields, .. } => {
+                    for (key, p) in fields {
+                        self.found |= key.name == self.prop;
+                        self.pattern(p);
+                    }
+                }
+                ast::PatternKind::Array { elems, .. } => elems.iter().for_each(|p| self.pattern(p)),
+                ast::PatternKind::Default { pattern, .. } => self.pattern(pattern),
+            }
+        }
+    }
+    impl<'a> Visit<'a> for Find<'_> {
+        fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+            sig.params
+                .iter()
+                .flat_map(|p| &p.pattern)
+                .for_each(|p| self.pattern(p));
+        }
+        fn stmt(&mut self, s: &'a ast::Stmt) {
+            match &s.kind {
+                ast::StmtKind::ForOf { pattern, .. } => self.pattern(pattern),
+                ast::StmtKind::Try {
+                    catch: Some((Some(pattern), _)),
+                    ..
+                } => self.pattern(pattern),
+                _ => {}
+            }
+        }
+        fn var_decl(&mut self, v: &'a ast::VarDecl) {
+            self.pattern(&v.pattern);
+        }
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::Member { prop, .. } => self.found |= prop.name == self.prop,
+                ast::ExprKind::Index { index, .. } => {
+                    self.found |= matches!(&index.kind,
+                        ast::ExprKind::Lit(ast::Lit::Str(key)) if key == self.prop);
+                }
+                ast::ExprKind::Arrow { params, .. } => {
+                    params
+                        .iter()
+                        .flat_map(|p| &p.pattern)
+                        .for_each(|p| self.pattern(p));
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut find = Find { prop, found: false };
+    visit::walk_module(module, &mut find);
+    find.found
 }
 
 /// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
@@ -197,12 +259,32 @@ mod tests {
     }
 
     #[test]
-    fn a_dot_word_is_a_property_access() {
-        assert!(mentions_word("const b = res.body;", ".body"));
-        assert!(mentions_word("for await (const c of req.body) {}", ".body"));
-        assert!(!mentions_word("fetch(u, { body: s });", ".body"));
-        assert!(!mentions_word("res.bodyUsed", ".body"));
-        assert!(mentions_word("const body = 1;", "body"));
+    fn a_dot_word_is_a_property_read() {
+        let uses = |src: &str, word: &str| {
+            let mut sm = SourceMap::new();
+            let file = sm.add(Path::new("m.vlt"), src.to_string());
+            let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
+            mentions_word(src, &module, word)
+        };
+        assert!(uses("const b = res.body;", ".body"));
+        assert!(uses(
+            "async function f() { for await (const c of req.body) {} }",
+            ".body"
+        ));
+        assert!(uses("const b = res?.body;", ".body"));
+        assert!(uses("const b = res[\"body\"];", ".body"));
+        assert!(uses("const { body, status } = res;", ".body"));
+        assert!(uses("const { body: b } = res;", ".body"));
+        assert!(uses("const [{ body }] = [res];", ".body"));
+        assert!(uses("function f({ body }: Response) {}", ".body"));
+        assert!(uses("const f = ({ body }: Response) => 1;", ".body"));
+        assert!(uses("for (const { body } of rs) {}", ".body"));
+        assert!(!uses("fetch(u, { body: s });", ".body"));
+        assert!(!uses("const body = s; fetch(u, { body });", ".body"));
+        assert!(!uses("res.bodyUsed", ".body"));
+        assert!(!uses("const b = res[\"bodyUsed\"];", ".body"));
+        assert!(!uses("// res.body\nconst s = \"res.body\";", ".body"));
+        assert!(uses("const body = 1;", "body"));
     }
 
     #[test]

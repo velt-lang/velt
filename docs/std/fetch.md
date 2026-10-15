@@ -123,8 +123,8 @@ is absolute, its headers are immutable, and its body is received while it is rea
 
 ## `BodyStream`
 
-Velt's body stream of `u8[]` chunks (the JS form is a [`ReadableStream`](streams.md) of
-`Uint8Array`s, which works too): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
+Velt's body stream of `u8[]` chunks (in JS a body can also be a
+[`ReadableStream`](streams.md) of `Uint8Array`s; Velt doesn't take one yet, #1129): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
 from an async iterable, such as an async generator, for `new Response(stream)`: a server sends
 each chunk as it is made, and `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws reaches the reader as
 an `IoError` (`"EIO"`) carrying its text.

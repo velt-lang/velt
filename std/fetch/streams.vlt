@@ -1,6 +1,6 @@
 // velt:fetch/streams: `Response.body` and `Request.body`, the body as a `ReadableStream` of
 // `Uint8Array`s. `extend` blocks of their own, loaded (with velt:streams and the typed arrays)
-// only by programs that read `.body` or name `ReadableStream`
+// only by programs that use `Response` and read a `body` property
 // (std/prelude/global/fetch_body.vlt), so other fetch and http programs don't compile them.
 
 import { AbortError } from "velt:task";
@@ -33,7 +33,7 @@ extend Request {
     if (!this.hasBody()) {
       return null;
     }
-    return bodyStream(this.chunks(), false);
+    return bodyStream(this.chunks(), this.bodyUsed);
   }
 }
 

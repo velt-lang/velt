@@ -44,7 +44,10 @@ async function main() {
   constructor; `pull(controller)` runs once `start` has settled (a microtask later) and again
   whenever the queue is below `strategy.highWaterMark` (default 1; 0 pulls only for a waiting
   read), never two at once; `cancel(reason)` runs when a consumer cancels. Each may be `async`
-  (the stream waits for its promise), and an error one throws errors the stream.
+  (the stream waits for its promise), and an error one throws errors the stream; a `start` that
+  throws at once makes the constructor throw. A `highWaterMark` that is negative or `NaN` is a
+  `RangeError`. Once the stream is closed or errored it drops `pull` and `cancel` (it never
+  keeps `start`), so a source whose callbacks hold the controller is freed with the stream.
 - **The controller**: `enqueue(chunk)` (a waiting read gets it, or it is queued), `close()`
   (reads get the queued chunks, then `done`), `error(e)` (queued chunks are dropped and reads
   reject with `e`), and `desiredSize`. `enqueue` or `close` after `close` throws `TypeError:
@@ -52,15 +55,19 @@ async function main() {
 - **Reading**: `stream.getReader()` locks the stream (`locked`; a second `getReader()` throws
   `TypeError: Invalid state: ReadableStream is locked`). `reader.read()` gives `{ value, done:
   false }`, or `{ done: true }` once the stream is closed, and rejects once it errored;
-  `releaseLock()` lets go (a waiting read rejects with `Invalid state: Releasing reader`);
+  `releaseLock()` lets go (a waiting read rejects with `Invalid state: Releasing reader`, and
+  `reader.closed` with `Invalid state: Reader released`);
   `reader.cancel(reason)` and `reader.closed` are as in JS. `read()` and `cancel()` do their
   work when they are called, as in JS, not when they are awaited.
 - **`for await (const chunk of stream)`** reads to the end; leaving the loop early (`break`,
-  `return`, a throw) cancels the stream and releases it.
-- **`ReadableStream.from(iterable)`** reads an async iterable (an async generator); an error
+  `return`, a throw) cancels the stream and releases it; a read that rejects ends the loop with
+  its error and releases the stream.
+- **`ReadableStream.from(iterable)`** reads an async iterable (an async generator), one value
+  per read (it is not read ahead: its high-water mark is 0); an error
   it throws reaches the reader as an `Error` with its text.
 - **Bodies**: `res.body` / `req.body` are a `ReadableStream<Uint8Array>` ([fetch](fetch.md)),
-  pulled only as they are read. A `ReadableStream` is not a body yet (`new Response(stream)`,
+  pulled only as they are read. Each read of `res.body` gives a new stream object (in JS it is
+  the same one). A `ReadableStream` is not a body yet (`new Response(stream)`,
   #1129): pass `BodyStream.from(gen())` with an async generator of `u8[]` chunks.
 - `console.log(stream)` prints what Node prints: `ReadableStream { locked: false, state:
   'readable', supportsBYOB: false }`.
