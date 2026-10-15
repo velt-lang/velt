@@ -1,0 +1,28 @@
+// `===` / `==` with an `any` operand decided by the checked type of the operands (#924): calls,
+// array elements, fields, `as any` and captured variables compare the values they hold.
+class Holder {
+  v: any = 1;
+}
+
+function get(): any {
+  return 1;
+}
+
+function getStr(): any {
+  return "1";
+}
+
+function main(): void {
+  const x: any = 1;
+  const s: string = "1";
+  const vals: any[] = [1, "1", null];
+  const h = new Holder();
+  console.log(get() === get(), vals[0] === h.v, vals[0] === 1, get() == "1", h.v === 1);
+  console.log((x as any) === 1, getStr() == get(), getStr() === get(), vals[2] == null);
+  console.log(vals[1] !== vals[0], vals[1] != vals[0], h.v !== x, 1 === get());
+  const f = (): void => {
+    console.log(s == x, s === x, vals[0] === x, x === vals[0], h.v === x);
+    console.log(x === 1, x !== 2, x != "1", x == true, vals[2] === undefined);
+  };
+  f();
+}

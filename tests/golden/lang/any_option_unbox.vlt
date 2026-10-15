@@ -1,0 +1,34 @@
+// `null` and `undefined` out of an `any` into nullable types, and `unknown` through `any` and
+// `instanceof` (#924): once a crash in debug builds (a temporary of the conversion dropped on
+// the path that never wrote it).
+class A {
+  x: number = 1;
+}
+
+class B extends A {
+  y: number = 2;
+}
+
+function main(): void {
+  const an: any = null;
+  const sn: string | null = an;
+  const au: any = undefined;
+  const su: string | undefined = au;
+  const an2: A | null = an;
+  console.log(sn, su, an2);
+  const uk: unknown = new B();
+  const ak: any = uk;
+  console.log(typeof ak);
+  const uk2: unknown = new B();
+  if (uk2 instanceof B) {
+    console.log(uk2.y);
+  }
+  let t = "ab";
+  for (let i = 0; i < 3; i++) {
+    t = t + String(i);
+  }
+  const s: any = t;
+  const m: string | null = s;
+  const m2: string | null = s;
+  console.log(m, m2, s);
+}

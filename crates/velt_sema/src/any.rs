@@ -75,6 +75,12 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `t` `any` or `unknown`, or one of them or `null` (`any | null`)?
+    pub(crate) fn maybe_dynamic(&self, t: TyId) -> bool {
+        let t = self.ty.opt_payload(t).unwrap_or(t);
+        self.dynamic(t).is_some()
+    }
+
     /// The type of the value a dynamic `null` (`Nothing::Null`) or `undefined` holds:
     /// `boolean | null` / `boolean | undefined`, whose nothing it is.
     pub(crate) fn dynamic_nothing_ty(&mut self, n: Nothing) -> TyId {

@@ -256,12 +256,6 @@ impl FnCx<'_, '_> {
                 }
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
-            B::Eq | B::NotEq if self.dynamic_operand(lhs) || self.dynamic_operand(rhs) => {
-                return self.dynamic_eq(lhs, rhs, strict, op == B::NotEq, span);
-            }
-            _ if self.dynamic_operand(lhs) || self.dynamic_operand(rhs) => {
-                return self.dynamic_operator(op_str(op), lhs, rhs, span);
-            }
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
                 let (other, word) = match nothing_word(rhs) {
                     Some(w) => (lhs, w),
@@ -293,6 +287,14 @@ impl FnCx<'_, '_> {
             Some(LitEq::Operands(l, r)) => (l, r),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
+        // a call, a capture).
+        if self.cx.maybe_dynamic(l.ty) || self.cx.maybe_dynamic(r.ty) {
+            return match op {
+                B::Eq | B::NotEq => self.dynamic_eq(l, r, strict, op == B::NotEq, span),
+                _ => self.dynamic_operator(op_str(op), &l, &r, span),
+            };
+        }
         // Branded values are operands as their primitives.
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {

@@ -1,7 +1,8 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
 //! lives at byte offset `8 * (k + 7)`: the seven negative slots are the class id of the concrete
 //! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), the transfer
-//! to another thread, the class name (a static string, class tables only) and share / format /
+//! to another thread, the class name (a static string, class tables only; in the table of an interface whose
+//! values are converted to `any`, the `any` table of the concrete type: lower/any.rs) and share / format /
 //! clone / drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables),
 //! then the class's virtual methods
 //! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
@@ -64,6 +65,9 @@ impl Cx<'_> {
                 let mut entries = self.impl_entries(index, ty);
                 if self.is_any_impl(index) {
                     entries.extend(self.any_entries(ty));
+                } else if let Some(t) = self.any_table_entry(index, ty) {
+                    // The name slot, unused in interface tables (crate::lower::any).
+                    entries.push((SLOT_NAME, t));
                 }
                 (entries, self.class_id_word(ty, true))
             }

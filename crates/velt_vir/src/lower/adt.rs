@@ -198,6 +198,12 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
+        if self.cx.is_any_impl(impl_index)
+            && matches!(self.cx.kind(cty), TyKind::Dyn(..))
+            && !self.cx.is_dynamic(cty)
+        {
+            return self.make_dyn_any(v, cty, ty);
+        }
         let data = if self.cx.is_class(cty) || self.cx.boxed(cty) {
             v
         } else {

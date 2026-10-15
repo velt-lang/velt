@@ -1,0 +1,26 @@
+// An `any` read out of a `Map<string, any>`, an `any | null` or an `(any | null)[]` is the
+// value itself, never an `any` boxed inside another (#924).
+function main(): void {
+  const m = new Map<string, any>();
+  m.set("n", 1);
+  m.set("s", "x");
+  m.set("xs", [1, 2]);
+  const v: any = m.get("n");
+  console.log(typeof v, v === 1, v == 1, v == "1");
+  const n: number = v;
+  console.log(n + 1);
+  const xs: any = m.get("xs");
+  const arr: number[] = xs;
+  console.log(typeof xs, arr.length, xs);
+  const items: (any | null)[] = [2, null, "s"];
+  const e0: any = items[0];
+  const e1: any = items[1];
+  console.log(typeof e0, e0 === 2, typeof e1, e1 === null, e1);
+  const u: unknown = m.get("s");
+  console.log(typeof u, u === "x");
+  const a: any = 0;
+  const on: any | null = a;
+  const z: any | null = null;
+  console.log(on, typeof on, on === 0, on == "0", on === null, z === null, z == undefined);
+  console.log(on ? "t" : "f", z ? "t" : "f", typeof z);
+}

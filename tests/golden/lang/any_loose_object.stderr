@@ -1,0 +1,1 @@
+TypeError: `==` between an object and a boolean, number or string is not supported yet (#924)

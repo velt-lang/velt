@@ -237,6 +237,7 @@ fn check_on_current_thread(
         union_shapes,
         counted_objects,
         any_impl: any.and_then(|a| a.imp),
+        unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
     };
     (Some(program), diags)
 }

@@ -622,7 +622,7 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 - `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
   `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
   implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
-  whose index is `Program::any_impl`. Converting a value to either type is `ToDyn` with that
+  whose index is `Program::any_impl` (`Program::unknown` names the `unknown` interface). Converting a value to either type is `ToDyn` with that
   index (for `unknown` too: both share one representation and one table per concrete type).
 - Sema unpacks before boxing, so a dynamic value always holds one concrete type: a literal type
   becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
@@ -642,9 +642,17 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 - `typeof x` is `AnyTypeof`; `typeof x === "number"` (also `"string"`, `"boolean"`) narrows a
   dynamic local with `Fact::Class(l, T)`, read as `AnyTo(Share(x))`; `instanceof C` narrows as
   on any interface value (`Downcast`). Conditions use `AnyTruthy`. `===` / `!==` and `==` / `!=`
-  with a dynamic variable on either side box both operands and use `AnyStrictEq` /
-  `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value, `null == undefined`,
-  `"1" == 1`, `true == 1`; objects by identity). `console.log` and the format glue print the
+  with an operand whose checked type is dynamic (or `any | null`) box the other operand and use
+  `AnyStrictEq` / `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value,
+  `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
+  of one object, such as a class and its base, compare the data pointers; `==` of an object
+  and a primitive stops with a `TypeError`).
+- A dynamic value is never boxed again: `ToDyn` never has a dynamic operand (an `any | null`
+  unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
+  interface value; lowering keeps its data pointer and takes the `any` table of the concrete
+  type from the interface table. Into a union or literal type, `AnyTo` is applied per member
+  behind a test (`AnyTypeof` for primitives, `PatKind::InstanceOf` for classes, `AnyStrictEq`
+  for literals), with `Intrinsic::Panic` (`TypeError`) when none passes. `console.log` and the format glue print the
   value the table formats; a string at the top level prints without quotes.
 - Not yet (each a compile error, phase 1b and 2 of #924): member reads, writes and calls on
   `any` (`x.f`, `x[k]`, `x(...)`), other operators, template literals and `String(x)`,

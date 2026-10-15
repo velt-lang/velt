@@ -1,0 +1,48 @@
+// An object in an `any` is itself whatever its static type was when it was boxed (#924): a
+// class instance through its base class, an interface value, a function boxed twice.
+interface Shape {
+  area(): number;
+}
+
+class P {
+  x: number = 1;
+}
+
+class Q extends P {
+  y: number = 2;
+}
+
+class Sq implements Shape {
+  s: number = 2;
+  area(): number {
+    return this.s * this.s;
+  }
+}
+
+function main(): void {
+  const q = new Q();
+  const qb: P = q;
+  const aq: any = q;
+  const aqb: any = qb;
+  console.log(aq === aqb, aq == aqb, aqb === aq, aq !== aqb);
+  const back: Q = aqb;
+  console.log(back === q, aqb instanceof Q, aqb instanceof P);
+  const other: any = new Q();
+  console.log(aq === other, aqb === other);
+
+  const f = (a: number): number => a + 1;
+  const af: any = f;
+  const af2: any = f;
+  const g = (a: number): number => a + 1;
+  const ag: any = g;
+  console.log(af === af2, af == af2, af !== af2, af === ag, typeof af);
+
+  const sq = new Sq();
+  const sh: Shape = sq;
+  const a: any = sh;
+  const a2: any = sq;
+  console.log(a instanceof Sq, a === sq, a == sq, a === a2, typeof a);
+  const back2: Sq = a;
+  console.log(back2 === sq, back2.area());
+  console.log(a);
+}

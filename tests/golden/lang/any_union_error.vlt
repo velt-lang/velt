@@ -1,0 +1,10 @@
+// An `any` holding none of the members of a union stops with a `TypeError` (#924). Node keeps
+// the string in the variable; Velt checks the value where it enters typed code.
+type Color = "red" | "green";
+
+function main(): void {
+  const r: any = "blue";
+  console.log(r);
+  const c: Color = r;
+  console.log(c);
+}

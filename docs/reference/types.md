@@ -1438,10 +1438,18 @@ function main(): void {
 ```
 
 What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
-`T | null`, unions and class instances, checked against the class and its subclasses),
-`typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness, `===`,
-`!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`), and
-`console.log`. **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
+`T | null`, unions and class instances, checked against the class and its subclasses; into a
+union or a literal type such as `"red" | "green"` the value takes the first member it is: a
+`typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
+literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
+operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
+`console.log`. An object is itself in an `any` whatever its static type was when it was
+converted (a class instance through its base class, an interface value, a function converted
+twice). Differences from Node: `null` and `undefined` converted to `T | null` both give `null`
+(a `T | null` has no `undefined`; convert to `T | undefined` to keep it), and `==` between an
+object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object
+with `ToPrimitive`: `[] == 0` is `true`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
 `x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
 `JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
 error.

@@ -51,7 +51,7 @@ emit_all() {
 # line, column), which moves when the prelude gains a module (the program's own files come
 # after the prelude's).
 names() {
-  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g; s/_Ginit_E[0-9]+_/_Ginit_EN_/g; s/_L[0-9]+_([0-9]+_[0-9]+)/_LN_/g' "$1"
+  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g; s/_Ginit_E[0-9]+_/_Ginit_EN_/g; s/_L[0-9]+_([0-9]+_[0-9]+)/_LN_\1/g' "$1"
 }
 
 emit_all "$base" "$base_std" "$tmp/base"

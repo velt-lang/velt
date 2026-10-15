@@ -95,7 +95,7 @@ impl super::Cx<'_> {
         self.is_object(t) && !self.is_class(t) && !self.is_fn_or_dyn(t)
     }
 
-    fn is_fn_or_dyn(&self, t: TyId) -> bool {
+    pub(super) fn is_fn_or_dyn(&self, t: TyId) -> bool {
         matches!(
             self.types.kind(t),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_)

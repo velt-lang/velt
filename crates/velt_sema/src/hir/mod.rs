@@ -138,6 +138,9 @@ pub struct Program {
     pub counted_objects: Vec<TyId>,
     /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
     pub any_impl: Option<u32>,
+    /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
+    /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
+    pub unknown: Option<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
