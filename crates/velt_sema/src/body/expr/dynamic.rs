@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 
 use super::union_coerce::outer_mode;
 use crate::any::Dynamic;
-use crate::body::places::is_place;
+use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{
     self, ExprKind as H, Intrinsic, LocalId, Nothing, PatKind as P, TyId, TyKind, UseMode,
@@ -62,7 +62,8 @@ impl FnCx<'_, '_> {
         }
         if let Some(payload) = self.cx.ty.opt_payload(h.ty) {
             if !matches!(h.kind, H::Lit(hir::Lit::Null)) {
-                return self.option_to_dynamic(h, payload, exp);
+                let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
+                return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
         match self.cx.ty.kind(h.ty) {
@@ -85,6 +86,67 @@ impl FnCx<'_, '_> {
         ))
     }
 
+    /// `h` as an `any` (`unknown`) when it is an `any | null` (`unknown | null`): the value,
+    /// or the dynamic `null` / `undefined` for the nothing (TypeScript has no `any | null`).
+    pub(crate) fn collapse_dynamic_option(&mut self, mut h: hir::Expr) -> hir::Expr {
+        let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
+            return h;
+        };
+        if self.cx.dynamic(payload).is_none() {
+            return h;
+        }
+        // The standard library's `T | null` results are JavaScript's `undefined` when absent
+        // (`Map.get`, `find`, `pop`, a `Record` index).
+        let nothing = if self.std_result(&h) {
+            Nothing::Undefined
+        } else {
+            self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null)
+        };
+        if is_place(&h) {
+            // A field or variable keeps its value: the result is a share of it.
+            set_place_mode(&mut h, UseMode::Borrow);
+        }
+        match self.option_to_dynamic(h, payload, payload, nothing) {
+            Ok(h) | Err(h) => h,
+        }
+    }
+
+    /// `s ?? rhs` on an `any` / `unknown` `s`: `rhs` (boxed) when `s` holds `null` or
+    /// `undefined`, else `s`.
+    pub(crate) fn dynamic_nullish(
+        &mut self,
+        s: hir::Expr,
+        rhs: &velt_syntax::ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let dty = s.ty;
+        let init = self.share_if_place(s);
+        let tmp = self.new_local("<nullish>", dty, false, span, LocalKind::Temp);
+        let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+        let nil = self.dynamic_null_compare(read, "null", false, true, span);
+        let d = self.expr(rhs, Some(dty), crate::body::Want::Move);
+        let d = self.coerce(d, dty);
+        let value = self.mk(H::Local(tmp, UseMode::Move), dty, span);
+        let kind = H::If {
+            cond: Box::new(nil),
+            then: Box::new(d),
+            els: Box::new(value),
+        };
+        let result = self.mk(kind, dty, span);
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(init),
+                },
+                span,
+            }],
+            value: Some(Box::new(result)),
+            span,
+        };
+        self.mk(H::Block(block), dty, span)
+    }
+
     /// `null` or `undefined` as a dynamic value of type `exp`.
     pub(crate) fn dynamic_nothing(&mut self, n: Nothing, exp: TyId, span: Span) -> hir::Expr {
         let t = self.cx.dynamic_nothing_ty(n);
@@ -100,9 +162,9 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         payload: TyId,
         exp: TyId,
+        nothing: Nothing,
     ) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;
-        let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
         let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
         let mode = if self.cx.is_copy(payload) {
             UseMode::Copy
@@ -158,14 +220,58 @@ impl FnCx<'_, '_> {
         if let Some(members) = members {
             return self.dynamic_to_members(h, exp, members);
         }
-        // A variable keeps its value: the conversion takes a share of it.
-        let h = if is_place(&h) {
-            let ty = h.ty;
-            self.intrinsic(Intrinsic::Share, vec![h], ty, span)
-        } else {
-            h
-        };
+        if let Some(payload) = self.cx.ty.opt_payload(exp) {
+            if self.cx.union_def(payload).is_some() || self.cx.lit_value(payload).is_some() {
+                return self.dynamic_to_optional(h, exp, payload);
+            }
+        }
+        let h = self.share_if_place(h);
         self.intrinsic(Intrinsic::AnyTo, vec![h], exp, span)
+    }
+
+    /// A variable keeps its value: a conversion out of it takes a share of it, reading the
+    /// variable (which stays owned and is dropped with its scope).
+    pub(crate) fn share_if_place(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if !is_place(&h) {
+            return h;
+        }
+        let (ty, span) = (h.ty, h.span);
+        set_place_mode(&mut h, UseMode::Borrow);
+        self.intrinsic(Intrinsic::Share, vec![h], ty, span)
+    }
+
+    /// A dynamic value as `exp`, a union or literal type `payload` that also allows `null` /
+    /// `undefined`: `null` and `undefined` give the nothing, anything else is converted to
+    /// `payload`.
+    fn dynamic_to_optional(&mut self, h: hir::Expr, exp: TyId, payload: TyId) -> hir::Expr {
+        let span = h.span;
+        let dty = h.ty;
+        let init = self.share_if_place(h);
+        let tmp = self.new_local("<any>", dty, false, span, LocalKind::Temp);
+        let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+        let nil = self.dynamic_null_compare(read, "null", false, true, span);
+        let none = self.mk(H::Lit(hir::Lit::Null), exp, span);
+        let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+        let value = self.unbox_dynamic(read, payload);
+        let some = self.coerce(value, exp);
+        let kind = H::If {
+            cond: Box::new(nil),
+            then: Box::new(none),
+            els: Box::new(some),
+        };
+        let result = self.mk(kind, exp, span);
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(init),
+                },
+                span,
+            }],
+            value: Some(Box::new(result)),
+            span,
+        };
+        self.mk(H::Block(block), exp, span)
     }
 
     /// A dynamic value as the union or literal type `exp` (`members`: its members, or `exp`
@@ -174,11 +280,7 @@ impl FnCx<'_, '_> {
     fn dynamic_to_members(&mut self, h: hir::Expr, exp: TyId, members: Vec<TyId>) -> hir::Expr {
         let span = h.span;
         let dty = h.ty;
-        let init = if is_place(&h) {
-            self.intrinsic(Intrinsic::Share, vec![h], dty, span)
-        } else {
-            h
-        };
+        let init = self.share_if_place(h);
         let tmp = self.new_local("<any>", dty, false, span, LocalKind::Temp);
         let name = self.cx.display(exp);
         let msg = self.str_lit(&format!("TypeError: the value is not a {name}"), span);

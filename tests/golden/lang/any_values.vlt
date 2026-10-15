@@ -1,3 +1,4 @@
+// check: no leaks
 // `any` and `unknown`: boxing, checked conversions, typeof, equality, truthiness, printing.
 class Point {
   x: number;

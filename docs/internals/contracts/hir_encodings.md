@@ -641,10 +641,19 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
   and `AnyNumber (data) -> f64` (booleans, numbers and strings). Tables are memoized per
   concrete type, so equal tables mean equal types.
 - `Intrinsic::AnyTo` converts out (assignment, argument, return, `as T`; an `unknown` only
-  with `as T` or after narrowing), checked at run time: the table must be `T`'s (a class: the
-  class id is `T` or a subclass; `U | null`: `null` and `undefined` give `null`). A mismatch
+  with `as T` or after narrowing), checked at run time: the table must be `T`'s (a class
+  without type arguments: the class id is `T` or a subclass; a generic class: that
+  instantiation's table; `U | null`: `null` and `undefined` give `null`; a union or literal
+  `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
   stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
-  owned: a place is wrapped in `Intrinsic::Share`.
+  owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
+  the place keeps (and later drops) its value.
+- A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
+  `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
+  still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
+  generic class's field) is collapsed where user code reads it: the payload, or the dynamic
+  nothing (`undefined` for a standard library result, else the type's own nothing). `x ?? d`
+  on a dynamic `x` is `d` (boxed) when `x` holds `null` or `undefined`.
 - `typeof x` is `AnyTypeof`; `typeof x === "number"` (also `"string"`, `"boolean"`) narrows a
   dynamic local with `Fact::Class(l, T)`, read as `AnyTo(Share(x))`; `instanceof C` narrows as
   on any interface value (`Downcast`). Conditions use `AnyTruthy`. `===` / `!==` and `==` / `!=`

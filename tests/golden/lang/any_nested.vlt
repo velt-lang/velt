@@ -1,3 +1,4 @@
+// check: no leaks
 // An `any` read out of a `Map<string, any>`, an `any | null` or an `(any | null)[]` is the
 // value itself, never an `any` boxed inside another (#924).
 function main(): void {

@@ -1,3 +1,4 @@
+// check: no leaks
 // An `any` converted to a union or a literal type takes the first member whose run-time test
 // it passes (#924); an `any` converts to `unknown` as it is.
 type Color = "red" | "green";

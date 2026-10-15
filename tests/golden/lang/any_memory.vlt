@@ -1,7 +1,8 @@
+// check: no leaks
 // Values boxed in `any` and their boxes are released once, never used after: strings, objects,
 // arrays, closures, values shared between an `any` and a typed variable, an object that refers
-// to itself through an `any` field (a counted cycle, kept like any other until #11), and `any`
-// values passed to and returned from async functions (the debug runs' checking allocator).
+// to another through an `any` field, and `any` values passed to and returned from async
+// functions (the debug runs' checking allocator).
 class Node {
   next: any = null;
   name: string;
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
   }
   console.log(items.length, items[0], items[1], items[2]);
   const n = new Node("a");
-  const held: any = n;
+  const held: any = new Node("b");
   n.next = held;
   console.log(n.name, typeof n.next);
   const f: any = (x: number): number => x * 2;

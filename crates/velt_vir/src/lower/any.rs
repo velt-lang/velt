@@ -543,8 +543,11 @@ impl FnLower<'_, '_> {
             return Operand::Copy(out);
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        // A class without type arguments: an instance of it or of a subclass. A generic class
+        // (`Box<number>`, `Map<string, string>`): the table of that very instantiation, since
+        // its class id does not say what its type arguments are.
         let class = match self.cx.kind(ty) {
-            TyKind::Adt(d, _) if self.cx.is_class(ty) => Some(d),
+            TyKind::Adt(d, args) if self.cx.is_class(ty) && args.is_empty() => Some(d),
             _ => None,
         };
         let ok = match class {
@@ -594,9 +597,21 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
+    /// The name of `ty` in a `TypeError`, with its type arguments (`Box<number>`).
+    fn any_target_name(&self, ty: TyId) -> String {
+        let name = self.cx.type_name(ty);
+        match self.cx.kind(ty) {
+            TyKind::Adt(_, args) if !args.is_empty() => {
+                let args: Vec<String> = args.iter().map(|a| self.any_target_name(*a)).collect();
+                format!("{name}<{}>", args.join(", "))
+            }
+            _ => name,
+        }
+    }
+
     /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
     fn any_type_error(&mut self, desc: Operand, ty: TyId) {
-        let want = self.cx.type_name(ty);
+        let want = self.any_target_name(ty);
         let article = match want.chars().next() {
             Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
             _ => "a",

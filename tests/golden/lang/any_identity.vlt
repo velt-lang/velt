@@ -1,3 +1,4 @@
+// check: no leaks
 // An object in an `any` is itself whatever its static type was when it was boxed (#924): a
 // class instance through its base class, an interface value, a function boxed twice.
 interface Shape {

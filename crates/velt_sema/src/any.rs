@@ -30,7 +30,7 @@ pub(crate) enum Dynamic {
     Unknown,
 }
 
-/// After the declared implementations: find the prelude's dynamic interfaces.
+/// After the declarations: find the prelude's dynamic interfaces.
 pub(crate) fn add_impl(cx: &mut Ctx) {
     let (Some(any), Some(unknown)) = (cx.prelude_iface("any"), cx.prelude_iface("unknown")) else {
         return;

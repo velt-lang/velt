@@ -1,3 +1,4 @@
+// check: no leaks
 // `null` and `undefined` out of an `any` into nullable types, and `unknown` through `any` and
 // `instanceof` (#924): once a crash in debug builds (a temporary of the conversion dropped on
 // the path that never wrote it).

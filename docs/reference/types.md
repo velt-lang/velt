@@ -1455,7 +1455,8 @@ function main(): void {
 ```
 
 What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
-`T | null`, unions and class instances, checked against the class and its subclasses; into a
+`T | null`, unions and class instances, checked against the class and its subclasses, and an
+instance of a generic class against that very instantiation (`Box<number>`); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
 `typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
 literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
@@ -1463,10 +1464,17 @@ literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
 converted (a class instance through its base class, an interface value, a function converted
-twice). Differences from Node: `null` and `undefined` converted to `T | null` both give `null`
-(a `T | null` has no `undefined`; convert to `T | undefined` to keep it), and `==` between an
+twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
+with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
+`m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
+give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored.
+Differences from Node: `null` and `undefined` converted to `T | null` both give `null`
+(a `T | null` has no `undefined`; convert to `T | undefined` to keep it); `==` between an
 object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object
-with `ToPrimitive`: `[] == 0` is `true`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
+with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
+convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
+optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
+today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
 `x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
 `JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
 error.

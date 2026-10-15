@@ -184,6 +184,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let lhs_span = s.span;
+        if self.cx.dynamic(s.ty).is_some() {
+            return self.dynamic_nullish(s, rhs, span);
+        }
         let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);

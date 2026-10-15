@@ -1,0 +1,23 @@
+// check: no leaks
+// An `any` converts to a generic class only when it holds that very instantiation: the class
+// id alone does not say what the type arguments are (#1103 review).
+class Bx<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+function main(): void {
+  const ab: any = new Bx<string>("s");
+  const same: Bx<string> = ab;
+  console.log(same.v);
+  const nb: any = new Bx<number>(5);
+  const n2: Bx<number> | null = nb;
+  console.log(n2 !== null ? n2.v : -1);
+  const nested: any = new Bx<Bx<number>>(new Bx<number>(3));
+  const nn: Bx<Bx<number>> = nested;
+  console.log(nn.v.v);
+  const mm: any = new Map<string, number>([["a", 1]]);
+  const m2: Map<string, number> = mm;
+  console.log(m2.get("a"));
+}

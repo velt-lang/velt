@@ -233,7 +233,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `h` the result of a standard library function or method (`Map.get`, `find`)?
-    fn std_result(&self, h: &hir::Expr) -> bool {
+    pub(crate) fn std_result(&self, h: &hir::Expr) -> bool {
         match &h.kind {
             H::Call {
                 callee: Callee::Def(d, _),
@@ -247,6 +247,7 @@ impl FnCx<'_, '_> {
                 ..
             } => true,
             H::Block(b) => b.value.as_deref().is_some_and(|v| self.std_result(v)),
+            H::Await(x) => self.std_result(x),
             _ => false,
         }
     }
