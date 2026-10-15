@@ -676,6 +676,8 @@ fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
 #[cfg(test)]
 mod case_tests;
 #[cfg(test)]
+mod globals_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod ts_tests;
