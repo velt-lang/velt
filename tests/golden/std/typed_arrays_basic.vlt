@@ -103,4 +103,19 @@ function main() {
     m.some((x) => x == 9),
     m.every((x) => x < 10),
   );
+  // Long arrays: elements far from the end of the buffer and in its last 15 bytes.
+  const big = new Float64Array(10);
+  const halves = new Float32Array(10);
+  const shorts = new Int16Array(12);
+  const words = new Uint32Array(9);
+  for (let i = 0; i < 10; i++) {
+    big[i] = i * 1.5 - 3;
+    halves[i] = i / 3;
+    shorts[i] = i * -3000;
+    words[i] = i * 0x30000001;
+  }
+  big[9] += 0.25;
+  shorts[11] = 32767;
+  console.log(big, halves, shorts, words);
+  console.log(new Uint8Array(big.buffer, 64, 16), new Float64Array(big.buffer, 8, 3));
 }

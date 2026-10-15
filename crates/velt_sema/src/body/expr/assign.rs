@@ -64,7 +64,10 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
-                if self.has_indexer(obj.ty) && self.symbol_key_of(index).is_none() {
+                if self.has_indexer(obj.ty)
+                    && super::member::literal_key(index).is_none()
+                    && self.symbol_key_of(index).is_none()
+                {
                     return Some(AssignTarget::Indexer(obj));
                 }
                 // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol

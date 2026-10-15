@@ -7,8 +7,9 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
 `AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
-`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder` and
+`TextDecoder` ([velt:encoding](encoding.md)), and `ArrayBuffer`, `DataView`, `Uint8Array` and the
+other typed arrays ([typed arrays](typed_array.md)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`

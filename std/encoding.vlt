@@ -511,7 +511,7 @@ export class TextDecoder {
 
   // The text of the `len` bytes of `bytes` from `off`.
   private decodeRange(bytes: u8[], off: usize, len: usize): string {
-    if (off == 0 && len == bytes.length as usize) {
+    if (off == 0 && len == (bytes.length as usize)) {
       return this.decodeBytes(bytes);
     }
     return this.decodeBytes(bytes.slice(off as i64, (off + len) as i64));

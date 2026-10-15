@@ -24,9 +24,9 @@ KINDS = [
     ("Uint16Array", 2, "load16(b, o)", "store16(b, o, toUint32(v) as u16)", "16-bit unsigned integers"),
     ("Int32Array", 4, "(load32(b, o) as i32)", "store32(b, o, toUint32(v))", "32-bit signed integers"),
     ("Uint32Array", 4, "load32(b, o)", "store32(b, o, toUint32(v))", "32-bit unsigned integers"),
-    ("Float32Array", 4, "f32FromBits(load32(b, o))", "store32(b, o, f32Bits(v as f32))",
+    ("Float32Array", 4, "loadF32(b, o)", "storeF32(b, o, v as f32)",
      "32-bit floats (`f32`)"),
-    ("Float64Array", 8, "f64FromBits(load64(b, o))", "store64(b, o, f64Bits(v))", "64-bit floats (numbers)"),
+    ("Float64Array", 8, "loadF64(b, o)", "storeF64(b, o, v)", "64-bit floats (numbers)"),
 ]
 
 HEADER = """\
@@ -45,17 +45,15 @@ HEADER = """\
 
 import {
   ArrayBuffer,
-  f32Bits,
-  f32FromBits,
-  f64Bits,
-  f64FromBits,
   load16,
   load32,
-  load64,
+  loadF32,
+  loadF64,
   relative,
   store16,
   store32,
-  store64,
+  storeF32,
+  storeF64,
   toIndex,
   toUint32,
   toUint8,
@@ -621,7 +619,7 @@ export class @C@ extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * @N@) as i64));
-      } else if (src.off == 0 && src.len * @N@ == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * @N@ == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -736,7 +734,7 @@ export class @C@ extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): @C@ {
     const out = @C@.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;

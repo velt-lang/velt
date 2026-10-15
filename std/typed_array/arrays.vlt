@@ -13,17 +13,15 @@
 
 import {
   ArrayBuffer,
-  f32Bits,
-  f32FromBits,
-  f64Bits,
-  f64FromBits,
   load16,
   load32,
-  load64,
+  loadF32,
+  loadF64,
   relative,
   store16,
   store32,
-  store64,
+  storeF32,
+  storeF64,
   toIndex,
   toUint32,
   toUint8,
@@ -596,7 +594,7 @@ export class Int8Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 1) as i64));
-      } else if (src.off == 0 && src.len * 1 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 1 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -714,7 +712,7 @@ export class Int8Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Int8Array {
     const out = Int8Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -1122,7 +1120,7 @@ export class Uint8Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 1) as i64));
-      } else if (src.off == 0 && src.len * 1 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 1 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -1240,7 +1238,7 @@ export class Uint8Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Uint8Array {
     const out = Uint8Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -1661,7 +1659,7 @@ export class Uint8ClampedArray extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 1) as i64));
-      } else if (src.off == 0 && src.len * 1 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 1 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -1779,7 +1777,7 @@ export class Uint8ClampedArray extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Uint8ClampedArray {
     const out = Uint8ClampedArray.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -2187,7 +2185,7 @@ export class Int16Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 2) as i64));
-      } else if (src.off == 0 && src.len * 2 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 2 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -2305,7 +2303,7 @@ export class Int16Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Int16Array {
     const out = Int16Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -2713,7 +2711,7 @@ export class Uint16Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 2) as i64));
-      } else if (src.off == 0 && src.len * 2 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 2 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -2831,7 +2829,7 @@ export class Uint16Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Uint16Array {
     const out = Uint16Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -3239,7 +3237,7 @@ export class Int32Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 4) as i64));
-      } else if (src.off == 0 && src.len * 4 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 4 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -3357,7 +3355,7 @@ export class Int32Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Int32Array {
     const out = Int32Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -3765,7 +3763,7 @@ export class Uint32Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 4) as i64));
-      } else if (src.off == 0 && src.len * 4 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 4 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -3883,7 +3881,7 @@ export class Uint32Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Uint32Array {
     const out = Uint32Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -3951,14 +3949,14 @@ export class Float32Array extends TypedArray {
   private get(i: usize): number {
     const b = this.buf.bytes;
     const o = this.off + i * 4;
-    return f32FromBits(load32(b, o));
+    return loadF32(b, o);
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
     const b = this.buf.bytes;
     const o = this.off + i * 4;
-    store32(b, o, f32Bits(v as f32));
+    storeF32(b, o, v as f32);
   }
 
   // The bytes of the elements, copied.
@@ -4291,7 +4289,7 @@ export class Float32Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 4) as i64));
-      } else if (src.off == 0 && src.len * 4 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 4 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -4409,7 +4407,7 @@ export class Float32Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Float32Array {
     const out = Float32Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;
@@ -4477,14 +4475,14 @@ export class Float64Array extends TypedArray {
   private get(i: usize): number {
     const b = this.buf.bytes;
     const o = this.off + i * 8;
-    return f64FromBits(load64(b, o));
+    return loadF64(b, o);
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
     const b = this.buf.bytes;
     const o = this.off + i * 8;
-    store64(b, o, f64Bits(v));
+    storeF64(b, o, v);
   }
 
   // The bytes of the elements, copied.
@@ -4817,7 +4815,7 @@ export class Float64Array extends TypedArray {
       if (src.buf === this.buf) {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 8) as i64));
-      } else if (src.off == 0 && src.len * 8 == src.buf.bytes.length as usize) {
+      } else if (src.off == 0 && src.len * 8 == (src.buf.bytes.length as usize)) {
         this.buf.bytes.set(src.buf.bytes, to);
       } else {
         this.buf.bytes.set(src.bytesCopy(), to);
@@ -4935,7 +4933,7 @@ export class Float64Array extends TypedArray {
   // A new array of the numbers `xs`, converted.
   private static ofArray(xs: number[]): Float64Array {
     const out = Float64Array.zeros(xs.length as usize);
-    for (let i: usize = 0; i < xs.length as usize; i++) {
+    for (let i: usize = 0; i < (xs.length as usize); i++) {
       out.put(i, xs[i]);
     }
     return out;

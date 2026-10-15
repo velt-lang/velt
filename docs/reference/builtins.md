@@ -35,11 +35,12 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Set<T>` | insertion-ordered hash set ([velt:collections/set](../std/collections/set.md)) |
 | `RegExp`, `/ab+c/gi` | regular expressions ([velt:regex](../std/regex.md)) |
 | `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt:encoding](../std/encoding.md)) |
+| `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` | bytes and the typed arrays that view them, as in Node ([typed arrays](../std/typed_array.md)) |
 | `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
-The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp` and `TextEncoder`
+The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp`, `TextEncoder` and `Uint8Array`
 (and the names next to them) are loaded only by programs that mention one of those names (or
 hold a regex literal), so the others don't pay for compiling them; a module that imports or
 declares such a name itself (`import { Response } from "./api"`) uses its own and
