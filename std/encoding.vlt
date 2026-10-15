@@ -332,7 +332,7 @@ export function utf8Valid(data: u8[]): bool {
   return velt_rt_bytes_utf8_valid(data);
 }
 
-// Offset of the first byte that starts an invalid sequence, or -1.
+/** Offset of the first byte of `data` that starts an invalid UTF-8 sequence, or -1. */
 export function firstInvalid(data: u8[]): i64 {
   let i: usize = 0;
   const n = data.length;
@@ -387,7 +387,7 @@ function sequenceAt(data: u8[], i: usize): i64 {
   return (need + 1) as i64;
 }
 
-// Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string.
+/** Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string. */
 export function validToString(bytes: u8[]): string {
   const r = velt_rt_bytes_to_str(bytes);
   if (r.code != 0) {
