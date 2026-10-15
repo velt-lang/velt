@@ -26,10 +26,12 @@ use crate::hir::{LitValue, Nothing, TyId, TyKind};
 use crate::resolve::TyEnv;
 use crate::types::collect_params;
 
+pub(crate) mod key_kinds;
 mod relate;
 mod template;
 
 use relate::Slots;
+pub(crate) use template::js_number;
 
 /// `infer X` while a pattern is matched is the placeholder `Param(INFER_BASE + i)`.
 pub(super) const INFER_BASE: u32 = 1 << 20;
@@ -281,7 +283,7 @@ impl Ctx<'_> {
                     );
                     return self.ty.error;
                 }
-                self.plain_fields(xt)
+                self.relatable_fields(xt)
             }
             _ => None,
         };
@@ -298,17 +300,18 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         let mut out: Vec<ShapeField> = vec![];
+        let mut key_tys: Vec<(String, TyId)> = vec![];
         for (key, kt) in keys {
             let mut inner = env.clone();
             inner.locals.push((m.param.name.clone(), kt));
-            let names = match &m.name {
+            let names: Vec<(String, TyId)> = match &m.name {
                 Some(n) => {
                     let nt = self.resolve_type(n, &inner);
                     let Some(nt) = self.known_type(nt, env, "a mapped type's `as` clause", n.span)
                     else {
                         return self.ty.error;
                     };
-                    match self.literal_strings(nt) {
+                    match self.literal_keys(nt) {
                         Some(ns) => ns,
                         None => {
                             let shown = self.display(nt);
@@ -322,7 +325,7 @@ impl Ctx<'_> {
                         }
                     }
                 }
-                None => vec![key.clone()],
+                None => vec![(key.clone(), kt)],
             };
             if names.is_empty() {
                 continue;
@@ -345,14 +348,18 @@ impl Ctx<'_> {
                 ast::MappedModifier::Remove => false,
                 ast::MappedModifier::Keep => src_field.is_some_and(|f| f.readonly),
             };
-            // An optional field's `undefined` is its absence; `-?` removes it as well.
-            let v = match optional || was_optional {
-                true => self.without_undefined(v),
-                false => v,
-            };
-            for name in names {
-                // Keys the `as` clause maps together have the union of the values.
-                if let Some(i) = out.iter().position(|f| f.name == name) {
+            for (name, name_ty) in names {
+                key_tys.push((name.clone(), name_ty));
+                // Keys the `as` clause maps together have the union of the values, and the
+                // first one's modifiers.
+                let existing = out.iter().position(|f| f.name == name);
+                let field_optional = existing.map_or(optional, |i| out[i].optional);
+                // An optional field's `undefined` is its absence; `-?` removes it as well.
+                let v = match field_optional || m.optional == ast::MappedModifier::Remove {
+                    true => self.without_undefined(v),
+                    false => v,
+                };
+                if let Some(i) = existing {
                     let prev = out[i].ty;
                     out[i].ty = self.union_with(&[prev, v], None, t.span);
                     if out[i].ty == self.ty.error {
@@ -373,6 +380,9 @@ impl Ctx<'_> {
         let ty = self.anon_type_with(&out, env.module);
         let spans = vec![t.span; out.len()];
         self.declare_anon_fields(ty, &spans);
+        for (name, key) in key_tys {
+            self.record_key_kind(ty, &name, key);
+        }
         ty
     }
 

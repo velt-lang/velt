@@ -94,7 +94,28 @@ impl Ctx<'_> {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
             _ => None,
         };
-        let Some(fields) = self.object_fields(op, t, written, object.span) else {
+        // A record: a closed one (`Record<"a" | "b", V>`) has those keys as fields; an open
+        // one (`Record<string, V>`) gives `V` for any string key.
+        let fields = match self.record_type_args(t) {
+            Some((rk, rv)) if self.record_key_names(rk).is_none() => {
+                let any_key = matches!(
+                    self.ty.kind(k),
+                    TyKind::Str | TyKind::Int(_) | TyKind::Float(_)
+                ) || self.literal_strings(k).is_some_and(|ks| !ks.is_empty());
+                if any_key && *self.ty.kind(rk) == TyKind::Str {
+                    return rv;
+                }
+                let (shown, key_shown) = (self.display(t), self.display(k));
+                self.err(
+                    format!("`{shown}[{key_shown}]` is not supported yet (#934)"),
+                    key.span,
+                );
+                return self.ty.error;
+            }
+            Some(_) => self.relatable_fields(t),
+            None => self.object_fields(op, t, written, object.span),
+        };
+        let Some(fields) = fields else {
             return self.ty.error;
         };
         let Some(keys) = self.utility_keys(op, t, &fields, k, key.span) else {
@@ -261,6 +282,11 @@ impl Ctx<'_> {
             .iter()
             .map(|m| match self.ty.kind(*m) {
                 TyKind::Literal(LitValue::Str(s)) => Some(s.clone()),
+                // A number names the property it spells (`T[1]` is `T["1"]`).
+                TyKind::Literal(LitValue::Int(_, i)) => Some(i.to_string()),
+                TyKind::Literal(LitValue::Float(_, bits)) => {
+                    Some(crate::type_level::js_number(f64::from_bits(*bits)))
+                }
                 _ => None,
             })
             .collect();

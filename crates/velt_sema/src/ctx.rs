@@ -65,6 +65,9 @@ pub(crate) struct Ctx<'m> {
     pub field_only: HashMap<DefId, DefId>,
     /// The reverse of `field_only`.
     pub field_only_of: HashMap<DefId, DefId>,
+    /// How object types' properties whose names spell numbers were named
+    /// (`crate::type_level::key_kinds`).
+    pub(crate) key_kinds: HashMap<(DefId, String), crate::type_level::key_kinds::KeyKind>,
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
@@ -257,6 +260,7 @@ impl<'m> Ctx<'m> {
             brand_keys: HashMap::new(),
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
+            key_kinds: HashMap::new(),
             shapes_done: false,
             query_locals: vec![],
             bodies_ok: false,

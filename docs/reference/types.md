@@ -957,7 +957,8 @@ error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function
 default parameter is not supported yet (#936).
 
 `keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
-string }` is `"a" | "b"`), and on a `Record` with literal keys it is the key type.
+string }` is `"a" | "b"`; a key a mapped type made from a number literal stays that number:
+`keyof { [K in 1 | 2]: K }` is `1 | 2`), and on a `Record` with literal keys it is the key type.
 
 ```ts
 const DEFAULTS = { host: "localhost", port: 8080 };
@@ -999,8 +1000,12 @@ the result is an ordinary object type, union or literal type.
   (structurally for object types). When `C` is a type parameter written alone, the test is made
   for each member of a union (`boolean` is `true | false`; `never` gives `never`);
   `[C] extends [E]` tests the whole type. As with `--strict`, function parameters are compared
-  contravariantly, an optional field does not fill a required one, and `{}` takes any value but
-  `null` and `undefined`.
+  contravariantly, an optional field does not fill a required one, an object type whose fields
+  are all optional takes only an object type with none of its own or one field in common (`{ b: 1 }
+  extends { a?: 1 }` is false), `{}` takes any value but `null` and `undefined`, and number
+  literals compare by value (`1` and `1.0` are one type). Two `Record`s relate by their type
+  arguments (the key the other way round), else by their fields: `Record<"a" | "b", 1>` extends
+  `Record<string, number>`.
   `infer X` in `E` names the part of `C` it stands for: in a generic type, an object type's field,
   a function type, a tuple, or a template literal pattern. An `infer` that finds nothing is
   TypeScript's `unknown`, which Velt supports only as `NonNullable<X>` (`{}`). An `infer X` in
@@ -1014,7 +1019,9 @@ the result is an ordinary object type, union or literal type.
   `F | undefined`, as TypeScript reads it.
 - **Template literal types** `` `on${K}` ``: the union of the strings they spell, with
   `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`; after `extends` they are patterns
-  (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``).
+  (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
+  is `"true" | "false"`, and a hole of literal types each of them spelled out
+  (`` `${boolean}x` `` is `"truex" | "falsex"`).
 - `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `string & K` with `K` a string literal
   type is `K`; `keyof` of a union is the keys its members share.
 

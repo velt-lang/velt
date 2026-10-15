@@ -117,6 +117,10 @@ impl Ctx<'_> {
             // A number literal is a `number` (Velt's integer literal types included).
             (TyKind::Literal(LitValue::Int(..)), TyKind::Float(_) | TyKind::Int(_))
             | (TyKind::Literal(LitValue::Float(..)), TyKind::Float(_)) => true,
+            // `1` and `1.0` are one literal type in TypeScript: number literals compare by value.
+            (TyKind::Literal(a), TyKind::Literal(b)) => {
+                matches!((num_value(&a), num_value(&b)), (Some(x), Some(y)) if x == y)
+            }
             (TyKind::Literal(v), _) => self.lit_base(&v) == p,
             (TyKind::Array(a), TyKind::Array(b)) => self.relate(a, b, slots),
             (TyKind::Tuple(a), TyKind::Tuple(b)) => {
@@ -233,6 +237,14 @@ impl Ctx<'_> {
         let Some(sf) = self.relatable_fields(s) else {
             return false;
         };
+        // A weak type (all fields optional) takes only a source with no properties or one that
+        // shares a property with it (TypeScript's weak type detection).
+        if pf.iter().all(|f| f.optional)
+            && !sf.is_empty()
+            && !sf.iter().any(|g| pf.iter().any(|f| f.name == g.name))
+        {
+            return false;
+        }
         for f in pf {
             match sf.iter().find(|g| g.name == f.name) {
                 // An optional field does not fill a required one, even one that takes
@@ -256,7 +268,7 @@ impl Ctx<'_> {
 
     /// The fields `s` has as an object type: an object type's or class's, or a record's with
     /// literal keys (each required).
-    fn relatable_fields(&mut self, s: TyId) -> Option<Vec<ShapeField>> {
+    pub(crate) fn relatable_fields(&mut self, s: TyId) -> Option<Vec<ShapeField>> {
         if let Some((k, v)) = self.record_type_args(s) {
             let keys = self.record_key_names(k)?;
             return Some(
@@ -279,8 +291,18 @@ impl Ctx<'_> {
         let Some((k, v)) = self.record_type_args(p) else {
             return false;
         };
+        // Two records relate as TypeScript relates two instances of one alias: by their type
+        // arguments first (the key contravariantly, the value covariantly), else structurally
+        // (a closed record as its fields; an open one has no property a closed one requires).
         if let Some((sk, sv)) = self.record_type_args(s) {
-            return self.relate(k, sk, &mut Slots::default()) && self.relate(sv, v, slots);
+            let saved = slots.clone();
+            if self.relate(k, sk, &mut Slots::default()) && self.relate(sv, v, slots) {
+                return true;
+            }
+            *slots = saved;
+            if self.record_key_names(sk).is_none() {
+                return false;
+            }
         }
         let Some(sf) = self.relatable_fields(s) else {
             return false;
@@ -316,5 +338,14 @@ impl Ctx<'_> {
                 })
                 .collect(),
         )
+    }
+}
+
+/// The value of a number literal (`1` and `1.0` are the same literal type in TypeScript).
+pub(super) fn num_value(v: &LitValue) -> Option<f64> {
+    match v {
+        LitValue::Int(_, i) => Some(*i as f64),
+        LitValue::Float(_, bits) => Some(f64::from_bits(*bits)),
+        _ => None,
     }
 }

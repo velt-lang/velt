@@ -291,7 +291,8 @@ fn optional_fields_relate_as_in_typescript() {
             ("Ext<{ a?: 1 }, { a: 1 | undefined }>", "2"),
             ("Ext<{ a: 1 | undefined }, { a?: 1 }>", "1"),
             ("Ext<{ a?: 1 }, { a?: 1 }>", "1"),
-            ("Ext<{ b: 1 }, { a?: 1 }>", "1"),
+            // A weak type (all fields optional) needs a property in common.
+            ("Ext<{ b: 1 }, { a?: 1 }>", "2"),
         ],
     );
 }
@@ -376,6 +377,144 @@ fn related_forms_around_the_fixes() {
             ("Ext<F2, F1>", "2"),
             ("Ext<boolean, true | false>", "1"),
             ("Ext<boolean, string | boolean>", "1"),
+        ],
+    );
+}
+
+// The second review's cases (each compared with tsc 5.9.3 `--strict`).
+
+#[test]
+fn number_literals_compare_by_value() {
+    check_all(
+        "",
+        &[
+            ("1 extends 1.0 ? \"y\" : \"n\"", "\"y\""),
+            ("1.0 extends 1 ? \"y\" : \"n\"", "\"y\""),
+            ("0 extends 0.0 ? \"y\" : \"n\"", "\"y\""),
+            ("Exclude<1 | 2 | 3, 2.0>", "1 | 3"),
+            ("Extract<0 | 1, 1.0>", "1"),
+            ("1.5 extends 1 ? \"y\" : \"n\"", "\"n\""),
+        ],
+    );
+    let e = err_src("type R = Exclude<1 | 2 | 3, 2.0>;\nfunction main() { const r: R = 2; }");
+    assert!(!e.is_empty());
+}
+
+#[test]
+fn weak_types_need_a_common_property() {
+    check_all(
+        "type HasOptA<T> = T extends { a?: number } ? 1 : 2;
+         type Opt<T> = { [K in keyof T]?: T[K] };",
+        &[
+            ("{ b: 2 } extends { a?: 1 } ? 1 : 2", "2"),
+            ("HasOptA<{ b: 1 }>", "2"),
+            ("{ c: 1 } extends { a?: 1; b?: 2 } ? 1 : 2", "2"),
+            ("{ a?: 1 } extends { b?: 1 } ? 1 : 2", "2"),
+            ("Opt<{ a: 1 }> extends Opt<{ b: 1 }> ? 1 : 2", "2"),
+            // No properties at all, or one in common: related as before.
+            ("{} extends { a?: 1 } ? 1 : 2", "1"),
+            ("{ a: 1; b: 2 } extends { a?: 1 } ? 1 : 2", "1"),
+            ("HasOptA<{ a: 1 }>", "1"),
+        ],
+    );
+}
+
+#[test]
+fn boolean_holes_match_true_and_false() {
+    check_all(
+        "type BoolT<S> = S extends `${boolean}` ? 1 : 2;",
+        &[
+            ("BoolT<\"true\">", "1"),
+            ("BoolT<\"false\">", "1"),
+            ("BoolT<\"true\" | \"no\">", "1 | 2"),
+            ("BoolT<\"false\" | \"true\">", "1"),
+            ("BoolT<\"yes\">", "2"),
+            ("`true` extends `${boolean}` ? 1 : 2", "1"),
+            ("\"truex\" extends `${boolean}x` ? 1 : 2", "1"),
+            ("\"falsey\" extends `${boolean}${string}` ? 1 : 2", "1"),
+            (
+                "\"ab-c\" extends `${\"a\" | \"ab\"}-${string}` ? 1 : 2",
+                "1",
+            ),
+            ("`${boolean}`", "\"false\" | \"true\""),
+        ],
+    );
+}
+
+#[test]
+fn keyof_keeps_number_keys() {
+    check_all(
+        "",
+        &[
+            ("keyof { [K in 1 | 2]: K }", "1 | 2"),
+            ("keyof { [K in 1 | \"a\"]: K }", "\"a\" | 1"),
+            ("keyof { [K in \"a\" | 1 as K]: K }", "\"a\" | 1"),
+            ("Exclude<keyof { [K in 1 | \"b\"]: 0 }, string>", "1"),
+            ("Extract<keyof { [K in 1 | \"b\"]: 0 }, number>", "1"),
+            ("{ [K in \"a\" | 1]: K }[1]", "1"),
+            ("keyof { \"1\": 0 }", "\"1\""),
+        ],
+    );
+    ok_src("type Num = Extract<keyof { [K in 1 | \"b\"]: 0 }, number>;\nfunction main() { const n: Num = 1; }");
+}
+
+#[test]
+fn colliding_as_keys_keep_undefined_of_a_later_optional_key() {
+    check_all(
+        "type Flat<T> = { [K in keyof T as \"all\"]: T[K] };",
+        &[
+            ("Flat<{ a: 1; b?: 2 }>", "{ all: 1 | 2 | undefined }"),
+            (
+                "{ [K in keyof { a: 1; b?: 2 } as \"z\"]: { a: 1; b?: 2 }[K] }",
+                "{ z: 1 | 2 | undefined }",
+            ),
+            ("Flat<{ a?: 1; b: 2 }>", "{ all?: 1 | 2 }"),
+        ],
+    );
+    ok_src("type Flat<T> = { [K in keyof T as \"all\"]: T[K] };\ntype F = Flat<{ a: 1; b?: 2 }>;\nfunction main() { const f: F = { all: undefined }; }");
+}
+
+#[test]
+fn closed_records_relate_to_open_ones() {
+    check_all(
+        "type Ext<X, Y> = X extends Y ? 1 : 2;",
+        &[
+            (
+                "Record<\"a\" | \"b\", 1> extends Record<string, number> ? 1 : 2",
+                "1",
+            ),
+            ("Ext<Record<\"a\" | \"b\", 1>, Record<string, string>>", "2"),
+            ("Ext<Record<string, 1>, Record<string, number>>", "1"),
+            // By the type arguments first, as tsc relates two instances of one alias.
+            (
+                "Ext<Record<string, number>, Record<\"a\" | \"b\", number>>",
+                "1",
+            ),
+            ("Ext<Record<string, number>, Record<\"a\" | \"b\", 1>>", "2"),
+            (
+                "Ext<Record<\"a\" | \"c\", number>, Record<\"a\" | \"b\", number>>",
+                "2",
+            ),
+            (
+                "Ext<Record<\"a\" | \"b\" | \"c\", 1>, Record<\"a\" | \"b\", number>>",
+                "1",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn mapped_types_and_indexed_access_over_records() {
+    check_all(
+        "type Id<T> = { [K in keyof T]: T[K] };
+         type Opt<T> = { [K in keyof T]?: T[K] };
+         type ValOf<T> = T[keyof T];",
+        &[
+            ("Id<Record<\"x\" | \"y\", 1>>", "{ x: 1; y: 1 }"),
+            ("Opt<Record<\"x\" | \"y\", 1>>", "{ x?: 1; y?: 1 }"),
+            ("ValOf<Record<\"x\" | \"y\", 1>>", "1"),
+            ("Record<\"x\" | \"y\", \"v\">[\"x\"]", "\"v\""),
+            ("Record<string, 2>[\"any\"]", "2"),
         ],
     );
 }

@@ -329,7 +329,7 @@ impl Ctx<'_> {
         let shown = self.display(ty);
         // A union's keys are the keys every member has (TypeScript).
         if let Some(members) = self.union_members(ty) {
-            let mut common: Option<Vec<String>> = None;
+            let mut common: Option<Vec<TyId>> = None;
             for m in members {
                 let Some(fs) = self.plain_fields(m).filter(|_| self.is_object_value(m)) else {
                     self.err(
@@ -338,17 +338,22 @@ impl Ctx<'_> {
                     );
                     return self.ty.error;
                 };
-                let names: Vec<String> = fs.into_iter().map(|f| f.name).collect();
+                let TyKind::Adt(d, _) = *self.ty.kind(m) else {
+                    return self.ty.error;
+                };
+                let mut names = vec![];
+                for f in fs {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    names.push(k);
+                }
                 common = Some(match common {
                     None => names,
                     Some(c) => c.into_iter().filter(|n| names.contains(n)).collect(),
                 });
             }
-            let keys: Vec<TyId> = common
-                .unwrap_or_default()
-                .into_iter()
-                .map(|n| self.lit_type(crate::hir::LitValue::Str(n)))
-                .collect();
+            let keys: Vec<TyId> = common.unwrap_or_default();
             return match keys.len() {
                 0 => self.ty.never,
                 1 => keys[0],
@@ -373,10 +378,13 @@ impl Ctx<'_> {
                 let Some(fields) = self.object_fields("keyof", ty, None, t.span) else {
                     return self.ty.error;
                 };
-                let keys: Vec<TyId> = fields
-                    .into_iter()
-                    .map(|f| self.lit_type(crate::hir::LitValue::Str(f.name)))
-                    .collect();
+                let mut keys: Vec<TyId> = vec![];
+                for f in fields {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    keys.push(k);
+                }
                 match keys.len() {
                     0 => self.ty.never,
                     1 => keys[0],

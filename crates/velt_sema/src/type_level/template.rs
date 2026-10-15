@@ -9,6 +9,13 @@ use crate::ctx::Ctx;
 use crate::hir::{LitValue, Nothing, TyId, TyKind};
 use crate::resolve::TyEnv;
 
+/// A template literal pattern's hole: `infer X`, or a type.
+#[derive(Clone)]
+enum Hole {
+    Infer(String),
+    Ty(TyId),
+}
+
 impl Ctx<'_> {
     /// Does `s` match template literal pattern `` `a${X}b` ``?
     pub(super) fn match_template(
@@ -21,6 +28,37 @@ impl Ctx<'_> {
         let Subject::Ty(st) = s else {
             return Ok(None);
         };
+        // The holes, resolved once: `infer X`, or a type.
+        let mut holes = Vec::with_capacity(types.len());
+        for hole in types {
+            holes.push(match &hole.kind {
+                ast::TypeExprKind::Infer(n) => Hole::Infer(n.name.clone()),
+                _ => {
+                    let h = self.resolve_type(hole, env);
+                    let Some(h) = self.known_type(h, env, "a template literal type", hole.span)
+                    else {
+                        return Err(());
+                    };
+                    Hole::Ty(h)
+                }
+            });
+        }
+        // Spelling out the holes of finitely many strings must stay within the limit.
+        let mut spelled: usize = 1;
+        for h in &holes {
+            if let Hole::Ty(t) = h {
+                let n = self.spelled_strings(*t, true).map_or(1, |ss| ss.len());
+                spelled = spelled.saturating_mul(n.max(1));
+            }
+        }
+        if spelled > MAX_TEMPLATE_MEMBERS {
+            let span = types.first().map_or(Span::default(), |t| t.span);
+            self.err(
+                format!("this template literal type has more than {MAX_TEMPLATE_MEMBERS} members"),
+                span,
+            );
+            return Err(());
+        }
         let mut binds: Binds = vec![];
         for m in self.subjects_of(st) {
             let Subject::Ty(m) = m else {
@@ -29,7 +67,7 @@ impl Ctx<'_> {
             let Some(LitValue::Str(text)) = self.lit_value(m) else {
                 return Ok(None);
             };
-            let Some(found) = self.match_template_str(&text, quasis, types, env)? else {
+            let Some(found) = self.match_template_str(&text, quasis.to_vec(), holes.clone()) else {
                 return Ok(None);
             };
             for (n, t) in found {
@@ -45,72 +83,90 @@ impl Ctx<'_> {
         Ok(Some(binds))
     }
 
-    /// One string against a template literal pattern, as TypeScript matches it: each hole
-    /// takes the text up to the next literal part (a single character when the next hole
-    /// follows at once), the last one the rest.
+    /// One string against a template literal pattern, as TypeScript matches it: a hole of
+    /// finitely many strings (a literal type, `boolean`) is each of them spelled out (TypeScript
+    /// normalizes `` `${boolean}x` `` to `"truex" | "falsex"`); then each hole takes the text up
+    /// to the next literal part (a single character when the next hole follows at once), the
+    /// last one the rest.
     fn match_template_str(
         &mut self,
         text: &str,
-        quasis: &[String],
-        types: &[ast::TypeExpr],
-        env: &TyEnv,
-    ) -> Result<Option<Vec<(String, TyId)>>, ()> {
-        if types.is_empty() {
-            return Ok((text == quasis[0]).then(Vec::new));
+        quasis: Vec<String>,
+        holes: Vec<Hole>,
+    ) -> Option<Vec<(String, TyId)>> {
+        let finite = holes.iter().enumerate().find_map(|(i, h)| match h {
+            Hole::Ty(t) => self.spelled_strings(*t, true).map(|ss| (i, ss)),
+            Hole::Infer(_) => None,
+        });
+        if let Some((j, alternatives)) = finite {
+            for alt in alternatives {
+                let mut q = quasis[..j].to_vec();
+                q.push(format!("{}{alt}{}", quasis[j], quasis[j + 1]));
+                q.extend_from_slice(&quasis[j + 2..]);
+                let mut hs = holes.clone();
+                hs.remove(j);
+                if let Some(found) = self.match_template_str(text, q, hs) {
+                    return Some(found);
+                }
+            }
+            return None;
+        }
+        if holes.is_empty() {
+            return (text == quasis[0]).then(Vec::new);
         }
         let (first, last) = (&quasis[0], &quasis[quasis.len() - 1]);
         if !text.starts_with(first.as_str()) || text.len() < first.len() + last.len() {
-            return Ok(None);
+            return None;
         }
         if !text[first.len()..].ends_with(last.as_str()) {
-            return Ok(None);
+            return None;
         }
         let body = &text[first.len()..text.len() - last.len()];
         let mut pos = 0;
         let mut out = vec![];
-        for (i, hole) in types.iter().enumerate() {
+        for (i, hole) in holes.iter().enumerate() {
             let rest = &body[pos..];
-            let end = if i + 1 == types.len() {
+            let end = if i + 1 == holes.len() {
                 rest.len()
             } else if quasis[i + 1].is_empty() {
-                match rest.chars().next() {
-                    Some(c) => c.len_utf8(),
-                    None => return Ok(None),
-                }
+                rest.chars().next()?.len_utf8()
             } else {
-                match rest.find(quasis[i + 1].as_str()) {
-                    Some(e) => e,
-                    None => return Ok(None),
-                }
+                rest.find(quasis[i + 1].as_str())?
             };
             let piece = &rest[..end];
             pos += end
-                + if i + 1 == types.len() {
+                + if i + 1 == holes.len() {
                     0
                 } else {
                     quasis[i + 1].len()
                 };
-            if let ast::TypeExprKind::Infer(n) = &hole.kind {
-                let lit = self.lit_type(LitValue::Str(piece.to_string()));
-                out.push((n.name.clone(), lit));
-                continue;
-            }
-            let h = self.resolve_type(hole, env);
-            let Some(h) = self.known_type(h, env, "a template literal type", hole.span) else {
-                return Err(());
-            };
             let lit = self.lit_type(LitValue::Str(piece.to_string()));
-            let fits = h == self.ty.str_
-                || (self.is_number_type(h) && is_numeric(piece))
-                || self.relate(lit, h, &mut Slots::default())
-                || self
-                    .literal_strings(h)
-                    .is_some_and(|ss| ss.iter().any(|x| x == piece));
-            if !fits {
-                return Ok(None);
+            let h = match hole {
+                Hole::Infer(n) => {
+                    out.push((n.clone(), lit));
+                    continue;
+                }
+                Hole::Ty(h) => *h,
+            };
+            if !self.hole_fits(piece, lit, h) {
+                return None;
             }
         }
-        Ok(Some(out))
+        Some(out)
+    }
+
+    /// Does `piece` (as literal type `lit`) fit a hole of type `h`?
+    fn hole_fits(&mut self, piece: &str, lit: TyId, h: TyId) -> bool {
+        let core = self.ty.opt_payload(h).unwrap_or(h);
+        let members = self.union_members(core).unwrap_or_else(|| vec![core]);
+        members.iter().any(|m| {
+            *m == self.ty.str_
+                || (self.is_number_type(*m) && is_numeric(piece))
+                || (*m == self.ty.bool_ && (piece == "true" || piece == "false"))
+        }) || self.relate(lit, h, &mut Slots::default())
+            || self
+                .spelled_strings(h, true)
+                .is_some_and(|ss| ss.iter().any(|x| x == piece))
     }
 
     fn is_number_type(&self, t: TyId) -> bool {
@@ -119,6 +175,12 @@ impl Ctx<'_> {
 
     /// The strings a literal type or a union of literal types spells (`never`: none).
     pub(crate) fn literal_strings(&mut self, t: TyId) -> Option<Vec<String>> {
+        self.spelled_strings(t, false)
+    }
+
+    /// [`Self::literal_strings`], with `boolean` as `"true" | "false"` when `bools` (a
+    /// template literal type's hole).
+    fn spelled_strings(&mut self, t: TyId, bools: bool) -> Option<Vec<String>> {
         if t == self.ty.never {
             return Some(vec![]);
         }
@@ -129,6 +191,10 @@ impl Ctx<'_> {
         };
         let members = self.union_members(core).unwrap_or_else(|| vec![core]);
         for m in members {
+            if bools && m == self.ty.bool_ {
+                out.extend(["true".to_string(), "false".to_string()]);
+                continue;
+            }
             match self.lit_value(m)? {
                 LitValue::Str(s) => out.push(s),
                 LitValue::Bool(b) => out.push(b.to_string()),
@@ -185,7 +251,7 @@ impl Ctx<'_> {
             let Some(h) = self.known_type(h, env, "a template literal type", hole.span) else {
                 return self.ty.error;
             };
-            let Some(parts) = self.literal_strings(h) else {
+            let Some(parts) = self.spelled_strings(h, true) else {
                 let shown = self.display(h);
                 self.err(
                     format!("a template literal type with a `{shown}` hole is not supported yet outside the `extends` clause of a conditional type (#934)"),

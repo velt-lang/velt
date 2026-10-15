@@ -199,6 +199,10 @@ impl Ctx<'_> {
         }
         let t = self.anon_type_with(&out, env.module);
         self.declare_anon_fields(t, &spans);
+        let str_ = self.ty.str_;
+        for f in &out {
+            self.record_key_kind(t, &f.name, str_);
+        }
         t
     }
 
