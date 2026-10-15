@@ -41,8 +41,12 @@ async function main() {
   const b = g.next();
   const r = g.return();
   const d = g.next();
-  console.log(await a, await b);
+  // The values are printed after `r`: whether `count: finally` comes before main's next line
+  // depends on the steps of a queued call, which differ from Node's (docs/reference/async.md).
+  const va = await a;
+  const vb = await b;
   await r;
+  console.log(va, vb);
   console.log("returned");
   console.log(await d, await g.next());
 }
