@@ -448,5 +448,7 @@ these answers:
 
 ## Not proposed
 
-- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`).
+- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`). Since #934
+  phase 1 they are evaluated where their type arguments are known (`velt_sema::type_level`);
+  in generic code they would be two more stuck operators (#934 phase 2).
 - Re-checking generic bodies per instantiation (C++ templates).

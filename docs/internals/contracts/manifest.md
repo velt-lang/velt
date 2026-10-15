@@ -64,6 +64,59 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   filled in (`entry`, `dependencies: {}`, `paths: {}`, and `native.path`/`targets`/`wasm` when
   `native` is present).
 
+## Scoped names (additive, #929)
+- `name` and the keys of `dependencies` may be scoped, `@scope/name`, each part lowercase
+  letters and digits (starting with either) joined by single `-` or `_`, not a Windows device
+  name (`vpm::manifest::is_valid_dependency_name`); `is_valid_package_name` (registry names)
+  stays unscoped. A scoped dependency needs a `path` ("dependency `@x/y` needs a `path`:
+  registries hold unscoped packages only"); a scoped package can't have `native`.
+  `"@scope/name/sub"` imports the dependency's `src/sub`.
+
+## `define` (additive, #929)
+- `define: Record<string, string>`: name (`[A-Za-z_$][A-Za-z0-9_$]*`) → the source of a literal
+  (`vpm::manifest::define_literal`: `true`, `false`, `null`, a non-negative number, a string in
+  double quotes (JSON) or in single quotes without escapes). Only the root package's apply
+  (`vpm::PackageGraph::defines`). The loader parses each non-std module with them
+  (`velt_syntax::parse_with`, `ParseOptions::defines`): an identifier expression (or
+  shorthand property) of a defined name that nothing in its scope declares
+  (`velt_syntax::scope::free_values`) is the literal.
+- Ambient declarations: `declare const|let|var NAME: T;` (also `export declare …`) and
+  `declare global { [declare] var NAME: T; … }` are returned by `parse_with` in
+  `Parsed::ambient`, not as items (`parse_file` keeps reporting them as errors, so the formatter
+  never drops them). `declare global { … }` is parsed once, as an `ItemKind::Augment` holding
+  its interfaces; only its variables go to `Parsed::ambient`, and any other declaration in it is
+  an error. `Ambient::global` marks
+  those in `declare global`, and `Parsed::is_module` a source with a top-level `import` or
+  `export`: the others of such a module are its own, and those of a declaration file that is a
+  module are not read. The loader also reads them
+  from the `.d.ts` files of each package it loads a module of (the nearest directory with a
+  `package.json` or `package.vlt`: its own `.d.ts` files and those below `src/`, skipping
+  `node_modules`, `target`, `dist`, hidden and symlinked directories and nested packages),
+  ignoring those files' syntax errors. A name a module refers to (`free_values`; any module for
+  a global declaration, its own module otherwise) without a `define` is an error at its first
+  declaration ("`X` is declared here but has no value"); so is a `define`
+  whose literal is not of a declared `boolean`, `string` or `number`.
+
+## npm packages (additive, #929)
+`vpm::npm::NpmResolver`. The loader asks it about a bare specifier (one `resolve_spec`
+classifies as a package, or rejects, other than `std…` and `velt:…`) that no `paths` alias
+matches and that is not a Velt dependency of the importing package. Its answer is a file,
+loaded like a relative import's (the importer's origin). Order: `node_modules/<name>/package.json`
+in the importer's directory and each ancestor (skipping `node_modules` directories
+themselves; a symlinked package directory is replaced by its real path), the nearest ancestor whose `package.json` has that `name`, then the first ancestor
+that is a workspace root (`pnpm-workspace.yaml` `packages:`, or `package.json` `workspaces`;
+globs with `*`, `**` and `!`; `**` does not enter symlinks; at most
+`vpm::npm::workspace::MAX_DIRS` directories are listed, and when a walk stops there, an unresolved import's error gets `NpmResolver::workspace_note`). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
+subpath, then the `*` pattern with the longest prefix; conditions in written order under
+`vpm::npm::SERVER_CONDITIONS` plus `default`: the targets of `types` and `velt` are hints, and
+besides them only the first other matching condition's target is kept, as Node takes it
+(`exports::Targets::runtime`, named by the no-source error); targets are tried `velt` hints
+first, then the runtime target, then `types` hints; `null` under a matching condition
+is not exported), else `types`, `typings`, `main`, `./index`;
+without `exports` a subpath names that path. Each target maps to source candidates
+(`vpm::npm::source_candidates`) and the first existing file wins. Errors: a subpath not
+exported, an `exports` mixing subpaths and conditions, a target without a source.
+
 ## Fields
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
   never do.

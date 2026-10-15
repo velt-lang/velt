@@ -47,6 +47,9 @@ file and reports these errors without building anything.
   library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
   package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
   (`velt_rt_…` is the runtime).
+- A name can also be scoped, as on npm: `@scope/name`, each part lowercase words as above
+  (`@sigx/server-renderer`). Registries hold unscoped packages only, so a package with a scoped
+  name is a local (`path`) dependency of others, and can't have [`native`](#native) code yet.
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
   300 characters, no line breaks, no surrounding whitespace.
@@ -102,8 +105,10 @@ a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with
 `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
 import's files). Standard library imports (`"velt:x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
-(`"my-lib": "1.0"`). `velt add` edits this object and keeps your comments. See
-[Packages](packages.md).
+(`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
+a `path`). `velt add` edits this object and keeps your comments. See
+[Packages](packages.md). A bare import that no dependency (and no `paths` alias) claims looks
+for an [npm package](packages.md#npm-packages).
 
 ## `paths`
 
@@ -126,6 +131,38 @@ The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:
 default), a `paths` alias, or `./dir` relative to the package root. A
 `/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
 reads it from a `//` comment, `tsc` only from a block comment.
+
+## `define`
+
+```ts ignore
+define: { __DEV__: "false", __SIGX_VERSION__: "\"1.0.1\"" },
+```
+
+Build-time constants, as Vite's `define`. Every reference to the name in the build's modules
+(the package's, and those of the npm packages it compiles) that nothing in scope declares is
+the literal, so `if (__DEV__) { … }` becomes `if (false) { … }` and the branch folds away, and
+`{ __DEV__ }` is `{ __DEV__: false }`. A name the code declares keeps its own value, as with
+esbuild's `define`: a parameter, a local, an import, a loop variable, a `catch` parameter or a
+function or class of that name, in its scope. A property (`o.__DEV__`) and a type are left
+alone too. Each value is the
+*source* of a literal, as in Vite: `"true"`, `"false"`, `"null"`, a number (`"3"`), or a string
+in quotes (`"\"1.0.1\""` or `"'1.0.1'"`); other expressions are an error. Only the root
+package's `define` applies.
+
+TypeScript code declares such constants in a declaration file, as sigx's `src/env.d.ts` does:
+
+```ts ignore
+declare const __DEV__: boolean;
+```
+
+Velt reads these ambient declarations (`declare const`, `let` and `var`, also inside
+`declare global { … }`) from modules and from the `.d.ts` files of each package it compiles (in
+the package's directory and below its `src/`). As in TypeScript, a declaration is global only
+in `declare global` or in a file without imports and exports; in a module (such as an
+`index.d.ts` with `export declare const version: string;`) it is the module's own. Velt has no
+global variables, so a declared constant that a module refers to (without declaring the name
+itself) needs a `define`; without one, the declaration is an error that says so. A `define` whose literal is not of the declared type (`boolean`, `string`, `number`)
+is an error too.
 
 ## `native`
 

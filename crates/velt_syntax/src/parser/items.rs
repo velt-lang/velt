@@ -15,12 +15,20 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !self.at(Tok::Eof) {
             let start = self.pos;
+            if self.at_module_syntax() {
+                self.saw_module_syntax = true;
+            }
             match self.peek() {
                 Tok::Semi => self.bump(),
                 Tok::RBrace => {
                     let span = self.cur_span();
                     self.error("unexpected `}`", span);
                     self.bump();
+                }
+                _ if self.at_ambient() => {
+                    if self.parse_ambient().is_err() {
+                        self.sync_item(start);
+                    }
                 }
                 _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {

@@ -5,6 +5,7 @@
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
+mod ambient;
 mod arrow;
 mod augment;
 mod cast_types;
@@ -31,11 +32,12 @@ mod switch;
 mod symbol_keys;
 mod type_assertion;
 mod type_decls;
+mod type_level;
 mod type_members;
 mod types;
 mod undefined;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::*;
 use crate::lexer::{Kw, Lexer, Payload, Tok, Token};
@@ -92,6 +94,13 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Ambient declarations read so far, when the caller asked for them (`ambient`).
+    pub(crate) ambient: Option<Vec<crate::Ambient>>,
+    /// Build-time constants: the identifier expression (or shorthand property) starting at
+    /// one of these offsets is the literal (`crate::ParseOptions::defines`).
+    pub(crate) define_at: Option<&'a HashMap<u32, Lit>>,
+    /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
+    pub(crate) saw_module_syntax: bool,
     /// Where the module first mentions `import.meta` (`import_meta`).
     import_meta: Option<Span>,
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
@@ -151,6 +160,9 @@ impl<'a> Parser<'a> {
             first_this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
+            ambient: None,
+            define_at: None,
+            saw_module_syntax: false,
             import_meta: None,
         }
     }

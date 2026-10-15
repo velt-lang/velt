@@ -21,6 +21,8 @@ pub struct GraphPackage {
     pub native: Option<crate::native::NativeLib>,
     /// The package's `jsx.importSource`, as written.
     pub jsx_import_source: Option<String>,
+    /// The package's `define` (name → literal source); the root package's apply to the build.
+    pub define: BTreeMap<String, String>,
     /// `root`, canonicalized, for matching importing files.
     key: PathBuf,
 }
@@ -67,6 +69,7 @@ impl PackageGraph {
             paths: BTreeMap::new(),
             native: None,
             jsx_import_source: None,
+            define: BTreeMap::new(),
             key,
         });
         self.packages.last_mut().expect("ICE: just pushed")
@@ -96,6 +99,14 @@ impl PackageGraph {
         } else {
             format!("./{rel}")
         })
+    }
+
+    /// The build-time constants of the build: the root package's (the first added) `define`.
+    pub fn defines(&self) -> BTreeMap<String, String> {
+        self.packages
+            .first()
+            .map(|p| p.define.clone())
+            .unwrap_or_default()
     }
 
     /// All packages, in insertion order (root package first when built by [`crate::install`]).
@@ -130,6 +141,11 @@ impl PackageGraph {
 
 /// The error for importing a package that is not declared in `dependencies`.
 pub fn not_a_dependency(name: &str) -> String {
+    if crate::manifest::split_scoped(name).is_some() {
+        return format!(
+            "package `{name}` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)"
+        );
+    }
     format!("package `{name}` is not a dependency (add it with `velt add {name}`)")
 }
 

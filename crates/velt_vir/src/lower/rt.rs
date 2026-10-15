@@ -59,6 +59,8 @@ pub(super) enum Rt {
     FutPeek,
     FutBox,
     FutStart,
+    /// An unhandled rejection waits for the task's microtasks (`build_unclaimed`).
+    UnhandledDefer,
     FutDetach,
     FutTransfer,
     XferBegin,
@@ -223,6 +225,7 @@ impl Rt {
             Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
+            Rt::UnhandledDefer => f("velt_rt_unhandled_defer", vec![], U8),
             Rt::FutDetach => f("velt_rt_fut_detach", vec![Ptr, Ptr], Unit),
             Rt::FutTransfer => f("velt_rt_fut_transfer", vec![Ptr, Ptr], Unit),
             Rt::XferBegin => f("velt_rt_xfer_begin", vec![], Unit),
