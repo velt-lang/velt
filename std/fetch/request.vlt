@@ -14,7 +14,7 @@ import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { Uint8Array } from "velt:typed_array/arrays";
+import { Uint8Array } from "velt:typed_array/uint8_array";
 import { ArrayBuffer } from "velt:typed_array/buffer";
 import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";

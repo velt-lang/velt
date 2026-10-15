@@ -1,15 +1,4 @@
-// Global (loaded when a module names one of these): the typed arrays, `ArrayBuffer` and
-// `DataView`, as in Node (docs/std/typed_array.md).
-export {
-  ArrayBuffer,
-  DataView,
-  Int8Array,
-  Uint8Array,
-  Uint8ClampedArray,
-  Int16Array,
-  Uint16Array,
-  Int32Array,
-  Uint32Array,
-  Float32Array,
-  Float64Array,
-} from "velt:typed_array";
+// Global (loaded when a module names one of these): `ArrayBuffer` and `DataView`, as in Node
+// (docs/std/typed_array.md). Each typed array class is a global of its own (uint8_array.vlt, …).
+export { ArrayBuffer } from "velt:typed_array/buffer";
+export { DataView } from "velt:typed_array/data_view";

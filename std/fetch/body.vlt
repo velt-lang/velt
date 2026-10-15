@@ -5,7 +5,7 @@
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
-import { TypedArray } from "velt:typed_array/arrays";
+import { TypedArray } from "velt:typed_array/base";
 import { ArrayBuffer } from "velt:typed_array/buffer";
 import { DataView } from "velt:typed_array/data_view";
 
