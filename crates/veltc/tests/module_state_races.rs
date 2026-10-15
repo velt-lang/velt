@@ -3,7 +3,8 @@
 //! both schedulers, and every run must count every update. A lost update or a race on the
 //! objects' reference counts shows as other totals, a crash or a leak. The same program run by
 //! `node` (when installed, with `spawn` and the task functions as plain promises) prints the
-//! same totals.
+//! same totals. `lang/module_let_mutex` (tasks blocking on a `Mutex` while others replace the
+//! module array they iterate) runs many times too: the array must never be freed under them.
 
 use std::path::Path;
 
@@ -19,8 +20,14 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
+const MUTEX_GOLDEN: &str = "../../tests/golden/lang/module_let_mutex";
+
 fn expected() -> String {
-    std::fs::read_to_string(manifest().join(format!("{GOLDEN}.out")))
+    expected_of(GOLDEN)
+}
+
+fn expected_of(golden: &str) -> String {
+    std::fs::read_to_string(manifest().join(format!("{golden}.out")))
         .unwrap()
         .replace("\r\n", "\n")
 }
@@ -37,14 +44,23 @@ fn stdout(o: &std::process::Output) -> String {
 
 #[test]
 fn every_update_counts_under_both_schedulers() {
+    runs_the_same_every_time(GOLDEN, 8);
+}
+
+#[test]
+fn a_mutex_wait_keeps_the_module_lock() {
+    runs_the_same_every_time(MUTEX_GOLDEN, 4);
+}
+
+/// Build golden `golden` and run it `runs` times under each scheduler: every run prints its
+/// `.out`.
+fn runs_the_same_every_time(golden: &str, runs: u32) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let src = manifest().join(format!("{GOLDEN}.vlt"));
-    let exe = dir.path().join(if cfg!(windows) {
-        "parallel.exe"
-    } else {
-        "parallel"
-    });
+    let src = manifest().join(format!("{golden}.vlt"));
+    let exe = dir
+        .path()
+        .join(if cfg!(windows) { "prog.exe" } else { "prog" });
     let build = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&src)
@@ -54,14 +70,14 @@ fn every_update_counts_under_both_schedulers() {
         .output()
         .unwrap();
     stdout(&build);
-    let want = expected();
+    let want = expected_of(golden);
     for scheduler in ["per-core", "stealing"] {
-        for run in 0..8 {
+        for run in 0..runs {
             let out = command(&exe)
                 .env("VELT_SCHEDULER", scheduler)
                 .output()
                 .unwrap();
-            assert_eq!(stdout(&out), want, "{scheduler}, run {run}");
+            assert_eq!(stdout(&out), want, "{golden}: {scheduler}, run {run}");
         }
     }
 }

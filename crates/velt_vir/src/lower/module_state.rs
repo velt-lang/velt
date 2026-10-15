@@ -5,6 +5,7 @@
 
 use velt_sema::hir;
 
+use super::cint;
 use super::operand::proj;
 use super::{Cx, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{
@@ -12,7 +13,7 @@ use crate::vir::{
 };
 
 impl Cx<'_> {
-    /// The descriptor `{ size, align, init, drop }` of the program's module state.
+    /// The descriptor `{ size, align, init, drop, names }` of the program's module state.
     fn module_desc(&mut self) -> StaticId {
         if let Some(d) = self.module_desc {
             return d;
@@ -23,6 +24,16 @@ impl Cx<'_> {
             .as_ref()
             .unwrap_or_else(|| super::ice("module state slot without module state"));
         let ty = ms.ty;
+        // Each slot's name, NUL-terminated, for the `ReferenceError` of a slot read before its
+        // initializer ran.
+        let mut names = vec![];
+        for &d in &ms.slots {
+            if let hir::Def::Global(g) = self.hir.def(d) {
+                let short = g.name.rsplit("::").next().unwrap_or(&g.name);
+                names.extend(short.bytes().filter(|&b| b != 0));
+            }
+            names.push(0);
+        }
         let vt = self.ty(ty);
         let (size, align) = match vt {
             Ty::Agg(a) => (self.aggs[a.0 as usize].size, self.aggs[a.0 as usize].align),
@@ -30,14 +41,19 @@ impl Cx<'_> {
         };
         let init = self.func(Work::ModuleInit);
         let drop = self.func(Work::Glue(Glue::Drop, ty));
-        let mut bytes = vec![0u8; 32];
+        let names = self.static_bytes(names, 1);
+        let mut bytes = vec![0u8; 40];
         bytes[0..8].copy_from_slice(&(size as u64).to_le_bytes());
         bytes[8..16].copy_from_slice(&(align as u64).to_le_bytes());
         let id = StaticId(self.statics.len() as u32);
         self.statics.push(StaticData {
             bytes,
             align: 8,
-            relocs: vec![(16, Const::Func(init)), (24, Const::Func(drop))],
+            relocs: vec![
+                (16, Const::Func(init)),
+                (24, Const::Func(drop)),
+                (32, Const::Static(names)),
+            ],
         });
         self.module_desc = Some(id);
         id
@@ -45,16 +61,23 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The module state block (a `Ptr`).
-    fn module_block(&mut self) -> Operand {
+    /// The module state block (a `Ptr`), to reach slot `slot` (the runtime stops with a
+    /// `ReferenceError` when that slot's initializer has not run yet).
+    fn module_block(&mut self, slot: u32) -> Operand {
         let desc = self.cx.module_desc();
-        let f = self
-            .cx
-            .extern_sym("velt_rt_module_state", vec![Ty::Ptr], Ty::Ptr, false);
+        let f = self.cx.extern_sym(
+            "velt_rt_module_state",
+            vec![Ty::Ptr, Ty::U64],
+            Ty::Ptr,
+            false,
+        );
         let p = self.temp(Ty::Ptr);
         self.call(
             vir::Callee::Extern(f),
-            vec![Operand::Const(Const::Static(desc), Ty::Ptr)],
+            vec![
+                Operand::Const(Const::Static(desc), Ty::Ptr),
+                cint(slot as i128, Ty::U64),
+            ],
             Some(Place::local(p)),
             false,
         );
@@ -63,7 +86,7 @@ impl FnLower<'_, '_> {
 
     /// The place of module state slot `slot` of the current task.
     pub(super) fn module_slot(&mut self, slot: u32) -> Place {
-        let block = self.module_block();
+        let block = self.module_block(slot);
         self.slot_in(block, slot)
     }
 
@@ -105,6 +128,22 @@ impl FnLower<'_, '_> {
             if !lw.dead() {
                 let p = lw.slot_in(Operand::Copy(Place::local(state)), i as u32);
                 lw.store(p, v);
+                // Slots up to this one may be read from now on.
+                let ready = lw.cx.extern_sym(
+                    "velt_rt_module_ready",
+                    vec![Ty::Ptr, Ty::U64],
+                    Ty::Unit,
+                    false,
+                );
+                lw.call(
+                    vir::Callee::Extern(ready),
+                    vec![
+                        Operand::Copy(Place::local(state)),
+                        cint(i as i128 + 1, Ty::U64),
+                    ],
+                    None,
+                    false,
+                );
             }
             lw.pop_scope();
         }
@@ -116,7 +155,7 @@ impl FnLower<'_, '_> {
     /// Initialize the module state before `main` runs, as Node evaluates the modules first.
     pub(super) fn init_module_state(&mut self) {
         if self.cx.hir.module_state.is_some() {
-            self.module_block();
+            self.module_block(0);
         }
     }
 }

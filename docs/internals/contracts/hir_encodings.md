@@ -547,10 +547,12 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
   modified in place. A use that takes the value (`Want::Move`) is wrapped in
   `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
   `Move`) is a share too (lowering).
-- Lowering emits `velt_rt_module_state(&DESC) -> ptr` for each access (rt_abi.md "Module
-  state") and projects slot `i` of the tuple behind it; `DESC` is `{ size, align, init, drop }`,
-  `init` the function evaluating every slot's `init` in order into the zeroed block, `drop`
-  the tuple's drop glue. `velt_main` touches the state before calling `main` (sync or async), so
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
+  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
+  `{ size, align, init, drop, names }`, `init` the function evaluating every slot's `init` in
+  order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
+  drop glue, `names` the slots' names. A slot is never read from its initializer's stored
+  data (a module constant table's `table_read`). `velt_main` touches the state before calling `main` (sync or async), so
   every initializer runs first, as in Node.
 
 ## Symbols

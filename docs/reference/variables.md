@@ -164,7 +164,20 @@ function main() {
   the same object. Assigning it is an error.
 - An initializer that reads a `let` declared after it (whose initializer has not run yet) is
   an error (``` `b` is read before its initializer runs ```), where JavaScript throws a
-  `ReferenceError`. A read through a function the initializer calls is not caught.
+  `ReferenceError`. A read through a function the initializer calls (also across a cyclic
+  import) stops the program with that `ReferenceError`
+  (`Cannot access 'b' before initialization`, exit code 1), as an uncaught one does in Node;
+  it cannot be caught.
+- Module state cannot hold a promise (`let p = work();`, `let t = spawn(work());`, also
+  `Promise<T> | null`): it is initialized before `main` runs, where nothing awaits it, and a
+  promise has one owner while every task reads the state. Start the work in `main` and pass
+  the promise, or its result, where it is needed.
+- A `Mutex` `with` callback cannot use module state, directly or through a function it calls
+  (``the function passed to `with` may use module state``); a call of a function value whose
+  body the compiler cannot see counts as a use. `with` blocks the thread while it waits for the
+  lock, and a task holds the module lock for its code between `await`s, so two tasks could
+  wait for each other. Read what the callback needs before `with`, and store what it returns
+  after.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
   function uses is module state, and its initializer runs before the first statement.
@@ -174,8 +187,9 @@ function main() {
   of each later run between `await`s (one uncontended atomic operation when no other task
   holds it). Tasks on other cores that use module state at the same moment wait for each
   other, so keep long computations that many tasks run in parallel out of the code between
-  their `await`s that uses module state, or give them `shared(...)` state instead. A blocking
-  `Mutex` `with` lets the lock go while it waits, so the two locks never deadlock.
+  their `await`s that uses module state, or give them `shared(...)` state instead. A task that
+  blocks on a `Mutex` keeps the module lock while it waits (the `Mutex`'s holder never needs
+  it, see above).
 - `velt dev`: code swapped into a running program starts its module state over, as after a
   restart ([hot reload](../tooling/dev.md)).
 

@@ -1,0 +1,8 @@
+module_let_mutex_with.vlt:14:10
+the function passed to `with` may use module state: it uses `count`
+module_let_mutex_with.vlt:17:10
+it uses `count` (through `viaBump` -> `bump`)
+module_let_mutex_with.vlt:20:10
+it uses `names`
+module_let_mutex_with.vlt:24:10
+it calls a function value

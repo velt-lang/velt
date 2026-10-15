@@ -298,6 +298,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     object_copies::check(cx);
     replaced_holders::check(cx);
     cx.module_slots = module_state::order(cx);
+    module_state::check_locked_access(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held

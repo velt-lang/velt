@@ -63,22 +63,18 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
     (p as *mut RawMutex).write(RawMutex::INIT);
 }
 
-/// Lock (blocking the thread; `with` bodies never await, so holds are short).
+/// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
+/// stays held meanwhile: a `with` callback never takes it (task/local/module_state.rs).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
-    let m = &*(p as *const RawMutex);
-    if !m.try_lock() {
-        // Waiting with the module lock held could cycle with a thread that holds `m` and waits
-        // for the module lock: let it go meanwhile (task/local/module_state.rs).
-        let held = crate::task::local::module_suspend();
-        m.lock();
-        crate::task::local::module_resume(held);
-    }
+    (*(p as *const RawMutex)).lock();
+    crate::task::local::mutex_locked();
 }
 
 /// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
+    crate::task::local::mutex_unlocked();
     (*(p as *const RawMutex)).unlock();
 }
 
