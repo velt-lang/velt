@@ -46,6 +46,9 @@ pub(super) struct Boxing {
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
     weak_roots: HashSet<DefId>,
     weak: HashSet<TyId>,
+    /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
+    /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
+    pub(super) dyn_to_any: HashSet<DefId>,
 }
 
 impl Boxing {
@@ -131,6 +134,8 @@ pub(super) struct Facts {
     vtable_types: HashSet<TyId>,
     /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
     weak_seeds: HashSet<TyId>,
+    /// Interfaces whose values are converted to `any` / `unknown`.
+    dyn_to_any: HashSet<DefId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -151,6 +156,11 @@ impl Cx<'_> {
     /// callee while it is borrowed out of an array other references reach.
     pub(super) fn note_identity_borrow(&mut self, t: TyId) {
         self.facts.identity_borrows.insert(t);
+    }
+
+    /// Record that values of the interface `iface` are converted to `any` / `unknown`.
+    pub(super) fn note_dyn_to_any(&mut self, iface: DefId) {
+        self.facts.dyn_to_any.insert(iface);
     }
 
     /// Record that function values are compared by identity.
@@ -213,6 +223,8 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.dyn_to_any
+            .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();
         let dyns: Vec<TyId> = dyns
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))

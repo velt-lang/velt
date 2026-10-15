@@ -1,0 +1,15 @@
+// check: no leaks
+// `Channel<any>.receive` gives an `any`: a sent `null` is `null`, a closed channel gives
+// `undefined` (#1103 review).
+import { channel } from "velt:channel";
+async function main(): Promise<void> {
+  const ch = channel<any>(4);
+  await ch.send(null);
+  await ch.send(1);
+  await ch.send("s");
+  ch.close();
+  for (let i = 0; i < 4; i++) {
+    const v = await ch.receive();
+    console.log(v === null, v === undefined, v ?? "dflt");
+  }
+}
