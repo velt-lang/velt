@@ -155,7 +155,7 @@ hidden classes and no runtime shape checks.
   virtual, so a subclass cannot redefine one (in its body or in an `extend` block of its own):
   ``` `m` is an `extend` method of `A` and cannot be redefined in a subclass yet ``` (a call
   through an `A` would run the `extend` method). This covers std's too: `bytes()` and
-  `arrayBuffer()` of `Response` and `Request` are `extend` methods (#1133 lifts the restriction). A static method of a generic class is called without type arguments
+  `arrayBuffer()` and the `body` getter of `Response` and `Request` are `extend` methods (#1133 lifts the restriction). A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
   the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
   also a bounded one (`class Box<T extends Named>`).
