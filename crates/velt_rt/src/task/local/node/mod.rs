@@ -317,7 +317,19 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
+/// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
+/// microtasks (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
+    let d = head(f).result_drop.load(Ordering::Acquire);
+    if !d.is_null() {
+        // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
+        let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
+        super::unhandled::drop_result(f, d);
+    }
+}
+
+/// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
+pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -377,6 +389,16 @@ pub(super) unsafe fn running_in(f: *mut VeltFut, shared: &Arc<Shared>) -> bool {
 /// Is started node `f` in its set's ready queue?
 pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Acquire) & QUEUED != 0
+}
+
+/// The waker registered to resume started node `f`'s owner, taken.
+pub(super) unsafe fn take_awaiter(f: *mut VeltFut) -> Option<Waker> {
+    head(f).awaiter.take()
+}
+
+/// Is started node `f` driven by its owner right now (see [`started_poll`])?
+pub(super) unsafe fn is_adopted(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & ADOPTED != 0
 }
 
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
