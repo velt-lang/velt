@@ -670,14 +670,15 @@ impl<'m> Ctx<'m> {
                 .join(", ")
         };
         let with_args = |s: &Self, name: &str, args: &[TyId]| {
+            let name = crate::namespaces::written(name);
             if args.is_empty() {
-                name.to_string()
+                name.into_owned()
             } else {
                 format!("{name}<{}>", list(s, args))
             }
         };
         if let Some(n) = self.alias_names.get(&t) {
-            return n.clone();
+            return crate::namespaces::written(n).into_owned();
         }
         match self.ty.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),

@@ -129,6 +129,13 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     let members = namespace_exports(cx, t, &n.name.name);
     if !members.is_empty() {
         let local = bound_name(n).clone();
+        // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
+        // local namespace instead).
+        let prefix = format!("{}.", local.name);
+        if cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix)) {
+            cx.error(crate::namespaces::conflict(&local, None));
+            return;
+        }
         for (x, it) in members {
             let key = format!("{}.{x}", local.name);
             cx.scopes[m].items.insert(key.clone(), it);

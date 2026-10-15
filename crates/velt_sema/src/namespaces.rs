@@ -14,7 +14,7 @@
 //! - `import { N }` binds every exported `N.x` of the module as `N.x` (`collect::imports`), and
 //!   export lists re-export them (`collect::exports`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -65,9 +65,11 @@ pub(crate) fn flatten(
     (Some(out), private, diags)
 }
 
-/// An import binding the name of a namespace the module declares (TypeScript's TS2440):
-/// `import { N } from "…"`, `import N from "…"` or `import * as N from "…"` next to
-/// `namespace N { … }`.
+/// `import * as N from "…"` next to `namespace N { … }`: both are namespaces (TypeScript's
+/// TS2440). A named or default import of a type or a value merges with the namespace, as in
+/// TypeScript (bare `N` is the import, `N.x` the namespace's member); a named import of
+/// another module's namespace is reported where its members are bound
+/// (`collect::imports`).
 fn import_conflicts(items: &[ast::Item], diags: &mut Vec<Diagnostic>) {
     let namespaces: HashMap<&str, Span> = items
         .iter()
@@ -84,27 +86,48 @@ fn import_conflicts(items: &[ast::Item], diags: &mut Vec<Diagnostic>) {
         if item.exported || imp.from.is_empty() {
             continue;
         }
-        let locals = imp
-            .names
-            .iter()
-            .map(|n| n.alias.as_ref().unwrap_or(&n.name))
-            .chain(&imp.namespace);
-        for local in locals {
+        if let Some(local) = &imp.namespace {
             if let Some(&ns) = namespaces.get(local.name.as_str()) {
-                diags.push(
-                    Diagnostic::error(
-                        format!(
-                            "import declaration conflicts with local declaration of `{}`",
-                            local.name
-                        ),
-                        local.span,
-                    )
-                    .with_label(ns, "the namespace declared here")
-                    .with_note("rename the namespace, or import the name under another name (`import { N as M }`)"),
-                );
+                diags.push(conflict(local, Some(ns)));
             }
         }
     }
+}
+
+/// TypeScript's TS2440: the import `local` binds the name of the namespace declared at `ns`.
+pub(crate) fn conflict(local: &ast::Ident, ns: Option<Span>) -> Diagnostic {
+    let d = Diagnostic::error(
+        format!(
+            "import declaration conflicts with local declaration of `{}`",
+            local.name
+        ),
+        local.span,
+    )
+    .with_note("rename the namespace, or import the name under another name (`import { N as M }`)");
+    match ns {
+        Some(ns) => d.with_label(ns, "the namespace declared here"),
+        None => d,
+    }
+}
+
+/// A flattened name as the user wrote it, for messages: without the block-unique suffix of
+/// an unexported member (`N.A#2` is `N.A`, [`Blocks::segment`]).
+pub(crate) fn written(name: &str) -> std::borrow::Cow<'_, str> {
+    if !name.contains('#') {
+        return name.into();
+    }
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(i) = rest.find('#') {
+        out.push_str(&rest[..i]);
+        let digits = rest[i + 1..].bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            out.push('#');
+        }
+        rest = &rest[i + 1 + digits..];
+    }
+    out.push_str(rest);
+    out.into()
 }
 
 /// The item `path` (two names or more) names in `module` at `at`: `ns.T` of a namespace import,
@@ -141,11 +164,18 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
         }
     }
     items.extend(hoisted);
+    let mut blocks = Blocks::default();
+    for item in &items {
+        if let ast::ItemKind::Namespace(ns) = &item.kind {
+            blocks.collect(ns, item.span, &mut vec![], ns.declare);
+        }
+    }
     // The exported members of every namespace path, over all of its blocks.
     let mut members: HashMap<Vec<String>, Members> = HashMap::new();
     for item in &items {
         if let ast::ItemKind::Namespace(ns) = &item.kind {
-            collect_members(ns, &mut vec![], ns.declare, &mut members);
+            let paths = Paths::default().push(&ns.name.name, ns.name.name.clone());
+            collect_members(ns, item.span, &paths, ns.declare, &blocks, &mut members);
         }
     }
     let mut out = Vec::with_capacity(items.len());
@@ -154,13 +184,16 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
             ast::ItemKind::Namespace(ns) => {
                 let cx = Flatten {
                     members: &members,
+                    blocks: &blocks,
                     private,
                 };
                 let ambient = ns.declare;
+                let seg = ns.name.name.clone();
                 cx.namespace(
                     ns,
                     item.span,
-                    &[],
+                    &Paths::default(),
+                    seg,
                     &[],
                     item.exported,
                     ambient,
@@ -175,88 +208,181 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
 }
 
 /// The members of a namespace that a name can mean: types (aliases and interfaces) as the last
-/// segment of a path, namespaces as a leading one.
+/// segment of a path, namespaces as a leading one; each with the name it is flattened under
+/// (its own, or a block-unique one for an unexported member, [`Blocks::segment`]).
 #[derive(Clone, Default)]
 struct Members {
-    types: HashSet<String>,
-    namespaces: HashSet<String>,
+    types: HashMap<String, String>,
+    namespaces: HashMap<String, String>,
 }
 
 impl Members {
-    fn has(&self, name: &str, namespace: bool) -> bool {
+    fn get(&self, name: &str, namespace: bool) -> Option<&String> {
         match namespace {
-            true => self.namespaces.contains(name),
-            false => self.types.contains(name),
+            true => self.namespaces.get(name),
+            false => self.types.get(name),
         }
     }
 
-    fn add(&mut self, item: &ast::Item) {
+    fn add(&mut self, item: &ast::Item, seg: String) {
         match &item.kind {
-            ast::ItemKind::TypeAlias(a) => self.types.insert(a.name.name.clone()),
-            ast::ItemKind::Interface(i) => self.types.insert(i.name.name.clone()),
-            ast::ItemKind::Namespace(n) => self.namespaces.insert(n.name.name.clone()),
-            _ => false,
+            ast::ItemKind::TypeAlias(a) => self.types.insert(a.name.name.clone(), seg),
+            ast::ItemKind::Interface(i) => self.types.insert(i.name.name.clone(), seg),
+            ast::ItemKind::Namespace(n) => self.namespaces.insert(n.name.name.clone(), seg),
+            _ => None,
         };
     }
 }
 
-/// The exported members of namespace `ns` (inside `path`) and of the namespaces in it, by
-/// path: the members every block of the namespace sees. (An unexported member is visible
-/// only in its own block.) `ambient`: inside a `declare namespace`, where every member is
-/// exported.
+/// The name of a member item: a type (alias or interface) or a namespace.
+fn member_name(item: &ast::Item) -> Option<(&str, bool)> {
+    match &item.kind {
+        ast::ItemKind::TypeAlias(a) => Some((&a.name.name, false)),
+        ast::ItemKind::Interface(i) => Some((&i.name.name, false)),
+        ast::ItemKind::Namespace(n) => Some((&n.name.name, true)),
+        _ => None,
+    }
+}
+
+/// A namespace path twice: as written (`N.I`), and as flattened (`N.I#2` when `I` is an
+/// unexported namespace with a block-unique name).
+#[derive(Clone, Default)]
+struct Paths {
+    written: Vec<String>,
+    real: Vec<String>,
+}
+
+impl Paths {
+    fn push(&self, written: &str, real: String) -> Paths {
+        let mut p = self.clone();
+        p.written.push(written.to_string());
+        p.real.push(real);
+        p
+    }
+}
+
+/// The blocks (by the start of the namespace declaration) declaring each member, by written
+/// namespace path, kind (namespace or type) and name.
+#[derive(Default)]
+struct Blocks(HashMap<(Vec<String>, bool, String), Vec<u32>>);
+
+impl Blocks {
+    fn collect(&mut self, ns: &ast::Namespace, span: Span, path: &mut Vec<String>, ambient: bool) {
+        let ambient = ambient || ns.declare;
+        path.push(ns.name.name.clone());
+        for item in &ns.items {
+            if let ast::ItemKind::Namespace(inner) = &item.kind {
+                self.collect(inner, item.span, path, ambient);
+            }
+            if let Some((name, is_ns)) = member_name(item) {
+                let blocks = self
+                    .0
+                    .entry((path.clone(), is_ns, name.to_string()))
+                    .or_default();
+                if !blocks.contains(&span.lo) {
+                    blocks.push(span.lo);
+                }
+            }
+        }
+        path.pop();
+    }
+
+    /// The name `item` (in the block starting at `block` of the namespace written `path`) is
+    /// flattened under: its own, or for an unexported member whose name another block of the
+    /// namespace declares too, a block-unique one (`A#2`), as in TypeScript, where such
+    /// members are different declarations.
+    fn segment(&self, path: &[String], item: &ast::Item, block: u32, exported: bool) -> String {
+        let Some((name, is_ns)) = member_name(item) else {
+            return String::new();
+        };
+        if exported {
+            return name.to_string();
+        }
+        let key = (path.to_vec(), is_ns, name.to_string());
+        match self.0.get(&key) {
+            Some(blocks) if blocks.len() > 1 => {
+                let n = blocks.iter().position(|&b| b == block).unwrap_or(0) + 1;
+                format!("{name}#{n}")
+            }
+            _ => name.to_string(),
+        }
+    }
+}
+
+/// The exported members of namespace `ns` (declared at `span`; `paths` ends with it) and of
+/// the namespaces in it, by flattened path: the members every block of the namespace sees.
+/// (An unexported member is visible only in its own block.) `ambient`: inside a `declare
+/// namespace`, where every member is exported.
 fn collect_members(
     ns: &ast::Namespace,
-    path: &mut Vec<String>,
+    span: Span,
+    paths: &Paths,
     ambient: bool,
+    blocks: &Blocks,
     out: &mut HashMap<Vec<String>, Members>,
 ) {
     let ambient = ambient || ns.declare;
-    path.push(ns.name.name.clone());
     for item in &ns.items {
+        let exported = item.exported || ambient;
+        let seg = blocks.segment(&paths.written, item, span.lo, exported);
         if let ast::ItemKind::Namespace(inner) = &item.kind {
-            collect_members(inner, path, ambient, out);
+            let inner_paths = paths.push(&inner.name.name, seg.clone());
+            collect_members(inner, item.span, &inner_paths, ambient, blocks, out);
         }
-        if item.exported || ambient {
-            out.entry(path.clone()).or_default().add(item);
+        if exported {
+            out.entry(paths.real.clone()).or_default().add(item, seg);
         }
     }
-    path.pop();
 }
 
 struct Flatten<'a> {
     members: &'a HashMap<Vec<String>, Members>,
+    blocks: &'a Blocks,
     private: &'a mut Private,
 }
 
 impl Flatten<'_> {
-    /// Appends the members of namespace `ns` (declared at `span`, inside the namespaces
-    /// `outer`, whose blocks around it declare the unexported members `outer_locals`) to `out`. `exported`: every enclosing level is exported. `vis`: the body the
-    /// members are confined to, when an enclosing level is not exported. `ambient`: inside a
-    /// `declare namespace`, whose members are exported without `export`, as in TypeScript.
+    /// Appends the members of namespace `ns` (declared at `span` inside the namespaces
+    /// `outer` and flattened under `seg`; the blocks around it declare the unexported members
+    /// `outer_locals`) to `out`. `exported`: every enclosing level is exported. `vis`: the
+    /// body the members are confined to, when an enclosing level is not exported. `ambient`:
+    /// inside a `declare namespace`, whose members are exported without `export`, as in
+    /// TypeScript.
     #[allow(clippy::too_many_arguments)]
     fn namespace(
         mut self,
         ns: ast::Namespace,
         span: Span,
-        outer: &[String],
+        outer: &Paths,
+        seg: String,
         outer_locals: &[Members],
         exported: bool,
         ambient: bool,
         vis: Option<Span>,
         out: &mut Vec<ast::Item>,
     ) -> Self {
-        let mut path = outer.to_vec();
-        path.push(ns.name.name.clone());
+        let paths = outer.push(&ns.name.name, seg);
+        let path = &paths.real;
         let prefix = path.join(".");
         let ambient = ambient || ns.declare;
+        let segs: Vec<String> = ns
+            .items
+            .iter()
+            .map(|i| {
+                self.blocks
+                    .segment(&paths.written, i, span.lo, i.exported || ambient)
+            })
+            .collect();
         // The members of this block only it sees.
         let mut locals: Vec<Members> = outer_locals.to_vec();
         let mut own = Members::default();
-        for item in ns.items.iter().filter(|i| !(i.exported || ambient)) {
-            own.add(item);
+        for (item, seg) in ns.items.iter().zip(&segs) {
+            if !(item.exported || ambient) {
+                own.add(item, seg.clone());
+            }
         }
         locals.push(own);
-        for mut item in ns.items {
+        for (mut item, seg) in ns.items.into_iter().zip(segs) {
             item.exported |= ambient;
             let item_exported = exported && item.exported;
             let item_vis = if item.exported { vis } else { Some(span) };
@@ -268,7 +394,8 @@ impl Flatten<'_> {
                     self = self.namespace(
                         inner,
                         item.span,
-                        &path,
+                        &paths,
+                        seg,
                         &locals,
                         item_exported,
                         ambient,
@@ -282,7 +409,7 @@ impl Flatten<'_> {
                     let r = Rewrite {
                         members: self.members,
                         locals: &locals,
-                        path: &path,
+                        path,
                         params,
                     };
                     r.generics(&mut a.generics);
@@ -294,7 +421,7 @@ impl Flatten<'_> {
                     let r = Rewrite {
                         members: self.members,
                         locals: &locals,
-                        path: &path,
+                        path,
                         params,
                     };
                     r.generics(&mut i.generics);
@@ -308,7 +435,7 @@ impl Flatten<'_> {
                 }
                 _ => continue, // reported by the parser
             };
-            name.name = format!("{prefix}.{}", name.name);
+            name.name = format!("{prefix}.{seg}");
             if let Some(v) = item_vis {
                 self.private.insert(name.name.clone(), v);
             }
@@ -367,32 +494,29 @@ impl Rewrite<'_> {
         }
     }
 
-    /// The namespace path a member named `name` written inside `self.path` belongs to: a type
-    /// (the whole path is `name`) or, with `namespace`, a namespace (the first segment of a
-    /// longer path).
-    fn owner(&self, name: &str, namespace: bool) -> Option<&[String]> {
+    /// The namespace path a member named `name` written inside `self.path` belongs to, with
+    /// the name the member is flattened under: a type (the whole path is `name`) or, with
+    /// `namespace`, a namespace (the first segment of a longer path). An unexported member of
+    /// the enclosing block wins over an exported one of another block, as in TypeScript.
+    fn owner(&self, name: &str, namespace: bool) -> Option<(&[String], String)> {
         if !namespace && self.params.iter().any(|p| p == name) {
             return None;
         }
-        (1..=self.path.len())
-            .rev()
-            .map(|n| &self.path[..n])
-            .find(|p| {
-                let level = p.len() - 1;
-                self.members.get(*p).is_some_and(|m| m.has(name, namespace))
-                    || self
-                        .locals
-                        .get(level)
-                        .is_some_and(|m| m.has(name, namespace))
-            })
+        (1..=self.path.len()).rev().find_map(|n| {
+            let p = &self.path[..n];
+            let local = self.locals.get(n - 1).and_then(|m| m.get(name, namespace));
+            let seg = local.or_else(|| self.members.get(p).and_then(|m| m.get(name, namespace)));
+            seg.map(|s| (p, s.clone()))
+        })
     }
 
     fn ty(&self, t: &mut ast::TypeExpr) {
         use ast::TypeExprKind as K;
         match &mut t.kind {
             K::Named { path, args } => {
-                if let Some(owner) = self.owner(&path[0].name, path.len() > 1) {
+                if let Some((owner, seg)) = self.owner(&path[0].name, path.len() > 1) {
                     let span = path[0].span;
+                    path[0].name = seg;
                     let prefix = owner.iter().map(|n| ast::Ident {
                         name: n.clone(),
                         span,
@@ -480,4 +604,17 @@ fn infer_names(t: &ast::TypeExpr, out: &mut Vec<String>) {
         }
     }
     velt_syntax::visit::walk_type_expr(t, &mut Infers(out));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::written;
+
+    #[test]
+    fn written_drops_block_suffixes_only() {
+        assert_eq!(written("N.A"), "N.A");
+        assert_eq!(written("N.A#2"), "N.A");
+        assert_eq!(written("N.I#1.T#3"), "N.I.T");
+        assert_eq!(written("N.#x"), "N.#x");
+    }
 }

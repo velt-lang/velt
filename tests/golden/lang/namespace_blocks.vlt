@@ -1,0 +1,58 @@
+// Members declared without `export` in different blocks of one namespace are different
+// declarations, as in TypeScript: the same name in two blocks does not collide, an exported
+// member of another block does not hide the block's own, and unexported interfaces of two
+// blocks do not merge.
+namespace N {
+  type A = number;
+  export type X = A;
+}
+namespace N {
+  type A = string;
+  export type Y = A;
+}
+
+namespace K {
+  type A = number;
+  export type X = A;
+}
+namespace K {
+  export type A = string;
+  export type Y = A;
+}
+
+namespace I {
+  namespace J {
+    export type T = number;
+  }
+  export type X = J.T;
+}
+namespace I {
+  namespace J {
+    export type T = string;
+  }
+  export type Y = J.T;
+}
+
+namespace F {
+  interface A {
+    a: string;
+  }
+  export type X = A;
+}
+namespace F {
+  interface A {
+    b: string;
+  }
+  export type Y = A;
+}
+
+const x: N.X = 1;
+const y: N.Y = "s";
+const kx: K.X = 2;
+const ky: K.Y = "k";
+const ka: K.A = "a";
+const ix: I.X = 3;
+const iy: I.Y = "i";
+const fx: F.X = { a: "fa" };
+const fy: F.Y = { b: "fb" };
+console.log(x, y, kx, ky, ka, ix, iy, fx.a, fy.b);
