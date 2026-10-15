@@ -322,6 +322,29 @@ impl Ctx<'_> {
         (d, params)
     }
 
+    /// A struct no source names, with fields `fields` (types over the type params `T0..Tn`), for
+    /// a value sema builds itself: an object literal implementing an interface
+    /// (`body/expr/iface_object.rs`). Unlike [`Self::anon_def`]'s it is never shared with
+    /// another shape, so an implementation added for it belongs to it alone.
+    pub(crate) fn hidden_struct_def(
+        &mut self,
+        name: &str,
+        fields: &[(String, TyId)],
+        n: usize,
+        module: usize,
+    ) -> DefId {
+        let norm: Vec<ShapeField> = fields
+            .iter()
+            .map(|(f, t)| ShapeField::plain(f, *t))
+            .collect();
+        let d = self.new_anon_def(&norm, n, module);
+        let a = self.adt_mut(d);
+        a.kind = AdtKind::Struct;
+        a.name = name.to_string();
+        a.qual_name = name.to_string();
+        d
+    }
+
     /// A fresh anonymous object def with fields `norm` (over `n` type params).
     fn new_anon_def(&mut self, norm: &[ShapeField], n: usize, module: usize) -> DefId {
         let name = {

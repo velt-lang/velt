@@ -30,6 +30,7 @@ mod fn_union_call;
 mod gen_closure;
 mod hoist;
 mod iface_call;
+mod iface_object;
 mod in_keys;
 mod in_place_chain;
 mod int32;

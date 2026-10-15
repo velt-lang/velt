@@ -32,7 +32,9 @@ pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
 /// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
 
-pub use crate::ast_names::{COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS};
+pub use crate::ast_names::{
+    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, OBJECT_GET_FN, OBJECT_SET_FN,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
