@@ -730,7 +730,7 @@ impl FnCx<'_, '_> {
     fn prototype_method_call(&mut self, m: &str, args: &[ast::Expr], span: Span) -> hir::Expr {
         match m {
             "hasOwnProperty" => self.has_own(args, "Object.prototype.hasOwnProperty.call", span),
-            "toString" => self.to_string_tag(args, span),
+            "toString" => self.object_to_string_call(args, span),
             _ => {
                 self.cx.err(
                     format!("`Object.prototype.{m}.call` is not supported yet"),
@@ -840,7 +840,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.prototype.toString.call(v)`: `"[object Tag]"`.
-    fn to_string_tag(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
+    fn object_to_string_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let [v] = args else {
             return self.arity_error("Object.prototype.toString.call", 1, args, span);
         };
@@ -1258,27 +1258,37 @@ impl FnCx<'_, '_> {
         Some(self.new_prototype(&proto, ty, span))
     }
 
-    /// `a === b` (`negate`: `!==`) where both sides are prototypes (or `null`): whether they
-    /// name the same prototype (`None`: other operands).
+    /// Are values of types `l` and `r` both prototypes (or `null`), which `===` compares by the
+    /// prototype they name ([`Self::prototype_eq`])?
+    pub(crate) fn prototype_operands(&self, l: TyId, r: TyId) -> bool {
+        let Some(d) = self.cx.prelude_adt("ObjectPrototype") else {
+            return false;
+        };
+        let is_proto = |t: TyId| {
+            let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+            matches!(self.cx.ty.kind(t), TyKind::Adt(x, _) if *x == d)
+        };
+        is_proto(l) && is_proto(r)
+    }
+
+    /// `a === b` (`negate`: `!==`) of two prototypes ([`Self::prototype_operands`]): whether
+    /// they name the same prototype.
     pub(crate) fn prototype_eq(
         &mut self,
         l: hir::Expr,
         r: hir::Expr,
         negate: bool,
         span: Span,
-    ) -> Result<hir::Expr, (hir::Expr, hir::Expr)> {
-        let Some(d) = self.cx.prelude_adt("ObjectPrototype") else {
-            return Err((l, r));
-        };
-        let is_proto = |s: &Self, t: TyId| {
-            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
-            matches!(s.cx.ty.kind(t), TyKind::Adt(x, _) if *x == d)
-        };
-        if !is_proto(self, l.ty) || !is_proto(self, r.ty) {
-            return Err((l, r));
-        }
-        let Some(Item::Def(f)) = self.cx.prelude.get("__prototypeSame").cloned() else {
-            return Err((l, r));
+    ) -> hir::Expr {
+        let found = self.cx.prelude_adt("ObjectPrototype").zip(
+            match self.cx.prelude.get("__prototypeSame").cloned() {
+                Some(Item::Def(f)) => Some(f),
+                _ => None,
+            },
+        );
+        let Some((d, f)) = found else {
+            self.cx.err("prototypes need the prelude (std/prelude)", span);
+            return self.error_expr(span);
         };
         let proto = self.cx.ty.intern(TyKind::Adt(d, vec![]));
         let opt = self.cx.ty.option(proto);
@@ -1292,7 +1302,7 @@ impl FnCx<'_, '_> {
             b,
             span,
         );
-        Ok(self.negated(call, negate, span))
+        self.negated(call, negate, span)
     }
 
     /// `Object.create(proto)`: `Object.create(null)` where a `Record<string, V>` is expected.

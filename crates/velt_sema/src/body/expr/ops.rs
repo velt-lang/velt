@@ -337,10 +337,9 @@ impl FnCx<'_, '_> {
             return self.concat(l, r, span);
         }
         if matches!(op, B::Eq | B::NotEq) && !self.primitive_eq(t) {
-            let (l, r) = match self.prototype_eq(l, r, op == B::NotEq, span) {
-                Ok(h) => return h,
-                Err(lr) => lr,
-            };
+            if self.prototype_operands(l.ty, r.ty) {
+                return self.prototype_eq(l, r, op == B::NotEq, span);
+            }
             crate::body::pure_init::check_identity(self.cx, [&l, &r]);
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
