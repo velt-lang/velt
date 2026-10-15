@@ -223,6 +223,12 @@ impl FnLower<'_, '_> {
                 let hir::Def::Global(g) = self.cx.hir.def(d) else {
                     return None;
                 };
+                // A module-level `let` (its slot holds the array, which code may replace or
+                // modify) is never read from the stored initializer.
+                if g.slot.is_some() {
+                    self.cx.tables.insert(d, None);
+                    return None;
+                }
                 let stored = self.store_table(g);
                 self.cx.tables.insert(d, stored);
                 stored?
