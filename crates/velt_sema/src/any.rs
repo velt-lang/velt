@@ -13,7 +13,8 @@
 use crate::ctx::Ctx;
 use crate::hir::{DefId, ImplDef, Nothing, TyId, TyKind};
 
-/// The prelude's dynamic interfaces and their implementation.
+/// The prelude's dynamic interfaces and their implementation (`Ctx::any`): `any` / `unknown`
+/// and the implementation every type has.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AnyDefs {
     pub any: DefId,
