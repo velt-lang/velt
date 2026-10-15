@@ -474,6 +474,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::AnyTo
+        | I::AnyTypeof
+        | I::AnyTruthy
+        | I::AnyStrictEq
+        | I::AnyLooseEq
         | I::StrLen
         | I::Exit
         | I::Panic

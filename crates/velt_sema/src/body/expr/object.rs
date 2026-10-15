@@ -584,6 +584,10 @@ impl FnCx<'_, '_> {
                     }
                     h
                 }
+                // `{ b?: any }` left out: the dynamic `undefined`.
+                (None, None) if f.optional && self.cx.dynamic(fty).is_some() => {
+                    self.dynamic_nothing(hir::Nothing::Undefined, fty, span)
+                }
                 // `{ b?: T }` is `{ b: T | null }`: an object literal may leave such a field out.
                 (None, None) if anon && self.cx.ty.opt_payload(fty).is_some() => {
                     self.mk(H::Lit(hir::Lit::Null), fty, span)

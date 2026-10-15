@@ -277,6 +277,8 @@ impl FnCx<'_, '_> {
             let (declared, optional) = match self.cx.ty.opt_payload(h.ty) {
                 _ if absent && presence => (h.ty, true),
                 Some(p) if absent => (p, true),
+                // `q?: any`: the `any` holds the `undefined` itself.
+                None if absent && self.cx.dynamic(h.ty).is_some() => (h.ty, true),
                 _ => (h.ty, false),
             };
             fields.push(crate::anon::ShapeField {

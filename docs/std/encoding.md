@@ -18,11 +18,34 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
   legacy encodings. `decode(bytes)` drops a leading byte order mark unless `ignoreBOM`, and
   writes U+FFFD for invalid input, or throws `EncodingError` with `fatal`. There is no
   `stream` option or `encodeInto`.
+- `btoa(s)` and `atob(s)`, Node's Base64 of "binary strings" (one code unit per byte), are
+  globals too. `btoa` encodes a string whose code units are all at most 0xFF (Latin-1) as
+  padded standard Base64; `atob` decodes as WHATWG's forgiving-base64 does: ASCII whitespace
+  (tab, line feed, form feed, carriage return, space) anywhere is ignored and padding is
+  optional, but at most two `=`, only at the end and only where they complete a group of four.
+  The result has one code unit (0 to 255) per byte; leftover bits of the last digit are
+  ignored. Bad input throws a `DOMException` named `InvalidCharacterError` (code 5) with
+  Node's message: `Invalid character` (a code unit above 0xFF for `btoa`; a character outside
+  the alphabet or misplaced `=` for `atob`), or `The string to be decoded is not correctly
+  encoded.` (a length that cannot come from whole bytes). For bytes and UTF-8 text, use
+  `base64Encode` and `base64EncodeString`. Unlike JS, the argument must be a string
+  (`btoa(String(123))`).
 
 ```ts
 function main() {
   const bytes = new TextEncoder().encode("héllo");
   console.log(bytes.length, new TextDecoder().decode(bytes)); // 6 héllo
+}
+```
+
+```ts
+function main() {
+  console.log(btoa("hello"), atob(" aGVs bG8 "), atob("/w==").charCodeAt(0)); // aGVsbG8= hello 255
+  try {
+    atob("a");
+  } catch (e) {
+    console.log(e.name, e.message); // InvalidCharacterError The string to be decoded is not correctly encoded.
+  }
 }
 ```
 
