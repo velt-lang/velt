@@ -20,21 +20,10 @@ pub use type_parts::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
-/// Member name of the computed key `[Symbol.dispose]` (a method declaration
-/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an [`Ident`] with this exact
-/// name. No plain identifier can collide with it.
-pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
-
-/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
-
-/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
-
-/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
-
-pub use crate::ast_names::{COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS};
+pub use crate::ast_names::{
+    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR,
+    SYMBOL_DISPOSE, SYMBOL_ITERATOR,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
