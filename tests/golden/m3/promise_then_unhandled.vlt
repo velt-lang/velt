@@ -1,5 +1,5 @@
 // A rejection that passes through `then` and nobody handles is uncaught, as in Node: the process
-// exits with code 1 after the code that was running.
+// exits with code 1 after the code that was running and the callbacks it queued.
 
 class Failed extends Error {}
 
@@ -9,5 +9,9 @@ async function fail(message: string): Promise<number, Failed> {
 
 async function main() {
   fail("nobody handles this").then((v) => console.log(`value ${v}`));
+  queueMicrotask(() => {
+    console.log("queued callbacks run first");
+    queueMicrotask(() => console.log("and the ones they queue"));
+  });
   console.log("main returns");
 }

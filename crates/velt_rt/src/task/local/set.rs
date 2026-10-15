@@ -108,6 +108,10 @@ pub(crate) struct LocalSet {
     running: *const Running,
     /// The task's microtask queue (micro.rs).
     pub(super) micro: super::micro::Queue,
+    /// How many adopted nodes are being polled right now, one inside the other (node/owner.rs
+    /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
+    /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
+    pub(super) adopting: u32,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -124,6 +128,7 @@ impl LocalSet {
             pending: VecDeque::new(),
             running: std::ptr::null(),
             micro: super::micro::Queue::new(),
+            adopting: 0,
         })
     }
 

@@ -62,6 +62,10 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
             None => w.wake(),
         }
     }
+    // Rejections nobody handles, reported now that the queue is empty (unhandled.rs).
+    if super::unhandled::pending() {
+        super::unhandled::flush();
+    }
 }
 
 /// The future of `velt_rt_microtask`.

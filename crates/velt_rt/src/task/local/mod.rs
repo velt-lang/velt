@@ -12,22 +12,27 @@
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
 
+mod gate;
 mod losers;
 mod micro;
 mod node;
 mod set;
 mod timers;
+mod unhandled;
 
+pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
 pub use micro::velt_rt_microtask;
 pub(crate) use timers::TimerLeaf;
+pub use unhandled::velt_rt_unhandled_defer;
 
 use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
+use self::gate::Gate;
 use self::set::LocalSet;
 use self::timers::Timers;
 use super::all::ResultDropFn;
@@ -44,6 +49,8 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
+    /// The task's gate (none until it first creates a timer; gate.rs).
+    gate: *mut Option<Arc<Gate>>,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
@@ -105,6 +112,17 @@ fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker) -> R) -> Option<R> {
     Some(f(timers.get_or_insert_with(Default::default), task))
 }
 
+/// Run `f` with the gate of the task being polled, created on first use; `None` outside a task.
+fn with_gate<R>(f: impl FnOnce(&Arc<Gate>) -> R) -> Option<R> {
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return None;
+    }
+    // SAFETY: as `with_timers`: `gate` points into the task's own `SetPtr`.
+    let gate = unsafe { &mut *(*tcx).gate };
+    Some(f(gate.get_or_insert_with(Gate::new_busy)))
+}
+
 /// Makes a task's set current for the duration of a poll (restores the previous one on drop).
 struct Enter(*const TaskCx);
 
@@ -120,14 +138,21 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
+/// gate.
+struct SetPtr(
+    *mut LocalSet,
+    u64,
+    Option<Arc<Timers>>,
+    u32,
+    Option<Arc<Gate>>,
+);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0, None);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -142,10 +167,14 @@ impl SetPtr {
             waker,
             id: &mut self.1,
             timers: &mut self.2,
+            gate: &mut self.4,
             turn: self.3,
             yielded: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
+        if let Some(g) = &self.4 {
+            g.enter();
+        }
         let timers = self.2.as_deref();
         if self.0.is_null() {
             // Only the root can wait for timers here; it is polled below.
@@ -172,6 +201,14 @@ impl SetPtr {
                 timers: None,
             });
         }
+        // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
+        if unhandled::pending() {
+            unhandled::flush();
+        }
+        // The poll is over: timers this task created may run their callbacks (gate.rs).
+        if let Some(g) = &self.4 {
+            g.leave();
+        }
     }
 
     /// Hand the set over if promises in it are still running (it is dropped otherwise).
@@ -188,6 +225,9 @@ impl SetPtr {
 
 impl Drop for SetPtr {
     fn drop(&mut self) {
+        if let Some(g) = &self.4 {
+            g.leave();
+        }
         if !self.0.is_null() {
             // SAFETY: created by `Box::into_raw` in `velt_rt_fut_start`, owned by `self`.
             drop(unsafe { Box::from_raw(self.0) });

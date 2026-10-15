@@ -84,6 +84,23 @@ impl FnLower<'_, '_> {
         let (err_bb, ok_bb) = (lw.new_block(), lw.new_block());
         lw.branch(is_err, err_bb, ok_bb);
         lw.switch_to(err_bb);
+        // Like Node, the rejection is reported once the task's queued microtasks have run: the
+        // runtime keeps the result and calls this again then (`velt_rt_unhandled_defer`).
+        let deferred = lw.temp(Ty::U8);
+        lw.call_rt(Rt::UnhandledDefer, vec![], Some(Place::local(deferred)));
+        let is_deferred = lw.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Ne,
+                Operand::Copy(Place::local(deferred)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (later_bb, now_bb) = (lw.new_block(), lw.new_block());
+        lw.branch(is_deferred, later_bb, now_bb);
+        lw.switch_to(later_bb);
+        lw.terminate(Terminator::Return(unit()));
+        lw.switch_to(now_bb);
         let ev = lw.cx.view(slot, 1);
         let ep = proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1));
         lw.report_uncaught(&ep, err);

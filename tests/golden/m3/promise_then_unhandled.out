@@ -1,1 +1,3 @@
 main returns
+queued callbacks run first
+and the ones they queue

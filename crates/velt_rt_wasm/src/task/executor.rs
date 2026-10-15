@@ -94,9 +94,14 @@ struct Executor {
     /// Slot `id - 1` holds task `id`.
     tasks: Vec<Option<Task>>,
     free: Vec<usize>,
-    ready: VecDeque<usize>,
-    /// The tasks in `ready`, with the turn that queued them.
-    queued: HashMap<usize, u32>,
+    /// Queued tasks with the number of their entry: an entry whose number is not the task's in
+    /// `queued` is stale (the task moved, ran or was cancelled) and is skipped, so moving a task
+    /// in the queue costs no search through it.
+    ready: VecDeque<(usize, u64)>,
+    /// The tasks in `ready`, with the turn that queued them and the number of their entry.
+    queued: HashMap<usize, (u32, u64)>,
+    /// Numbers the entries of `ready`.
+    entries: u64,
     timers: BinaryHeap<Reverse<Timer>>,
     timer_seq: u64,
     /// Inside `block_on` (promises can only be started while tasks run).
@@ -160,11 +165,30 @@ pub fn waker(id: usize) -> Waker {
 /// Queue task `id` (once) to be polled.
 fn schedule(id: usize) {
     with_exec(|e| {
-        if let std::collections::hash_map::Entry::Vacant(v) = e.queued.entry(id) {
-            v.insert(e.turn);
-            e.ready.push_back(id);
+        if !e.queued.contains_key(&id) {
+            let turn = e.turn;
+            e.enqueue(id, turn, false);
         }
     });
+}
+
+impl Executor {
+    /// Queue task `id` (at the front or the back), queued by `turn`; an entry it had is now stale.
+    fn enqueue(&mut self, id: usize, turn: u32, front: bool) {
+        self.entries += 1;
+        let entry = (id, self.entries);
+        self.queued.insert(id, (turn, self.entries));
+        if front {
+            self.ready.push_front(entry);
+        } else {
+            self.ready.push_back(entry);
+        }
+    }
+
+    /// Is `entry` of `ready` the live one of its task?
+    fn live(&self, entry: &(usize, u64)) -> bool {
+        self.queued.get(&entry.0).is_some_and(|q| q.1 == entry.1)
+    }
 }
 
 /// Wake `w` so that its task runs next (before the tasks already queued): how a finished
@@ -180,10 +204,8 @@ pub fn wake_next(w: Waker) {
     }
     let id = w.data() as usize;
     with_exec(|e| {
-        if e.queued.insert(id, e.turn).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
-        e.ready.push_front(id);
+        let turn = e.turn;
+        e.enqueue(id, turn, true);
     });
 }
 
@@ -238,10 +260,12 @@ fn next_micro() -> Option<usize> {
 }
 
 fn next_ready() -> Option<usize> {
-    with_exec(|e| {
-        let id = e.ready.pop_front()?;
-        e.queued.remove(&id);
-        Some(id)
+    with_exec(|e| loop {
+        let entry = e.ready.pop_front()?;
+        if e.live(&entry) {
+            e.queued.remove(&entry.0);
+            return Some(entry.0);
+        }
     })
 }
 
@@ -283,7 +307,7 @@ fn end_poll() {
 pub fn queued_earlier(id: usize) {
     with_exec(|e| {
         if let Some(t) = e.queued.get_mut(&id) {
-            *t = 0;
+            t.0 = 0;
         }
     });
 }
@@ -296,11 +320,12 @@ pub fn run_now(id: usize, turn: u32) {
     loop {
         let next = with_exec(|e| {
             let i = e.ready.iter().position(|q| {
-                *q != ROOT
-                    && e.queued.get(q) == Some(&turn)
-                    && !e.polling.iter().any(|(p, _)| p == q)
+                q.0 != ROOT
+                    && e.live(q)
+                    && e.queued.get(&q.0).is_some_and(|t| t.0 == turn)
+                    && !e.polling.iter().any(|(p, _)| *p == q.0)
             })?;
-            let q = e.ready.remove(i)?;
+            let (q, _) = e.ready.remove(i)?;
             e.queued.remove(&q);
             Some(q)
         });
@@ -310,10 +335,7 @@ pub fn run_now(id: usize, turn: u32) {
     }
     let queued = with_exec(|e| {
         let free = !e.polling.iter().any(|(p, _)| *p == id);
-        free && e.queued.remove(&id).is_some() && {
-            e.ready.retain(|&q| q != id);
-            true
-        }
+        free && e.queued.remove(&id).is_some()
     });
     if queued {
         // SAFETY: as above.
@@ -383,9 +405,7 @@ pub fn live_tasks() -> usize {
 /// that still holds its waker wakes nothing, or the slot's next task spuriously.
 pub fn cancel(id: usize) {
     let task = with_exec(|e| {
-        if e.queued.remove(&id).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
+        e.queued.remove(&id);
         let task = e.tasks.get_mut(id - 1)?.take()?;
         e.free.push(id - 1);
         Some(task)
@@ -493,10 +513,7 @@ fn wake_last(w: Waker) {
     let id = w.data() as usize;
     with_exec(|e| {
         // Turn 0: a timer's wake-up is no turn's microtask, so `run_now` leaves it in its place.
-        if e.queued.insert(id, 0).is_some() {
-            e.ready.retain(|&q| q != id);
-        }
-        e.ready.push_back(id);
+        e.enqueue(id, 0, false);
     });
 }
 
@@ -528,12 +545,19 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     schedule(ROOT);
     let mut root_done = false;
     loop {
+        if root_done && with_exec(|e| e.micro.is_empty()) {
+            super::local::flush_unhandled();
+        }
         if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
             with_exec(|e| e.running = false);
             return;
         }
         fire_due_now();
-        let Some(id) = next_micro().or_else(next_ready) else {
+        let Some(id) = next_micro().or_else(|| {
+            // The microtask queue is drained: unhandled rejections are reported now.
+            super::local::flush_unhandled();
+            next_ready()
+        }) else {
             if !wait_for_timers() {
                 crate::panic::fatal(
                     "deadlock: the main task is waiting, but no task or timer can wake it",

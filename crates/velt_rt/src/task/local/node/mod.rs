@@ -317,7 +317,19 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
+/// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
+/// microtasks (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
+    let d = head(f).result_drop.load(Ordering::Acquire);
+    if !d.is_null() {
+        // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
+        let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
+        super::unhandled::drop_result(f, d);
+    }
+}
+
+/// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
+pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).

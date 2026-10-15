@@ -85,7 +85,19 @@ impl FnCx<'_, '_> {
         let TyKind::Promise(t, e) = *self.cx.ty.kind(recv.ty) else {
             panic!("ICE: promise_callback_call on a non-promise receiver");
         };
-        let method = prop.name.as_str();
+        // `then(null, g)` / `then(undefined, g)` is `catch(g)`, and `then(f, null)` is `then(f)`,
+        // as in JS (an absent callback passes the value or the reason through).
+        let absent = |a: &ast::Expr| {
+            matches!(
+                a.kind,
+                ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+            )
+        };
+        let (method, args) = match (prop.name.as_str(), args) {
+            ("then", [f, g]) if absent(f) && !absent(g) => ("catch", std::slice::from_ref(g)),
+            ("then", [f, g]) if absent(g) && !absent(f) => ("then", std::slice::from_ref(f)),
+            (m, _) => (m, args),
+        };
         let max = if method == "then" { 2 } else { 1 };
         if args.is_empty() || args.len() > max {
             self.arg_count_error(&format!("`{method}`"), 1, max, args.len(), span);

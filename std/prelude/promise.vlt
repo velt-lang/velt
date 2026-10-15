@@ -23,10 +23,15 @@ export async function promiseAllSettled<T, E>(
   ps: Promise<T, E>[],
 ): Promise<PromiseSettledResult<T, E>[]> {
   const out: PromiseSettledResult<T, E>[] = [];
+  if (ps.length == 0) {
+    return out;
+  }
   ps.reverse();
   while (true) {
     const p = ps.pop();
     if (p == null) {
+      // Node settles in the callback it runs for the last promise: one microtask later.
+      await velt_rt_microtask();
       return out;
     }
     try {
@@ -45,9 +50,13 @@ export async function promiseAny<T, E>(ps: Promise<T, E>[]): Promise<T> throws A
   if (ps.length == 0) {
     throw new AggregateError("All promises were rejected");
   }
+  // Node settles in the callback it runs for the deciding promise: one microtask later.
   try {
-    return await __intrinsic_promise_any(ps);
+    const v = await __intrinsic_promise_any(ps);
+    await velt_rt_microtask();
+    return v;
   } catch (e) {
+    await velt_rt_microtask();
     throw new AggregateError("All promises were rejected");
   }
 }
@@ -335,6 +344,26 @@ async function settledOf<T, E>(p: Promise<T, E>): Promise<PromiseSettledResult<T
   }
 }
 
+// A promise a callback returns is adopted like a JS thenable: one microtask before it is awaited
+// (the job that calls its `then`) and one after it settles (that `then`'s callback), so the new
+// promise settles when Node's would.
+async function adopted<U, F>(q: Promise<U, F>): Promise<U> throws F {
+  await velt_rt_microtask();
+  const r = await settledOf<U, F>(q);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return r.value;
+}
+
+// After `finally`'s callback: the value or reason passes on two microtasks later, as in Node
+// (its callback's result is wrapped in a promise whose `then` gives the new promise a thenable).
+async function finallySteps(): Promise<void> {
+  await velt_rt_microtask();
+  await velt_rt_microtask();
+}
+
 // What the new promise rejects with is a single type parameter in each function: the source's
 // error type, a callback's (the compiler converts the source to it), or both when they are the
 // same. Which function a call compiles to depends on whether the callback returns a promise
@@ -376,7 +405,7 @@ export async function promiseThenAsync<T, E, U>(
   if (r.status == "rejected") {
     throw r.reason;
   }
-  return await f(r.value);
+  return await adopted<U, never>(f(r.value));
 }
 
 /** `p.then(f)`: `f` returns a promise that rejects with what `p` rejects with. */
@@ -389,7 +418,7 @@ export async function promiseThenAsyncThrows<T, E, U>(
   if (r.status == "rejected") {
     throw r.reason;
   }
-  return await f(r.value);
+  return await adopted<U, E>(f(r.value));
 }
 
 /** `p.then(f, g)` where `f` and `g` return values (`F`: what they throw). */
@@ -415,9 +444,9 @@ export async function promiseThenElseAsync<T, E, U, F>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
-    return await g(r.reason);
+    return await adopted<U, F>(g(r.reason));
   }
-  return await f(r.value);
+  return await adopted<U, F>(f(r.value));
 }
 
 /** `p.catch(g)` where `g` returns a value. */
@@ -441,16 +470,20 @@ export async function promiseCatchAsync<T, E, G>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
-    return await g(r.reason);
+    return await adopted<T, G>(g(r.reason));
   }
   return r.value;
 }
 
-/** `p.finally(h)`: the value or reason passes through once `h` returned (`h` does not throw). */
+/**
+ * `p.finally(h)`: the value or reason passes through two microtasks after `h` returned, as in
+ * Node (`h` does not throw).
+ */
 export async function promiseFinally<T, E, R>(p: Promise<T, E>, h: () => R): Promise<T> throws E {
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   const ignored = h();
+  await finallySteps();
   if (r.status == "rejected") {
     throw r.reason;
   }
@@ -465,6 +498,7 @@ export async function promiseFinallyThrows<T, E, R>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   const ignored = h();
+  await finallySteps();
   if (r.status == "rejected") {
     throw r.reason;
   }
@@ -479,20 +513,28 @@ export async function promiseFinallyAsync<T, E, R>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   const ignored = await h();
+  await finallySteps();
   if (r.status == "rejected") {
     throw r.reason;
   }
   return r.value;
 }
 
-/** `p.finally(h)` where `h` returns a promise rejecting with what `p` rejects with. */
+/**
+ * `p.finally(h)` where `h` returns a promise rejecting with what `p` rejects with: a rejection
+ * of `h`'s promise replaces the outcome, as in JS.
+ */
 export async function promiseFinallyAsyncThrows<T, E, R>(
   p: Promise<T, E>,
   h: () => Promise<R, E>,
 ): Promise<T> throws E {
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
-  const ignored = await h();
+  const done = await settledOf<R, E>(h());
+  await finallySteps();
+  if (done.status == "rejected") {
+    throw done.reason;
+  }
   if (r.status == "rejected") {
     throw r.reason;
   }

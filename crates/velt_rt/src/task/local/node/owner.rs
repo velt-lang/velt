@@ -33,14 +33,23 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
     READY
 }
 
-/// The set of the task being polled, if it drives unfinished, un-woken node `f`.
+/// How many adopted nodes may be polled one inside the other. A deeper owner waits for the set
+/// instead, so the stack stays bounded however long a chain of promises awaiting each other is
+/// (`p = p.then(f)` 100,000 times), and so does the work of polling the chain's end.
+const MAX_ADOPT_DEPTH: u32 = 4;
+
+/// The set of the task being polled, if it drives unfinished, un-woken node `f` and may adopt
+/// it (fewer than [`MAX_ADOPT_DEPTH`] adopted nodes are being polled).
 unsafe fn adoptable(f: *mut VeltFut, fl: u32) -> Option<*mut LocalSet> {
     let h = head(f);
     if fl & (QUEUED | CANCELLED) != 0 || h.member.load(Ordering::Relaxed) == NO_MEMBER {
         return None;
     }
     let set = super::super::current_set();
-    (!set.is_null() && std::ptr::eq(Arc::as_ptr(&(*set).shared), h.set)).then_some(set)
+    (!set.is_null()
+        && std::ptr::eq(Arc::as_ptr(&(*set).shared), h.set)
+        && (*set).adopting < MAX_ADOPT_DEPTH)
+        .then_some(set)
 }
 
 /// Poll adopted node `f` with its owner's context; true when it finished.
@@ -49,7 +58,10 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
     if fl & ADOPTED == 0 {
         h.flags.fetch_or(ADOPTED, Ordering::Relaxed);
     }
-    if super::super::set::polling(set, f, || (h.poll)(state(f), cx)) != READY {
+    (*set).adopting += 1;
+    let r = super::super::set::polling(set, f, || (h.poll)(state(f), cx));
+    (*set).adopting -= 1;
+    if r != READY {
         return false;
     }
     super::super::set::finish_adopted(set, f);

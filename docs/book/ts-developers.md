@@ -338,6 +338,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | `xs.length = 0` | the same: setting `length` drops the elements past it; a larger `length` panics (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
 | `p.then(f).catch(g)` | the same; `catch(g)` gives the promise's value type | `catch` changing the value type |
+| `p.then(f); p.then(g);`, or `p.then(f)` and later `await p` | a promise has one consumer: the second use is ``use of moved value``; chain the calls or keep the promise `then` returns | shared promises (#212) |
 | `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
 | `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | the same layout, `[runtime, script, ...args]`: the script is the source file under `velt run`, the executable for a built program; each read is a new array, so changing it in place is an error (copy it first) | — |
