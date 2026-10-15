@@ -210,7 +210,21 @@ impl Ctx<'_> {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
             }
-            self.err(format!("cannot find type `{name}` in this scope"), t.span);
+            // A namespace declaration's member that is missing or not exported (TS2694).
+            let (ns, member) = name.rsplit_once('.').unwrap_or_default();
+            let prefix = format!("{ns}.");
+            let is_namespace = !self.scopes[env.module].namespaces.contains_key(ns)
+                && self.scopes[env.module]
+                    .items
+                    .keys()
+                    .any(|k| k.starts_with(&prefix));
+            match is_namespace {
+                true => self.err(
+                    format!("namespace `{ns}` has no exported member `{member}`"),
+                    path.last().map_or(t.span, |i| i.span),
+                ),
+                false => self.err(format!("cannot find type `{name}` in this scope"), t.span),
+            }
             return self.ty.error;
         }
         let name = path[0].name.as_str();

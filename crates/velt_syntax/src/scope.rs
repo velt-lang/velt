@@ -85,7 +85,8 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Extend(_)
-            | ItemKind::Augment(_) => {}
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => {}
         }
     }
 
@@ -160,6 +161,7 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Var(v) => self.var(v),
             ItemKind::TypeAlias(a) => self.ty(&a.ty),
             ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
+            ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ItemKind::ExternFn(sig) => self.signature(sig),
             ItemKind::Import(_) => {}
         }

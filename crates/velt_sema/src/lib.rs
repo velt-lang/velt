@@ -54,6 +54,7 @@ mod json;
 mod known;
 mod literals;
 mod moves;
+mod namespaces;
 mod object_copies;
 mod overloads;
 mod ownership;
@@ -176,6 +177,8 @@ fn check_on_current_thread(
     opts: CheckOptions,
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    let (flat, ns_private) = namespaces::flatten(modules);
+    let modules = flat.as_deref().unwrap_or(modules);
     let (merged, merge_diags) = interface_merge::rewrite(modules);
     let modules = merged.as_deref().unwrap_or(modules);
     let lifted = generic_arrows::lift(modules);
@@ -192,6 +195,7 @@ fn check_on_current_thread(
         let mut cx = ctx::Ctx::new(modules, root);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
+        cx.ns_private = ns_private.clone();
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();

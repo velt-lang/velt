@@ -372,3 +372,43 @@ fn this_parameters_and_the_this_type() {
     };
     assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
 }
+
+#[test]
+fn namespaces_of_types() {
+    let m = parse_ok(
+        "export namespace Define {
+  export type Prop<T> = { value: T };
+  interface I { a: number }
+}
+declare namespace A.B {
+  type X = number;
+}
+const namespace = 1;",
+    );
+    let ItemKind::Namespace(d) = &m.items[0].kind else {
+        panic!("not a namespace: {:?}", m.items[0]);
+    };
+    assert!(m.items[0].exported && !d.declare);
+    assert_eq!(d.name.name, "Define");
+    assert!(m.items[0].exported);
+    assert!(d.items[0].exported && !d.items[1].exported);
+    assert!(matches!(&d.items[0].kind, ItemKind::TypeAlias(a) if a.name.name == "Prop"));
+    assert!(matches!(&d.items[1].kind, ItemKind::Interface(i) if i.name.name == "I"));
+    // `namespace A.B { … }` is `A` holding the exported `B`.
+    let ItemKind::Namespace(a) = &m.items[1].kind else {
+        panic!("not a namespace: {:?}", m.items[1]);
+    };
+    assert!(a.declare && a.name.name == "A" && a.items[0].exported);
+    assert!(
+        matches!(&a.items[0].kind, ItemKind::Namespace(b) if b.name.name == "B" && b.items.len() == 1)
+    );
+    // `namespace` stays an identifier elsewhere.
+    assert!(matches!(&m.items[2].kind, ItemKind::Var(_)));
+    assert_eq!(
+        errors("namespace V {
+  export const x = 1;
+  export type T = number;
+}"),
+        vec!["variables in a namespace are not supported yet: a namespace may hold types, interfaces and namespaces"]
+    );
+}

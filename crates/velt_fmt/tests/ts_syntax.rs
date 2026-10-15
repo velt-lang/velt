@@ -189,6 +189,29 @@ fn declare_global_and_module_blocks() {
 }
 
 #[test]
+fn namespaces() {
+    round_trips(
+        "export namespace Define {
+  // a prop
+  export type Prop<T> = { value: T };
+
+  interface Hidden {
+    a: number;
+  }
+}
+",
+    );
+    round_trips(
+        "declare namespace A {
+  namespace B {
+    type X = number;
+  }
+}
+",
+    );
+}
+
+#[test]
 fn bracketed_and_numeric_keys_keep_their_spelling() {
     // `[7]: 5` once printed as `7: 5`: brackets stay, and numeric names print as written.
     round_trips("const r = { a: 1, [7]: 5, [\"lit\"]: 3, 8: 4, 0x10: 6 };\n");

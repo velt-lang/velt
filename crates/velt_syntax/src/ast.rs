@@ -7,8 +7,10 @@
 
 use velt_common::Span;
 
+mod blocks;
 mod jsx;
 
+pub use blocks::*;
 pub use jsx::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -91,14 +93,10 @@ pub enum ItemKind {
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
     /// declaration of the same name).
     Augment(Augment),
-}
-
-#[derive(Clone, Debug)]
-pub struct Augment {
-    /// `declare module "spec"`: the module specifier (resolved like an import's) and its span;
-    /// `None` for `declare global`.
-    pub module: Option<(String, Span)>,
-    pub items: Vec<Item>,
+    /// `namespace N { … }` / `declare namespace N { … }`: a scope of types (TypeScript's
+    /// namespace without values). Its members are named `N.T` outside it; `namespace A.B { … }`
+    /// is parsed as `A` holding the exported namespace `B`.
+    Namespace(Namespace),
 }
 
 #[derive(Clone, Debug)]

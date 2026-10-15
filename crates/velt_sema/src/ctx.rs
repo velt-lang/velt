@@ -196,6 +196,8 @@ pub(crate) struct Ctx<'m> {
     /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
     /// second check of a program the borrowing version rejects (`crate::check_with`).
     pub held_borrows: bool,
+    /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
+    pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
@@ -306,6 +308,7 @@ impl<'m> Ctx<'m> {
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
+            ns_private: vec![],
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
@@ -538,7 +541,8 @@ impl<'m> Ctx<'m> {
         }
     }
 
-    /// The item a written type path names: `T`, or `ns.T` through namespace import `ns`.
+    /// The item a written type path names: `T`, `ns.T` through namespace import `ns`, or `N.T`
+    /// of a namespace declaration (`crate::namespaces::lookup`).
     pub fn lookup_path_at(
         &self,
         module: usize,
@@ -546,12 +550,9 @@ impl<'m> Ctx<'m> {
         at: Span,
     ) -> Option<Item> {
         match path {
+            [] => None,
             [name] => self.lookup_item_at(module, &name.name, at),
-            [ns, name] if self.scopes[module].namespaces.contains_key(&ns.name) => {
-                let key = format!("{}.{}", ns.name, name.name);
-                self.scopes[module].items.get(&key).copied()
-            }
-            _ => None,
+            _ => crate::namespaces::lookup(self, module, path, at),
         }
     }
 

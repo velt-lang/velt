@@ -18,6 +18,7 @@ mod imports;
 mod items;
 mod jsx;
 mod members;
+mod namespaces;
 mod param_patterns;
 mod param_props;
 mod paren_match;

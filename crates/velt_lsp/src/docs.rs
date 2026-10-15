@@ -180,6 +180,7 @@ impl FileDocs {
         let lo = item.span.lo;
         match &item.kind {
             ast::ItemKind::Import(_) | ast::ItemKind::Augment(_) => {}
+            ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ast::ItemKind::Function(f) => self.sig(&f.sig, lo),
             ast::ItemKind::ExternFn(sig) => self.sig(sig, lo),
             ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
