@@ -283,7 +283,7 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         match fields.into_iter().find(|f| f.name == seg.name) {
-            Some(f) if f.optional => self.ty.option(f.ty),
+            Some(f) if f.optional && self.dynamic(f.ty).is_none() => self.ty.option(f.ty),
             Some(f) => f.ty,
             None => {
                 self.err(

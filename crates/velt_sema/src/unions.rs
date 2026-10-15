@@ -46,6 +46,13 @@ impl Ctx<'_> {
         if flat.contains(&self.ty.error) {
             return self.ty.error;
         }
+        // As in TypeScript, a union with `any` is `any` and one with `unknown` is `unknown`
+        // (`any | null` too: the dynamic value holds `null` itself; crate::any).
+        for d in [crate::any::Dynamic::Any, crate::any::Dynamic::Unknown] {
+            if let Some(&t) = flat.iter().find(|t| self.dynamic(**t) == Some(d)) {
+                return t;
+            }
+        }
         if flat.contains(&self.ty.unit) {
             self.err("`void` cannot be a member of a union type", span);
             return self.ty.error;

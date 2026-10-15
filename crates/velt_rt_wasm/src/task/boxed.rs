@@ -152,7 +152,8 @@ mod tests {
     fn boxed_state_machine() {
         let init = [0i64, 0];
         let mut cx = Context::from_waker(Waker::noop());
-        let raw = raw_cx(&mut cx);
+        let raw_cx = raw_cx(&mut cx);
+        let raw = raw_cx.ptr();
         unsafe {
             let f = velt_rt_fut_box(two_polls, count_drop, init.as_ptr() as *const u8, 16, 8);
             assert_eq!(f as usize % 16, 0);

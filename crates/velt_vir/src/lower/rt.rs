@@ -84,6 +84,8 @@ pub(super) enum Rt {
     RaceOk,
     YieldNow,
     YieldNowFut,
+    AwaitTick,
+    AwaitReady,
     Sleep,
     All,
     AllWithDrop,
@@ -108,6 +110,8 @@ pub(super) enum Rt {
     MutexUnlock,
     // M4: string builder and JSON pull reader (rt_abi_async.md §12)
     StrEq,
+    /// JavaScript's `Number(s)` of a string (`any` == conversions, any.rs).
+    StrToNumber,
     StrbufNew,
     /// A template literal's builder made from a fresh part's buffer (`build_sized`).
     StrbufAdopt,
@@ -246,6 +250,8 @@ impl Rt {
             Rt::RaceOk => f("velt_rt_race_ok", vec![Ptr, U64, U64, Ptr], Ptr),
             Rt::YieldNow => f("velt_rt_yield_now", vec![Ptr], Unit),
             Rt::YieldNowFut => f("velt_rt_yield_now_fut", vec![], Ptr),
+            Rt::AwaitTick => f("velt_rt_await_tick", vec![Ptr], U64),
+            Rt::AwaitReady => f("velt_rt_await_ready", vec![U64, Ptr], U32),
             Rt::Sleep => f("velt_rt_sleep", vec![I64], Ptr),
             Rt::All => f("velt_rt_all", vec![Ptr, U64, U64, Ptr], Ptr),
             Rt::AllWithDrop => f("velt_rt_all_with_drop", vec![Ptr, U64, U64, Ptr, Ptr], Ptr),
@@ -286,6 +292,7 @@ impl Rt {
         let f = |s, params, ret| (s, params, ret, false);
         match self {
             Rt::StrEq => f("velt_rt_str_eq", vec![Ptr, Ptr], U8),
+            Rt::StrToNumber => f("velt_rt_str_to_number", vec![Ptr], F64),
             Rt::StrbufNew => f("velt_rt_strbuf_new", vec![U64, Ptr], Unit),
             Rt::StrbufAdopt => f("velt_rt_strbuf_adopt", vec![Ptr, Ptr, U64, Ptr], U8),
             Rt::StrbufPushStr => f("velt_rt_strbuf_push_str", vec![Ptr, Ptr], Unit),

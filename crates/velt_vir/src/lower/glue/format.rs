@@ -99,7 +99,28 @@ impl FnLower<'_, '_> {
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
-            _ => {
+            // A string held by an `any` prints as itself at the top level (lower/any.rs).
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
+                let (s_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+                let is_str = self.any_holds_str(place);
+                self.branch(is_str, s_bb, other_bb);
+                self.switch_to(s_bb);
+                let data = Operand::Copy(proj(place, Proj::Field(0)));
+                self.push_str(buf, data);
+                self.goto(done);
+                self.switch_to(other_bb);
+                self.format_top_inspect(buf, place, ty);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.format_top_inspect(buf, place, ty),
+        }
+    }
+
+    /// The top-level text of a value that may hold containers.
+    fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        {
+            {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
                 self.call_rt(Rt::StrbufInspectBegin, vec![], None);

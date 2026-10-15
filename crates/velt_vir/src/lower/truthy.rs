@@ -21,7 +21,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Assign whether the value at `p` (of the concrete type `t`) is truthy to `out`.
-    fn truthy_into(&mut self, out: &Place, p: &Place, t: TyId) {
+    pub(super) fn truthy_into(&mut self, out: &Place, p: &Place, t: TyId) {
         let v = match self.cx.kind(t) {
             TyKind::Bool => Operand::Copy(p.clone()),
             TyKind::Int(_) => {

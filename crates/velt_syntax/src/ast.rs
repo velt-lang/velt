@@ -312,6 +312,12 @@ pub enum TypeExprKind {
     Array(Box<TypeExpr>),
     /// `[A, B]`
     Tuple(Vec<TypeExpr>),
+    /// `...T` in a tuple type (a variadic tuple type, `[string, ...A]`): `T`'s elements. Only
+    /// a direct element of [`TypeExprKind::Tuple`].
+    TupleRest(Box<TypeExpr>),
+    /// `T?` / `name?: T` in a tuple type: an element that may be left out (`[A, B?]`). Only a
+    /// direct element of [`TypeExprKind::Tuple`].
+    TupleOptional(Box<TypeExpr>),
     /// `(a: A, b: B) => R`, optionally `=> R throws E` (the function may throw `E`).
     Function {
         params: Vec<TypeExpr>,
