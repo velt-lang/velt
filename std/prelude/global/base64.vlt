@@ -1,0 +1,3 @@
+// Global (loaded when a module names one of these): Node's `btoa` and `atob`, Base64 of binary
+// strings (docs/std/encoding.md).
+export { btoa, atob } from "velt:encoding/binary_string";
