@@ -280,21 +280,17 @@ impl FnCx<'_, '_> {
             return self.arity_error("Object.is", 2, args, span);
         };
         // Against `null` or `undefined`, SameValue is `===`.
-        let nothing = |e: &ast::Expr| {
-            matches!(&strip_parens(e).kind, ast::ExprKind::Lit(ast::Lit::Null))
-                || matches!(&strip_parens(e).kind, ast::ExprKind::Ident(i) if i.name == "undefined")
+        let nothing = |e: &ast::Expr| match &strip_parens(e).kind {
+            ast::ExprKind::Lit(l @ (ast::Lit::Null | ast::Lit::Undefined)) => Some(l.clone()),
+            _ => None,
         };
-        if nothing(a) && nothing(b) {
+        if let (Some(x), Some(y)) = (nothing(a), nothing(b)) {
             // `Object.is(null, null)`: `null` is itself, and not `undefined`.
-            let same = matches!(
-                (&strip_parens(a).kind, &strip_parens(b).kind),
-                (ast::ExprKind::Lit(_), ast::ExprKind::Lit(_))
-                    | (ast::ExprKind::Ident(_), ast::ExprKind::Ident(_))
-            );
+            let same = std::mem::discriminant(&x) == std::mem::discriminant(&y);
             let b = self.cx.ty.bool_;
             return self.mk(H::Lit(hir::Lit::Bool(same)), b, span);
         }
-        if nothing(a) || nothing(b) {
+        if nothing(a).is_some() || nothing(b).is_some() {
             let eq = synth(
                 ast::ExprKind::Binary {
                     op: ast::BinaryOp::StrictEq,
