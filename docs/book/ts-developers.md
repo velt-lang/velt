@@ -305,7 +305,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 
 ## Not supported
 
-`var`, `eval`, prototypes, `delete` (other than on a `Record`), `with`, getters on object literals,
+`var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`), `with`, getters on object literals,
 decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
 method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode

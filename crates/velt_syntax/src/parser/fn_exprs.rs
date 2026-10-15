@@ -37,7 +37,7 @@ impl<'a> Parser<'a> {
             let mut sig = self.parse_sig_rest(lo, name, is_async)?;
             sig.is_generator = true;
             let this_param = self.this_param.take();
-            let body = self.parse_block()?;
+            let body = self.parse_fn_body()?;
             self.check_fn_this(this_param, &body, in_object);
             return Ok(ExprKind::Function(Box::new(FnDecl {
                 sig,
@@ -53,7 +53,7 @@ impl<'a> Parser<'a> {
         } else {
             (None, None)
         };
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         self.check_fn_this(this_param, &body, in_object);
         if !name.name.is_empty() {
             self.no_own_name(&name, &body);

@@ -8,12 +8,19 @@ impl<'a> Parser<'a> {
     /// `{ stmts }`. A missing `}` at end of file is reported and the partial block is returned.
     pub(super) fn parse_block(&mut self) -> PResult<Block> {
         let lo = self.cur_lo();
+        let fn_body = std::mem::take(&mut self.fn_body_next);
         self.expect(Tok::LBrace)?;
         // A function body in a `for` head (`for (f = () => { … }; …)`) has its own `in`.
-        self.allow_in(|p| p.parse_block_in(lo))
+        self.allow_in(|p| p.parse_block_in(lo, fn_body))
     }
 
-    fn parse_block_in(&mut self, lo: u32) -> PResult<Block> {
+    /// The body of a function: a block in which `var` may be declared (`var_stmt`).
+    pub(super) fn parse_fn_body(&mut self) -> PResult<Block> {
+        self.fn_body_next = true;
+        self.parse_block()
+    }
+
+    fn parse_block_in(&mut self, lo: u32, fn_body: bool) -> PResult<Block> {
         let mut stmts = Vec::new();
         loop {
             match self.peek() {
@@ -27,6 +34,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {}
             }
+            self.var_ok = fn_body;
             self.parse_stmt_recovering(&mut stmts);
         }
         Ok(Block {
@@ -91,6 +99,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt_kind(&mut self) -> PResult<StmtKind> {
+        let var_ok = std::mem::take(&mut self.var_ok);
+        if self.at_var_decl() {
+            return self.var_stmt(var_ok);
+        }
         if self.at_using_decl() {
             let var = self.parse_using_decl()?;
             self.expect_semi()?;

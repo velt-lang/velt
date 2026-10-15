@@ -1,7 +1,9 @@
 //! Items: imports, functions, `declare function`, type aliases and variables, plus the blank-line
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
-use velt_syntax::ast::{Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl};
+use velt_syntax::ast::{
+    Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl, VarKind,
+};
 
 use super::lists::delimited;
 use super::script::{blank_before, Top};
@@ -165,7 +167,26 @@ impl<'a> Printer<'a> {
 
     /// `const pattern: T = init` without the semicolon (also used by `for` initializers).
     pub(super) fn var_decl(&mut self, var: &VarDecl) -> Doc {
-        cat![var.kind.keyword(), " ", self.declarator(var)]
+        cat![self.var_keyword(var), " ", self.declarator(var)]
+    }
+
+    /// The keyword of `var`: `var` when the source has it (the AST reads `var` as `let`),
+    /// also for a further declarator of a `var` (whose span starts at its pattern).
+    fn var_keyword(&mut self, var: &VarDecl) -> &'static str {
+        let written = crate::source::slice(self.src, var.span);
+        let starts = |kw: &str| {
+            written
+                .strip_prefix(kw)
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_whitespace()))
+        };
+        let is_var =
+            var.kind == VarKind::Let && (starts("var") || (self.after_var && !starts("let")));
+        self.after_var = is_var;
+        if is_var {
+            "var"
+        } else {
+            var.kind.keyword()
+        }
     }
 
     /// `pattern: T = init`: a declaration without its keyword (`for (let a = 1, b = 2; …)`).

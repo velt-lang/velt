@@ -427,7 +427,7 @@ impl<'a> Parser<'a> {
         }
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         Ok(Some(ObjectProp::Method(Box::new(FnDecl {
             sig,
             body,
@@ -449,7 +449,7 @@ impl<'a> Parser<'a> {
         };
         let mut sig = self.parse_sig_rest(lo, anonymous, is_async)?;
         sig.is_generator = true;
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         self.reject_this_in_method(&name, &body);
         let span = self.span_from(lo);
         let f = FnDecl {
@@ -501,7 +501,7 @@ impl<'a> Parser<'a> {
         } else {
             (None, None)
         };
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         self.reject_this_in_method(&name, &body);
         let span = self.span_from(lo);
         let arrow = self.mk_expr(

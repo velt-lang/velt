@@ -43,6 +43,9 @@ pub(crate) struct Printer<'a> {
     /// Start offsets of the elements that are the body of an arrow passed to a call directly
     /// inside `{…}` (`{xs.map((x) => <li />)}`): their parentheses always break (prettier).
     broken_jsx_bodies: HashSet<u32>,
+    /// The declaration printed last was written with `var`, which the AST reads as `let`: a
+    /// further declarator of it (`var a = 1, b = 2`, printed as its own declaration) keeps it.
+    after_var: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -51,6 +54,7 @@ impl<'a> Printer<'a> {
             src,
             comments: Comments::new(src),
             broken_jsx_bodies: HashSet::new(),
+            after_var: false,
         }
     }
 
