@@ -124,7 +124,7 @@ async function* byteChunks(
     if (r.done) {
       return;
     }
-    yield Uint8Array.fromBytes(r.value);
+    yield Uint8Array.wrap(r.value);
   }
 }
 
