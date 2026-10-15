@@ -43,6 +43,7 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod holds_promise;
 mod hooks;
 pub mod ide;
 mod index_signatures;
