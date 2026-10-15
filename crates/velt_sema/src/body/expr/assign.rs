@@ -109,17 +109,9 @@ impl FnCx<'_, '_> {
         }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
             let item = self.lookup_item(&id.name, id.span);
-            if let Some(crate::ctx::Item::Def(d)) = item {
-                if self.cx.global(d).is_some_and(|g| g.stored) {
-                    // A module-level `let`: its slot in the module state.
-                    let place = self.global_read(d, Want::BorrowMut, id.span);
-                    if self.require_mutable(&place, "assign to") {
-                        return Some(place);
-                    }
-                    return None;
-                }
-            }
-            if item.is_some() {
+            if let Some(place) = self.module_let_target(item, id) {
+                return place;
+            } else if item.is_some() {
                 self.cx.err(
                     format!("cannot assign to `{}`: it is not a variable", id.name),
                     span,

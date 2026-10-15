@@ -99,8 +99,7 @@ pub(crate) struct Ctx<'m> {
     /// for because they are shared: lowering counts them from its first pass
     /// (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
-    /// Module-level `let`s in initialization order (`crate::module_state`).
-    pub module_slots: Vec<DefId>,
+    pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.

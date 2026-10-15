@@ -132,3 +132,22 @@ pub(crate) fn build(cx: &mut Ctx) -> Option<hir::ModuleState> {
     let ty = cx.ty.intern(TyKind::Tuple(tys));
     Some(hir::ModuleState { ty, slots })
 }
+
+impl crate::body::FnCx<'_, '_> {
+    /// `x = v` where `x` names a module-level `let` (or a kept `const`, which `require_mutable`
+    /// rejects): its slot, or `Some(None)` after an error; `None` for any other name.
+    pub(crate) fn module_let_target(
+        &mut self,
+        item: Option<crate::ctx::Item>,
+        id: &velt_syntax::ast::Ident,
+    ) -> Option<Option<hir::Expr>> {
+        let Some(crate::ctx::Item::Def(d)) = item else {
+            return None;
+        };
+        if !self.cx.global(d).is_some_and(|g| g.stored) {
+            return None;
+        }
+        let place = self.global_read(d, crate::body::Want::BorrowMut, id.span);
+        Some(self.require_mutable(&place, "assign to").then_some(place))
+    }
+}
