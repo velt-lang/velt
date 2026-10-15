@@ -517,13 +517,17 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `type Name<T> = T;` (the `;` may be left out before the `}` of a block, namespace or
+    /// `declare global` and at the end of the file, as everywhere in TypeScript).
     pub(super) fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
         let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
-        self.expect_semi()?;
+        if !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
+            self.expect_semi()?;
+        }
         Ok(TypeAlias { name, generics, ty })
     }
 

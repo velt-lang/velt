@@ -60,8 +60,23 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
             .retain(|i| !matches!(i.kind, ast::ItemKind::Augment(_)));
         for block in blocks {
             for item in block.items {
-                let ast::ItemKind::Interface(decl) = item.kind else {
-                    continue; // reported by the parser
+                let decl = match item.kind {
+                    ast::ItemKind::Interface(d) if d.call_sigs.is_empty() => d,
+                    ast::ItemKind::Interface(d) => {
+                        let s = &d.call_sigs[0];
+                        diags.push(unsupported_in_block("call signatures", s.span, block.module.is_none()));
+                        continue;
+                    }
+                    // An interface with an index signature (the parser gives it as an alias).
+                    ast::ItemKind::TypeAlias(a) => {
+                        diags.push(unsupported_in_block(
+                            "an index signature",
+                            a.name.span,
+                            block.module.is_none(),
+                        ));
+                        continue;
+                    }
+                    _ => continue, // reported by the parser
                 };
                 match &block.module {
                     None => augment_global(&mut out[m].ast.items, decl, item.span, &mut diags),
@@ -246,6 +261,7 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
         return;
     }
     into.extends.extend(from.extends);
+    into.call_sigs.extend(from.call_sigs);
     let taken = |into: &ast::InterfaceDecl, n: &str| {
         into.fields
             .iter()
@@ -272,6 +288,20 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
         }
         into.methods.push(m);
     }
+}
+
+/// An interface with `what` (at `span`) in a `declare global` (`global`) or `declare module`
+/// block: not supported yet (it would be a type alias, which does not merge).
+fn unsupported_in_block(what: &str, span: Span, global: bool) -> Diagnostic {
+    let place = match global {
+        true => "`declare global`",
+        false => "`declare module`",
+    };
+    Diagnostic::error(
+        format!("an interface with {what} in {place} is not supported yet"),
+        span,
+    )
+    .with_note("declare the interface in a module (`export interface …`) and import it where it is used")
 }
 
 /// Reports member `member` of interface `iface` declared in two merged declarations.

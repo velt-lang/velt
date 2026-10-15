@@ -1,0 +1,22 @@
+// A namespace named like an import conflicts with it (TypeScript's TS2440), whichever form
+// the import has.
+import { N } from "./_namespace_import_conflict_lib.vlt";
+import type { P } from "./_namespace_import_conflict_lib.vlt";
+import * as M from "./_namespace_import_conflict_lib.vlt";
+import { Q as R } from "./_namespace_import_conflict_lib.vlt";
+
+namespace N {
+  export type T = string;
+}
+namespace P {
+  export type T = string;
+}
+namespace M {
+  export type T = string;
+}
+namespace R {
+  export type T = string;
+}
+
+const a: N.T = "which";
+console.log(a);

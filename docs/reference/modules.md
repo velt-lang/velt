@@ -95,6 +95,12 @@ console.log(s.ends[1].x, s.length); // 3 5
 
 - Only members declared with `export` are visible outside (`Geo.Pair` is TypeScript's TS2694,
   ``namespace `Geo` has no exported member `Pair` ``); in a `declare namespace` every member is.
+  A member declared without `export` is visible only in its own block, not in another block
+  of the same namespace.
+- Inside a namespace, a name used as a type means a type or interface (a nested namespace of
+  the same name does not hide an outer type), and the first part of `B.T` a namespace.
+- A namespace can't share its name with an import (TypeScript's TS2440: ``import declaration
+  conflicts with local declaration of `N` ``).
 - An exported namespace is imported and re-exported by its name, like a type
   (`import { type Geo } from "./geo"`, `export type { Geo } from "./geo"`), and through
   `import * as m` as `m.Geo.Point`.

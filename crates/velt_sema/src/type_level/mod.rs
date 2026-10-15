@@ -650,6 +650,9 @@ fn infer_names(t: &ast::TypeExpr) -> Vec<String> {
                 go(value, out);
             }
             K::Mapped(m) => go(&m.value, out),
+            K::Callable { sigs, members } => {
+                go(&crate::call_sigs::lower(sigs, members, t.span), out)
+            }
             K::TemplateLiteral { types, .. } => types.iter().for_each(|a| go(a, out)),
             K::Predicate { .. }
             | K::Literal(_)

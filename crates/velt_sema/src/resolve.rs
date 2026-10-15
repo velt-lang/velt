@@ -99,6 +99,10 @@ impl Ctx<'_> {
             ast::TypeExprKind::IndexSig {
                 fields, key, value, ..
             } => self.resolve_index_sig(fields, &key.ty, value, env),
+            ast::TypeExprKind::Callable { sigs, members } => {
+                let lowered = crate::call_sigs::lower(sigs, members, t.span);
+                self.resolve_type(&lowered, env)
+            }
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
             ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),

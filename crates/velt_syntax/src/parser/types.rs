@@ -415,18 +415,21 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RBrace)?;
         let span = self.span_from(lo);
-        let members = (!fields.is_empty() || index.is_some() || sigs.is_empty()).then(|| {
-            let kind = match index {
-                Some(ix) => ix.into_type(fields),
-                None => TypeExprKind::Object(fields),
-            };
-            TypeExpr { kind, span }
-        });
-        Ok(Self::callable_type(
-            sigs,
-            members.into_iter().collect(),
+        let kind = match index {
+            Some(ix) => ix.into_type(fields),
+            None => TypeExprKind::Object(fields),
+        };
+        let ty = TypeExpr { kind, span };
+        if sigs.is_empty() {
+            return Ok(ty);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Callable {
+                sigs,
+                members: Box::new(ty),
+            },
             span,
-        ))
+        })
     }
 
     /// At `[name: K]` (an index signature, after any `readonly`)?

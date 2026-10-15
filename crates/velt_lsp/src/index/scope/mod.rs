@@ -272,6 +272,7 @@ impl<'a> Walker<'a> {
             self.declared(&m.sig.name, kind);
             self.function(&m.sig, m.body.as_ref());
         }
+        i.call_sigs.iter().for_each(|s| self.function(&s.sig, None));
     }
 
     fn fields(&mut self, fields: &'a [ast::Field], owner: &str) {
@@ -340,6 +341,10 @@ impl<'a> Walker<'a> {
                 fields.iter().for_each(|f| self.ty(&f.ty));
                 self.ty(&key.ty);
                 self.ty(value);
+            }
+            ast::TypeExprKind::Callable { sigs, members } => {
+                sigs.iter().for_each(|s| self.function(&s.sig, None));
+                self.ty(members);
             }
             ast::TypeExprKind::KeyOf(t) => self.ty(t),
             ast::TypeExprKind::Conditional(c) => {

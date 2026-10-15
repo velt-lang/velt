@@ -175,9 +175,9 @@ impl<'a> Parser<'a> {
             extends,
             fields: vec![],
             methods: vec![],
+            call_sigs: vec![],
         };
         let mut index = None;
-        let mut sigs = vec![];
         self.parse_members(|p| {
             let lo = p.cur_lo();
             let readonly = p.at(Tok::Kw(Kw::Readonly))
@@ -193,14 +193,11 @@ impl<'a> Parser<'a> {
                 return p.expect_member_end();
             }
             if let Some(sig) = p.parse_call_signature()? {
-                sigs.push(sig);
+                decl.call_sigs.push(sig);
                 return p.expect_member_end();
             }
             p.parse_interface_member(&mut decl)
         })?;
-        if !sigs.is_empty() {
-            return Ok(self.callable_interface(lo, decl, index, sigs));
-        }
         let Some(index) = index else {
             return Ok(ItemKind::Interface(decl));
         };
@@ -237,13 +234,23 @@ impl<'a> Parser<'a> {
             })
             .collect();
         let span = self.span_from(lo);
+        let mut ty = TypeExpr {
+            kind: index.into_type(fields),
+            span,
+        };
+        if !decl.call_sigs.is_empty() {
+            ty = TypeExpr {
+                kind: TypeExprKind::Callable {
+                    sigs: decl.call_sigs,
+                    members: Box::new(ty),
+                },
+                span,
+            };
+        }
         Ok(ItemKind::TypeAlias(TypeAlias {
             name: decl.name,
             generics: decl.generics,
-            ty: TypeExpr {
-                kind: index.into_type(fields),
-                span,
-            },
+            ty,
         }))
     }
 

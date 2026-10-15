@@ -252,13 +252,13 @@ fn numeric_property_names_and_call_signatures() {
     };
     assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
-    // A call signature alone is the function type it declares; with members or other
-    // signatures, the intersection of them (TypeScript's meaning).
+    // Call and construct signatures are kept as written (sema gives them their type): in an
+    // interface's `call_sigs`, in an object type's `Callable`.
     let m = parse_ok(
         "interface F {
   (x: number): string
 }
-type G = { <T>(x: T): T };
+type G = { <T>(x?: T): T; z: string };
 interface H<T> extends B {
   (x: T): void
   y: number
@@ -266,27 +266,34 @@ interface H<T> extends B {
 }
 type P = { new (x: number): P; (y: string): P };",
     );
-    assert_eq!(alias_ty(&m, 0), "fn(number) => string");
-    assert!(matches!(
-        &m.items[1].kind,
-        ItemKind::TypeAlias(a) if matches!(a.ty.kind, TypeExprKind::GenericFunction { .. })
-    ));
-    let ItemKind::TypeAlias(h) = &m.items[2].kind else {
-        panic!("not a type alias: {:?}", m.items[2]);
+    let ItemKind::Interface(f) = &m.items[0].kind else {
+        panic!("not an interface: {:?}", m.items[0]);
     };
-    assert_eq!(h.generics.len(), 1);
-    let TypeExprKind::Intersection(parts) = &h.ty.kind else {
-        panic!("not an intersection: {:?}", h.ty);
+    assert_eq!(f.call_sigs.len(), 1);
+    assert!(!f.call_sigs[0].construct && f.call_sigs[0].sig.name.name.is_empty());
+    assert_eq!(f.call_sigs[0].sig.params[0].name.name, "x");
+    let ItemKind::TypeAlias(g) = &m.items[1].kind else {
+        panic!("not a type alias: {:?}", m.items[1]);
     };
-    assert!(matches!(parts[0].kind, TypeExprKind::Function { .. }));
-    assert!(matches!(&parts[1].kind, TypeExprKind::Named { path, .. } if path[0].name == "B"));
-    assert!(matches!(&parts[2].kind, TypeExprKind::Object(fields) if fields.len() == 2));
+    let TypeExprKind::Callable { sigs, members } = &g.ty.kind else {
+        panic!("not a callable object type: {:?}", g.ty);
+    };
+    assert_eq!(sigs[0].sig.generics.len(), 1);
+    assert!(sigs[0].sig.params[0].optional);
+    assert!(matches!(&members.kind, TypeExprKind::Object(fields) if fields.len() == 1));
+    let ItemKind::Interface(h) = &m.items[2].kind else {
+        panic!("not an interface: {:?}", m.items[2]);
+    };
+    assert_eq!((h.call_sigs.len(), h.fields.len(), h.methods.len()), (1, 1, 1));
+    assert_eq!(h.extends.len(), 1);
     let ItemKind::TypeAlias(p) = &m.items[3].kind else {
         panic!("not a type alias: {:?}", m.items[3]);
     };
     assert!(matches!(
         &p.ty.kind,
-        TypeExprKind::Intersection(parts) if matches!(parts[0].kind, TypeExprKind::Construct(_))
+        TypeExprKind::Callable { sigs, members }
+            if sigs.len() == 2 && sigs[0].construct && !sigs[1].construct
+                && matches!(&members.kind, TypeExprKind::Object(f) if f.is_empty())
     ));
     let none: Vec<String> = vec![];
     assert_eq!(
@@ -435,4 +442,18 @@ const namespace = 1;",
 }"),
         vec!["variables in a namespace are not supported yet: a namespace may hold types, interfaces and namespaces"]
     );
+}
+
+#[test]
+fn a_type_alias_may_end_at_a_closing_brace() {
+    let m = parse_ok(
+        "declare namespace D { type T = number; namespace E { type U = string } }
+declare global { namespace G { type V = boolean } }
+function f() { type W = number }",
+    );
+    let ItemKind::Namespace(d) = &m.items[0].kind else {
+        panic!("not a namespace: {:?}", m.items[0]);
+    };
+    assert!(matches!(&d.items[1].kind, ItemKind::Namespace(e) if e.items.len() == 1));
+    assert_eq!(m.items.len(), 3);
 }

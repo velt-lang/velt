@@ -168,6 +168,18 @@ pub fn ty(t: &TypeExpr) -> String {
             }
             out + "`"
         }
+        TypeExprKind::Callable { sigs, members } => {
+            let sigs: Vec<String> = sigs
+                .iter()
+                .map(|s| {
+                    let params: Vec<String> = s.sig.params.iter().map(|p| ty(&p.ty)).collect();
+                    let ret = s.sig.ret.as_ref().map(ty).unwrap_or_else(|| "void".into());
+                    let new = if s.construct { "new " } else { "" };
+                    format!("{new}({}): {ret}", params.join(", "))
+                })
+                .collect();
+            format!("{{{} & {}}}", sigs.join("; "), ty(members))
+        }
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Undefined => "undefined".into(),
         TypeExprKind::Void => "void".into(),

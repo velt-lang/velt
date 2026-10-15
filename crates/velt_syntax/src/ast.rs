@@ -247,6 +247,10 @@ pub struct InterfaceDecl {
     /// Fields every implementor must have (same name and type).
     pub fields: Vec<Field>,
     pub methods: Vec<InterfaceMethod>,
+    /// Call and construct signatures (`(x: T): R;`, `new (x: T): C;`), in source order. Sema
+    /// gives an interface with any the type its body spells, as for
+    /// [`TypeExprKind::Callable`] (with its bases as parts of the intersection).
+    pub call_sigs: Vec<CallSig>,
 }
 
 /// Interface method: required (`body: None`) or with a default implementation.
@@ -352,6 +356,17 @@ pub enum TypeExprKind {
         value: Box<TypeExpr>,
         /// `readonly [key: string]: T`
         readonly: bool,
+    },
+    /// An object type with call or construct signatures: `{ (x: T): R; n: number }`,
+    /// `{ new (x: T): C }`. Kept as written (for `velt fmt` and the tools); sema gives it the
+    /// type TypeScript does: one signature alone is that function type, more signatures or
+    /// members the intersection of all of them.
+    Callable {
+        /// The signatures, in source order.
+        sigs: Vec<CallSig>,
+        /// The other members: an [`TypeExprKind::Object`] (empty when there are none) or an
+        /// [`TypeExprKind::IndexSig`].
+        members: Box<TypeExpr>,
     },
     /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
     /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof

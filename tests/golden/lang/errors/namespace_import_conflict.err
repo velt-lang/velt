@@ -1,0 +1,4 @@
+namespace_import_conflict.vlt:3:10: error: import declaration conflicts with local declaration of `N`
+namespace_import_conflict.vlt:4:15: error: import declaration conflicts with local declaration of `P`
+namespace_import_conflict.vlt:5:13: error: import declaration conflicts with local declaration of `M`
+namespace_import_conflict.vlt:6:15: error: import declaration conflicts with local declaration of `R`

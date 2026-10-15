@@ -32,6 +32,7 @@ mod assigned_fields;
 mod ast_walk;
 mod body;
 mod brands;
+mod call_sigs;
 mod collect;
 mod ctx;
 mod defs;
@@ -178,10 +179,16 @@ fn check_on_current_thread(
     opts: CheckOptions,
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
-    let (flat, ns_private) = namespaces::flatten(modules);
+    let mut merge_diags = call_sigs::check(modules);
+    let (flat, ns_private, diags) = namespaces::flatten(modules);
+    merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
-    let (merged, merge_diags) = interface_merge::rewrite(modules);
+    let (merged, diags) = interface_merge::rewrite(modules);
+    merge_diags.extend(diags);
     let modules = merged.as_deref().unwrap_or(modules);
+    let (callable, diags) = call_sigs::rewrite(modules);
+    merge_diags.extend(diags);
+    let modules = callable.as_deref().unwrap_or(modules);
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = overloads::rewrite(modules);

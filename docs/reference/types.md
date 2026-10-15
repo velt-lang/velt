@@ -1115,7 +1115,11 @@ console.log(b.v); // hi
   (#921); a generic call signature (`<T>(x: T): T`) is a generic function type and a
   construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
   a method, while in a class it is) a construct type, both planned
-  ([Functions](functions.md#arrow-functions-and-function-types)).
+  ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
+  call signature (`(x?: number): void`) are not supported yet, and a parameter initializer
+  there (`(x = 1): void`) is an error, as in TypeScript. An interface with call signatures
+  merges with the other declarations of its name, but not yet in `declare global` or
+  `declare module`, nor inside a function body.
 
 ```ts
 interface Formatter {

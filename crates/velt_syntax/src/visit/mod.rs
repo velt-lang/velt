@@ -125,6 +125,7 @@ fn walk_interface<'a>(i: &'a ast::InterfaceDecl, v: &mut dyn Visit<'a>) {
     walk_generics(&i.generics, v);
     i.extends.iter().for_each(|e| walk_type(e, v));
     i.fields.iter().for_each(|f| walk_type(&f.ty, v));
+    i.call_sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
     for m in &i.methods {
         walk_sig_types(&m.sig, v);
         if let Some(body) = &m.body {

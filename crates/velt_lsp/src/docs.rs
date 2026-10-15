@@ -283,6 +283,13 @@ impl FileDocs {
                 self.type_fields(&key.ty);
                 self.type_fields(value);
             }
+            ast::TypeExprKind::Callable { sigs, members } => {
+                for s in sigs {
+                    s.sig.params.iter().for_each(|p| self.type_fields(&p.ty));
+                    s.sig.ret.iter().for_each(|t| self.type_fields(t));
+                }
+                self.type_fields(members);
+            }
             ast::TypeExprKind::KeyOf(t) => self.type_fields(t),
             ast::TypeExprKind::Conditional(c) => {
                 [&c.check, &c.extends, &c.then, &c.else_]

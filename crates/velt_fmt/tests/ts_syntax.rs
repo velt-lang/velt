@@ -226,3 +226,65 @@ fn members_without_semicolons_parse() {
     let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
     round_trips(&got);
 }
+
+#[test]
+fn call_and_construct_signatures_keep_their_form() {
+    // Interfaces stay interfaces (they merge, and `extends` / `implements` name them), members
+    // keep their order, and parameters their names, `?` and initializers.
+    round_trips(
+        "interface F {
+  // c
+  (x: number, y: string): string;
+}
+",
+    );
+    round_trips(
+        "interface H {
+  (x: number): string;
+  stop(): void;
+  n: number;
+}
+",
+    );
+    round_trips("interface E extends F {\n  (z: boolean): void;\n}\n");
+    round_trips("interface P {\n  new (x: number): P;\n  <T>(y: T): T;\n}\n");
+    round_trips("interface I {\n  (x: number): string;\n  [key: string]: number;\n}\n");
+    round_trips("type Q = { (x?: number): void };\n");
+    round_trips("type D = { (x = 1): void };\n");
+    round_trips("type G = { <T>(x: T): T; z: string };\n");
+    round_trips("type U = { new (x: number): Foo } | null;\n");
+    round_trips("type S = { (): void; (x: number): number };\n");
+    round_trips("let f: { (x: number): string } = g;\n");
+}
+
+#[test]
+fn construct_and_generic_function_types_in_unions_keep_their_parentheses() {
+    // `new (x: number) => Foo | null` would return `Foo | null`.
+    round_trips("type U = (new (x: number) => Foo) | null;\n");
+    round_trips("type A = (new () => Foo)[];\n");
+    round_trips("type B = (<T>(x: T) => T) | null;\n");
+    round_trips("type C = (new () => Foo) & { n: number };\n");
+}
+
+#[test]
+fn call_signatures_are_formatted() {
+    let got = format_source("interface F { (x:number):string; n:number }\ntype T = {(x:number):string}\n")
+        .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "interface F {\n  (x: number): string;\n  n: number;\n}\n\ntype T = { (x: number): string };\n"
+    );
+    if let Err(msg) = common::check(&got) {
+        panic!("{msg}");
+    }
+}
+
+#[test]
+fn a_type_alias_may_end_at_the_closing_brace() {
+    let got = format_source("namespace N { type U = string }\ndeclare global {\n  namespace G { type V = number }\n}\n")
+        .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "namespace N {\n  type U = string;\n}\n\ndeclare global {\n  namespace G {\n    type V = number;\n  }\n}\n"
+    );
+}
