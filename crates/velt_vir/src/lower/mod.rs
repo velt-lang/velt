@@ -118,10 +118,13 @@ pub(crate) fn lower_program(
 ) -> (vir::Program, Vec<velt_common::Diagnostic>) {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
-    for _ in 0..MAX_BOXING_PASSES {
+    let mut no_await_steps = false;
+    // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
+    for _ in 0..=MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
+        cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -145,7 +148,15 @@ pub(crate) fn lower_program(
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
             let diags = cx.nothing_clash_diagnostics();
-            return (cx.finish(), diags);
+            let types_now = cx.types.clone();
+            let program = cx.finish();
+            if !no_await_steps && async_fn::await_order::unobservable(&program) {
+                // Lower again without the steps: the program then has no step code at all.
+                no_await_steps = true;
+                types = types_now;
+                continue;
+            }
+            return (program, diags);
         }
         types = cx.types;
         counted = next;
@@ -256,6 +267,9 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
+    /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
+    /// nothing in it can make a task's await word non-0.
+    no_await_steps: bool,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,

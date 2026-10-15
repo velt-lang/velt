@@ -53,8 +53,14 @@ Promises behave like JavaScript's, at Rust's cost:
 
 - A started promise runs on its creator's task, never at the same time as the creator or the
   task's other promises (JavaScript's single-threaded model), so no thread-safety rules apply to
-  it. When it finishes, whoever awaits it resumes at once, like a JS microtask, so output order
-  matches Node. Only `spawn` puts work on another core.
+  it. Only `spawn` puts work on another core.
+- `await` takes Node's steps: the code after it runs one microtask after the promise settles
+  (one microtask later when it already has), behind the callbacks and other `await`s queued before it, so
+  promises started side by side interleave as in Node (`const a = f(); const b = g();` runs `f`
+  and `g` up to their first `await`, then the caller's next line, then their continuations in
+  turn). Awaiting an async call takes its step when the call returns. A program that never
+  starts a promise, chains a callback or settles one with a stored `resolve` can't tell the
+  steps apart, and its `await`s cost what a plain call does.
 - Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
   So the started promises (and the task itself) waiting for timers that are due together resume
   in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
@@ -208,17 +214,19 @@ Callbacks run in Node's order: after the code that is running, in the order they
 runs before the callbacks queued by the task that scheduled it. `finally` passes the value or
 the reason on two steps after its callback, as in Node, and `Promise.allSettled` and
 `Promise.any` settle in the step Node's do. Chains interleave as in Node
-(`a.then(f1).then(f2)` next to `b.then(g1).then(g2)` runs `f1 g1 f2 g2`). `await` does not go
-through the queue, so a program that uses no callbacks runs exactly as without them. That is
-where Velt's order differs from Node's: code after an `await` resumes as soon as the promise
-settles (or at once when it already has), while in Node it waits behind the callbacks queued
-before it. So `p.then(f); await q;` with `q` settled runs the code after the `await` before
-`f`; likewise an async function that awaits inside resumes earlier than in Node, relative to
-the callbacks queued meanwhile. `Promise.all` and `Promise.race` also settle in fewer steps than
-Node's (they keep `await` on them fast), which matters only for callbacks chained on them next
-to other callbacks. A promise settled by a `resolve` or `reject` called later (kept from
-`Promise.withResolvers()` or a `new Promise` executor) settles at the task's next step, so
-callbacks queued meanwhile run before the ones chained on it.
+(`a.then(f1).then(f2)` next to `b.then(g1).then(g2)` runs `f1 g1 f2 g2`). Code after an `await`
+goes through the same queue, so `p.then(f); await q;` runs `f` first, as in Node. A `resolve` or
+`reject` called later (kept from `Promise.withResolvers()` or a `new Promise` executor) queues
+the callbacks and `await`s waiting for that promise right away, as Node does.
+
+Where the order still differs from Node's: `Promise.all` and `Promise.race` settle in fewer
+steps (they keep `await` on them fast), which matters only for callbacks and `await`s running
+next to them. Async generators take Node's steps (a `yield` awaits its value, `return()` awaits
+before it closes the body), except for calls queued behind a running one: such a call starts one
+step later than in Node, and the code after an `await` of an earlier call can run after it
+rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
+task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
+`resolve` called later resumes its waiters at the executor's next step.
 
 ```ts
 class Failed extends Error {}

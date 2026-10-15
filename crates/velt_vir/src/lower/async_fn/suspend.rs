@@ -185,7 +185,84 @@ impl FnLower<'_, '_> {
         let ret = self.cx.async_result(f);
         let ret = self.cx.subst(ret, &targs);
         let throws = self.cx.fn_throws(f, &targs);
+        // The child's promise settled: one step before the caller goes on, as in Node.
+        let stepped = self.await_step(|lw| {
+            let held = match throws {
+                Some(e) => lw.cx.intern(TyKind::Result(ret, e)),
+                None => ret,
+            };
+            let sp = lw.addr(Place::local(child));
+            let base = lw.operand_place(sp, Ty::Ptr);
+            let vt = lw.cx.ty(held);
+            if vt != Ty::Unit {
+                lw.drop_glue(proj(&base, Proj::Deref(vt)), held);
+            }
+        });
+        // After a step the address is taken again (the state may have been polled anew).
+        let sp = if stepped {
+            self.addr(Place::local(child))
+        } else {
+            sp
+        };
         self.take_result(sp, ret, throws)
+    }
+
+    /// The step of an `await` once its operand settled: the code after it runs one microtask
+    /// later, as in Node (rt_abi_async.md §1, velt_rt local/micro.rs). Only when the task's await
+    /// word (`*(*cx)`) is not 0 can another job run first; then `velt_rt_await_tick` queues the
+    /// step and its ticket is waited for. `drop_held` drops the settled value when the state is
+    /// cancelled meanwhile. Standard-library code takes no step: the prelude counts Node's steps
+    /// itself (std/prelude/promise.vlt). Nor does a program in which nothing can make the word
+    /// non-0 (await_order.rs): it is lowered again without any step code.
+    /// Returns whether step code was emitted.
+    pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
+        if self.in_std() {
+            return false;
+        }
+        self.step(drop_held)
+    }
+
+    /// The step itself ([`await_step`](Self::await_step)), in std code too: async generators
+    /// take Node's steps in every caller (generator.rs).
+    pub(super) fn step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
+        if self.dead() || self.cx.no_await_steps {
+            return false;
+        }
+        let cx = self.poll_cx();
+        let cxp = self.operand_place(cx.clone(), Ty::Ptr);
+        let wp = self.copy_to_temp(Operand::Copy(proj(&cxp, Proj::Deref(Ty::Ptr))), Ty::Ptr);
+        let wpp = self.operand_place(Operand::Copy(Place::local(wp)), Ty::Ptr);
+        let w = self.copy_to_temp(Operand::Copy(proj(&wpp, Proj::Deref(Ty::U32))), Ty::U32);
+        let busy = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(w)), cint(0, Ty::U32)),
+        );
+        let (slow, done) = (self.new_block(), self.new_block());
+        self.branch(busy, slow, done);
+        self.switch_to(slow);
+        let t = self.temp(Ty::U64);
+        self.call_rt(Rt::AwaitTick, vec![cx], Some(Place::local(t)));
+        let queued = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(t)), cint(0, Ty::U64)),
+        );
+        let wait = self.new_block();
+        self.branch(queued, wait, done);
+        self.switch_to(wait);
+        let (k, resume) = self.suspension();
+        self.goto(resume);
+        self.switch_to(resume);
+        let r = self.temp(Ty::U32);
+        let cx = self.poll_cx();
+        self.call_rt(
+            Rt::AwaitReady,
+            vec![Operand::Copy(Place::local(t)), cx],
+            Some(Place::local(r)),
+        );
+        self.after_poll(k, Operand::Copy(Place::local(r)), drop_held);
+        self.goto(done);
+        self.switch_to(done);
+        true
     }
 
     /// Move the result out of a finished state (at `ptr + 0`); a `Result` from a throwing
@@ -287,6 +364,12 @@ impl FnLower<'_, '_> {
             self.copy_to_temp(Operand::Copy(proj(&sp, Proj::Deref(vt))), vt)
         });
         self.call_rt(Rt::FutDrop, vec![fp], None);
+        // The promise settled: one step before the code after the `await` runs, as in Node.
+        self.await_step(|lw| {
+            if let Some(r) = res {
+                lw.drop_glue(Place::local(r), slot_ty);
+            }
+        });
         match (res, err) {
             (Some(r), Some(e)) => self.check_result(r, ty, e),
             (Some(r), None) => self.owned_result(Some(r), ty),

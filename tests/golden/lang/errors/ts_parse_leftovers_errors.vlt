@@ -1,0 +1,18 @@
+// TypeScript's syntax errors in function types and tuple types (TS1016, TS1047, TS1257,
+// TS1266, TS5085), and `var` where it would not mean what `let` does (not supported yet).
+type F = (a?: number, b: string) => void;
+type G = (...a?: number[]) => void;
+type A = [x?: number, y: string];
+type C = [...number[], x?: string];
+type D = [...x?: number[]];
+
+function nested(flag: boolean): number {
+    if (flag) {
+        var inner = 1;
+    }
+    return 0;
+}
+
+function loop(): void {
+    for (var i = 0; i < 3; i++) {}
+}

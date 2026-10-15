@@ -72,6 +72,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - In `catch (e)`, `e` has the **exact union** of what the `try` block can throw
   (`NotFound | Forbidden`; `never` when nothing can throw). Narrow it with `instanceof`,
   `typeof`, `==` or `switch` like any [union](types.md#union-types).
+- As in TypeScript, the binding may be annotated `unknown` or `any` (`catch (e: unknown)`); `e`
+  still has the union of what the block can throw. Any other annotation is TypeScript's error
+  TS1196.
 - An `if`/`else if` chain whose branches leave handles every member, so no code is needed after
   it.
 - `throw e;` rethrows; a narrowed `e` rethrows just that member.

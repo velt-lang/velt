@@ -1098,7 +1098,9 @@ console.log(b.v); // hi
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
   a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data). A generator method `*name() { ... }` (`async *name()`) is
+  (an object literal is plain data). A generic method (`match<R>(arms: Arms<R>): R { ... }`)
+  parses as a property holding a generic arrow, which is not supported yet there (a generic
+  arrow must be the value of a `const`, [Functions](functions.md#arrow-functions-and-function-types)). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
   `name: function* () { ... }` is; a generator method with a symbol key only as
   `*[Symbol.iterator]()`
@@ -1107,7 +1109,9 @@ console.log(b.v); // hi
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
   `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
-  (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
+  (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
+  optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
+  type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
   Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
   `new(…)` in an object type is never a method, while in a class it is) are not supported yet
   and are reported.
@@ -1257,7 +1261,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
-  string]`. `Promise.all` over tuples of different types is not supported.
+  string]`. Optional elements (`[A, B?]`, `[name: string, age?: number]`) and rest elements
+  (variadic tuple types, `[A, ...T]`, `[first: string, ...rest: number[]]`) parse, with
+  TypeScript's errors for their order (an optional element after a rest one, TS1266; a required
+  one after an optional one, TS1257), and using one is an error saying it is not supported yet.
+  `Promise.all` over tuples of different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
   and values, and a repeated key keeps its first position and its last value) or from any
