@@ -8,8 +8,10 @@
 use velt_common::Span;
 
 mod jsx;
+mod type_fields;
 
 pub use jsx::*;
+pub use type_fields::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
@@ -308,11 +310,9 @@ pub enum TypeExprKind {
     Array(Box<TypeExpr>),
     /// `[A, B]`
     Tuple(Vec<TypeExpr>),
-    /// `...T` as an element of a tuple type (a variadic tuple type, `[string, ...A]`): the
-    /// elements of the tuple or array type `T`. Only an element of [`TypeExprKind::Tuple`].
+    /// `...T` in a tuple type (a variadic tuple type, `[string, ...A]`): `T`'s elements.
     TupleRest(Box<TypeExpr>),
-    /// `T?` (or `name?: T`) as an element of a tuple type: an element that may be left out
-    /// (`[string, number?]` has length 1 or 2). Only an element of [`TypeExprKind::Tuple`].
+    /// `T?` / `name?: T` in a tuple type: an element that may be left out (`[A, B?]`).
     TupleOptional(Box<TypeExpr>),
     /// `(a: A, b: B) => R`, optionally `=> R throws E` (the function may throw `E`).
     Function {
@@ -378,28 +378,6 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
-}
-
-/// The key of an index signature, `[name: ty]` (the name is documentation only).
-#[derive(Clone, Debug)]
-pub struct IndexKey {
-    pub name: Ident,
-    pub ty: TypeExpr,
-}
-
-/// `name: T` / `name?: T` / `readonly name: T` in an object type.
-#[derive(Clone, Debug)]
-pub struct ObjectTypeField {
-    pub name: Ident,
-    /// For an optional field, the written type plus `| null`.
-    pub ty: TypeExpr,
-    /// `name?: T` — parsed as `name: T | null`; the flag makes it an optional field of the object
-    /// type (left out by `JSON.stringify` while `null`). An object literal may leave out any
-    /// `T | null` field of an object type.
-    pub optional: bool,
-    /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
-    pub readonly: bool,
-    pub span: Span,
 }
 
 // ─────────────────────────── Statements ───────────────────────────

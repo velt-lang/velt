@@ -30,6 +30,7 @@ mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod tuple_types;
 mod type_assertion;
 mod type_decls;
 mod type_members;
