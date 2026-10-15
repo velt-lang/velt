@@ -1,0 +1,25 @@
+// A subclass may not redefine a method an `extend` block gives a base class (its own method or
+// one of its own `extend` blocks): `extend` methods are not virtual yet.
+class Shape {}
+
+class Square extends Shape {
+  kind(): string {
+    return "square";
+  }
+}
+
+class Tiny extends Square {}
+
+extend Shape {
+  kind(): string {
+    return "shape";
+  }
+}
+
+extend Tiny {
+  kind(): string {
+    return "tiny";
+  }
+}
+
+function main() {}

@@ -153,4 +153,10 @@ function main() {
   console.log({ big: new ArrayBuffer(60) });
   console.log({ v: new DataView(new ArrayBuffer(40), 1) });
   console.log([new DataView(new ArrayBuffer(2))]);
+  // Past Node's depth limit they print as `[ArrayBuffer]`, `[DataView]`, `[Uint8Array]` (a
+  // `Date` keeps its text).
+  const dv2 = new DataView(new ArrayBuffer(4), 1, 2);
+  console.log({ a: { b: { dv2 } } });
+  console.log({ a: { b: { c: new ArrayBuffer(2), d: new Uint8Array(2), e: new Date(0) } } });
+  console.log({ a: { b: { c: { u: new Uint8Array(2) } } } }, [[new ArrayBuffer(1)]]);
 }

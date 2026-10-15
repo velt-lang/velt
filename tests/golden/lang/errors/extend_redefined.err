@@ -1,0 +1,3 @@
+extend_redefined.vlt:6:3
+error: `kind` is an `extend` method of `Shape` and cannot be redefined in a subclass yet
+extend_redefined.vlt:20:3

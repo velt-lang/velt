@@ -78,9 +78,19 @@ export class ArrayBuffer {
   }
 
   /** How `console.log` shows the buffer, like Node: `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }`. */
-  __inspect(): string {
-    return inspectBuffer(this.bytes);
+  __inspect(): NativeInspect {
+    return { text: inspectBuffer(this.bytes) };
   }
+}
+
+/**
+ * What an `__inspect()` returns for a class that stands for one of Node's own objects (std only:
+ * `ArrayBuffer`, `DataView`): `console.log` prints `text`, and `[ArrayBuffer]` (the class's
+ * name) past Node's depth limit, as Node cuts its objects, where a string `__inspect()` is
+ * printed at any depth (`Date`). crates/velt_vir/src/lower/glue/format.rs knows it by name.
+ */
+export struct NativeInspect {
+  text: string;
 }
 
 /**
