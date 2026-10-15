@@ -1,0 +1,4 @@
+dynamic_import.vlt:3:19: error: dynamic `import()` is not supported
+  = note: Velt loads every module while compiling: import it with a static `import` at the top of the module (`import * as m from "…"`)
+dynamic_import.vlt:4:19: error: dynamic `import()` is not supported
+  = note: Velt loads every module while compiling, so a module named only at run time cannot be loaded

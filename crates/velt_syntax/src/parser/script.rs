@@ -17,9 +17,9 @@ impl Parser<'_> {
     /// Does the cursor start a declaration (as opposed to a statement)?
     pub(super) fn at_item_start(&mut self) -> bool {
         match self.cur_kw() {
+            Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(
                 Kw::Export
-                | Kw::Import
                 | Kw::Function
                 | Kw::Struct
                 | Kw::Class
@@ -29,7 +29,6 @@ impl Parser<'_> {
                 | Kw::Let
                 | Kw::Declare,
             ) => true,
-            // `import(...)`/`import.meta` are not supported, so `import` always starts an item.
             Some(Kw::Async) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
             None => self.at_extend(),

@@ -36,12 +36,6 @@ impl Parser<'_> {
         })
     }
 
-    /// Is there a line break between the previous token and the cursor?
-    pub(super) fn line_break_before(&mut self) -> bool {
-        let (from, to) = (self.prev_hi as usize, self.cur_lo() as usize);
-        self.src.get(from..to).is_some_and(|s| s.contains('\n'))
-    }
-
     /// After `{`: `[K in`, optionally after `readonly`, `+readonly` or `-readonly`?
     pub(super) fn at_mapped_type(&mut self) -> bool {
         let mut i = usize::from(matches!(self.peek(), Tok::Plus | Tok::Minus));

@@ -108,6 +108,11 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
+  `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
+  bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
+  `|` in a cast type (`x as i32 | 1`) is an error that shows both spellings, `(x as i32) | 1`
+  and `x as (i32 | 1)`, since earlier versions of Velt read it as a bitwise or.
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
@@ -269,8 +274,10 @@ a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The const
 initialized with `Symbol("...")` or `Symbol.for("...")` (TypeScript's `unique symbol`;
 `const KEY: unique symbol = Symbol("k")` declares the same), or with another such constant, and
 may be imported. Velt objects have fixed fields, so the compiler resolves these members while
-compiling: reading `o[KEY]` costs what reading a named field does. A key known only at run time
-(a symbol made in a function, a string variable) is an error: use a `Map`. A module constant
+compiling: reading `o[KEY]` costs what reading a named field does. A symbol key known only at
+run time (a symbol made in a function) is an error: use a `Map`. In an object literal, a string
+key known only at run time (`{ [o.tag]: v }`, `{ [name]: v }` with a local `name`) makes the
+object a `Record<string, V>`, as TypeScript gives it a string index signature. A module constant
 holding a string literal names that field the same way (`const NAME = "name"`, `[NAME]: T`).
 A class or interface may declare a method, getter or setter with such a key (`[KEY]() {}`,
 `get [KEY]()`) or a well-known symbol key (`get [Symbol.toStringTag]()`); `o[KEY]`, `o[KEY]()`,
@@ -893,8 +900,8 @@ Differences from TypeScript, each a compile error with a note on what to write i
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
 - A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
   yet (#350). A generic alias works, since each use has concrete type arguments.
-- Interface declarations are not merged (#652): declare an interface once, or name the
-  combination with `&`.
+- Interface declarations merge as in TypeScript
+  ([declaration merging](classes.md#declaration-merging)).
 
 ```ts error
 type Conflict = { k: string } & { k: number }; // error: no value has type ...
@@ -1093,6 +1100,9 @@ console.log(b.v); // hi
   `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
+  Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
+  `new(…)` in an object type is never a method, while in a class it is) are not supported yet
+  and are reported.
 
 ```ts
 type Handler = {
@@ -1272,7 +1282,14 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   On an enum-keyed record, `r.mem` names the member whose value is `"mem"`. Build a record
   from an object literal where a record is expected (`const r: Record<string, i64> = {}`; a
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
-  may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
+  may spread another record (`{ ...r, x: 1 }`) and have computed keys (`{ [k]: v, [a + b]: w }`,
+  in order with the other keys); an object literal with a computed key that is not a module
+  constant is a `Record<string, V>` also where no record is expected. A string or integer
+  literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
+  property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
+  is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
+  `i = 3` has the key `"3.5"`); a symbol made at run time is an error, and so is a key of any
+  other type (`{ [true]: v }`, TypeScript's TS2464). In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`

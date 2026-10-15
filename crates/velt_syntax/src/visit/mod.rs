@@ -83,6 +83,7 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
             walk_type(&alias.ty, v);
         }
         ast::ItemKind::ExternFn(sig) => walk_sig_types(sig, v),
+        ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| walk_item(i, v)),
         ast::ItemKind::Import(_) => {}
     }
 }

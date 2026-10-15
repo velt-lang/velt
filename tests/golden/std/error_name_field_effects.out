@@ -1,0 +1,22 @@
+init PName
+P body 5 PName
+init Q.extra
+Q body t PName
+PName: qmsg 5 t 7
+init GE.first
+init GE:dyn
+GE body GE:dyn
+init GE2:dyn
+init GE2.later
+GE2:dyn: msg GE.first GE2.later 7
+caught RangeError: from init
+SubInit: b2 SubInit
+SetInCtor: b2
+0 SubInit: b2 SubInit SubInit: b2 b2
+1 TypeError: tt TypeError TypeError: tt tt
+init GE.first
+init GE:dyn
+GE body GE:dyn
+init GE2:dyn
+init GE2.later
+2 GE2:dyn: x GE2:dyn GE2:dyn: x x

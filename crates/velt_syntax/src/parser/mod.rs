@@ -6,10 +6,13 @@
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
 mod arrow;
+mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
 mod fn_exprs;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
@@ -29,6 +32,7 @@ mod symbol_keys;
 mod type_assertion;
 mod type_decls;
 mod type_level;
+mod type_members;
 mod types;
 mod undefined;
 
@@ -89,6 +93,8 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
     /// and whether `T` is `void`.
     this_param: Option<(Span, bool)>,
@@ -146,6 +152,7 @@ impl<'a> Parser<'a> {
             first_this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
+            import_meta: None,
         }
     }
 
@@ -281,6 +288,25 @@ impl<'a> Parser<'a> {
 
     fn expect_semi(&mut self) -> PResult<()> {
         self.expect(Tok::Semi)
+    }
+
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace)
+            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
     }
 
     /// The literal payload of a token.

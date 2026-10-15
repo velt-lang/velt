@@ -1,0 +1,33 @@
+// `name = "…"` as a field initializer of an error class sets the name `Error` declares (it runs
+// with the class's other initializers, after `super(...)`), as in TypeScript.
+class FieldError extends Error {
+  name = "FieldError";
+}
+class Typed extends Error {
+  name: string = "Typed";
+  code: number = 7;
+  constructor(m: string) {
+    console.log("before super");
+    super(m);
+    console.log(`in ctor: ${this.name}`);
+  }
+}
+class Sub extends FieldError {}
+class Again extends FieldError {
+  name = "Again";
+}
+class T2 extends TypeError {
+  name = "T2Error";
+}
+const e = new FieldError("f");
+console.log(e.name, String(e), `${e}`);
+const t = new Typed("t");
+console.log(t.name, t.code, String(t));
+console.log(new Sub("s").name, String(new Sub("s")));
+console.log(new Again("a").name, String(new Again("a")));
+const t2 = new T2("x");
+console.log(t2.name, String(t2), t2 instanceof TypeError);
+const arr: Error[] = [e, t, new Sub("s"), new Again("a"), t2];
+for (const x of arr) {
+  console.log(x.name);
+}

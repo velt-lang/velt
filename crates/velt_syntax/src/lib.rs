@@ -6,6 +6,7 @@
 //! statement/item-level error recovery.
 
 pub mod ast;
+mod ast_names;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;

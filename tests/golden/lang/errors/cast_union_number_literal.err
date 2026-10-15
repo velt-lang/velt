@@ -1,0 +1,6 @@
+cast_union_number_literal.vlt:5:24: error: a cast to a union with a number literal member is ambiguous
+  = note: write `(x as T) | n` for a bitwise or of the cast value, or `x as (T | n)` for a cast to the union type
+cast_union_number_literal.vlt:7:23: error: a cast to a union with a number literal member is ambiguous
+  = note: write `(x as T) | n` for a bitwise or of the cast value, or `x as (T | n)` for a cast to the union type
+cast_union_number_literal.vlt:9:27: error: a cast to a union with a number literal member is ambiguous
+  = note: write `(x as T) | n` for a bitwise or of the cast value, or `x as (T | n)` for a cast to the union type

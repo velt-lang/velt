@@ -1,0 +1,11 @@
+// The class in front of an uncaught error's name is left out when the class's name contains
+// the name (Node: `HttpError: not found`, not `HttpError [Error]: not found`).
+class HttpError extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "Error";
+  }
+}
+
+console.log("before");
+throw new HttpError("not found");

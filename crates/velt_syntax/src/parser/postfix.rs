@@ -261,6 +261,7 @@ impl<'a> Parser<'a> {
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
+                            | Kw::Import
                             | Kw::Typeof
                             | Kw::Void
                     )

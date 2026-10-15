@@ -1,0 +1,13 @@
+// Call and construct signatures in an interface or object type are not supported yet.
+interface Fn {
+  (x: number): string
+  label: string
+}
+type Generic = {
+  <T>(x: T): T;
+};
+// `new(…)` in an interface is a construct signature, not a method named `new`.
+interface PointCtor {
+  new (x: number): Fn
+  origin: number
+}

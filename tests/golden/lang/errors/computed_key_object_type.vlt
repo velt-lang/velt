@@ -1,0 +1,7 @@
+// A computed key known only at run time gives the object string keys (a `Record`): it cannot
+// build an object type, which needs its fields known while compiling (TypeScript's TS2741).
+function f(s: string) {
+  const o: { a: number } = { [s]: 1 };
+  console.log(o);
+}
+f("a");

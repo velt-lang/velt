@@ -1,0 +1,21 @@
+Error: a|Error: b|TypeError: c
+Error: a,Error: b,TypeError: c
+Error: a,Error: b,TypeError: c
+Error: a,Error: b,TypeError: c
+Error: x
+LOUD l,Named: m,RangeError: r LOUD l / Named: m / RangeError: r LOUD l,Named: m,RangeError: r
+LOUD u0,Named: u1 LOUD u0;Named: u1
+Error: a,TypeError: b,Named: c
+Error: p,
+[Error] [only msg] [Error] []
+TypeError: gen|TypeError: gen Error: g2|Error: g2
+RangeError: rr 42 RangeError: rr
+[object Object] [object Object]
+[object Map] Error: m
+Error: tu,1
+H(TypeError: held) H(TypeError: held)
+undefined
+Error: def Error: def
+undefined undefined p=undefined
+undefined TypeError: tu e=undefined undefined
+Error: x+ Error: x,
