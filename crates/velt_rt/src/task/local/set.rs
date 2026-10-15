@@ -115,6 +115,8 @@ pub(crate) struct LocalSet {
     /// Rejected promises nobody handles, reported once the microtask queue is drained
     /// (unhandled.rs; each holds a reference).
     pub(super) unhandled: Vec<*mut VeltFut>,
+    /// The task's gate (none until it first creates a timer; gate.rs).
+    pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -133,6 +135,7 @@ impl LocalSet {
             micro: super::micro::Queue::new(),
             adopting: 0,
             unhandled: Vec::new(),
+            gate: None,
         })
     }
 
@@ -330,6 +333,9 @@ impl Drop for LocalSet {
     /// The task was dropped (cancelled, or it finished while promises it started are unfinished and
     /// could not be handed on): cancel what is left.
     fn drop(&mut self) {
+        if let Some(g) = &self.gate {
+            g.leave();
+        }
         self.shared.closed.store(true, SeqCst);
         {
             let _g = self.shared.closing.lock();

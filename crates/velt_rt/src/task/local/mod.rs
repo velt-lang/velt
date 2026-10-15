@@ -49,8 +49,6 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
-    /// The task's gate (none until it first creates a timer; gate.rs).
-    gate: *mut Option<Arc<Gate>>,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
@@ -124,15 +122,12 @@ pub(super) unsafe fn run_here(f: *mut VeltFut) {
     set::run_now(set, &*(*tcx).waker, f);
 }
 
-/// Run `f` with the gate of the task being polled, created on first use; `None` outside a task.
+/// Run `f` with the gate of the task being polled, created on first use (with the task's set,
+/// which keeps it); `None` outside a task.
 fn with_gate<R>(f: impl FnOnce(&Arc<Gate>) -> R) -> Option<R> {
-    let tcx = CURRENT.with(Cell::get);
-    if tcx.is_null() {
-        return None;
-    }
-    // SAFETY: as `with_timers`: `gate` points into the task's own `SetPtr`.
-    let gate = unsafe { &mut *(*tcx).gate };
-    Some(f(gate.get_or_insert_with(Gate::new_busy)))
+    // SAFETY: the set of the task being polled, used only by this task's polls.
+    let set = unsafe { current_set_or_new().as_mut() }?;
+    Some(f(set.gate.get_or_insert_with(Gate::new_busy)))
 }
 
 /// Makes a task's set current for the duration of a poll (restores the previous one on drop).
@@ -150,21 +145,14 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
-/// gate.
-struct SetPtr(
-    *mut LocalSet,
-    u64,
-    Option<Arc<Timers>>,
-    u32,
-    Option<Arc<Gate>>,
-);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0, None);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -179,12 +167,11 @@ impl SetPtr {
             waker,
             id: &mut self.1,
             timers: &mut self.2,
-            gate: &mut self.4,
             turn: self.3,
             yielded: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
-        if let Some(g) = &self.4 {
+        if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.enter();
         }
         let timers = self.2.as_deref();
@@ -218,7 +205,7 @@ impl SetPtr {
             unhandled::flush(self.0);
         }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
-        if let Some(g) = &self.4 {
+        if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.leave();
         }
     }
@@ -237,9 +224,6 @@ impl SetPtr {
 
 impl Drop for SetPtr {
     fn drop(&mut self) {
-        if let Some(g) = &self.4 {
-            g.leave();
-        }
         if !self.0.is_null() {
             // SAFETY: created by `Box::into_raw` in `velt_rt_fut_start`, owned by `self`.
             drop(unsafe { Box::from_raw(self.0) });
