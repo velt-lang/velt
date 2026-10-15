@@ -133,6 +133,9 @@ impl FnCx<'_, '_> {
             return None;
         };
         if ns.name == "Array" && prop.name == "isArray" && self.builtin_array(ns) {
+            if let Some(h) = self.dynamic_args("Array.isArray", args, span) {
+                return Some(h);
+            }
             return Some(self.array_is_array(args, span));
         }
         if !self.is_prelude_object(ns) {
@@ -149,6 +152,9 @@ impl FnCx<'_, '_> {
         if !type_args.is_empty() && name != "fromEntries" {
             self.cx
                 .err(format!("`Object.{name}` takes no type arguments"), span);
+        }
+        if let Some(h) = self.dynamic_args(&format!("Object.{name}"), args, span) {
+            return Some(h);
         }
         Some(match name {
             "is" => self.object_is(args, span),
@@ -169,6 +175,21 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         })
+    }
+
+    /// An error when an argument of `what` is `any` or `unknown` (`None`: none is), whose
+    /// run-time tests are #924's.
+    fn dynamic_args(&mut self, what: &str, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+        let at = args.iter().find(|a| {
+            self.trial_type(a)
+                .is_some_and(|t| self.cx.dynamic(t).is_some())
+        })?;
+        self.cx.err(
+            format!("`{what}` of an `any` or `unknown` value is not supported yet (#924)"),
+            at.span,
+        );
+        self.check_args_loose(args);
+        Some(self.error_expr(span))
     }
 
     /// Does `ns` name the prelude's `Object` (not shadowed)?
@@ -729,6 +750,12 @@ impl FnCx<'_, '_> {
     /// `Object.prototype.m.call(args)`.
     fn prototype_method_call(&mut self, m: &str, args: &[ast::Expr], span: Span) -> hir::Expr {
         match m {
+            _ if self
+                .dynamic_args(&format!("Object.prototype.{m}.call"), args, span)
+                .is_some() =>
+            {
+                self.error_expr(span)
+            }
             "hasOwnProperty" => self.has_own(args, "Object.prototype.hasOwnProperty.call", span),
             "toString" => self.object_to_string_call(args, span),
             _ => {
@@ -1287,7 +1314,8 @@ impl FnCx<'_, '_> {
             },
         );
         let Some((d, f)) = found else {
-            self.cx.err("prototypes need the prelude (std/prelude)", span);
+            self.cx
+                .err("prototypes need the prelude (std/prelude)", span);
             return self.error_expr(span);
         };
         let proto = self.cx.ty.intern(TyKind::Adt(d, vec![]));

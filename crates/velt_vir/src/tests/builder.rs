@@ -86,6 +86,8 @@ impl PB {
             union_shapes: Default::default(),
             counted_objects: Vec::new(),
             null_proto_records: false,
+            any_impl: None,
+            unknown: None,
         }
     }
 }

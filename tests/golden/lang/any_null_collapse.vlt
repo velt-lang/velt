@@ -1,0 +1,43 @@
+// check: no leaks
+// An `any | null` is an `any` (as in TypeScript): a stored `null`, a stored `undefined` and an
+// absent key are told apart through `Map<string, any>.get`, a `Record<string, any>` index, `find`
+// and a generic class field (#1103 review).
+class Holder<T> {
+  v: T | null = null;
+}
+function pick(flag: boolean): any | null {
+  if (flag) {
+    return undefined;
+  }
+  return null;
+}
+const m = new Map<string, any>();
+m.set("nil", null);
+m.set("u", undefined);
+m.set("arr", [1, 2, 3]);
+m.set("n", 7);
+for (const k of ["nil", "u", "arr", "n", "missing"]) {
+  const v = m.get(k);
+  console.log(k, v === null, v === undefined, v == null, typeof v, v ?? "dflt");
+  if (v != null) {
+    console.log("  taken", k);
+  }
+}
+const xs: number[] = m.get("arr");
+console.log(xs.length);
+const n: number = m.get("n");
+console.log(n + 1);
+const r: Record<string, any> = { k: null, j: "s" };
+console.log(r["k"] === null, r["j"] === null, r["zz"] === undefined);
+const arr: (any | null)[] = [1, null, "x"];
+console.log(arr.find((x) => x === null) === null, arr.find((x) => x === 5) === undefined);
+const outer: any | undefined = undefined;
+const o2: any = outer;
+console.log(o2 === undefined, o2 === null);
+console.log(pick(true), pick(false));
+const und: (any | undefined)[] = [null, undefined, 1];
+console.log(und);
+const h = new Holder<any>();
+console.log(h.v === null);
+h.v = "x";
+console.log(h.v === "x", typeof h.v);

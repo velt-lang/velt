@@ -11,3 +11,4 @@ an `Object.freeze` result where a `{ a: f64 }` is expected is not supported yet:
 `Object.seal` is not supported yet
 `structuredClone` of a `Record<string, f64>`, which holds a record, is not supported yet in a program that calls `Object.create(null)`
 `Date.prototype` is not supported yet
+`Array.isArray` of an `any` or `unknown` value is not supported yet (#924)

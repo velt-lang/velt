@@ -18,3 +18,5 @@ console.log(Object.isFrozen(target), Object.seal(target));
 const dict: Record<string, number> = Object.create(null);
 console.log(structuredClone(dict));
 console.log(Date.prototype);
+const opaque: unknown = [1];
+console.log(Array.isArray(opaque));

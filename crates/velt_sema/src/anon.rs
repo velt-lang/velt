@@ -426,16 +426,22 @@ impl Ctx<'_> {
                 // An optional field reads as `T | null` and may be left out, like a class's
                 // (`body::driver`): its default is `null`, which lowering's JSON and printing
                 // glue reads as "absent".
-                let ty = if f.optional {
+                // `q?: any` holds the dynamic `undefined` itself (`collect::shapes`).
+                let dynamic = f.optional && self.dynamic(f.ty).is_some();
+                let ty = if f.optional && !dynamic {
                     self.ty.option(f.ty)
                 } else {
                     f.ty
                 };
-                let default = f.optional.then_some(crate::hir::Expr {
-                    kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
-                    ty,
-                    span: Span::DUMMY,
-                });
+                let default = if dynamic {
+                    self.dynamic_undefined(ty, Span::DUMMY)
+                } else {
+                    f.optional.then_some(crate::hir::Expr {
+                        kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
+                        ty,
+                        span: Span::DUMMY,
+                    })
+                };
                 FieldInfo {
                     name: f.name.clone(),
                     ty,

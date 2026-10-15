@@ -49,7 +49,7 @@ impl FnLower<'_, '_> {
     }
 
     /// SameValueZero of two floats: `x == y || (x != x && y != y)`.
-    fn same_value_zero(&mut self, x: Operand, y: Operand) -> Operand {
+    pub(in crate::lower) fn same_value_zero(&mut self, x: Operand, y: Operand) -> Operand {
         let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
         let nx = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), x));
         let ny = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, y.clone(), y));
@@ -95,6 +95,8 @@ impl FnLower<'_, '_> {
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => {
                 Operand::Const(Const::Bool(true), Ty::Bool)
             }
+            // `any` / `unknown` (generic code over them): by value, as `===` (keys: SameValueZero).
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.key_mode),
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
@@ -137,6 +139,7 @@ impl FnLower<'_, '_> {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Hash, ty, vec![a])
             }
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
             TyKind::Dyn(..) => {
                 self.cx.note_identity(ty);
                 let p = Operand::Copy(proj(place, Proj::Field(0)));
@@ -216,7 +219,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `(rotl(h, 5) ^ x) * K`.
-    fn fx_combine(&mut self, h: Operand, x: Operand) -> Operand {
+    pub(in crate::lower) fn fx_combine(&mut self, h: Operand, x: Operand) -> Operand {
         let l = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::Shl, h.clone(), cint(5, Ty::U64)),
@@ -231,7 +234,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Bits of a float as a key (SameValueZero): `0` for `-0` and one pattern for every `NaN`.
-    fn key_float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
+    pub(in crate::lower) fn key_float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
         let bits = self.float_bits(v.clone(), vt);
         let zero = Operand::Const(Const::Float(0.0), vt);
         let is_zero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, v.clone(), zero));

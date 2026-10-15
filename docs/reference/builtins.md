@@ -36,11 +36,14 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Set<T>` | insertion-ordered hash set ([velt:collections/set](../std/collections/set.md)) |
 | `RegExp`, `/ab+c/gi` | regular expressions ([velt:regex](../std/regex.md)) |
 | `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt:encoding](../std/encoding.md)) |
+| `btoa(s)`, `atob(s)` | Base64 of binary strings, as in Node ([velt:encoding](../std/encoding.md)) |
+| `DOMException` | the error web APIs throw, with `name` and `code` ([prelude](../std/prelude.md#errors)) |
 | `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
-The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp` and `TextEncoder`
+The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp`, `TextEncoder`, `btoa`
+and `DOMException`
 (and the names next to them) are loaded only by programs that mention one of those names (or
 hold a regex literal), so the others don't pay for compiling them; a module that imports or
 declares such a name itself (`import { Response } from "./api"`) uses its own and

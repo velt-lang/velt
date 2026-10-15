@@ -136,6 +136,11 @@ impl FnLower<'_, '_> {
             }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
+            (I::AnyTo, [a]) => self.any_to(a, ty),
+            (I::AnyTypeof, [a]) => self.any_typeof(a),
+            (I::AnyTruthy, [a]) => self.any_truthy(a),
+            (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
+            (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
