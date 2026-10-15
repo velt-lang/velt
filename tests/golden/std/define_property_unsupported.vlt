@@ -1,0 +1,19 @@
+// What Velt can't define as Node does yet: "not supported yet" (tsc accepts all).
+const CELL: unique symbol = Symbol("cell");
+const MARK: unique symbol = Symbol("mark");
+interface Cell {
+  state: string;
+}
+const cell: Cell = { state: "a" };
+Object.defineProperty(cell, CELL, { value: true });
+const other = { state: "b" } as Cell;
+(other as Cell & { [CELL]?: boolean })[CELL] = true;
+interface Counter {
+  n: number;
+}
+const counter: Counter = { n: 0 };
+Object.defineProperty(counter, "n", { get: () => 1 });
+Object.defineProperty(counter, "n", { value: 2, enumerable: false });
+const loose = { a: 1 };
+Object.defineProperty(loose, MARK, { value: true });
+Object.defineProperties(counter, { n: { value: 3 } });

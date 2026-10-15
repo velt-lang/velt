@@ -71,7 +71,7 @@ impl FnLower<'_, '_> {
     /// The fields an object prints: (index, name, type). ES private fields (`#x`) are hidden, as
     /// Node hides them, and so are private zero-sized fields (a marker such as std's
     /// `runtime: RuntimeHandle`); other private fields show, as Node shows a TypeScript
-    /// `private` field.
+    /// `private` field. A hidden field (`FieldDef::hidden`, a non-enumerable property) is hidden.
     fn shown_fields(&mut self, ty: TyId) -> Vec<(u32, String, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
@@ -81,10 +81,11 @@ impl FnLower<'_, '_> {
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| (f.name.clone(), f.private))
+            .map(|f| (f.name.clone(), f.private, f.hidden))
             .zip(self.cx.adt_field_tys(ty))
             .enumerate()
-            .map(|(i, ((n, private), t))| (i as u32, n, t, private))
+            .filter(|(_, ((_, _, hidden), _))| !hidden)
+            .map(|(i, ((n, private, _), t))| (i as u32, n, t, private))
             .collect();
         let shown: Vec<(u32, String, TyId)> = all
             .into_iter()

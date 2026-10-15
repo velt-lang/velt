@@ -1417,8 +1417,25 @@ does is an error saying it is not supported yet, never a quiet difference.
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
 
-The other `Object` functions (`defineProperty`, `seal`, `isFrozen`, `setPrototypeOf`, ...) are not
-supported yet.
+- `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
+  compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
+  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal
+  value), so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that
+  have it. Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and
+  spreads, as a non-enumerable property is; a property with that symbol written directly
+  anywhere (`{ [KEY]: v }`, `o[KEY] = v`) is an error, since it would be enumerable, or written
+  where Node throws. With a string key naming a declared field and only a `value`, it assigns
+  the field. Accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare
+  are not supported yet, and neither is `Object.defineProperties`.
+
+The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
+
+`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
+browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
+Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
+`typeof window === "undefined"` tells the server from the browser. Reading a browser global
+throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
+still compiles.
 
 ```ts
 class Point {

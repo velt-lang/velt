@@ -36,6 +36,7 @@ mod brands;
 mod collect;
 mod creation_notes;
 mod ctx;
+mod defined_props;
 mod defs;
 mod discriminants;
 mod dispatch;
@@ -187,6 +188,8 @@ fn check_on_current_thread(
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let (brands, branded) = defined_props::rewrite(modules);
+    let modules = branded.as_deref().unwrap_or(modules);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
@@ -207,6 +210,7 @@ fn check_on_current_thread(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.brands = brands.clone();
         cx.diags.extend(merge_diags.iter().cloned());
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
         if let Some(o) = &overloaded {
