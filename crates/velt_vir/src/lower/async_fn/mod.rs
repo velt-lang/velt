@@ -24,6 +24,7 @@
 
 mod all;
 mod all_settle;
+pub(crate) mod await_order;
 mod channel;
 mod ctor;
 mod gen_object;

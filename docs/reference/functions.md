@@ -699,6 +699,10 @@ async function main() {
   They parse, and using one is an error saying it is not supported yet. A function type's
   parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
   which, like a name, is only for the reader.
+- A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
+  type is `Options | null`, as for a function's optional parameter, and a required parameter
+  cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
+  now; leaving the optional one out (`install(app)`) is not supported yet.
 
 ### `call` and `apply`
 

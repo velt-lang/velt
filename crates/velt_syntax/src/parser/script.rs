@@ -31,7 +31,7 @@ impl Parser<'_> {
             ) => true,
             Some(Kw::Async) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
-            None => self.at_extend(),
+            None => self.at_extend() || self.at_var_decl(),
             _ => false,
         }
     }
