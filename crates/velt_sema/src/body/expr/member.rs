@@ -584,9 +584,7 @@ impl FnCx<'_, '_> {
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
         let inner = self.expr(expr, hint, Want::Borrow);
         if self.cx.dynamic(inner.ty).is_some() {
-            return match self.coerce_dynamic(inner, target, true) {
-                Ok(h) | Err(h) => h,
-            };
+            return self.cast_dynamic(inner, target);
         }
         // `id as string`: a brand's value as its primitive.
         let inner = match self.cx.brand_base(inner.ty) == Some(target) {

@@ -209,6 +209,13 @@ impl FnCx<'_, '_> {
         Ok(self.mk(m, exp, span))
     }
 
+    /// `h as target` on a dynamic `h`: checked at run time.
+    pub(crate) fn cast_dynamic(&mut self, h: hir::Expr, target: TyId) -> hir::Expr {
+        match self.coerce_dynamic(h, target, true) {
+            Ok(h) | Err(h) => h,
+        }
+    }
+
     /// A dynamic value as `exp`: checked at run time (`Intrinsic::AnyTo`).
     fn unbox_dynamic(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;
