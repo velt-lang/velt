@@ -238,18 +238,6 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        if let (ast::ExprKind::Ident(id), "prototype", false) =
-            (&object.kind, prop.name.as_str(), optional)
-        {
-            if let Some(h) = self.prototype_member(id, span) {
-                return h;
-            }
-        }
-        if !optional {
-            if let Some(h) = self.prototype_method_value(object, prop, span) {
-                return h;
-            }
-        }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
                 if matches!(

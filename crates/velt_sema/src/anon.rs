@@ -13,7 +13,7 @@
 //! fields in the same order, so they lay out alike (`velt_vir` maps both to one type), and
 //! `assigned_fields.rs` makes them agree on `AdtDef::assigned`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
@@ -42,6 +42,18 @@ impl ShapeField {
             optional: false,
         }
     }
+}
+
+/// What the `Object` built-ins (`body::expr::object_builtins`) make, program-wide.
+#[derive(Default)]
+pub(crate) struct ObjectState {
+    /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
+    /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).
+    pub frozen: HashMap<DefId, DefId>,
+    /// The values of `frozen`.
+    pub frozen_defs: HashSet<DefId>,
+    /// The program calls `Object.create(null)`: records may have no prototype.
+    pub null_proto_records: bool,
 }
 
 impl Ctx<'_> {
@@ -333,7 +345,7 @@ impl Ctx<'_> {
         if a.kind != AdtKind::Anon || !args.is_empty() || a.generics.len() != 0 {
             return None;
         }
-        if let Some(&f) = self.frozen.get(&d) {
+        if let Some(&f) = self.objects.frozen.get(&d) {
             return Some(self.ty.intern(TyKind::Adt(f, vec![])));
         }
         let fields: Vec<ShapeField> = a
@@ -354,8 +366,8 @@ impl Ctx<'_> {
         let f = self.new_anon_def(&fields, 0, module);
         let (twin, _) = self.anon_def_with(&plain, module);
         self.readonly_twins.insert(f, (twin, None));
-        self.frozen.insert(d, f);
-        self.frozen_defs.insert(f);
+        self.objects.frozen.insert(d, f);
+        self.objects.frozen_defs.insert(f);
         Some(self.ty.intern(TyKind::Adt(f, vec![])))
     }
 
@@ -363,11 +375,12 @@ impl Ctx<'_> {
     /// result be written (`to`, or a member of it, an object type with a field that is not
     /// readonly)?
     pub(crate) fn unfreezes(&mut self, from: TyId, to: TyId) -> bool {
-        if self.frozen_defs.is_empty() || from == to {
+        if self.objects.frozen_defs.is_empty() || from == to {
             return false;
         }
         let from = self.ty.opt_payload(from).unwrap_or(from);
-        if !matches!(self.ty.kind(from), TyKind::Adt(d, _) if self.frozen_defs.contains(d)) {
+        if !matches!(self.ty.kind(from), TyKind::Adt(d, _) if self.objects.frozen_defs.contains(d))
+        {
             return false;
         }
         let to = self.ty.opt_payload(to).unwrap_or(to);

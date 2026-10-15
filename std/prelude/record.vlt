@@ -270,6 +270,14 @@ export class ObjectPrototype {
   // Whether `JSON.stringify` writes `[]` (`Array.prototype`) rather than `{}`.
   private array: bool;
 
+  /**
+   * A prototype (sema calls this for `Object.prototype`, `C.prototype` and
+   * `Object.getPrototypeOf`).
+   * @param tag - Which prototype it is.
+   * @param shown - What `console.log` shows.
+   * @param text - What `String(p)` gives.
+   * @param array - Whether `JSON.stringify` writes `[]` rather than `{}`.
+   */
   constructor(tag: string, shown: string, text: string, array: bool) {
     this.tag = tag;
     this.shown = shown;
@@ -285,10 +293,12 @@ export class ObjectPrototype {
     return this.shown;
   }
 
+  /** Returns what `String(p)` gives for this prototype in JavaScript (`"[object Object]"`). */
   toString(): string {
     return this.text;
   }
 
+  /** Returns what `JSON.stringify` writes for this prototype: `[]` or `{}`. */
   toJSON(): string[] | Record<string, string> {
     if (this.array) {
       return [];

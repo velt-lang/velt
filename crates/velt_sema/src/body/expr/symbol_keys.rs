@@ -146,7 +146,7 @@ impl FnCx<'_, '_> {
             return self.dynamic_key_in(lhs, rhs, span);
         };
         // `"toString" in r` on a record that may have no prototype: tested at run time.
-        if let (true, InKey::Str(k)) = (self.cx.null_proto_records, &key) {
+        if let (true, InKey::Str(k)) = (self.cx.objects.null_proto_records, &key) {
             let target = match super::in_keys::OBJECT_PROTOTYPE.contains(&k.as_str()) {
                 true => Some(self.trial_expr(rhs).ty),
                 false => None,

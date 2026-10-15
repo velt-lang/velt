@@ -34,6 +34,7 @@ mod ast_walk;
 mod body;
 mod brands;
 mod collect;
+mod creation_notes;
 mod ctx;
 mod defs;
 mod discriminants;
@@ -205,7 +206,7 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
-        cx.null_proto_records = null_proto;
+        cx.objects.null_proto_records = null_proto;
         cx.diags.extend(merge_diags.iter().cloned());
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
         if let Some(o) = &overloaded {
@@ -230,7 +231,7 @@ fn check_on_current_thread(
         diags,
         impls,
         counted_objects,
-        null_proto_records,
+        objects,
         any,
         ..
     } = cx;
@@ -246,7 +247,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
-        null_proto_records,
+        null_proto_records: objects.null_proto_records,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
     };

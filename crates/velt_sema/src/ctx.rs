@@ -58,13 +58,8 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
-    /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
-    /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).
-    pub frozen: HashMap<DefId, DefId>,
-    /// The values of `frozen`.
-    pub frozen_defs: HashSet<DefId>,
-    /// The program calls `Object.create(null)`: records may have no prototype.
-    pub null_proto_records: bool,
+    /// What the `Object` built-ins make: frozen types, prototype-less records.
+    pub objects: crate::anon::ObjectState,
     /// Branded type definitions → their primitive (`crate::brands`).
     pub brands: HashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
@@ -261,9 +256,7 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
-            frozen: HashMap::new(),
-            frozen_defs: HashSet::new(),
-            null_proto_records: false,
+            objects: Default::default(),
             brands: HashMap::new(),
             brand_keys: HashMap::new(),
             field_only: HashMap::new(),
@@ -400,67 +393,6 @@ impl<'m> Ctx<'m> {
         match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => Some(a),
             _ => None,
-        }
-    }
-
-    /// The visibility of the constructor `new C(...)` of class `d` runs: its own, or the one it
-    /// inherits from the nearest base class declaring one (public without any).
-    pub fn ctor_visibility(&self, d: DefId) -> velt_syntax::ast::CtorVisibility {
-        self.adt(d)
-            .and_then(|a| a.ctor)
-            .and_then(|c| self.fn_info(c).owner)
-            .and_then(|owner| self.adt(owner)?.decl)
-            .map_or_else(Default::default, |decl| decl.ctor_visibility)
-    }
-
-    /// The public static methods of class `d` that return a `d` (its factories), as
-    /// `` `C.of(...)` or `C.parse(...)` ``; `None` without any.
-    pub fn factories(&self, d: DefId) -> Option<String> {
-        let a = self.adt(d)?;
-        let mut names: Vec<String> = a
-            .methods
-            .iter()
-            .filter(|(_, m)| m.is_static && !self.fn_info(m.def).is_private)
-            .filter(|(_, m)| {
-                matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
-            })
-            .map(|(name, _)| {
-                let name = name.strip_prefix("static ").unwrap_or(name);
-                format!("`{}.{name}(...)`", a.name)
-            })
-            .collect();
-        names.sort();
-        let last = names.pop()?;
-        Some(match names.is_empty() {
-            true => last,
-            false => format!("{} or {last}", names.join(", ")),
-        })
-    }
-
-    /// A note saying how code outside class `d` creates one: `new`, its factories, or (for a
-    /// class of the user's own with a private or protected constructor and no factory) adding
-    /// a factory.
-    pub fn creation_note(&self, d: DefId) -> String {
-        use velt_syntax::ast::CtorVisibility;
-        let Some(a) = self.adt(d) else {
-            return String::new();
-        };
-        let name = &a.name;
-        let visibility = self.ctor_visibility(d);
-        if visibility == CtorVisibility::Public {
-            return format!("create it with `new {name}(...)`");
-        }
-        if let Some(factories) = self.factories(d) {
-            return format!("create it with {factories}");
-        }
-        match visibility {
-            _ if self.scopes[a.module].is_std => {
-                format!("`{name}` values come from the functions of the module that declares it")
-            }
-            CtorVisibility::Protected => {
-                format!("add a static factory method to `{name}`, or construct a subclass")
-            }
-            _ => format!("add a static factory method to `{name}` and call that"),
         }
     }
 

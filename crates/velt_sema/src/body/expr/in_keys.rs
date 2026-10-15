@@ -294,7 +294,7 @@ impl FnCx<'_, '_> {
             _ => lhs.clone(),
         };
         // A record made by `Object.create(null)` inherits nothing (`hir::Program::null_proto_records`).
-        let helper = match self.cx.null_proto_records {
+        let helper = match self.cx.objects.null_proto_records {
             true => "__recordInMaybeNullProto",
             false => "__recordIn",
         };

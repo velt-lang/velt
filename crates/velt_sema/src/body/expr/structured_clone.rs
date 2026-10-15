@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
     /// Report an error if a value of type `t` (`structuredClone`'s argument, at `span`) holds
     /// something JS's structured clone throws for or copies as a plain object.
     pub(super) fn check_structured_clone(&mut self, t: TyId, span: Span) {
-        if self.cx.null_proto_records && self.holds_record(t, 0) {
+        if self.cx.objects.null_proto_records && self.holds_record(t, 0) {
             // A copy keeps the record's mark (`Object.create(null)`), where JS's copy has
             // `Object.prototype`.
             let tn = self.cx.display(t);
