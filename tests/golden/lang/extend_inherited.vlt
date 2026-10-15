@@ -1,0 +1,32 @@
+// An `extend` block's instance methods apply to subclasses of the class it extends, nearest
+// base first, after the subclass's own methods and extend blocks.
+class Shape {
+  name(): string {
+    return "shape";
+  }
+}
+
+class Square extends Shape {}
+
+class Tiny extends Square {}
+
+extend Shape {
+  describe(): string {
+    return `a ${this.name()}`;
+  }
+
+  kind(): string {
+    return "extend Shape";
+  }
+}
+
+extend Square {
+  kind(): string {
+    return "extend Square";
+  }
+}
+
+function main() {
+  console.log(new Square().describe(), new Tiny().describe());
+  console.log(new Shape().kind(), new Square().kind(), new Tiny().kind());
+}

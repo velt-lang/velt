@@ -59,3 +59,26 @@ héllo, wörld hé héllo, wörld  wörld
 2 3 Uint8Array(5) [ 97, 195, 169, 0, 0 ]
 0 0
 abcdef 6
+{
+  big: ArrayBuffer {
+    [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00>,
+    [byteLength]: 60
+  }
+}
+{
+  v: DataView {
+    [byteLength]: 39,
+    [byteOffset]: 1,
+    [buffer]: ArrayBuffer {
+      [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00>,
+      [byteLength]: 40
+    }
+  }
+}
+[
+  DataView {
+    [byteLength]: 2,
+    [byteOffset]: 0,
+    [buffer]: ArrayBuffer { [Uint8Contents]: <00 00>, [byteLength]: 2 }
+  }
+]

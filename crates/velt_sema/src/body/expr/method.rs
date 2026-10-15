@@ -66,6 +66,9 @@ impl FnCx<'_, '_> {
         if let Some(r) = self.extension_method(recv, name) {
             return Some(r);
         }
+        if let Some(r) = self.inherited_extension_method(recv, name) {
+            return Some(r);
+        }
         self.builtin_method(recv, name).map(Resolved::Builtin)
     }
 
@@ -160,6 +163,20 @@ impl FnCx<'_, '_> {
             recv_ty: recv,
             is_static: m.is_static,
         })
+    }
+
+    /// The method `name` of an `extend` block of a base class of class `recv`, nearest base
+    /// first: a subclass has its bases' extension methods as it has their own methods
+    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/fetch/typed.vlt).
+    fn inherited_extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        let mut t = recv;
+        for _ in 0..64 {
+            t = self.cx.base_of(t)?;
+            if let Some(r) = self.extension_method(t, name) {
+                return Some(r);
+            }
+        }
+        None
     }
 
     /// An error if `r` (the resolved method `name` of `recv`) comes from an `extend` block and

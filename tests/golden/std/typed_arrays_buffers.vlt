@@ -149,4 +149,8 @@ function main() {
     offset += c.byteLength;
   }
   console.log(dec.decode(merged), merged.length);
+  // Nested, a multi-line buffer or view is indented with its container, as in Node.
+  console.log({ big: new ArrayBuffer(60) });
+  console.log({ v: new DataView(new ArrayBuffer(40), 1) });
+  console.log([new DataView(new ArrayBuffer(2))]);
 }

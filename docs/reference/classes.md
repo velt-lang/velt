@@ -149,7 +149,9 @@ hidden classes and no runtime shape checks.
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
   body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
   statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
-  nearest first. A static method of a generic class is called without type arguments
+  nearest first. Instance methods of an `extend A` block apply to subclasses too: `new B().m()`
+  finds `m` in `B` and its bases' bodies, then in `B`'s `extend` blocks, then in each base
+  class's, nearest first. A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
   the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
   also a bounded one (`class Box<T extends Named>`).
