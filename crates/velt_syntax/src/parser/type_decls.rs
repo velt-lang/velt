@@ -177,6 +177,7 @@ impl<'a> Parser<'a> {
             methods: vec![],
         };
         let mut index = None;
+        let mut sigs = vec![];
         self.parse_members(|p| {
             let lo = p.cur_lo();
             let readonly = p.at(Tok::Kw(Kw::Readonly))
@@ -191,11 +192,15 @@ impl<'a> Parser<'a> {
                 p.add_index_signature(&mut index, sig);
                 return p.expect_member_end();
             }
-            if p.skip_call_signature() {
+            if let Some(sig) = p.parse_call_signature()? {
+                sigs.push(sig);
                 return p.expect_member_end();
             }
             p.parse_interface_member(&mut decl)
         })?;
+        if !sigs.is_empty() {
+            return Ok(self.callable_interface(lo, decl, index, sigs));
+        }
         let Some(index) = index else {
             return Ok(ItemKind::Interface(decl));
         };

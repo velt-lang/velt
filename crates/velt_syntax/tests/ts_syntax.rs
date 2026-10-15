@@ -252,18 +252,42 @@ fn numeric_property_names_and_call_signatures() {
     };
     assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
-    let msg = "call signatures in an interface or object type are not supported yet";
-    assert_eq!(
-        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { <T>(x: T): T; z: string };"),
-        vec![msg, msg]
+    // A call signature alone is the function type it declares; with members or other
+    // signatures, the intersection of them (TypeScript's meaning).
+    let m = parse_ok(
+        "interface F {
+  (x: number): string
+}
+type G = { <T>(x: T): T };
+interface H<T> extends B {
+  (x: T): void
+  y: number
+  stop(): void
+}
+type P = { new (x: number): P; (y: string): P };",
     );
-    // `new(…)` in an interface or object type is a construct signature, as in TypeScript; in a
-    // class it is a method.
-    let ctor = "construct signatures in an interface or object type are not supported yet";
-    assert_eq!(
-        errors("interface P {\n  new (x: number): P\n  y: number\n}\ntype Q = { new <T>(): T; z: string };"),
-        vec![ctor, ctor]
-    );
+    assert_eq!(alias_ty(&m, 0), "fn(number) => string");
+    assert!(matches!(
+        &m.items[1].kind,
+        ItemKind::TypeAlias(a) if matches!(a.ty.kind, TypeExprKind::GenericFunction { .. })
+    ));
+    let ItemKind::TypeAlias(h) = &m.items[2].kind else {
+        panic!("not a type alias: {:?}", m.items[2]);
+    };
+    assert_eq!(h.generics.len(), 1);
+    let TypeExprKind::Intersection(parts) = &h.ty.kind else {
+        panic!("not an intersection: {:?}", h.ty);
+    };
+    assert!(matches!(parts[0].kind, TypeExprKind::Function { .. }));
+    assert!(matches!(&parts[1].kind, TypeExprKind::Named { path, .. } if path[0].name == "B"));
+    assert!(matches!(&parts[2].kind, TypeExprKind::Object(fields) if fields.len() == 2));
+    let ItemKind::TypeAlias(p) = &m.items[3].kind else {
+        panic!("not a type alias: {:?}", m.items[3]);
+    };
+    assert!(matches!(
+        &p.ty.kind,
+        TypeExprKind::Intersection(parts) if matches!(parts[0].kind, TypeExprKind::Construct(_))
+    ));
     let none: Vec<String> = vec![];
     assert_eq!(
         errors("interface N { new: number }\nclass C { new(): C { return this; } }"),

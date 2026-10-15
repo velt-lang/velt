@@ -1054,9 +1054,24 @@ console.log(b.v); // hi
   `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
-  Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
-  `new(…)` in an object type is never a method, while in a class it is) are not supported yet
-  and are reported.
+  A call signature alone (`interface F { (x: T): R }`, `type F = { (x: T): R }`) declares the
+  function type `(x: T) => R`: a value of it is called as `f(x)`, any function or arrow of that
+  type is one, and `typeof f` is `"function"`. With members or other call signatures, an object
+  type or interface with call signatures is a function with properties or an overloaded
+  function (TypeScript's `((x: T) => R) & { stop(): void }`), which is not supported yet
+  (#921); a generic call signature (`<T>(x: T): T`) is a generic function type and a
+  construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
+  a method, while in a class it is) a construct type, both planned
+  ([Functions](functions.md#arrow-functions-and-function-types)).
+
+```ts
+interface Formatter {
+  (value: number, unit: string): string;
+}
+
+const fmt: Formatter = (value, unit) => `${value} ${unit}`;
+console.log(fmt(3, "kg"), typeof fmt); // 3 kg function
+```
 
 ```ts
 type Handler = {
