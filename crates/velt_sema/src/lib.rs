@@ -217,6 +217,7 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let ctx::Ctx {
@@ -239,6 +240,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        type_ops,
     };
     (Some(program), diags)
 }
@@ -283,6 +285,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    // Before the passes that read instantiated types: deferred types reduced per instance.
+    type_level::instances::reach(cx);
     hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);

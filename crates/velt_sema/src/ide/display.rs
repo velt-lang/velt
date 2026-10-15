@@ -27,6 +27,8 @@ pub(crate) struct Names {
     pub defs: Vec<TypeName>,
     /// Type alias names of structural types (`Ctx::alias_names`).
     pub aliases: HashMap<TyId, String>,
+    /// Every type alias's name, by `Ctx::aliases` index (deferred types, `TyKind::Op`).
+    pub alias_decls: Vec<String>,
 }
 
 impl Names {
@@ -36,6 +38,7 @@ impl Names {
             table: cx.ty.table.clone(),
             defs,
             aliases: cx.alias_names.clone(),
+            alias_decls: cx.aliases.iter().map(|a| a.decl.name.name.clone()).collect(),
         }
     }
 
@@ -84,6 +87,10 @@ impl Names {
             }
             TyKind::Promise(x, e) => with_args("Promise", &[*x, *e]),
             TyKind::Shared(x) => with_args("shared", &[*x]),
+            TyKind::Op(crate::hir::TyOp::Alias(a), args) => {
+                let name = self.alias_decls.get(*a as usize).map_or("unknown", |n| n);
+                with_args(name, args)
+            }
             TyKind::FnPtr {
                 params,
                 ret,

@@ -570,6 +570,15 @@ an indexed access to the type of the field it names (a union for several keys,
 `utility_types.rs`). Branded types (`string & { __brand: "UserId" }`) are replaced by their
 primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 
+## Deferred types (issue #934, phase 2)
+`TyKind::Op(TyOp, args)` appears only in generic definitions (signatures, fields, bodies): a type
+alias applied to arguments that mention type parameters, whose body (a conditional, mapped,
+indexed access or template literal type) can't be evaluated until they are known
+(`TyOp::Alias`). Lowering never lays one out: when its substitution makes the arguments concrete,
+it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else with canonical
+arguments), the reduced type sema computed for every instantiation the program reaches. A missing
+entry is an `ICE:`.
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

@@ -204,7 +204,9 @@ impl Types {
             TyKind::Error => true,
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
-            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
+            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) | TyKind::Op(_, args) => {
+                any(args)
+            }
             TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
@@ -247,6 +249,7 @@ impl Types {
         let nk = match k {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
@@ -318,7 +321,7 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
-        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
+        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) | TyKind::Op(_, a) => a.clone(),
         TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {

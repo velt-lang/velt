@@ -1,0 +1,81 @@
+// Conditional, mapped, indexed access and template literal types whose arguments are still type
+// parameters (#934 phase 2): an alias like `PropsAccessor<TProps>` in a generic signature, class
+// or interface stays deferred and is evaluated once the type arguments are known, at each
+// instantiation, as TypeScript evaluates it.
+type PropsAccessor<TProps> = {
+  readonly [K in keyof TProps]: TProps[K];
+};
+type IsString<T> = T extends string ? "yes" : "no";
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+type Boxed<T> = { [K in keyof T]: T[K][] };
+type Wrapped<T> = { inner: T };
+type Unbox<T> = T extends { value: infer V } ? V : never;
+type OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
+
+interface SetupContext<TProps> {
+  name: string;
+  props: PropsAccessor<TProps>;
+}
+
+function makeCtx<T>(name: string, props: PropsAccessor<T>): SetupContext<T> {
+  return { name, props };
+}
+
+function propsOf<T>(ctx: SetupContext<T>): PropsAccessor<T> {
+  return ctx.props;
+}
+
+function tag<T>(x: T, t: IsString<T>): IsString<T> {
+  return t;
+}
+
+function box<T>(x: Boxed<T>): Boxed<T> {
+  return x;
+}
+
+// Instantiates `box` at `Wrapped<T>`, which only this pass's caller makes concrete.
+function boxWrapped<T>(x: Boxed<Wrapped<T>>): Boxed<Wrapped<T>> {
+  return box<Wrapped<T>>(x);
+}
+
+function unbox<T>(v: Unbox<T>): Unbox<T> {
+  return v;
+}
+
+class Store<T> {
+  value: Boxed<T>;
+  constructor(v: Boxed<T>) {
+    this.value = v;
+  }
+  get(): Boxed<T> {
+    return this.value;
+  }
+}
+
+function keysNamed<T>(k: OptionalKeys<T>): OptionalKeys<T> {
+  return k;
+}
+
+const ctx = makeCtx<{ title: string; count: number }>("card", { title: "hi", count: 2 });
+console.log(ctx.name, ctx.props.title, ctx.props.count);
+const p = propsOf(ctx);
+console.log(p.title + "!", p.count + 1);
+
+const yes: "yes" = tag("s", "yes");
+const no: "no" = tag(1, "no");
+console.log(yes, no);
+
+const g: Getters<{ age: number }> = { getAge: () => 42 };
+console.log(g.getAge());
+
+const w = boxWrapped<string>({ inner: ["a", "b"] });
+console.log(w.inner.length, w.inner[1]);
+
+const s = new Store<{ a: number }>({ a: [1, 2, 3] });
+console.log(s.get().a.length, JSON.stringify(s.value));
+
+const n: number = unbox<{ value: number }>(7);
+console.log(n * 2);
+
+const k: "b" | undefined = keysNamed<{ a: string; b?: number }>("b");
+console.log(k);

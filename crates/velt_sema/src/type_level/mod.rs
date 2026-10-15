@@ -22,10 +22,11 @@ use velt_syntax::ast;
 
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
-use crate::hir::{LitValue, Nothing, TyId, TyKind};
+use crate::hir::{LitValue, Nothing, TyId, TyKind, TyOp};
 use crate::resolve::TyEnv;
 use crate::types::collect_params;
 
+pub(crate) mod instances;
 pub(crate) mod key_kinds;
 mod relate;
 mod template;
@@ -52,6 +53,22 @@ pub(crate) struct State {
     /// How object types' properties whose names spell numbers were named (`key_kinds`).
     pub(crate) key_kinds:
         std::collections::HashMap<(crate::hir::DefId, String), key_kinds::KeyKind>,
+    /// How many alias expansions in progress have an argument that is a type parameter: a form
+    /// that needs that argument defers the alias (`TyKind::Op`) instead of failing.
+    pub(crate) deferring: u32,
+    /// The alias being expanded needs an argument that is still a type parameter.
+    pub(crate) stuck: bool,
+    /// Where each deferred type was first written (reductions report there).
+    pub(crate) op_sites: std::collections::HashMap<TyId, Span>,
+    /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
+    pub(crate) reduced: std::collections::HashMap<TyId, TyId>,
+}
+
+/// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
+/// every reduction sema made, after readonly erasure. [`instances::reach`] has reduced each one
+/// an instantiation of a generic definition reaches.
+pub(crate) fn lowered_ops(cx: &mut Ctx) -> std::collections::HashMap<TyId, TyId> {
+    std::mem::take(&mut cx.type_level.reduced)
 }
 
 /// What a conditional type tests: a type, or `null` / `undefined` (which are not types alone).
@@ -82,7 +99,7 @@ impl Ctx<'_> {
         if !self.has_type_params(t) {
             return Some(t);
         }
-        if !self.checking_unused_aliases {
+        if !self.defer_param_form() {
             // At the use of the alias whose body has the form, where the type parameter is.
             let span = self.type_level.alias_site.unwrap_or(span);
             let msg = format!("{what} over a type parameter is not supported yet");
@@ -92,6 +109,54 @@ impl Ctx<'_> {
             );
         }
         None
+    }
+
+    /// Does `t` hold a deferred type (`TyKind::Op`)?
+    pub(crate) fn mentions_op(&self, t: TyId) -> bool {
+        let mut found = false;
+        self.ty.visit(t, &mut |k| found |= matches!(k, TyKind::Op(..)));
+        found
+    }
+
+    /// A form needs a type argument that is still a type parameter. Inside an alias expanded
+    /// with such an argument, the alias is deferred (`true`: nothing to report); `true` also
+    /// while unused aliases are checked on their own. `false`: report the form.
+    pub(crate) fn defer_param_form(&mut self) -> bool {
+        if self.type_level.deferring > 0 {
+            self.type_level.stuck = true;
+            return true;
+        }
+        self.checking_unused_aliases
+    }
+
+    /// The deferred application of alias `a` to `args` (which mention type parameters), as
+    /// written at `span`.
+    pub(crate) fn deferred_alias(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
+        let op = self.ty.intern(TyKind::Op(TyOp::Alias(a), args));
+        self.type_level.op_sites.entry(op).or_insert(span);
+        op
+    }
+
+    /// Deferred type `t`, whose arguments are now concrete, evaluated (memoized); `Error`, with
+    /// no second report, when an argument is one.
+    pub(crate) fn reduce_op(&mut self, t: TyId) -> TyId {
+        if let Some(&r) = self.type_level.reduced.get(&t) {
+            return r;
+        }
+        let TyKind::Op(TyOp::Alias(a), args) = self.ty.kind(t).clone() else {
+            return t;
+        };
+        if args.iter().any(|x| self.ty.has_error(*x)) {
+            return self.ty.error;
+        }
+        let span = self
+            .type_level
+            .alias_site
+            .or_else(|| self.type_level.op_sites.get(&t).copied())
+            .unwrap_or(self.aliases[a as usize].decl.name.span);
+        let r = self.alias_body(a, args, span);
+        self.type_level.reduced.insert(t, r);
+        r
     }
 
     /// `C extends E ? T : F`.

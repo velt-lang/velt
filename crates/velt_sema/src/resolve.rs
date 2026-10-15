@@ -6,6 +6,7 @@
 //! `TyKind::Dyn`; `T | null` is `TyKind::Option`; other unions are compiler-generated enums (`crate::unions`); literal types are `TyKind::Literal`
 //! (`crate::literals`) and object types `{ a: T }` anonymous object types (`crate::anon`).
 
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::anon::ShapeField;
@@ -559,6 +560,16 @@ impl Ctx<'_> {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
         }
+        self.alias_body(a, args, t.span)
+    }
+
+    /// The body of alias `a` (with as many `args` as it has parameters) at `args`, used at
+    /// `span`. A conditional, mapped, indexed access or template literal type in it that needs
+    /// an argument that is still a type parameter makes it the deferred `TyKind::Op` (#934).
+    pub(crate) fn alias_body(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
+        let info = &self.aliases[a as usize];
+        let decl = info.decl;
+        let module = info.module;
         let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         self.aliases[a as usize].used = true;
         self.aliases[a as usize].expanding = true;
@@ -566,13 +577,29 @@ impl Ctx<'_> {
         env.args = args.clone();
         let outermost = self.type_level.alias_site.is_none();
         if outermost {
-            self.type_level.alias_site = Some(t.span);
+            self.type_level.alias_site = Some(span);
         }
+        let defer =
+            !self.checking_unused_aliases && args.iter().any(|x| self.has_type_params(*x));
+        if defer {
+            self.type_level.deferring += 1;
+        }
+        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
         let body = self.resolve_type(&decl.ty, &env);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        if defer {
+            self.type_level.deferring -= 1;
+        }
         if outermost {
             self.type_level.alias_site = None;
         }
         self.aliases[a as usize].expanding = false;
+        if stuck {
+            // Evaluated again, and reported, once the arguments are known.
+            self.diags.truncate(reported);
+            return self.deferred_alias(a, args, span);
+        }
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
             self.alias_names
@@ -582,7 +609,7 @@ impl Ctx<'_> {
         if self.mixes_nothings(body, &args) {
             self.err(
                 "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
-                t.span,
+                span,
             );
             return self.ty.error;
         }
