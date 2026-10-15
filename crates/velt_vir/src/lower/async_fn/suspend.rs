@@ -186,11 +186,11 @@ impl FnLower<'_, '_> {
         let ret = self.cx.subst(ret, &targs);
         let throws = self.cx.fn_throws(f, &targs);
         // The child's promise settled: one step before the caller goes on, as in Node.
-        let held = match throws {
-            Some(e) => self.cx.intern(TyKind::Result(ret, e)),
-            None => ret,
-        };
-        self.await_step(|lw| {
+        let stepped = self.await_step(|lw| {
+            let held = match throws {
+                Some(e) => lw.cx.intern(TyKind::Result(ret, e)),
+                None => ret,
+            };
             let sp = lw.addr(Place::local(child));
             let base = lw.operand_place(sp, Ty::Ptr);
             let vt = lw.cx.ty(held);
@@ -198,7 +198,12 @@ impl FnLower<'_, '_> {
                 lw.drop_glue(proj(&base, Proj::Deref(vt)), held);
             }
         });
-        let sp = self.addr(Place::local(child));
+        // After a step the address is taken again (the state may have been polled anew).
+        let sp = if stepped {
+            self.addr(Place::local(child))
+        } else {
+            sp
+        };
         self.take_result(sp, ret, throws)
     }
 
@@ -207,10 +212,12 @@ impl FnLower<'_, '_> {
     /// word (`*(*cx)`) is not 0 can another job run first; then `velt_rt_await_tick` queues the
     /// step and its ticket is waited for. `drop_held` drops the settled value when the state is
     /// cancelled meanwhile. Standard-library code takes no step: the prelude counts Node's steps
-    /// itself (std/prelude/promise.vlt).
-    pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) {
-        if self.dead() || self.in_std() {
-            return;
+    /// itself (std/prelude/promise.vlt). Nor does a program in which nothing can make the word
+    /// non-0 (await_order.rs): it is lowered again without any step code.
+    /// Returns whether step code was emitted.
+    pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
+        if self.dead() || self.in_std() || self.cx.no_await_steps {
+            return false;
         }
         let cx = self.poll_cx();
         let cxp = self.operand_place(cx.clone(), Ty::Ptr);
@@ -246,6 +253,7 @@ impl FnLower<'_, '_> {
         self.after_poll(k, Operand::Copy(Place::local(r)), drop_held);
         self.goto(done);
         self.switch_to(done);
+        true
     }
 
     /// Move the result out of a finished state (at `ptr + 0`); a `Result` from a throwing
