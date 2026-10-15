@@ -572,8 +572,10 @@ console.log(p.x + p.y); // 3
 - An interface merges only with interfaces, not with a class, function or enum of its name.
 - `var NAME: T;` in `declare global` declares a build-time constant (see
   [`define`](../tooling/manifest.md#define)).
+- A namespace of types in `declare global` is declared in its module, as a `declare namespace`
+  ([Namespaces](modules.md#namespaces)), like a `declare global` interface.
 - Not supported yet: other declarations in `declare global` and `declare module` blocks
-  (functions, namespaces, `var` in `declare module`), declaring a new interface in another module with
+  (functions, namespaces in `declare module`, `var` in `declare module`), declaring a new interface in another module with
   `declare module`, a `declare global` interface visible in other modules, and a shorthand
   `declare module "spec";`.
 

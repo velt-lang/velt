@@ -68,7 +68,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
-            let Ok(kind) = self.parse_augment_member(item_lo) else {
+            let Ok(kind) = self.parse_augment_member(item_lo, global) else {
                 self.skip_to_block_end();
                 return Err(Fail);
             };
@@ -99,11 +99,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// One declaration in an augmentation block: an interface (which merges), or a type alias.
+    /// One declaration in an augmentation block: an interface (which merges), or in
+    /// `declare global` a namespace of types (declared in the module, as `declare namespace`).
     /// Anything else is reported.
-    fn parse_augment_member(&mut self, lo: u32) -> PResult<ItemKind> {
+    fn parse_augment_member(&mut self, lo: u32, global: bool) -> PResult<ItemKind> {
         match self.cur_kw() {
             Some(Kw::Interface) => self.parse_interface(),
+            None if global && self.at_namespace(0) => {
+                Ok(ItemKind::Namespace(self.parse_namespace()?))
+            }
             _ => {
                 let span = Span::new(self.file, lo, self.cur_span().hi);
                 let what = match self.cur_kw() {
@@ -111,7 +115,9 @@ impl<'a> Parser<'a> {
                     Some(Kw::Function) => "a function",
                     Some(Kw::Class) => "a class",
                     _ if self.at_word("var") => "a variable",
-                    _ if self.at_word("namespace") => "a namespace",
+                    _ if self.at_word("namespace") => {
+                        "a namespace (only `declare global` may hold one)"
+                    }
                     _ => "this declaration",
                 };
                 self.error(

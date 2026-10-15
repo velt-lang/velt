@@ -29,11 +29,11 @@ pub(crate) type Private = HashMap<String, Span>;
 /// The modules with their namespaces flattened, or `None` when no module has one; with each
 /// module's private members.
 pub(crate) fn flatten(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Private>) {
+    let is_ns = |i: &ast::Item| matches!(i.kind, ast::ItemKind::Namespace(_));
     let has = |m: &SourceModule| {
-        m.ast
-            .items
-            .iter()
-            .any(|i| matches!(i.kind, ast::ItemKind::Namespace(_)))
+        m.ast.items.iter().any(|i| {
+            is_ns(i) || matches!(&i.kind, ast::ItemKind::Augment(a) if a.items.iter().any(is_ns))
+        })
     };
     if !modules.iter().any(has) {
         return (None, vec![]);
@@ -74,7 +74,27 @@ pub(crate) fn lookup(cx: &Ctx, module: usize, path: &[ast::Ident], at: Span) -> 
     cx.scopes[module].items.get(&key).copied()
 }
 
-fn flatten_items(items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::Item> {
+fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::Item> {
+    // A namespace in `declare global { … }` is declared in its module, as `declare namespace`.
+    let mut hoisted = vec![];
+    for item in &mut items {
+        if let ast::ItemKind::Augment(a) = &mut item.kind {
+            let (ns, rest) = std::mem::take(&mut a.items)
+                .into_iter()
+                .partition(|i| matches!(i.kind, ast::ItemKind::Namespace(_)));
+            a.items = rest;
+            hoisted.extend(ns.into_iter().map(|mut i: ast::Item| {
+                if let ast::ItemKind::Namespace(n) = &mut i.kind {
+                    n.declare = true;
+                }
+                ast::Item {
+                    exported: false,
+                    ..i
+                }
+            }));
+        }
+    }
+    items.extend(hoisted);
     // The members of every namespace path, over all of its blocks.
     let mut members: HashMap<Vec<String>, HashSet<String>> = HashMap::new();
     for item in &items {

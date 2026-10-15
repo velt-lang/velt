@@ -98,6 +98,8 @@ console.log(s.ends[1].x, s.length); // 3 5
 - An exported namespace is imported and re-exported by its name, like a type
   (`import { type Geo } from "./geo"`, `export type { Geo } from "./geo"`), and through
   `import * as m` as `m.Geo.Point`.
+- `declare global { namespace JSX { … } }` declares the namespace in its module, as a
+  `declare namespace` (a global visible in other modules is not supported yet).
 - A namespace holds type aliases, interfaces and namespaces. Values in a namespace (`const`,
   `function`, `class`, `enum`: a run-time object in TypeScript) are not supported yet.
 
