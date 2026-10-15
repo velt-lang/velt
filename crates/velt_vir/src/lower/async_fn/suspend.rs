@@ -208,7 +208,7 @@ impl FnLower<'_, '_> {
     /// step and its ticket is waited for. `drop_held` drops the settled value when the state is
     /// cancelled meanwhile. Standard-library code takes no step: the prelude counts Node's steps
     /// itself (std/prelude/promise.vlt).
-    fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) {
+    pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) {
         if self.dead() || self.in_std() {
             return;
         }
