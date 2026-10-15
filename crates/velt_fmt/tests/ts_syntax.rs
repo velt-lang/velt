@@ -233,8 +233,12 @@ fn let_after_var_stays_let() {
     round_trips(
         "function f(): void {\n  var x = 1;\n  for (let i = 0; i < 1; i++) {}\n  for (let i = 0, j = 1; i < j; i++) {}\n  console.log(x);\n}\n",
     );
-    let got = format_source("function f(): void {\n  var x = 1;\n  let y = 2, z = 3;\n}\n").unwrap();
-    assert_eq!(got, "function f(): void {\n  var x = 1;\n  let y = 2;\n  let z = 3;\n}\n");
+    let got =
+        format_source("function f(): void {\n  var x = 1;\n  let y = 2, z = 3;\n}\n").unwrap();
+    assert_eq!(
+        got,
+        "function f(): void {\n  var x = 1;\n  let y = 2;\n  let z = 3;\n}\n"
+    );
 }
 
 #[test]
