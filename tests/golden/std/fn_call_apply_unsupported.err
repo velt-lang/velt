@@ -1,0 +1,3 @@
+`call` with this `this` is not supported yet: a method read as a value keeps the object it was read from
+`call` with this `this` is not supported yet: a function value may be a method that keeps the object it was read from
+`apply` with this `this` is not supported yet: a function value may be a method that keeps the object it was read from

@@ -1,0 +1,50 @@
+// Function.prototype.call and apply on function values (#1110), as in Node.
+const codes = [104, 105];
+console.log(String.fromCharCode.apply(null, codes));
+function add(a: number, b: number): number {
+  return a + b;
+}
+console.log(add.apply(null, [1, 2]), add.call(null, 3, 4), add.call(undefined, 5, 6));
+const pair: [number, number] = [7, 8];
+console.log(add.apply(null, pair), add.apply(undefined, [9, 10]));
+function hello(): string {
+  return "hello";
+}
+console.log(hello.call(null), hello.apply(null), hello.apply(null, []));
+const twice = (x: number): number => x * 2;
+console.log(twice.call(null, 21), ((s: string): string => s.toUpperCase()).call(null, "up"));
+console.log(Math.max.apply(null, [3, 9, 4]), Math.max.call(null, 1, 5));
+function evaluationOrder(): string {
+  const order: string[] = [];
+  const note = (s: string): number => {
+    order.push(s);
+    return order.length;
+  };
+  const target = { tag: "t" };
+  const report = (n: number): number => n * 10;
+  const r = report.call(null, note("arg"));
+  const t = (twice as (x: number) => number).call(undefined, note("second"));
+  return `${r} ${t} ${order.join(",")} ${target.tag}`;
+}
+console.log(evaluationOrder());
+function withThis(): number {
+  return 1;
+}
+const holder = { tag: "h" };
+console.log(withThis.call(holder), withThis.apply(holder, []));
+class Counter {
+  n = 0;
+  inc(by: number): number {
+    this.n += by;
+    return this.n;
+  }
+}
+const c = new Counter();
+console.log(c.inc.call(c, 2), c.inc.apply(c, [3]), c.n);
+function sum(...xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0);
+}
+const nums = [1, 2, 3, 4];
+console.log(sum.apply(null, nums), sum.call(null, ...nums), sum.apply(null, []));
+const fns: ((x: number) => number)[] = [twice, (x) => x + 1];
+console.log(fns.map((f) => f.call(null, 10)));

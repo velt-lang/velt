@@ -1,0 +1,3 @@
+mismatched types
+function `add` takes 2 arguments but 1 argument was supplied
+a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)

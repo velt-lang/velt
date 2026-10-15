@@ -700,6 +700,32 @@ async function main() {
   parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
   which, like a name, is only for the reader.
 
+### `call` and `apply`
+
+`f.call(thisArg, a, b)` and `f.apply(thisArg, [a, b])` call a function value as JavaScript's
+`Function.prototype` does: `f(a, b)`, with `thisArg` evaluated first (after `f`). `apply`'s
+argument spreads into the call as `f(...args)` does: an array literal or a tuple fills the
+parameters one by one, and an array of unknown length only a rest parameter
+(`String.fromCharCode.apply(null, codes)`, `Math.max.apply(null, xs)`), as TypeScript's
+`strictBindCallApply` checks it.
+
+`this` matters only to a function that reads it. Function declarations, arrow functions and the
+static functions of built-in namespaces read none, so any `thisArg` works for them. A method read
+as a value (`o.m`) keeps the object it was read from: `o.m.call(o, x)` works, and so does any
+function value with `null` or `undefined` as `thisArg`; calling one with another `this` is not
+supported yet (an error), since Velt would run it on the object it keeps.
+
+```ts
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+const codes = [104, 105];
+const pair: [number, number] = [3, 4];
+console.log(String.fromCharCode.apply(null, codes)); // hi
+console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
+```
+
 ## Captures
 
 - A closure passed directly as a call argument, or called immediately, is **non-escaping** and

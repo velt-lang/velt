@@ -10,6 +10,7 @@ mod attempt;
 mod await_union;
 mod builtins;
 mod call;
+mod call_apply;
 mod callback;
 mod callback_sig;
 mod chain;

@@ -1,0 +1,14 @@
+// A `this` other than the one Velt's function keeps: "not supported yet" (tsc accepts all).
+class Counter {
+  n = 0;
+  inc(by: number): number {
+    this.n += by;
+    return this.n;
+  }
+}
+const a = new Counter();
+const b = new Counter();
+console.log(a.inc.call(b, 1));
+const f = a.inc;
+console.log(f.call(a, 1));
+console.log(f.apply(b, [1]));
