@@ -405,6 +405,8 @@ impl<'a> Parser<'a> {
                     && p.nth(k + 2) == Tok::RBracket
                     && p.nth(k + 3) == Tok::LParen)
                 || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::LParen)
+                // `name<T>(…) { … }`: a generic method.
+                || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::Lt)
         };
         if !is_generator && !at_name(self, off) {
             return Ok(None);
