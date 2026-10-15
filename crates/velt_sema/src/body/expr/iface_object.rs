@@ -436,6 +436,8 @@ impl FnCx<'_, '_> {
             methods: impl_methods,
         });
         let impl_index = self.cx.impls.len() as u32 - 1;
+        // The dispatch groups gain the new methods (`throws/groups.rs`): built again on next use.
+        self.cx.groups = None;
         let type_args: Vec<TyId> = ps.iter().map(|p| self.cx.ty.param(*p)).collect();
         let ty = self.cx.ty.intern(TyKind::Adt(d, type_args.clone()));
         let fields = values.into_iter().map(|(_, h)| h).collect();

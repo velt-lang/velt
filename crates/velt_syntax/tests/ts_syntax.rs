@@ -145,10 +145,44 @@ fn object_literal_methods_are_arrow_properties() {
         errors("const o = { n: 1, m() { return this.n; } };"),
         vec!["`this` in the object-literal method `m` is not supported yet"]
     );
+    assert!(errors("const o = { get v() { return 1; }, set v(x: number) {} };").is_empty());
     assert_eq!(
-        errors("const o = { get v() { return 1; } };"),
-        vec!["getters and setters in object literals are not supported yet"]
+        errors("const o = { get v(x) { return 1; } };"),
+        vec!["a getter cannot have parameters"]
     );
+    assert_eq!(
+        errors("const o = { set v() {} };"),
+        vec!["a setter must have exactly one parameter"]
+    );
+}
+
+#[test]
+fn object_literal_accessors_are_calls_of_the_prelude_functions() {
+    let e = expr("x = { get v(): number { return 1; }, set v(n: number) {} }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let names: Vec<&str> = ps
+        .iter()
+        .map(|p| {
+            let ObjectProp::KeyValue(k, v) = p else {
+                panic!("expected a property, got {p:?}")
+            };
+            assert_eq!(k.name, "v");
+            let ExprKind::Call { callee, args, .. } = &v.kind else {
+                panic!("expected a call, got {v:?}")
+            };
+            assert!(matches!(args[0].kind, ExprKind::Arrow { .. }));
+            match &callee.kind {
+                ExprKind::Ident(f) => f.name.as_str(),
+                k => panic!("expected a name, got {k:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(names, [OBJECT_GET_FN, OBJECT_SET_FN]);
 }
 
 #[test]
