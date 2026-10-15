@@ -70,6 +70,26 @@ impl Ctx<'_> {
                 throws,
                 rest: false,
             } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
+            ast::TypeExprKind::TupleRest(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "variadic tuple types (`[A, ...T]`) are not supported yet (#943)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; write them out (`[A, B, C]`), or use an array (`A[]`)"),
+                );
+                self.ty.error
+            }
+            ast::TypeExprKind::TupleOptional(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "optional tuple elements (`[A, B?]`) are not supported yet (#938)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; make the element `B | null` and pass `null`, or declare one tuple type per length"),
+                );
+                self.ty.error
+            }
             ast::TypeExprKind::Function { rest: true, .. }
             | ast::TypeExprKind::GenericFunction { .. }
             | ast::TypeExprKind::Construct(_) => {

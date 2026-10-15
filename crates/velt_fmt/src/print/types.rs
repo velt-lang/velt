@@ -61,6 +61,14 @@ impl<'a> Printer<'a> {
                 cat![self.generic_params(type_params), self.ty(ty)]
             }
             TypeExprKind::Construct(ty) => cat!["new ", self.ty(ty)],
+            TypeExprKind::TupleRest(ty) => match fn_type_param_name(self.src, ty.span.lo) {
+                Some(label) => cat!["...", label.to_string(), ": ", self.ty(ty)],
+                None => cat!["...", self.ty_operand(ty)],
+            },
+            TypeExprKind::TupleOptional(ty) => match optional_label(self.src, ty.span.lo) {
+                Some(label) => cat![label.to_string(), "?: ", self.ty(ty)],
+                None => cat![self.ty_operand(ty), "?"],
+            },
             TypeExprKind::Union(members) => {
                 let docs = members.iter().map(|m| self.ty_operand(m)).collect();
                 join(&text(" | "), docs)

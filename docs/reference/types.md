@@ -1205,7 +1205,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
-  string]`. `Promise.all` over tuples of different types is not supported.
+  string]`. Optional elements (`[A, B?]`, `[name: string, age?: number]`) and rest elements
+  (variadic tuple types, `[A, ...T]`, `[first: string, ...rest: number[]]`) parse, with
+  TypeScript's errors for their order (an optional element after a rest one, TS1266; a required
+  one after an optional one, TS1257), and using one is an error saying it is not supported yet.
+  `Promise.all` over tuples of different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
   and values, and a repeated key keeps its first position and its last value) or from any
