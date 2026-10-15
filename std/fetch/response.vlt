@@ -343,7 +343,9 @@ export class Response {
       return this.#str;
     }
     let d = this.#data ?? [];
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == STREAM && s != null) {
       d = await collect(s);
     }
@@ -372,7 +374,9 @@ export class Response {
     if (this.#source == TEXT) {
       return utf8Encode(this.#str);
     }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == STREAM && s != null) {
       return await collect(s);
     }
@@ -403,7 +407,9 @@ export class Response {
         yield chunk;
       }
     }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == TEXT) {
       yield utf8Encode(this.#str);
     } else if (this.#source == STREAM && s != null) {

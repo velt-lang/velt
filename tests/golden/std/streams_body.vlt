@@ -1,0 +1,55 @@
+// check: no leaks
+// A ReadableStream of Uint8Array chunks as a Response body (sigx's server renderer streams its
+// document this way), and a ReadableStream<string> turned into one, as in Node.
+function chunksToBytes(parts: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let i = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i == parts.length) {
+        controller.close();
+      } else {
+        controller.enqueue(encoder.encode(parts[i]));
+        i++;
+      }
+    },
+    cancel() {
+      console.log("cancelled");
+    },
+  });
+}
+
+function renderStream(parts: string[]): ReadableStream<string> {
+  return new ReadableStream<string>({
+    start(controller) {
+      for (const p of parts) {
+        controller.enqueue(p);
+      }
+      controller.close();
+    },
+  });
+}
+
+async function main() {
+  const res = new Response(chunksToBytes(["<html>", "<body>héllo</body>", "</html>"]), {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  console.log(res.headers.get("content-type"), res.bodyUsed);
+  console.log(await res.text(), res.bodyUsed);
+  const bytes = await new Response(chunksToBytes(["ab", "c"])).bytes();
+  console.log(bytes);
+  const buf = await new Response(chunksToBytes([])).arrayBuffer();
+  console.log(buf.byteLength);
+  // A string stream, encoded chunk by chunk.
+  const encoder = new TextEncoder();
+  const out: string[] = [];
+  const reader = renderStream(["<p>", "x", "</p>"]).getReader();
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) {
+      break;
+    }
+    out.push(new TextDecoder().decode(encoder.encode(r.value)));
+  }
+  console.log(out.join(""));
+}

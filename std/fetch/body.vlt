@@ -5,13 +5,15 @@
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
-import { TypedArray } from "velt:typed_array/arrays";
+import { TypedArray, Uint8Array } from "velt:typed_array/arrays";
 import { ArrayBuffer } from "velt:typed_array/buffer";
 import { DataView } from "velt:typed_array/data_view";
+import { ReadableStream } from "velt:streams";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
- * fields (sent as `application/x-www-form-urlencoded`), or a stream.
+ * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `ReadableStream` of
+ * `Uint8Array`s, or a `BodyStream`).
  */
 export type BodyInit =
   | string
@@ -20,6 +22,7 @@ export type BodyInit =
   | ArrayBuffer
   | DataView
   | URLSearchParams
+  | ReadableStream<Uint8Array>
   | BodyStream;
 
 /**
@@ -69,6 +72,9 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof BodyStream) {
     return { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
   }
+  if (body instanceof ReadableStream) {
+    return { kind: 3, text: "", bytes: [], stream: BodyStream.from(streamBytes(body)), implied: 0 };
+  }
   // A typed array, buffer or view: its bytes, copied (as JS does).
   if (body instanceof TypedArray) {
     const o = body.off as i64;
@@ -89,6 +95,13 @@ export function bodyParts(body: BodyInit | null): BodyParts {
     };
   }
   return { kind: 2, text: "", bytes: body, stream: null, implied: 0 };
+}
+
+// The chunks of a `ReadableStream` body as Velt byte arrays (each copied once).
+async function* streamBytes(s: ReadableStream<Uint8Array>): AsyncGenerator<u8[], Error> {
+  for await (const chunk of s) {
+    yield chunk.toBytes();
+  }
 }
 
 /** The bytes of a stream, in one array. */
