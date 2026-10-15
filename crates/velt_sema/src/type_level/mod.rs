@@ -111,6 +111,17 @@ impl Ctx<'_> {
         None
     }
 
+    /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
+    pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
+        let TyOp::Alias(a) = o;
+        let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
+        format!(
+            "{}<{}>",
+            self.aliases[a as usize].decl.name.name,
+            args.join(", ")
+        )
+    }
+
     /// Does `t` hold a deferred type (`TyKind::Op`)?
     pub(crate) fn mentions_op(&self, t: TyId) -> bool {
         let mut found = false;

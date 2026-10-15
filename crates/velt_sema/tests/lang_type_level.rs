@@ -230,7 +230,8 @@ function main() {{ const v = {init}; }}"
         at("opt<{ a: string; b?: number }>({ a: \"\" })"),
         "\"b\" | undefined"
     );
-    assert_eq!(at("ev({ click: 1 })"), "{ onClick?: () => void }");
+    // (`show` prints a function type's result only.)
+    assert_eq!(at("ev({ click: 1 })"), "{ onClick?: () => Unit }");
     assert_eq!(at("ctx({ a: \"s\" }).props"), "{ a: string }");
     // In the generic signature the type stays deferred; lowering gets its reductions.
     let p = ok_src(&format!(

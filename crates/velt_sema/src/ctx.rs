@@ -754,9 +754,7 @@ impl<'m> Ctx<'m> {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),
             },
-            TyKind::Op(crate::hir::TyOp::Alias(a), args) => {
-                with_args(self, &self.aliases[*a as usize].decl.name.name, args)
-            }
+            TyKind::Op(o, args) => self.display_op(*o, args, names),
             TyKind::Closure(d) => match self.try_fn(*d) {
                 Some(f) => {
                     let ps: Vec<String> = f
