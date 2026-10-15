@@ -265,7 +265,7 @@ impl ParamCall {
     }
 
     /// The method that runs for a concrete receiver, with its type arguments.
-    fn resolve(&self, cx: &mut Ctx) -> Option<(DefId, Vec<TyId>)> {
+    pub(crate) fn resolve(&self, cx: &mut Ctx) -> Option<(DefId, Vec<TyId>)> {
         let (index, _, implementor) = cx.find_impl(self.recv, self.iface)?;
         let imp = cx.impls.get(index as usize)?;
         let (pattern, generics, iface_args) = (imp.ty, imp.generics, imp.iface_args.clone());
