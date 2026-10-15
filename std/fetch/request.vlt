@@ -16,7 +16,16 @@ import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { Uint8Array } from "velt:typed_array/arrays";
 import { ArrayBuffer } from "velt:typed_array/buffer";
-import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
+import {
+  BodyInit,
+  BodyParts,
+  BodyStream,
+  bodyParts,
+  bodyStream,
+  collect,
+  impliedType,
+} from "velt:fetch/body";
+import { ReadableStream } from "velt:streams";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
 declare function velt_rt_http_req_method(r: u64): string;
@@ -185,7 +194,7 @@ export class Request {
       );
     }
     if (input.#raw != 0) {
-      const body = input.body;
+      const body = BodyStream.adopt(input.chunks());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();
@@ -251,14 +260,14 @@ export class Request {
   }
 
   /**
-   * The body as a stream of `u8[]` chunks (JS: a `ReadableStream`); null without a body.
-   * Reading it uses the body up, as `text()` does.
+   * The body as a `ReadableStream` of `Uint8Array`s; null without a body. Reading it uses the
+   * body up, as `text()` does.
    */
-  get body(): BodyStream | null {
+  get body(): ReadableStream<Uint8Array> | null {
     if (!this.hasBody()) {
       return null;
     }
-    return BodyStream.adopt(this.chunks());
+    return bodyStream(this.chunks(), false);
   }
 
   get bodyUsed(): bool {

@@ -17,12 +17,14 @@ import { AbortError, AbortSignal } from "velt:task";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { Uint8Array } from "velt:typed_array/arrays";
 import { ArrayBuffer } from "velt:typed_array/buffer";
+import { ReadableStream } from "velt:streams";
 import {
   BodyInit,
   BodyStream,
   JSON_TYPE,
   TEXT_TYPE,
   bodyParts,
+  bodyStream,
   collect,
   impliedType,
 } from "velt:fetch/body";
@@ -313,17 +315,22 @@ export class Response {
   }
 
   /**
-   * The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
-   * `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
-   * 304), for a `HEAD` request's response and for a response made without one.
+   * The body as it arrives, a `ReadableStream` of `Uint8Array`s: `getReader()`, or
+   * `for await (const chunk of res.body)`. Null for a status that has no body (101, 103, 204,
+   * 205, 304), for a `HEAD` request's response and for a response made without one.
    */
-  get body(): BodyStream | null {
-    const code = this.#code;
-    const none = code == 101 || code == 103 || code == 204 || code == 205;
-    if (none || code == 304 || this.#source == NONE || this.#source == BUILT) {
+  get body(): ReadableStream<Uint8Array> | null {
+    if (!this.streams()) {
       return null;
     }
-    return BodyStream.adopt(this.chunks(), this.#used);
+    return bodyStream(this.chunks(), this.#used);
+  }
+
+  // Whether the response has a body to stream (`body` is not null).
+  private streams(): bool {
+    const code = this.#code;
+    const none = code == 101 || code == 103 || code == 204 || code == 205;
+    return !(none || code == 304 || this.#source == NONE || this.#source == BUILT);
   }
 
   /** Whether the body has been read. */
@@ -506,7 +513,7 @@ export class Response {
   // when the body is not streamed.
   private serverStream(): BodyStream | null {
     if (this.#source == RUNTIME) {
-      return this.body;
+      return this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null;
     }
     return this.#stream;
   }

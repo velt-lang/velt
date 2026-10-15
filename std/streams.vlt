@@ -79,6 +79,8 @@ export class ReadableStreamDefaultController<R> {
   private closeWaits: CloseWait[] = [];
   // `ReadableStream.from`'s source: the iterator pulled from instead of `source.pull`.
   private iter: AsyncIterator<R, Error> | null = null;
+  // A body of `fetch`, `Response` or `Request`: shown as a byte stream, as Node shows one.
+  private bytes: bool = false;
 
   private constructor(source: UnderlyingSource<R>, hwm: number) {
     this.source = source;
@@ -398,6 +400,21 @@ export class ReadableStream<R> {
     return s;
   }
 
+  // A stream of the chunks of `chunks`, pulled only when read (std only: the `body` of
+  // `Response` and `Request`); `used`: the body was read already, so the stream is closed and
+  // locked, as in JS.
+  private static body<T>(chunks: AsyncIterator<T, Error>, used: bool): ReadableStream<T> {
+    const s = new ReadableStream<T>({}, { highWaterMark: 0 });
+    s.ctl.bytes = true;
+    if (used) {
+      s.ctl.finishClose();
+      s.ctl.locked = true;
+    } else {
+      s.ctl.iter = chunks;
+    }
+    return s;
+  }
+
   /** Whether a reader holds the stream (`getReader()` until `releaseLock()`). */
   get locked(): bool {
     return this.ctl.locked;
@@ -429,7 +446,7 @@ export class ReadableStream<R> {
   __inspect(): string {
     const state =
       this.ctl.state == READABLE ? "readable" : this.ctl.state == CLOSED ? "closed" : "errored";
-    return `ReadableStream { locked: ${this.ctl.locked}, state: '${state}', supportsBYOB: false }`;
+    return `ReadableStream { locked: ${this.ctl.locked}, state: '${state}', supportsBYOB: ${this.ctl.bytes} }`;
   }
 }
 
