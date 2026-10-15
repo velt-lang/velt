@@ -116,7 +116,7 @@ impl FnCx<'_, '_> {
         let from_body = declared.is_none();
         let ty = match declared {
             Some(t) => self.cx.canon_error(Some(t)),
-            None => crate::throws::srcs_now(self.cx, &frame.uncaught),
+            None => self.body_error_now(frame),
         };
         self.cx.fn_info_mut(def).declared_throws = Some(crate::defs::DeclaredThrows {
             ty,
@@ -124,6 +124,22 @@ impl FnCx<'_, '_> {
             from_body,
         });
         ty
+    }
+
+    /// What a closure's body (`frame`) is known to throw now. A call back into the function
+    /// being checked (recursion, #1111) counts what that function's body throws before the
+    /// closure (the final inference re-checks it): its error type is not known yet.
+    fn body_error_now(&mut self, frame: &Frame) -> Option<TyId> {
+        let me = self.body_def.filter(|d| self.cx.checking.contains(d));
+        let Some(me) = me.filter(|d| self.cx.fn_info(*d).throw_srcs.is_empty()) else {
+            return crate::throws::srcs_now(self.cx, &frame.uncaught);
+        };
+        let base = self.outer.first().unwrap_or(&self.f);
+        let so_far = base.uncaught.clone();
+        self.cx.fn_info_mut(me).throw_srcs = so_far;
+        let t = crate::throws::srcs_now(self.cx, &frame.uncaught);
+        self.cx.fn_info_mut(me).throw_srcs = vec![];
+        t
     }
 
     /// `(params) => ret throws err`, or for an async arrow `(params) => Promise<ret, err>`.

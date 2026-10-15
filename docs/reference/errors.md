@@ -135,7 +135,9 @@ nothing; `null` means success).
 
 ## Inference limits
 
-A closure created inside a recursive function that it calls, and a `catch` or promise whose
+A closure created inside a recursive function that it calls throws what the function's body
+throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
+`xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
 clause (``` the error type of this function is not known yet ```); when the recursion goes
 through an interface value, the `throws` clause goes on the interface method. Error types of
