@@ -27,7 +27,10 @@ fn show(p: &Program, t: TyId) -> String {
             }
         ),
         TyKind::Literal(LitValue::Str(s)) => format!("{s:?}"),
-        TyKind::Literal(v) => format!("{v:?}"),
+        TyKind::Literal(LitValue::Int(_, i)) => i.to_string(),
+        TyKind::Literal(LitValue::Float(_, bits)) => f64::from_bits(*bits).to_string(),
+        TyKind::Literal(LitValue::Bool(b)) => b.to_string(),
+        TyKind::Array(e) => format!("{}[]", show(p, *e)),
         TyKind::FnPtr { ret, .. } => format!("() => {}", show(p, *ret)),
         TyKind::Adt(d, _) => match p.def(*d) {
             Def::Adt(a) => {
@@ -168,4 +171,211 @@ fn forms_over_type_parameters_are_errors() {
     ok_src("type IsStr<T> = T extends string ? 1 : 2;\ntype M<T> = { [K in keyof T]: T[K] };\nfunction main() {}");
     let e = err_src("type Bad = infer X;\nfunction main() {}");
     assert!(e.contains("only permitted in the `extends` clause"), "{e}");
+}
+
+/// The type of `f`'s first parameter for each alias in `cases` (`(alias, tsc's type)`), the
+/// declarations `decls` in scope; every mismatch is reported together.
+fn check_all(decls: &str, cases: &[(&str, &str)]) {
+    let mut bad = vec![];
+    for (ty, want) in cases {
+        let got = param(&format!("{decls}\nfunction f(x: {ty}) {{}}"));
+        if got != *want {
+            bad.push(format!("{ty}: got {got}, tsc {want}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+// The cases below are each compared with tsc 5.9 `--strict` (`checker.typeToString`); unions
+// are shown sorted.
+
+#[test]
+fn number_literals_extend_number() {
+    check_all(
+        "type IsNum<T> = T extends number ? 1 : 2;
+         type Inner<T> = T extends number ? \"n\" : \"o\";
+         type Outer<T> = { [K in keyof T]: Inner<T[K]> }[keyof T];
+         type TupNum<T> = T extends number[] ? 1 : 2;",
+        &[
+            ("IsNum<1>", "1"),
+            ("IsNum<1 | 2.5>", "1"),
+            ("IsNum<-1>", "1"),
+            ("IsNum<\"1\">", "2"),
+            ("Exclude<1 | \"a\" | 2.5, number>", "\"a\""),
+            ("Extract<1 | \"a\", number>", "1"),
+            ("TupNum<[1, 2]>", "1"),
+            ("Outer<{ a: 5 }>", "\"n\""),
+        ],
+    );
+}
+
+#[test]
+fn boolean_distributes_as_true_or_false() {
+    check_all(
+        "type IsTrue<T> = T extends true ? 1 : 2;
+         type ToArr<T> = T extends any ? T[] : never;",
+        &[
+            ("IsTrue<boolean>", "1 | 2"),
+            ("Exclude<boolean, true>", "false"),
+            ("Exclude<boolean | string, \"x\">", "boolean | string"),
+            ("ToArr<boolean>", "false[] | true[]"),
+        ],
+    );
+}
+
+#[test]
+fn homomorphic_mapped_types_distribute_over_unions() {
+    check_all(
+        "type Id<T> = { [K in keyof T]: T[K] };
+         type Partial2<T> = { [K in keyof T]?: T[K] };",
+        &[
+            ("Id<{ a: 1 } | { b: 2 }>", "{ a: 1 } | { b: 2 }"),
+            ("Partial2<{ a: 1 } | { b: 2 }>", "{ a?: 1 } | { b?: 2 }"),
+        ],
+    );
+    // Not the empty object type: `{}` is not one of the members.
+    let e = err_src(
+        "type Id<T> = { [K in keyof T]: T[K] };\nfunction main() { const x: Id<{ a: 1 } | { b: 2 }> = {}; }",
+    );
+    assert!(!e.is_empty());
+}
+
+#[test]
+fn colliding_as_keys_union_their_values() {
+    check_all(
+        "type Merge<T> = { [K in keyof T as \"x\"]: T[K] };",
+        &[
+            (
+                "{ [K in \"a\" | \"b\" as \"z\"]: K }",
+                "{ z: \"a\" | \"b\" }",
+            ),
+            ("Merge<{ a: 1; b: \"s\" }>", "{ x: \"s\" | 1 }"),
+        ],
+    );
+}
+
+#[test]
+fn infer_in_parameter_positions_intersects() {
+    check_all(
+        "type BothFn<T> = T extends { a: (x: infer U) => void; b: (x: infer U) => void } ? U : never;
+         type Param<T> = T extends (x: infer P) => void ? P : never;",
+        &[
+            ("BothFn<{ a: (x: string) => void; b: (x: number) => void }>", "never"),
+            ("BothFn<{ a: (x: { p: 1 }) => void; b: (x: { q: 2 }) => void }>", "{ p: 1; q: 2 }"),
+            ("Param<(x: string) => void>", "string"),
+        ],
+    );
+}
+
+#[test]
+fn function_parameters_relate_contravariantly() {
+    check_all(
+        "type A = (x: \"a\") => void; type S = (x: string) => void;
+         type Ext<X, Y> = X extends Y ? 1 : 2;
+         type AnyP<X> = X extends (x: any) => void ? 1 : 2;
+         type UnknownP<X> = X extends (x: unknown) => void ? 1 : 2;",
+        &[
+            ("Ext<A, S>", "2"),
+            ("Ext<S, A>", "1"),
+            ("AnyP<S>", "1"),
+            ("UnknownP<S>", "2"),
+        ],
+    );
+}
+
+#[test]
+fn optional_fields_relate_as_in_typescript() {
+    check_all(
+        "type Ext<X, Y> = X extends Y ? 1 : 2;",
+        &[
+            ("Ext<{ a?: 1 }, { a: 1 | undefined }>", "2"),
+            ("Ext<{ a: 1 | undefined }, { a?: 1 }>", "1"),
+            ("Ext<{ a?: 1 }, { a?: 1 }>", "1"),
+            ("Ext<{ b: 1 }, { a?: 1 }>", "1"),
+        ],
+    );
+}
+
+#[test]
+fn template_patterns_without_holes_and_number_holes() {
+    check_all(
+        "type N<S> = S extends `${number}` ? 1 : 2;
+         type Abc<S> = S extends `abc` ? 1 : 2;",
+        &[
+            ("Abc<\"abc\">", "1"),
+            ("Abc<\"abcd\">", "2"),
+            ("N<\" 12\">", "1"),
+            ("N<\"12 \">", "1"),
+            ("N<\"0x1F\">", "1"),
+            ("N<\"0b11\">", "1"),
+            ("N<\"1e3\">", "1"),
+            ("N<\".5\">", "1"),
+            ("N<\"+1\">", "1"),
+            ("N<\"-0\">", "1"),
+            ("N<\"Infinity\">", "2"),
+            ("N<\"NaN\">", "2"),
+            ("N<\"\">", "2"),
+            ("N<\"1_0\">", "2"),
+            ("N<\"inf\">", "2"),
+        ],
+    );
+}
+
+#[test]
+fn numbers_in_templates_print_as_javascript_does() {
+    check_all(
+        "",
+        &[
+            ("`${1e21}`", "\"1e+21\""),
+            ("`${1.5e-7}`", "\"1.5e-7\""),
+            ("`${1.2345678901234568e20}`", "\"123456789012345680000\""),
+            ("`${0.000001}`", "\"0.000001\""),
+            ("`${2.5}`", "\"2.5\""),
+        ],
+    );
+}
+
+#[test]
+fn numeric_mapped_keys_stay_numbers() {
+    check_all("", &[("{ [K in \"a\" | 1]: K }", "{ 1: 1; a: \"a\" }")]);
+}
+
+#[test]
+fn empty_object_and_record_patterns() {
+    check_all(
+        "type Ext<X, Y> = X extends Y ? 1 : 2;",
+        &[
+            ("Ext<\"a\", {}>", "1"),
+            ("Ext<string, {}>", "1"),
+            ("Ext<1, {}>", "1"),
+            ("Ext<{ a: 1 }, {}>", "1"),
+            ("Ext<Record<\"a\" | \"b\", number>, { a: number }>", "1"),
+            ("Ext<{ a: number }, Record<\"a\" | \"b\", number>>", "2"),
+        ],
+    );
+}
+
+#[test]
+fn related_forms_around_the_fixes() {
+    check_all(
+        "type Id<T> = { [K in keyof T]: T[K] };
+         type Ext<X, Y> = X extends Y ? 1 : 2;
+         type Param<T> = T extends (x: infer P) => void ? P : never;
+         type Ret<T> = T extends (a: any) => infer R ? R : never;
+         type F1 = (x: string) => void; type F2 = (x: string, y: number) => void;",
+        &[
+            ("Id<{ a: 1 } | undefined>", "{ a: 1 } | undefined"),
+            ("Id<string>", "string"),
+            ("Ext<{ a?: number }, Record<string, number>>", "1"),
+            ("Ext<{ a: number; b: string }, Record<string, number>>", "2"),
+            ("Ext<Record<string, number>, { a: number }>", "2"),
+            ("Ext<{ a: 1; b: 2 }, Record<\"a\" | \"b\", number>>", "1"),
+            ("Param<(x: string | number) => void>", "number | string"),
+            ("Ret<(x: string) => number>", "number"),
+            ("Ext<F1, F2>", "1"),
+            ("Ext<F2, F1>", "2"),
+            ("Ext<boolean, true | false>", "1"),
+            ("Ext<boolean, string | boolean>", "1"),
+        ],
+    );
 }

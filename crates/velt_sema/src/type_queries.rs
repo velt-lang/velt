@@ -310,7 +310,15 @@ impl Ctx<'_> {
         }
         if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_)) {
             if !self.checking_unused_aliases {
-                let shown = self.display(ty);
+                // The parameter as written (`keyof T`), not its internal name.
+                let shown = match &inner.kind {
+                    ast::TypeExprKind::Named { path, args }
+                        if path.len() == 1 && args.is_empty() =>
+                    {
+                        path[0].name.clone()
+                    }
+                    _ => self.display(ty),
+                };
                 self.err(
                     format!("`keyof {shown}` on a type parameter is not supported yet (#350)"),
                     t.span,

@@ -111,3 +111,13 @@ if (onChange) onChange("now");
 const getter = models["model:value"];
 console.log(names, optional, defaults.a, withDefaults.a, withDefaults.b, stripped.label, stripped.count, p1.size ?? "none", p2.size, cap2);
 if (getter && typeof getter === "function") console.log(getter());
+
+// A homomorphic mapped type distributes over a union; `boolean` is `true | false`; colliding
+// `as` keys union their values (#1099 review).
+type Same<T> = { [K in keyof T]: T[K] };
+type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+const shapes: Same<Shape>[] = [{ kind: "circle", r: 1 }, { kind: "square", side: 2 }];
+for (const s of shapes) console.log(s.kind === "circle" ? s.r : s.side);
+const flag: Exclude<boolean | string, "x"> = false;
+const collide: { [K in "a" | "b" as "z"]: K } = { z: "b" };
+console.log(shapes, flag, collide);

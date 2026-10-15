@@ -4,7 +4,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
-use super::{Binds, Subject, MAX_TEMPLATE_MEMBERS};
+use super::{Binds, Slots, Subject, MAX_TEMPLATE_MEMBERS};
 use crate::ctx::Ctx;
 use crate::hir::{LitValue, Nothing, TyId, TyKind};
 use crate::resolve::TyEnv;
@@ -55,6 +55,9 @@ impl Ctx<'_> {
         types: &[ast::TypeExpr],
         env: &TyEnv,
     ) -> Result<Option<Vec<(String, TyId)>>, ()> {
+        if types.is_empty() {
+            return Ok((text == quasis[0]).then(Vec::new));
+        }
         let (first, last) = (&quasis[0], &quasis[quasis.len() - 1]);
         if !text.starts_with(first.as_str()) || text.len() < first.len() + last.len() {
             return Ok(None);
@@ -99,7 +102,7 @@ impl Ctx<'_> {
             let lit = self.lit_type(LitValue::Str(piece.to_string()));
             let fits = h == self.ty.str_
                 || (self.is_number_type(h) && is_numeric(piece))
-                || self.relate(lit, h, &mut vec![])
+                || self.relate(lit, h, &mut Slots::default())
                 || self
                     .literal_strings(h)
                     .is_some_and(|ss| ss.iter().any(|x| x == piece));
@@ -142,6 +145,30 @@ impl Ctx<'_> {
             }
         }
         Some(out)
+    }
+
+    /// The keys a mapped type's `in` clause spells, each with its type: a string literal key is
+    /// itself, a number literal key stays a number (`{ [K in 1]: K }` is `{ 1: 1 }`).
+    pub(crate) fn literal_keys(&mut self, t: TyId) -> Option<Vec<(String, TyId)>> {
+        let names = self.literal_strings(t)?;
+        if t == self.ty.never {
+            return Some(vec![]);
+        }
+        let core = self.ty.opt_payload(t).unwrap_or(t);
+        let members = self.union_members(core).unwrap_or_else(|| vec![core]);
+        Some(
+            names
+                .into_iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let ty = match members.get(i).and_then(|m| self.lit_value(*m)) {
+                        Some(LitValue::Int(..) | LitValue::Float(..)) => members[i],
+                        _ => self.lit_type(LitValue::Str(name.clone())),
+                    };
+                    (name, ty)
+                })
+                .collect(),
+        )
     }
 
     /// `` `on${K}` ``: the union of the strings it spells, its holes being literal types.
@@ -194,19 +221,105 @@ impl Ctx<'_> {
     }
 }
 
-/// A JavaScript number as `String(n)` spells it (for the integers and short decimals literal
-/// types hold).
-fn js_number(n: f64) -> String {
-    if n.is_finite() && n == n.trunc() && n.abs() < 1e21 {
-        format!("{}", n as i128)
-    } else {
-        format!("{n}")
+/// A JavaScript number as `String(n)` spells it (Number::toString: the shortest digits that
+/// round-trip, in exponent form from 1e21 and below 1e-6).
+pub(crate) fn js_number(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".into();
     }
+    if n == 0.0 {
+        return "0".into();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.into();
+    }
+    let sign = if n < 0.0 { "-" } else { "" };
+    // Rust's `{:e}` gives the shortest round-trip digits: `d[.ddd]e<exp>`.
+    let sci = format!("{:e}", n.abs());
+    let (mantissa, exp) = sci.split_once('e').expect("ICE: `{:e}` has an exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i64;
+    let e: i64 = exp.parse().expect("ICE: `{:e}` exponent");
+    let point = e + 1; // JavaScript's `n`: the decimal point after this many digits
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let exp_sign = if point - 1 < 0 { "-" } else { "+" };
+        let frac = match k {
+            1 => String::new(),
+            _ => format!(".{}", &digits[1..]),
+        };
+        format!("{}{frac}e{exp_sign}{}", &digits[..1], (point - 1).abs())
+    };
+    format!("{sign}{body}")
 }
 
-/// Does `s` spell a number (`${number}` in a template literal pattern)?
+/// Does `s` spell a finite number as JavaScript's `Number(s)` reads it (`${number}` in a
+/// template literal pattern; TypeScript's `isValidNumberString`)? Surrounding white space,
+/// `0x` / `0o` / `0b` and a sign are allowed; `""`, `NaN` and `Infinity` are not.
 fn is_numeric(s: &str) -> bool {
-    !s.trim().is_empty() && s.trim() == s && s.parse::<f64>().is_ok()
+    if s.is_empty() {
+        return false;
+    }
+    let t = s.trim_matches(is_js_space);
+    if t.is_empty() {
+        return true; // `Number("  ")` is 0
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(d) = t.strip_prefix(prefix) {
+            return !d.is_empty() && d.chars().all(|c| c.is_digit(radix));
+        }
+    }
+    let u = t.strip_prefix(['+', '-']).unwrap_or(t);
+    // StrUnsignedDecimalLiteral: digits [. digits] [e [sign] digits], or . digits [exponent].
+    let (mantissa, exp) = match u.find(['e', 'E']) {
+        Some(i) => (&u[..i], Some(&u[i + 1..])),
+        None => (u, None),
+    };
+    let (int, frac) = match mantissa.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (mantissa, None),
+    };
+    let digits = |x: &str| x.chars().all(|c| c.is_ascii_digit());
+    let mantissa_ok = digits(int)
+        && frac.is_none_or(digits)
+        && !(int.is_empty() && frac.is_none_or(str::is_empty));
+    let exp_ok = exp.is_none_or(|e| {
+        let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+        !e.is_empty() && digits(e)
+    });
+    // A literal too large for a double is `Infinity`, which is not finite.
+    mantissa_ok && exp_ok && t.parse::<f64>().is_ok_and(f64::is_finite)
+}
+
+/// JavaScript's white space and line terminators (what `Number(s)` trims).
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 impl Ctx<'_> {
@@ -251,5 +364,41 @@ impl Ctx<'_> {
             [one] => *one,
             _ => self.union_of(&kept, false, span),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_numeric, js_number};
+
+    #[test]
+    fn numbers_print_as_javascript_does() {
+        for (n, s) in [
+            (1e21, "1e+21"),
+            (1.5e-7, "1.5e-7"),
+            (1.2345678901234568e20, "123456789012345680000"),
+            (0.000001, "0.000001"),
+            (2.5, "2.5"),
+            (-0.5, "-0.5"),
+            (100.0, "100"),
+            (1.25e300, "1.25e+300"),
+            (5e-324, "5e-324"),
+        ] {
+            assert_eq!(js_number(n), s);
+        }
+    }
+
+    #[test]
+    fn numeric_strings_read_as_javascript_does() {
+        for s in [
+            " 12", "12 ", "0x1F", "0b11", "0o7", "1e3", ".5", "5.", "+1", "-0", "  ",
+        ] {
+            assert!(is_numeric(s), "{s:?}");
+        }
+        for s in [
+            "", "Infinity", "NaN", "inf", "1_0", "0x", "-0x1", "1e", ".", "1e400", "1.2.3",
+        ] {
+            assert!(!is_numeric(s), "{s:?}");
+        }
     }
 }

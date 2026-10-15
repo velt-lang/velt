@@ -29,10 +29,15 @@ use crate::types::collect_params;
 mod relate;
 mod template;
 
+use relate::Slots;
+
 /// `infer X` while a pattern is matched is the placeholder `Param(INFER_BASE + i)`.
 pub(super) const INFER_BASE: u32 = 1 << 20;
-/// `any` and `unknown` in a pattern: a placeholder that matches anything.
+/// `any` in a pattern: a placeholder that matches anything and is assignable to anything.
 pub(super) const WILDCARD: u32 = INFER_BASE - 1;
+/// `unknown` in a pattern: matches anything, and is assignable only to `any` and `unknown`
+/// (in a function type's parameter).
+pub(super) const UNKNOWN: u32 = INFER_BASE - 2;
 /// The most members a template literal type may expand to (TypeScript stops at 100 000).
 pub(super) const MAX_TEMPLATE_MEMBERS: usize = 10_000;
 
@@ -51,7 +56,7 @@ impl Ctx<'_> {
     pub(crate) fn has_type_params(&self, t: TyId) -> bool {
         let mut ps = vec![];
         collect_params(&self.ty, t, &mut ps);
-        ps.iter().any(|p| *p < WILDCARD)
+        ps.iter().any(|p| *p < UNKNOWN)
     }
 
     /// `t`, resolved in `env`, with the alias's arguments substituted. `None` (reported, unless
@@ -137,13 +142,28 @@ impl Ctx<'_> {
             }
             out.push(r);
         }
+        self.rejoin_booleans(&mut out);
         match (out.as_slice(), nothing) {
             ([one], None) => *one,
             _ => self.union_with(&out, nothing, t.span),
         }
     }
 
-    /// The members a distributive conditional type tests one by one.
+    /// `true` and `false` both among `ts` are `boolean` again.
+    fn rejoin_booleans(&mut self, ts: &mut Vec<TyId>) {
+        let t = self.lit_type(LitValue::Bool(true));
+        let f = self.lit_type(LitValue::Bool(false));
+        if let (Some(i), true) = (
+            ts.iter().position(|x| *x == t || *x == f),
+            ts.contains(&t) && ts.contains(&f),
+        ) {
+            ts[i] = self.ty.bool_;
+            ts.retain(|x| *x != t && *x != f);
+        }
+    }
+
+    /// The members a distributive conditional type tests one by one (`boolean` is
+    /// `true | false`).
     fn subjects_of(&mut self, t: TyId) -> Vec<Subject> {
         let mut out = vec![];
         let (core, nothing) = match *self.ty.kind(t) {
@@ -151,9 +171,15 @@ impl Ctx<'_> {
             _ => (t, None),
         };
         if core != self.ty.never {
-            match self.union_members(core) {
-                Some(ms) => out.extend(ms.into_iter().map(Subject::Ty)),
-                None => out.push(Subject::Ty(core)),
+            let ms = self.union_members(core).unwrap_or_else(|| vec![core]);
+            for m in ms {
+                if m == self.ty.bool_ {
+                    for b in [true, false] {
+                        out.push(Subject::Ty(self.lit_type(LitValue::Bool(b))));
+                    }
+                } else {
+                    out.push(Subject::Ty(m));
+                }
             }
         }
         match nothing {
@@ -199,10 +225,10 @@ impl Ctx<'_> {
             let p = self.ty.param(INFER_BASE + i as u32);
             inner.locals.push((n.clone(), p));
         }
-        let wild = self.ty.param(WILDCARD);
-        for n in ["any", "unknown"] {
+        for (n, w) in [("any", WILDCARD), ("unknown", UNKNOWN)] {
             if !env.params.iter().any(|p| p == n) {
-                inner.locals.push((n.to_string(), wild));
+                let w = self.ty.param(w);
+                inner.locals.push((n.to_string(), w));
             }
         }
         let p = self.resolve_type(pat, &inner);
@@ -212,12 +238,16 @@ impl Ctx<'_> {
         let Some(p) = self.known_type(p, env, "a conditional type", pat.span) else {
             return Err(());
         };
-        let mut slots = vec![None; names.len()];
+        let mut slots = Slots::new(names.len());
         let ok = match s {
             Subject::Ty(t) => self.relate(t, p, &mut slots),
             Subject::Nothing(n) => self.relate_nothing(n, p),
         };
-        Ok(ok.then(|| names.into_iter().zip(slots).collect()))
+        if !ok {
+            return Ok(None);
+        }
+        let found = self.finish_slots(slots, env.module, pat.span)?;
+        Ok(Some(names.into_iter().zip(found).collect()))
     }
 
     /// `{ readonly [K in S as N]?: V }`.
@@ -237,6 +267,13 @@ impl Ctx<'_> {
                 let Some(xt) = self.known_type(xt, env, "a mapped type", x.span) else {
                     return self.ty.error;
                 };
+                // Over a type parameter, a homomorphic mapped type distributes over a union
+                // (`null` and `undefined` stay) and gives a primitive as it is.
+                if let Some(name) = naked_param(x, env) {
+                    if let Some(r) = self.distribute_mapped(t, m, env, name, xt) {
+                        return r;
+                    }
+                }
                 if matches!(self.ty.kind(xt), TyKind::Array(_) | TyKind::Tuple(_)) {
                     self.err(
                         "a mapped type over an array or tuple type is not supported yet (#934)",
@@ -252,7 +289,7 @@ impl Ctx<'_> {
         let Some(src) = self.known_type(src, env, "a mapped type", m.source.span) else {
             return self.ty.error;
         };
-        let Some(keys) = self.literal_strings(src) else {
+        let Some(keys) = self.literal_keys(src) else {
             let shown = self.display(src);
             self.err(
                 format!("a mapped type over `{shown}` (not a union of literal keys) is not supported yet; write `Record<{shown}, V>`"),
@@ -261,8 +298,7 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         let mut out: Vec<ShapeField> = vec![];
-        for key in keys {
-            let kt = self.lit_type(LitValue::Str(key.clone()));
+        for (key, kt) in keys {
             let mut inner = env.clone();
             inner.locals.push((m.param.name.clone(), kt));
             let names = match &m.name {
@@ -315,7 +351,13 @@ impl Ctx<'_> {
                 false => v,
             };
             for name in names {
-                if out.iter().any(|f| f.name == name) {
+                // Keys the `as` clause maps together have the union of the values.
+                if let Some(i) = out.iter().position(|f| f.name == name) {
+                    let prev = out[i].ty;
+                    out[i].ty = self.union_with(&[prev, v], None, t.span);
+                    if out[i].ty == self.ty.error {
+                        return self.ty.error;
+                    }
                     continue;
                 }
                 out.push(ShapeField {
@@ -326,10 +368,59 @@ impl Ctx<'_> {
                 });
             }
         }
+        // Integer keys come first, in ascending order, as JavaScript orders an object's keys.
+        out.sort_by_key(|f| array_index(&f.name).map_or((1, 0), |i| (0, i)));
         let ty = self.anon_type_with(&out, env.module);
         let spans = vec![t.span; out.len()];
         self.declare_anon_fields(ty, &spans);
         ty
+    }
+
+    /// `{ [K in keyof T]: … }` with `T` (`name`) at `xt`: `Some` with the result when `xt` is a
+    /// union (the mapped type of each member, `null` / `undefined` kept) or a primitive (itself).
+    fn distribute_mapped(
+        &mut self,
+        t: &ast::TypeExpr,
+        m: &ast::MappedType,
+        env: &TyEnv,
+        name: &str,
+        xt: TyId,
+    ) -> Option<TyId> {
+        let primitive = |cx: &Self, t: TyId| {
+            matches!(
+                cx.ty.kind(t),
+                TyKind::Str | TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Literal(_)
+            )
+        };
+        if primitive(self, xt) {
+            return Some(xt);
+        }
+        let (core, nothing) = match *self.ty.kind(xt) {
+            TyKind::Option(p, n) => (p, Some(n)),
+            _ => (xt, None),
+        };
+        let members = self.union_members(core);
+        if members.is_none() && nothing.is_none() {
+            return None;
+        }
+        let mut out = vec![];
+        for member in members.unwrap_or_else(|| vec![core]) {
+            if primitive(self, member) {
+                out.push(member);
+                continue;
+            }
+            let mut inner = env.clone();
+            inner.locals.push((name.to_string(), member));
+            let r = self.resolve_mapped(t, m, &inner);
+            if r == self.ty.error {
+                return Some(r);
+            }
+            out.push(r);
+        }
+        Some(match (out.as_slice(), nothing) {
+            ([one], None) => *one,
+            _ => self.union_with(&out, nothing, t.span),
+        })
     }
 
     /// `t` without `undefined` (`T | undefined` → `T`).
@@ -396,6 +487,7 @@ impl Ctx<'_> {
                         Subject::Nothing(n) => nothing = Some(nothing.map_or(n, |m| m.join(n))),
                     }
                 }
+                self.rejoin_booleans(&mut kept);
                 match (kept.as_slice(), nothing) {
                     ([one], None) => *one,
                     _ => self.union_with(&kept, nothing, t.span),
@@ -427,6 +519,12 @@ impl Ctx<'_> {
             }
         })
     }
+}
+
+/// `s` as an array index (a canonical integer below 2^32 - 1), the keys JavaScript orders first.
+fn array_index(s: &str) -> Option<u32> {
+    let i: u32 = s.parse().ok()?;
+    (i < u32::MAX && i.to_string() == s).then_some(i)
 }
 
 /// `Uppercase`, `Lowercase`, `Capitalize`, `Uncapitalize` of `s`.

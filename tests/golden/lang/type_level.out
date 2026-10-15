@@ -3,3 +3,6 @@ yes no no 42 ann 3 age a 3 Hello s b a model model:value kept some
 change now
 [ 'update:value', 'change' ] [ 'a', 'c' ] 1 2 x l 1 none 3 Click
 7
+1
+2
+[ { kind: 'circle', r: 1 }, { kind: 'square', side: 2 } ] false { z: 'b' }

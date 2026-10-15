@@ -990,14 +990,20 @@ the result is an ordinary object type, union or literal type.
 
 - **Conditional types** `C extends E ? T : F`: `C` is tested for assignability to `E`
   (structurally for object types). When `C` is a type parameter written alone, the test is made
-  for each member of a union (`never` gives `never`); `[C] extends [E]` tests the whole type.
+  for each member of a union (`boolean` is `true | false`; `never` gives `never`);
+  `[C] extends [E]` tests the whole type. As with `--strict`, function parameters are compared
+  contravariantly, an optional field does not fill a required one, and `{}` takes any value but
+  `null` and `undefined`.
   `infer X` in `E` names the part of `C` it stands for: in a generic type, an object type's field,
   a function type, a tuple, or a template literal pattern. An `infer` that finds nothing is
-  TypeScript's `unknown`, which Velt supports only as `NonNullable<X>` (`{}`).
+  TypeScript's `unknown`, which Velt supports only as `NonNullable<X>` (`{}`). An `infer X` in
+  several function parameters finds their intersection.
 - **Mapped types** `{ readonly [K in S as N]?: V }`: one field per key of the literal union `S`.
   Over `keyof X`, each field keeps `X`'s `?` and `readonly` unless `+`, `-` or a modifier says
   otherwise; `-?` also removes `undefined` from the field's type. `as N` renames a key, and a key
-  renamed to `never` is dropped. Inside these forms, `T[K]` of an optional field is
+  renamed to `never` is dropped; keys renamed alike have the union of the values. A number literal
+  key stays a number. With `keyof T` for a type parameter `T`, a union argument gives the union of
+  each member's mapped type. Inside these forms, `T[K]` of an optional field is
   `F | undefined`, as TypeScript reads it.
 - **Template literal types** `` `on${K}` ``: the union of the strings they spell, with
   `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`; after `extends` they are patterns

@@ -190,7 +190,13 @@ impl Ctx<'_> {
     }
 
     /// The intersection of `a` and `b`; `Err` says why no value has both types.
-    fn meet(&mut self, a: TyId, b: TyId, module: usize, depth: u32) -> Result<TyId, String> {
+    pub(crate) fn meet(
+        &mut self,
+        a: TyId,
+        b: TyId,
+        module: usize,
+        depth: u32,
+    ) -> Result<TyId, String> {
         if a == b {
             return Ok(a);
         }
