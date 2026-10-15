@@ -6,7 +6,8 @@
 // runtime copy. Decoders throw `EncodingError` on malformed input.
 
 import { IoResult } from "velt:io";
-import { TypedArray, Uint8Array } from "velt:typed_array/arrays";
+import { TypedArray } from "velt:typed_array/base";
+import { Uint8Array } from "velt:typed_array/uint8_array";
 import { ArrayBuffer } from "velt:typed_array/buffer";
 import { DataView } from "velt:typed_array/data_view";
 

@@ -1,13 +1,13 @@
 // velt:typed_array/buffer: `ArrayBuffer`, the bytes every typed array and `DataView` is a view
 // of, and the conversions their elements go through (ES2024 §25.1, §10.4.5; the numbers are
-// JS's: `ToUint8`, `ToUint8Clamp`, `ToInt32`, …). Programs use the globals (velt:typed_array).
+// JS's: `ToUint8`, `ToUint8Clamp`, `ToInt32`, …). Programs use the global.
 //
 // An `ArrayBuffer` owns a `u8[]` of fixed length. Views (`Uint8Array`, `Float64Array`,
 // `DataView`, …) keep a reference to the buffer and a byte range of it, so two views of one
 // buffer see each other's writes, as in JS. Multi-byte elements are little-endian, as on every
 // platform Velt targets (JS uses the platform's order; `DataView` takes the order as an argument).
 
-import { TypedArray } from "velt:typed_array/arrays";
+import { TypedArray } from "velt:typed_array/base";
 import { DataView } from "velt:typed_array/data_view";
 
 // Vector lanes (rt_abi.md "SIMD", emitted inline): the bit patterns of floats, and loads and
@@ -193,11 +193,6 @@ export function relative(i: i64, len: usize): usize {
 }
 
 // ───────────────────────────── element conversions ─────────────────────────────
-
-/** JS's `ToInt32(v)`: truncated, then wrapped modulo 2^32 into the signed range (NaN is 0). */
-export function toInt32(v: number): i32 {
-  return (v | 0) as i32;
-}
 
 /** JS's `ToUint32(v)`: truncated, then wrapped modulo 2^32 (NaN is 0). */
 export function toUint32(v: number): u32 {
