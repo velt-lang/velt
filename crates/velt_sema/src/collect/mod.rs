@@ -37,7 +37,7 @@ mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 pub(crate) mod sigs;
-mod static_this;
+pub(crate) mod static_this;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
