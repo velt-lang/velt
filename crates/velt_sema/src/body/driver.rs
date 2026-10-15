@@ -15,6 +15,7 @@ use crate::resolve::TyEnv;
 const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
+    super::literal_hosts::find(cx);
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
         field_defaults(cx, d);
@@ -29,6 +30,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
         super::defaults::param_defaults(cx, d);
     }
     super::defaults::iface_defaults(cx);
+    super::literal_hosts::ensure_all(cx);
     for d in fns {
         ensure_body(cx, d);
     }

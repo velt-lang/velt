@@ -1495,11 +1495,17 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
 - A method is a function value: `m(x) { … }`, `m: (x) => …` or `async m(x) { … }`. Its
   parameter types may be left out: they come from the interface's method.
 - A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
-  method of the interface (`get f(): T`) takes a getter, and a setter method (`set f(v: T)`) a
-  setter `set f(v) { … }`, which runs on each `x.f = v`.
+  method of the interface (`get f(): T`) takes a getter or a value (`f: 5`), and a setter method
+  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
+  interface can't be written through the interface value yet (`x.f = v` is an error), so a
+  setter given for a field never runs: declare a setter method in the interface instead.
 - A method with a default body and an optional field may be left out (the field is `null`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.
+- Such a literal may be a module constant, exported or not (`export const upper: Handler = {
+  … }`). Like every module constant it is evaluated at each use, so comparing it by identity
+  (`===`) is an error, and each use passed on is a new value, as for a function-valued constant
+  ([Variables](variables.md#module-constants-initialized-by-a-call)).
 
 ```ts
 interface Counter {

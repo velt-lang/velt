@@ -46,6 +46,7 @@ mod for_await;
 mod for_iter;
 mod for_map;
 mod generators;
+pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
 mod locals;

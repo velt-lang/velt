@@ -4,7 +4,8 @@
 //!
 //! - a method `m(...)` as a function value (`m(x) { … }`, `m: (x) => …`), whose parameter types
 //!   come from the interface's method (contextual typing);
-//! - a field as a value, or as a getter `get f() { … }` that runs on each read;
+//! - a field, or a getter method of the interface, as a value or as a getter `get f() { … }`
+//!   that runs on each read;
 //! - a setter method `set f(v)` as a setter in the literal;
 //! - a method with a default body or an optional field may be left out.
 //!
@@ -78,7 +79,7 @@ fn written(value: Option<&ast::Expr>) -> Written<'_> {
 }
 
 /// Is property `p` a getter or setter?
-pub(super) fn is_accessor(p: &ast::ObjectProp) -> Option<Span> {
+pub(crate) fn is_accessor(p: &ast::ObjectProp) -> Option<Span> {
     match p {
         ast::ObjectProp::KeyValue(k, v) => match written(Some(v)) {
             Written::Value(_) => None,
@@ -258,12 +259,14 @@ impl FnCx<'_, '_> {
                     values.push((key.name.clone(), h));
                     slots[slot] = Some(Slot::Call(index));
                 }
-                (Written::Value(_), Some(slot), _) => {
-                    self.cx.err(
-                        format!("`{}` is a getter of `{iname}`: write it as `get {}() {{ … }}` in the object literal", methods[slot].name, key.name),
-                        key.span,
-                    );
-                    ok = false;
+                (Written::Value(v), Some(slot), _) => {
+                    // A plain value for a getter (`size: 5` for `get size()`): the slot reads
+                    // the stored value, as TypeScript allows.
+                    let ret = methods[slot].ret;
+                    let h = self.prop_value(&key, v, Some(ret));
+                    let h = self.coerce(h, ret);
+                    values.push((key.name.clone(), h));
+                    slots[slot] = Some(Slot::Value(index));
                 }
                 (Written::Value(v), None, Some(fi)) => {
                     let fty = fields[fi].1;

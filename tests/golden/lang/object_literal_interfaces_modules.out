@@ -1,0 +1,6 @@
+upper(2): ABC
+reverse(1): cba
+upper(2): XY
+reverse(1): yx
+twice(3): xyxy
+3

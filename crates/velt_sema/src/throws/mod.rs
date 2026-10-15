@@ -219,6 +219,8 @@ impl Ctx<'_> {
     /// The dispatch groups (built on first use; interfaces, impls and vtables are known once
     /// declarations are collected).
     pub(crate) fn throw_groups(&mut self) -> &Groups {
+        // Object literals add implementations while bodies are checked (`body::literal_hosts`).
+        crate::body::literal_hosts::ensure_all(self);
         if self.groups.is_none() {
             let g = groups::build(self);
             self.groups = Some(g);
