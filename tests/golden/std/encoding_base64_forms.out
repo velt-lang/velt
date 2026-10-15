@@ -52,6 +52,11 @@ del Invalid base64 character at offset 3
 latin Invalid base64 character at offset 4
 latin first Invalid base64 character at offset 0
 emoji Invalid base64 character at offset 4
+u+00ff Invalid base64 character at offset 3
+u+0100 Invalid base64 character at offset 3
+u+00ff url Invalid base64 character at offset 3
+empty 0 
+empty url 0 
 under 15 fb9229c057ee
 under bad Invalid base64 character at offset 10
 under latin Invalid base64 character at offset 19
@@ -68,3 +73,5 @@ long wrong alphabet Invalid base64 character at offset 0
 long url 600 fb9229c057ee
 long extra digit Invalid base64: bad length or padding
 long pad inside Invalid base64 character at offset 400
+long u+00ff Invalid base64 character at offset 500
+long u+0100 Invalid base64 character at offset 500
