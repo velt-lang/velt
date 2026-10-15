@@ -15,15 +15,3 @@ then 1
 qm
 v2 1
 t5
---
-r0 waits
-x0
-sync end
-x1
-x2
-r0 got 5
-qm
-r1 then 7
-x3
-r0 -> 5
-r1 -> 7

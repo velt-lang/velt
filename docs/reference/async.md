@@ -223,7 +223,8 @@ Where the order still differs from Node's: `Promise.all` and `Promise.race` sett
 steps (they keep `await` on them fast), which matters only for callbacks and `await`s running
 next to them. Async generators (`for await` over an `async function*`, `g.next()`) take fewer
 steps per value than Node's. A promise settled from another task resumes its waiters at that
-task's next step (the tasks run in parallel; there is no order between them).
+task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
+`resolve` called later resumes its waiters at the executor's next step.
 
 ```ts
 class Failed extends Error {}

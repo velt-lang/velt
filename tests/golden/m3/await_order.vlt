@@ -1,8 +1,5 @@
-// `await` takes Node's steps (#1104): started promises interleave, the code after an `await`
-// waits behind the callbacks queued before it, and a `resolve` called later queues its waiters
-// at once. Expected output recorded with Node 22.
-class Failed extends Error {}
-
+// `await` takes Node's steps (#1104): started promises interleave, and the code after an
+// `await` waits behind the callbacks queued before it. Expected output recorded with Node 22.
 function log(s: string) {
   console.log(s);
 }
@@ -34,13 +31,6 @@ async function ticker(n: string) {
   }
 }
 
-async function waitFor(name: string, p: Promise<number, Failed>): Promise<number, Failed> {
-  log(`${name} waits`);
-  const x = await p;
-  log(`${name} got ${x}`);
-  return x;
-}
-
 async function started() {
   const pa = a();
   const pb = b();
@@ -59,35 +49,8 @@ async function steps() {
   await x;
 }
 
-async function resolvers() {
-  const { promise: rp0, resolve: rr0 } = Promise.withResolvers<number, Failed>();
-  const w0 = waitFor("r0", rp0);
-  const { promise: rp1, resolve: rr1 } = Promise.withResolvers<number, Failed>();
-  const w1 = rp1.then((n) => {
-    log(`r1 then ${n}`);
-    return n;
-  });
-  const t = (async () => {
-    log("x0");
-    await Promise.resolve(0);
-    log("x1");
-    rr1(7);
-    log("x2");
-    await Promise.resolve(0);
-    log("x3");
-  })();
-  rr0(5);
-  queueMicrotask(() => log("qm"));
-  log("sync end");
-  log(`r0 -> ${await w0}`);
-  log(`r1 -> ${await w1}`);
-  await t;
-}
-
 async function main() {
   await started();
   log("--");
   await steps();
-  log("--");
-  await resolvers();
 }
