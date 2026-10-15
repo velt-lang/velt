@@ -44,21 +44,11 @@ BASE_DOC = """\
 """
 
 BASE_BODY = """/**
- * What every typed array is (std only: JS's `%TypedArray%`): the buffer, the range of it the
- * elements take, and element access by number for copies between kinds.
+ * What every typed array is (std only: JS's `%TypedArray%`): a view of a buffer
+ * (`BufferView`: the buffer, the range of it the elements take) with element access by number
+ * for copies between kinds.
  */
-export class TypedArray {
-  // The buffer, the offset of the first element in it (bytes), and the element count.
-  private buf: ArrayBuffer;
-  private off: usize;
-  private len: usize;
-
-  constructor(buf: ArrayBuffer, off: usize, len: usize) {
-    this.buf = buf;
-    this.off = off;
-    this.len = len;
-  }
-
+export class TypedArray extends BufferView {
   /** Element `i` (in range) as a number; each kind overrides it. */
   __get(i: usize): number {
     panic("ICE: TypedArray.__get");
@@ -74,10 +64,6 @@ export class TypedArray {
     panic("ICE: TypedArray.__kind");
   }
 
-  /** The size of an element in bytes; each kind overrides it. */
-  __size(): usize {
-    panic("ICE: TypedArray.__size");
-  }
 }
 
 /** Where a new typed array's elements are, and the values to write there (null: none). */
@@ -802,7 +788,8 @@ def write(path, text):
 def main():
     base = BASE_BODY
     write(os.path.join(DIR, "base.vlt"),
-          BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt:typed_array/buffer") + "\n" + base)
+          BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt:typed_array/buffer")
+          + 'import { BufferView } from "velt:typed_array/core";\n' + "\n" + base)
     for c, n, read, write_, what in KINDS:
         t = TEMPLATE
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
@@ -821,7 +808,7 @@ def main():
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
           "// as in Node (docs/std/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
           + GENERATED
-          + "export { ArrayBuffer } from \"velt:typed_array/buffer\";\n"
+          + "export { ArrayBuffer } from \"velt:typed_array/core\";\n"
           + "export { DataView } from \"velt:typed_array/data_view\";\n"
           + "export { Uint8Array } from \"velt:typed_array/uint8_array\";\n")
     write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),

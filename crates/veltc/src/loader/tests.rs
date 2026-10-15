@@ -155,6 +155,51 @@ fn globals_load_when_a_user_module_names_them() {
 }
 
 #[test]
+fn a_conditional_global_loads_with_its_module_and_a_word() {
+    let t = Tree::new();
+    let std = t.path("std");
+    t.write(
+        "std/prelude/global/web.vlt",
+        "export { Response } from \"velt:web\";\n",
+    );
+    t.write(
+        "std/prelude/global/web_bytes.vlt",
+        "// load when std/web uses: bytes arrayBuffer\nimport \"velt:web_bytes\";\n",
+    );
+    t.write("std/web.vlt", "export class Response {}\n");
+    t.write(
+        "std/web_bytes.vlt",
+        "import { Response } from \"velt:web\";\nextend Response {\n  bytes(): i64 { return 1; }\n}\n",
+    );
+    let opts = || LoadOptions {
+        std_root: Some(std.clone()),
+        ..Default::default()
+    };
+    // The module and a word: loaded, after the rest.
+    let both = t.write(
+        "p/both.vlt",
+        "function main() { const n = new Response().bytes(); }\n",
+    );
+    let (l, diags, _) = load(&both, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    let want = [
+        "main",
+        "std/prelude/global/web",
+        "std/web",
+        "std/prelude/global/web_bytes",
+        "std/web_bytes",
+    ];
+    assert_eq!(paths(&l), want);
+    // The module without a word, or a word without the module: not loaded.
+    let module_only = t.write("p/module.vlt", "function main() { new Response(); }\n");
+    let (l, _, _) = load(&module_only, opts());
+    assert_eq!(paths(&l), ["main", "std/prelude/global/web", "std/web"]);
+    let word_only = t.write("p/word.vlt", "function main() { const bytes = 1; }\n");
+    let (l, _, _) = load(&word_only, opts());
+    assert_eq!(paths(&l), ["main"]);
+}
+
+#[test]
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");
