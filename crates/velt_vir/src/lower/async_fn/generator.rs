@@ -111,6 +111,19 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
+        if self.actx().async_gen {
+            // `yield v` awaits `v` first in Node: one step before the request settles.
+            let ty = self.sub(v.ty);
+            let held = match &value {
+                Operand::Copy(p) => Some(p.clone()),
+                _ => None,
+            };
+            self.await_step(|lw| {
+                if let Some(p) = held {
+                    lw.drop_glue(p, ty);
+                }
+            });
+        }
         if !matches!(value, Operand::Const(vir::Const::Unit, _)) {
             let p = self.out_place();
             self.store(p, value);
@@ -268,6 +281,10 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
+        // Node awaits the return value first (AsyncGeneratorUnwrapYieldResumption, or
+        // AsyncGeneratorAwaitReturn when the body is not at a `yield`): one step before the
+        // close, in `return()` (std code) too.
+        self.step(|_| {});
         let gr = self.gen_ref(g);
         let state = self.gen_state(&gr);
         match &gr {

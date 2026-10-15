@@ -132,19 +132,19 @@ mod tests {
         // SAFETY: a live handle and leaf, polled and dropped here.
         unsafe {
             let f = super::velt_rt_task_gate_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx)), PENDING);
+            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), PENDING);
             g.leave();
             g.enter();
             // A later poll of the task does not hold the wait back.
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx)), READY);
+            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
             velt_rt_fut_drop(f);
             g.leave();
             let f = super::velt_rt_task_gate_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx)), READY);
+            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
             velt_rt_fut_drop(f);
             super::velt_rt_task_gate_free(h);
             let f = super::velt_rt_task_gate_wait(0);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx)), READY);
+            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
             velt_rt_fut_drop(f);
         }
     }

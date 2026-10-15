@@ -166,6 +166,8 @@ impl Printer<'_> {
                 format!("{}{}", self.generics(type_params), self.ty(ty))
             }
             TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
+            TypeExprKind::TupleRest(ty) => format!("...{}", self.ty(ty)),
+            TypeExprKind::TupleOptional(ty) => format!("{}?", self.ty(ty)),
             TypeExprKind::Union(members) => {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")

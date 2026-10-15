@@ -47,6 +47,8 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             format!("<{}>{}", names.join(", "), written(ty))
         }
         T::Construct(ty) => format!("new {}", written(ty)),
+        T::TupleRest(ty) => format!("...{}", written(ty)),
+        T::TupleOptional(ty) => format!("{}?", written(ty)),
         T::Union(ts) => list(ts, " | "),
         T::Intersection(ts) => ts
             .iter()

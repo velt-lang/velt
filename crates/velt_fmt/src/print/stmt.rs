@@ -118,7 +118,11 @@ impl<'a> Printer<'a> {
         let mut doc = cat!["try ", self.block(body)];
         if let Some((binding, handler)) = catch {
             let binding = match binding {
-                Some(p) => cat!["(", self.pattern(p), ") "],
+                // `catch (e: unknown)`: the annotation (`any` or `unknown`) is not in the AST.
+                Some(p) => match catch_annotation(self.src, p.span.hi) {
+                    Some(ty) => cat!["(", self.pattern(p), ": ", ty.to_string(), ") "],
+                    None => cat!["(", self.pattern(p), ") "],
+                },
                 None => nil(),
             };
             doc = cat![doc, " catch ", binding, self.block(handler)];
@@ -136,4 +140,11 @@ fn jump(keyword: &str, label: Option<&str>) -> Doc {
         Some(l) => cat![keyword, " ", l.to_string(), ";"],
         None => cat![keyword, ";"],
     }
+}
+
+/// The type annotation after a catch binding ending at `hi` (`any` or `unknown`), if written.
+fn catch_annotation(src: &str, hi: u32) -> Option<&str> {
+    let rest = src.get(hi as usize..)?.trim_start().strip_prefix(':')?;
+    let ty = rest[..rest.find(')')?].trim();
+    matches!(ty, "any" | "unknown").then_some(ty)
 }

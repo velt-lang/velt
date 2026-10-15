@@ -42,6 +42,8 @@ fn golden_m1_files_parse() {
                 | "overloads_declarations.vlt"
                 | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
+                | "ts_parse_leftovers_errors.vlt"
+                | "catch_types_errors.vlt"
                 | "type_operators_unsupported.vlt"
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"

@@ -139,6 +139,11 @@ impl<'a> Parser<'a> {
             }
             None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
+            _ if self.at_var_decl() => {
+                let var = self.parse_var_decl()?;
+                self.expect_semi()?;
+                ItemKind::Var(var)
+            }
             _ if self.at_using_decl() => {
                 let span = self.cur_span();
                 self.error(
@@ -203,7 +208,7 @@ impl<'a> Parser<'a> {
             sig = self.parse_fn_sig(next_lo, next_async)?;
         }
         let this_param = self.this_param.take();
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         // Without a `this` parameter, `this` in a function declaration is sema's to report.
         if this_param.is_some() {
             self.check_fn_this(this_param, &body, false);
@@ -536,6 +541,9 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let kind = if self.eat_kw(Kw::Const) {
             VarKind::Const
+        } else if self.at_var_decl() {
+            self.bump(); // var
+            VarKind::Let
         } else {
             self.expect_kw(Kw::Let, "let")?;
             VarKind::Let

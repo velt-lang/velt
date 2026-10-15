@@ -625,7 +625,9 @@ fn infer_names(t: &ast::TypeExpr) -> Vec<String> {
             }
             K::Conditional(_) => {}
             K::Named { args, .. } => args.iter().for_each(|a| go(a, out)),
-            K::Array(e) | K::KeyOf(e) | K::Construct(e) => go(e, out),
+            K::Array(e) | K::KeyOf(e) | K::Construct(e) | K::TupleRest(e) | K::TupleOptional(e) => {
+                go(e, out)
+            }
             K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().for_each(|a| go(a, out)),
             K::Indexed { object, key } => {
                 go(object, out);

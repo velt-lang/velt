@@ -1,0 +1,2 @@
+catch_types_errors.vlt:4:13: error: a catch clause variable's type annotation must be `any` or `unknown` if specified
+catch_types_errors.vlt:10:23: error: a catch clause variable's type annotation must be `any` or `unknown` if specified

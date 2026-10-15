@@ -13,7 +13,7 @@ use velt_syntax::ast::{
 use super::decls::braced;
 use super::Printer;
 use crate::doc::{cat, group, if_break, indent, join, line, nil, text, Doc};
-use crate::source::{chars_after, fn_type_param_name, literal_tokens, slice};
+use crate::source::{chars_after, fn_type_param_name, literal_tokens, optional_label, slice};
 
 impl<'a> Printer<'a> {
     /// A type in a position that accepts unions.
@@ -64,6 +64,14 @@ impl<'a> Printer<'a> {
                 cat![self.generic_params(type_params), self.ty(ty)]
             }
             TypeExprKind::Construct(ty) => cat!["new ", self.ty(ty)],
+            TypeExprKind::TupleRest(ty) => match fn_type_param_name(self.src, ty.span.lo) {
+                Some(label) => cat!["...", label.to_string(), ": ", self.ty(ty)],
+                None => cat!["...", self.ty_operand(ty)],
+            },
+            TypeExprKind::TupleOptional(ty) => match optional_label(self.src, ty.span.lo) {
+                Some(label) => cat![label.to_string(), "?: ", self.ty(ty)],
+                None => cat![self.ty_operand(ty), "?"],
+            },
             TypeExprKind::Union(members) => {
                 let docs = members.iter().map(|m| self.ty_operand(m)).collect();
                 join(&text(" | "), docs)
@@ -350,18 +358,28 @@ impl<'a> Printer<'a> {
     ) -> Option<Doc> {
         let after = chars_after(self.src, name.span.hi);
         let is_sig = match after {
-            (Some('?'), Some('(')) => optional,
-            (Some('('), _) => !optional,
+            (Some('?'), Some('(' | '<')) => optional,
+            (Some('(' | '<'), _) => !optional,
             _ => false,
         };
         if !is_sig {
             return None;
         }
         let f = match &ty.kind {
-            TypeExprKind::Union(members) if optional => members
-                .iter()
-                .find(|m| matches!(m.kind, TypeExprKind::Function { .. }))?,
+            TypeExprKind::Union(members) if optional => members.iter().find(|m| {
+                matches!(
+                    m.kind,
+                    TypeExprKind::Function { .. } | TypeExprKind::GenericFunction { .. }
+                )
+            })?,
             _ => ty,
+        };
+        // `m<T>(x: T): T`: a field of generic function type.
+        let (generics, f) = match &f.kind {
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                (self.generic_params(type_params), &**ty)
+            }
+            _ => (nil(), f),
         };
         let TypeExprKind::Function {
             params,
@@ -383,7 +401,16 @@ impl<'a> Printer<'a> {
         } else {
             cat![": ", self.ty(ret)]
         };
-        Some(cat![key, q, "(", join(&text(", "), docs), ")", ret, throws])
+        Some(cat![
+            key,
+            q,
+            generics,
+            "(",
+            join(&text(", "), docs),
+            ")",
+            ret,
+            throws
+        ])
     }
 
     /// A function type's parameters, the last one a rest parameter (`...xs: T[]`) when `rest`.
@@ -404,6 +431,9 @@ impl<'a> Printer<'a> {
     }
 
     fn fn_type_param(&mut self, t: &TypeExpr) -> Doc {
+        if let Some(name) = optional_label(self.src, t.span.lo) {
+            return cat![name.to_string(), "?: ", self.ty_optional_field(t)];
+        }
         let ty = self.ty(t);
         match fn_type_param_name(self.src, t.span.lo) {
             Some(name) => cat![name.to_string(), ": ", ty],
