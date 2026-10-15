@@ -1,12 +1,20 @@
 // An `extend` block's instance methods apply to subclasses of the class it extends, nearest
-// base first, after the subclass's own methods and extend blocks.
+// base first, and `super.m()` finds them too.
 class Shape {
   name(): string {
     return "shape";
   }
 }
 
-class Square extends Shape {}
+class Square extends Shape {
+  override name(): string {
+    return "square";
+  }
+
+  both(): string {
+    return `${this.describe()} / ${super.describe()}`;
+  }
+}
 
 class Tiny extends Square {}
 
@@ -14,19 +22,9 @@ extend Shape {
   describe(): string {
     return `a ${this.name()}`;
   }
-
-  kind(): string {
-    return "extend Shape";
-  }
-}
-
-extend Square {
-  kind(): string {
-    return "extend Square";
-  }
 }
 
 function main() {
   console.log(new Square().describe(), new Tiny().describe());
-  console.log(new Shape().kind(), new Square().kind(), new Tiny().kind());
+  console.log(new Square().both());
 }
