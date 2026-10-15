@@ -14,6 +14,8 @@ import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { Uint8Array } from "velt:typed_array/arrays";
+import { ArrayBuffer } from "velt:typed_array/buffer";
 import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
@@ -286,7 +288,8 @@ export class Request {
     return JSON.parse<T>(await this.text());
   }
 
-  async bytes(): Promise<u8[], IoError | AbortError> {
+  // The body's bytes, as Velt's byte array.
+  private async rawBytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
     if (this.#raw != 0) {
       return unwrapIo(await velt_rt_http_req_bytes(this.#raw));
@@ -302,9 +305,14 @@ export class Request {
     return s == null ? body.bytes : await collect(s);
   }
 
-  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
-  async arrayBuffer(): Promise<u8[], IoError | AbortError> {
-    return await this.bytes();
+  /** The body's bytes, in a `Uint8Array`. */
+  async bytes(): Promise<Uint8Array, IoError | AbortError> {
+    return Uint8Array.fromBytes(await this.rawBytes());
+  }
+
+  /** The body's bytes, in an `ArrayBuffer`. */
+  async arrayBuffer(): Promise<ArrayBuffer, IoError | AbortError> {
+    return ArrayBuffer.adopt(await this.rawBytes());
   }
 
   // Whether there is a body (a received request without one, a GET, has none).

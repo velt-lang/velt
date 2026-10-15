@@ -389,6 +389,18 @@ impl FnLower<'_, '_> {
             let a = self.addr(res.clone());
             self.push_str(buf, a);
             self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        } else if let TyKind::Array(_) = self.cx.kind(rty) {
+            // An array: after the name and its length, as Node prints an array subclass or a
+            // typed array (`Uint8Array(3) [ 1, 2, 3 ]`).
+            let name = self.cx.type_name(ty);
+            let arr = self.content(&res, rty);
+            let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+            self.push_text(buf, &format!("{name}("));
+            let u64_ = self.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
+            self.push_scalar(buf, len, u64_);
+            self.push_text(buf, ") ");
+            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.format_nested(buf, &res, rty, depth);
         } else {
             let name = self.cx.type_name(ty);
             self.push_text(buf, &format!("{name} "));

@@ -1,0 +1,283 @@
+// velt:typed_array/buffer: `ArrayBuffer`, the bytes every typed array and `DataView` is a view
+// of, and the conversions their elements go through (ES2024 §25.1, §10.4.5; the numbers are
+// JS's: `ToUint8`, `ToUint8Clamp`, `ToInt32`, …). Programs use the globals (velt:typed_array).
+//
+// An `ArrayBuffer` owns a `u8[]` of fixed length. Views (`Uint8Array`, `Float64Array`,
+// `DataView`, …) keep a reference to the buffer and a byte range of it, so two views of one
+// buffer see each other's writes, as in JS. Multi-byte elements are little-endian, as on every
+// platform Velt targets (JS uses the platform's order; `DataView` takes the order as an argument).
+
+import { TypedArray } from "velt:typed_array/arrays";
+import { DataView } from "velt:typed_array/data_view";
+
+// The bit patterns of floats, through a vector lane: one register move (rt_abi.md "SIMD").
+declare function velt_simd_u32x4_splat(x: u32): u32x4;
+declare function velt_simd_u32x4_as_f32x4(v: u32x4): f32x4;
+declare function velt_simd_f32x4_splat(x: f32): f32x4;
+declare function velt_simd_f32x4_as_u32x4(v: f32x4): u32x4;
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
+declare function velt_simd_f32x4_lane(v: f32x4, index: u64): f32;
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_as_f64x2(v: u64x2): f64x2;
+declare function velt_simd_f64x2_splat(x: f64): f64x2;
+declare function velt_simd_f64x2_as_u64x2(v: f64x2): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+declare function velt_simd_f64x2_lane(v: f64x2, index: u64): f64;
+
+/**
+ * A fixed-length block of bytes (JS `ArrayBuffer`). Read and write it through a view:
+ * `new Uint8Array(buffer)`, `new DataView(buffer)`, or any other typed array.
+ */
+export class ArrayBuffer {
+  // The bytes (the views read and write them).
+  private bytes: u8[];
+
+  /** `byteLength` zero bytes (`RangeError` for a negative or non-integer length beyond 2^53). */
+  constructor(byteLength: number = 0) {
+    this.bytes = Buffer.alloc(bufferLength(byteLength));
+  }
+
+  // A buffer that owns `bytes` (std only: `TextEncoder.encode`, `Uint8Array.fromBytes`).
+  private static adopt(bytes: u8[]): ArrayBuffer {
+    try {
+      const b = new ArrayBuffer(0);
+      b.bytes = bytes;
+      return b;
+    } catch (e) {
+      panic(`ICE: ArrayBuffer.adopt: ${e.message}`);
+    }
+  }
+
+  /** The number of bytes. */
+  get byteLength(): usize {
+    return this.bytes.length as usize;
+  }
+
+  /** The length cannot change (JS: false unless made with `maxByteLength`). */
+  get resizable(): bool {
+    return false;
+  }
+
+  /** The most bytes it can hold: its `byteLength`, since it is not resizable. */
+  get maxByteLength(): usize {
+    return this.bytes.length as usize;
+  }
+
+  /** Whether the buffer was transferred away (never: Velt has no `transfer` yet). */
+  get detached(): bool {
+    return false;
+  }
+
+  /**
+   * A new buffer with a copy of the bytes in [begin, end); negative positions count from the
+   * end, as for an array's `slice`.
+   */
+  slice(begin: i64 = 0, end: i64 = 9223372036854775807): ArrayBuffer {
+    return ArrayBuffer.adopt(this.bytes.slice(begin, end));
+  }
+
+  /**
+   * Whether `v` is a view of a buffer: a typed array or a `DataView` (JS takes any value; Velt
+   * takes these until `unknown` arrives, #924).
+   */
+  static isView(v: ArrayBuffer | TypedArray | DataView | null): bool {
+    return v instanceof TypedArray || v instanceof DataView;
+  }
+
+  /** `JSON.stringify` writes an `ArrayBuffer` as `{}`, as in JS. */
+  toJSON(): Record<string, number> {
+    return {};
+  }
+
+  /** `"[object ArrayBuffer]"`, as `String(buffer)` gives in JS. */
+  toString(): string {
+    return "[object ArrayBuffer]";
+  }
+
+  /** How `console.log` shows the buffer, like Node: `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }`. */
+  __inspect(): string {
+    return inspectBuffer(this.bytes);
+  }
+}
+
+/**
+ * Node's text for a buffer's bytes, `ArrayBuffer { [Uint8Contents]: <…>, [byteLength]: n }`,
+ * printed `indent` spaces in (the lines after the first are indented that much).
+ */
+export function inspectBuffer(bytes: u8[], indent: usize = 0): string {
+  const hex = "0123456789abcdef";
+  const n = bytes.length as usize;
+  // Node shows the first 100 bytes (`maxArrayLength`), then how many more there are.
+  const shown: usize = n > 100 ? 100 : n;
+  let contents = "<";
+  for (let i: usize = 0; i < shown; i++) {
+    if (i > 0) {
+      contents += " ";
+    }
+    const b = bytes[i];
+    contents += hex[(b >> 4) as i64];
+    contents += hex[(b & 15) as i64];
+  }
+  if (n > shown) {
+    const more = n - shown;
+    contents += ` ... ${more} more byte${more == 1 ? "" : "s"}`;
+  }
+  contents += ">";
+  const first = `[Uint8Contents]: ${contents}`;
+  const second = `[byteLength]: ${n}`;
+  // Node's `isBelowBreakLength` for two entries (breakLength 80).
+  if (first.length + second.length + indent <= 53) {
+    return `ArrayBuffer { ${first}, ${second} }`;
+  }
+  const pad = " ".repeat(indent as i64);
+  return `ArrayBuffer {\n${pad}  ${first},\n${pad}  ${second}\n${pad}}`;
+}
+
+/** `new ArrayBuffer(n)`'s length, as JS's `ToIndex`: an error for a negative or huge `n`. */
+function bufferLength(n: number): usize throws RangeError {
+  const i = toIndex(n);
+  if (i < 0) {
+    throw new RangeError("Invalid array buffer length");
+  }
+  return i as usize;
+}
+
+/**
+ * JS's `ToIndex(n)`: `n` truncated (NaN is 0), or -1 when it is negative or beyond 2^53 - 1
+ * (the caller throws its own `RangeError`).
+ */
+export function toIndex(n: number): i64 {
+  if (!(n > -1)) {
+    // NaN and -0.5 are 0.
+    return n != n || n > -1 ? 0 : -1;
+  }
+  if (n > 9007199254740991) {
+    return -1;
+  }
+  return n as i64;
+}
+
+/** JS's `ToIntegerOrInfinity(n)` clamped to i64: what an optional position argument means. */
+export function toInteger(n: number): i64 {
+  if (n != n) {
+    return 0;
+  }
+  return n as i64;
+}
+
+/** JS's relative position: negative counts from `len`, then clamped to `[0, len]`. */
+export function relative(i: i64, len: usize): usize {
+  const n = len as i64;
+  if (i < 0) {
+    const r = n + i;
+    return r < 0 ? 0 : r as usize;
+  }
+  return i > n ? len : i as usize;
+}
+
+// ───────────────────────────── element conversions ─────────────────────────────
+
+/** JS's `ToInt32(v)`: truncated, then wrapped modulo 2^32 into the signed range (NaN is 0). */
+export function toInt32(v: number): i32 {
+  return (v | 0) as i32;
+}
+
+/** JS's `ToUint32(v)`: truncated, then wrapped modulo 2^32 (NaN is 0). */
+export function toUint32(v: number): u32 {
+  return ((v | 0) as i32) as u32;
+}
+
+/** JS's `ToUint8(v)`: truncated, then wrapped modulo 256 (NaN is 0). */
+export function toUint8(v: number): u8 {
+  if (v >= 0 && v < 256) {
+    return v as u8;
+  }
+  return ((v | 0) & 255) as u8;
+}
+
+/** JS's `ToUint8Clamp(v)`: clamped to [0, 255], rounding halves to even (NaN is 0). */
+export function toUint8Clamp(v: number): u8 {
+  if (!(v > 0)) {
+    return 0;
+  }
+  if (v >= 255) {
+    return 255;
+  }
+  const f = Math.floor(v);
+  const d = v - f;
+  if (d < 0.5) {
+    return f as u8;
+  }
+  if (d > 0.5) {
+    return (f + 1) as u8;
+  }
+  const k = f as u8;
+  return (k & 1) == 0 ? k : k + 1;
+}
+
+/** The `f32` with bit pattern `bits`. */
+export function f32FromBits(bits: u32): f32 {
+  return velt_simd_f32x4_lane(velt_simd_u32x4_as_f32x4(velt_simd_u32x4_splat(bits)), 0);
+}
+
+/** The bit pattern of `x`. */
+export function f32Bits(x: f32): u32 {
+  return velt_simd_u32x4_lane(velt_simd_f32x4_as_u32x4(velt_simd_f32x4_splat(x)), 0);
+}
+
+/** The `f64` with bit pattern `bits`. */
+export function f64FromBits(bits: u64): f64 {
+  return velt_simd_f64x2_lane(velt_simd_u64x2_as_f64x2(velt_simd_u64x2_splat(bits)), 0);
+}
+
+/** The bit pattern of `x`. */
+export function f64Bits(x: f64): u64 {
+  return velt_simd_u64x2_lane(velt_simd_f64x2_as_u64x2(velt_simd_f64x2_splat(x)), 0);
+}
+
+// Little-endian loads and stores at byte offset `o` (in range: the caller checked).
+
+export function load16(b: u8[], o: usize): u16 {
+  return (b[o] as u16) | ((b[o + 1] as u16) << 8);
+}
+
+export function load32(b: u8[], o: usize): u32 {
+  return (b[o] as u32) |
+    ((b[o + 1] as u32) << 8) |
+    ((b[o + 2] as u32) << 16) |
+    ((b[o + 3] as u32) << 24);
+}
+
+export function load64(b: u8[], o: usize): u64 {
+  return (load32(b, o) as u64) | ((load32(b, o + 4) as u64) << 32);
+}
+
+export function store16(b: u8[], o: usize, x: u16) {
+  b[o] = x as u8;
+  b[o + 1] = (x >> 8) as u8;
+}
+
+export function store32(b: u8[], o: usize, x: u32) {
+  b[o] = x as u8;
+  b[o + 1] = (x >> 8) as u8;
+  b[o + 2] = (x >> 16) as u8;
+  b[o + 3] = (x >> 24) as u8;
+}
+
+export function store64(b: u8[], o: usize, x: u64) {
+  store32(b, o, x as u32);
+  store32(b, o + 4, (x >> 32) as u32);
+}
+
+/** Byte-swapped `x`, for `DataView`'s big-endian accesses. */
+export function swap16(x: u16): u16 {
+  return (x >> 8) | (x << 8);
+}
+
+export function swap32(x: u32): u32 {
+  return (x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x << 24);
+}
+
+export function swap64(x: u64): u64 {
+  return ((swap32(x as u32) as u64) << 32) | (swap32((x >> 32) as u32) as u64);
+}

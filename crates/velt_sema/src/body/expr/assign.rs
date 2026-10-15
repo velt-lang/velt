@@ -18,6 +18,8 @@ enum AssignTarget {
     Setter(hir::Expr),
     /// `r[k]` / `r.name` of a `Record`: the checked record.
     Record(hir::Expr),
+    /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
+    Indexer(hir::Expr),
 }
 
 impl FnCx<'_, '_> {
@@ -61,6 +63,9 @@ impl FnCx<'_, '_> {
                 let obj = self.expr(object, None, Want::Borrow);
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
+                }
+                if self.has_indexer(obj.ty) && self.symbol_key_of(index).is_none() {
+                    return Some(AssignTarget::Indexer(obj));
                 }
                 // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
                 // key the member it names: a setter or a getter-only accessor is handled the
@@ -318,6 +323,10 @@ impl FnCx<'_, '_> {
                 let e = self.setter_assign(obj, Some(op), target, value, as_value, span);
                 return (e, as_value);
             }
+            if let Some(AssignTarget::Indexer(obj)) = checked {
+                let e = self.indexer_assign(obj, Some(op), target, value, as_value, span);
+                return (e, as_value);
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
@@ -358,7 +367,7 @@ impl FnCx<'_, '_> {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
-            Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+            Some(AssignTarget::Place(_) | AssignTarget::Setter(_) | AssignTarget::Indexer(_)) => {}
         }
         let rhs = ast::Expr {
             id: ast::NodeId(u32::MAX),
@@ -385,6 +394,10 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Place(place)) => self.place_assign(place, op, target, value, span),
             Some(AssignTarget::Setter(obj)) => {
                 let e = self.setter_assign(obj, op, target, value, as_value, span);
+                return (e, as_value);
+            }
+            Some(AssignTarget::Indexer(obj)) => {
+                let e = self.indexer_assign(obj, op, target, value, as_value, span);
                 return (e, as_value);
             }
             Some(AssignTarget::Record(obj)) => {
@@ -541,6 +554,9 @@ impl FnCx<'_, '_> {
             }
             Some(AssignTarget::Record(obj)) => {
                 return self.record_update(obj, op, target, as_value, span)
+            }
+            Some(AssignTarget::Indexer(obj)) => {
+                return self.indexer_update(obj, op, prefix, target, as_value, span)
             }
             None => return self.error_expr(span),
         };

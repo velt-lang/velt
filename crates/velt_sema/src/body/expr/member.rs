@@ -430,6 +430,10 @@ impl FnCx<'_, '_> {
                 };
                 self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
             }
+            // `xs[i]` on a typed array: `xs.__index(i)` (`indexers`).
+            TyKind::Adt(..) if self.has_indexer(t) && self.symbol_key_of(index).is_none() => {
+                self.indexer_read(obj, index, span)
+            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {

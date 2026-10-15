@@ -1,0 +1,61 @@
+ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 } ArrayBuffer { [Uint8Contents]: <>, [byteLength]: 0 }
+ArrayBuffer {
+  [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00>,
+  [byteLength]: 60
+}
+ArrayBuffer {
+  [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ... 20 more bytes>,
+  [byteLength]: 120
+}
+{ a: ArrayBuffer { [Uint8Contents]: <00 00 00>, [byteLength]: 3 } }
+8 ArrayBuffer { [Uint8Contents]: <03 04>, [byteLength]: 2 } ArrayBuffer { [Uint8Contents]: <07 08>, [byteLength]: 2 } 7
+true true false
+{} [object ArrayBuffer] {"v":{}}
+Uint8Array(8) [
+  18, 52,  52, 18,
+   0,  0, 192, 63
+] 4660 13330 18 1.5
+305411090 305411090 8 0 true
+Uint8Array(8) [
+  64,  9, 33, 251,
+  84, 68, 45,  24
+] 3.141592653589793 3.207375630676366e-192 11544 24
+DataView {
+  [byteLength]: 39,
+  [byteOffset]: 1,
+  [buffer]: ArrayBuffer {
+    [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00>,
+    [byteLength]: 40
+  }
+}
+4 0
+RangeError: Offset is outside the bounds of the DataView
+RangeError: Offset is outside the bounds of the DataView
+RangeError: Offset is outside the bounds of the DataView
+RangeError: Offset is outside the bounds of the DataView
+RangeError: Start offset 9 is outside the bounds of the buffer
+RangeError: Invalid DataView length 7
+RangeError: Start offset -1 is outside the bounds of the buffer
+RangeError: byte length of Uint16Array should be a multiple of 2
+RangeError: start offset of Uint16Array should be a multiple of 2
+RangeError: Start offset 5 is outside the bounds of the buffer
+RangeError: Invalid typed array length: 4
+RangeError: Invalid typed array length: -1
+RangeError: offset is out of bounds
+RangeError: offset is out of bounds
+RangeError: Invalid typed array index
+RangeError: Invalid array buffer length
+Uint8Array(16) [
+    0,  0,   0,   0, 0, 0,
+  240, 63, 255, 255, 0, 0,
+    0,  0,   0,   0
+] 3.23786e-319 1072693248
+Uint8Array(14) [
+  104, 195, 169, 108, 108,
+  111,  44,  32, 119, 195,
+  182, 114, 108, 100
+] 14 true
+héllo, wörld hé héllo, wörld  wörld
+2 3 Uint8Array(5) [ 97, 195, 169, 0, 0 ]
+0 0
+abcdef 6

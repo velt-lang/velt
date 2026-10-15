@@ -31,6 +31,7 @@ mod hoist;
 mod iface_call;
 mod in_keys;
 mod in_place_chain;
+mod indexers;
 mod int32;
 mod intrinsics;
 mod js_list;

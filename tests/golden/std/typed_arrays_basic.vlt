@@ -1,0 +1,106 @@
+// Typed arrays as in Node: construction, conversion of written values, printing, JSON.
+function main() {
+  const a = new Uint8Array([1, 2, 300, -1, 1.7, NaN, Infinity]);
+  console.log(a);
+  console.log(new Uint8Array(10), new Uint8Array(0));
+  console.log(new Uint8Array(30));
+  console.log(new Float64Array([1.5, -0, NaN, 1e21, 0.1]));
+  console.log(new Float32Array([0.1, 1 / 3]));
+  console.log(
+    new Int16Array([40000, -40000]),
+    new Uint16Array([-1]),
+    new Int32Array([2 ** 31, 2 ** 32 + 5]),
+    new Uint32Array([-1]),
+    new Int8Array([200]),
+  );
+  console.log(new Uint8ClampedArray([300, -5, 1.5, 2.5, 0.5, 254.5, NaN]));
+  console.log(
+    JSON.stringify(new Uint8Array([1, 2])),
+    JSON.stringify({ a: new Uint8Array([5]) }),
+    JSON.stringify(new Uint8Array(0)),
+  );
+  console.log(
+    String(new Uint8Array([1, 2, 3])),
+    `${new Float64Array([0.5])}`,
+    new Uint8Array([1, 2]).join("-"),
+  );
+  console.log(new Uint8Array(200));
+  console.log([new Uint8Array([1])], { x: new Uint8Array([1, 2]) });
+  console.log(
+    new Uint8Array(new ArrayBuffer(8), 2, 3).byteOffset,
+    Uint8Array.BYTES_PER_ELEMENT,
+    Float64Array.BYTES_PER_ELEMENT,
+  );
+  const u = new Uint8Array([1, 2, 3, 4]);
+  const s = u.subarray(1, 3);
+  s[0] = 9;
+  const c = u.slice(1, 3);
+  c[0] = 7;
+  console.log(u, s, c, s.byteOffset, s.buffer === u.buffer, c.buffer === u.buffer);
+  u[10] = 5;
+  console.log(u.length, u.byteLength, new Float64Array(3).byteLength);
+  console.log(
+    Uint8Array.from([1, 2, 3], (x) => x * 2),
+    Uint8Array.of(1, 2),
+    Uint8Array.from(new Set([5])),
+  );
+  console.log([...u.entries()], [...u.keys()], [...u.values()]);
+  console.log(
+    new Uint8Array([3, 1, 2]).sort(),
+    new Float64Array([3, -0, 0, NaN, -1]).sort(),
+    new Uint8Array([1, 2, 3]).reverse(),
+  );
+  console.log(
+    new Uint8Array([1, 2, 3]).map((x) => x * 100),
+    new Uint8Array([1, 2, 3]).filter((x) => x > 1),
+  );
+  console.log(
+    new Uint8Array([1, 2, 3]).at(-1),
+    new Uint8Array([1, 2, 3]).indexOf(2),
+    new Uint8Array([1, 2, 3]).includes(2),
+    new Float64Array([NaN]).includes(NaN),
+    new Float64Array([NaN]).indexOf(NaN),
+  );
+  console.log(
+    new Uint8Array([1, 2, 3]).toReversed(),
+    new Uint8Array([3, 1]).toSorted(),
+    new Uint8Array([1, 2, 3]).with(0, 9),
+    new Uint8Array(4).fill(7, 1, 3),
+    new Uint8Array([1, 2, 3, 4, 5]).copyWithin(0, 3),
+  );
+  console.log(
+    new Uint8Array([1, 2, 3]).reduce((a, b) => a + b, 0),
+    new Uint8Array([1, 2]).toLocaleString(),
+    new Float64Array([1234.5, -0, 1e6]).toLocaleString(),
+  );
+  console.log(
+    new Uint8Array([5, 6]).sort((x, y) => y - x),
+    new Int8Array(new Uint8Array([255, 128])),
+    new Uint8Array(new Float64Array([1.5, 256])),
+  );
+  const f = new Float64Array([1, 2, 3, 4]);
+  const bytes = new Uint8Array(f.buffer, 8, 8);
+  console.log(bytes, new Float32Array(new Float64Array([1.5]).buffer));
+  let sum = 0;
+  for (const x of new Int32Array([1, -2, 3])) {
+    sum += x;
+  }
+  console.log(sum, [...new Uint16Array([7, 8])]);
+  const m = new Uint8Array(6);
+  m.set([1, 2], 1);
+  m.set(new Uint8Array([9, 9]), 4);
+  m.set(m.subarray(0, 3), 3);
+  console.log(m);
+  m[0] += 300;
+  m[1]--;
+  console.log(
+    m[0],
+    m[1],
+    m[2]++,
+    ++m[2],
+    m.findLast((x) => x > 1),
+    m.findLastIndex((x) => x > 100),
+    m.some((x) => x == 9),
+    m.every((x) => x < 10),
+  );
+}

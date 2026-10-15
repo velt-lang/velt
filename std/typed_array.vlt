@@ -1,0 +1,17 @@
+// velt:typed_array: the ES typed arrays and their buffer, globals as in Node (docs/std/typed_array.md):
+// `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`,
+// `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array` and `Float64Array`.
+
+export {
+  Int8Array,
+  Uint8Array,
+  Uint8ClampedArray,
+  Int16Array,
+  Uint16Array,
+  Int32Array,
+  Uint32Array,
+  Float32Array,
+  Float64Array,
+} from "velt:typed_array/arrays";
+export { ArrayBuffer } from "velt:typed_array/buffer";
+export { DataView } from "velt:typed_array/data_view";
