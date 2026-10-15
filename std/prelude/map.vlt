@@ -295,10 +295,6 @@ export class Map<K, V> {
     return out;
   }
 
-  /**
-   * Whether the newest entry's key starts with a digit (a `Record` key that may be an array
-   * index): `${key}` reads a string or a string enum member's value.
-   */
   /** Marks this map as a prototype-less record's entries (`Object.create(null)`). */
   __markNullProto() {
     this.edits = this.edits | NULL_PROTO;
@@ -309,6 +305,10 @@ export class Map<K, V> {
     return (this.edits & NULL_PROTO) != 0;
   }
 
+  /**
+   * Whether the newest entry's key starts with a digit (a `Record` key that may be an array
+   * index): `${key}` reads a string or a string enum member's value.
+   */
   __newestKeyDigit(): bool {
     const n = this.entryKeys.length;
     if (n == 0) {
