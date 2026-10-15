@@ -160,3 +160,41 @@ fn a_tcp_echo_runs_on_the_backends_own_sockets() {
     ));
     assert_eq!(&echoed.ok().expect("joined"), b"hello");
 }
+
+#[test]
+fn data_after_a_short_read_still_wakes_the_reader() {
+    // A short read clears the readiness without a `WouldBlock`: what arrives later must bring
+    // an event that wakes the next wait.
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = std_listener.local_addr().unwrap();
+    let got = block_on(spawn(
+        async move {
+            let listener = io::TcpListener::from_std(std_listener).expect("listener");
+            let writer = spawn(
+                async move {
+                    let (mut s, _) = listener.accept().await.expect("accept");
+                    s.write_all(b"one").await.expect("write");
+                    Sleep::until(Instant::now() + Duration::from_millis(30)).await;
+                    s.write_all(b"two").await.expect("write");
+                    Sleep::until(Instant::now() + Duration::from_millis(30)).await;
+                },
+                None,
+            );
+            let c = io::TcpStream::connect(addr).await.expect("connect");
+            let mut got = Vec::new();
+            while got.len() < 6 {
+                c.readable().await.expect("readable");
+                let mut buf = Vec::with_capacity(64);
+                match c.try_read_buf(&mut buf) {
+                    Ok(_) => got.extend_from_slice(&buf),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => panic!("read: {e}"),
+                }
+            }
+            let _ = writer.await;
+            got
+        },
+        None,
+    ));
+    assert_eq!(got.ok().expect("joined"), b"onetwo");
+}
