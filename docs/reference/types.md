@@ -1055,7 +1055,9 @@ console.log(b.v); // hi
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
   `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
-  (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
+  (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
+  optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
+  type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
   Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
   `new(…)` in an object type is never a method, while in a class it is) are not supported yet
   and are reported.

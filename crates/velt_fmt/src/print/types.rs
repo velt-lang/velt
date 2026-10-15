@@ -284,18 +284,28 @@ impl<'a> Printer<'a> {
     ) -> Option<Doc> {
         let after = chars_after(self.src, name.span.hi);
         let is_sig = match after {
-            (Some('?'), Some('(')) => optional,
-            (Some('('), _) => !optional,
+            (Some('?'), Some('(' | '<')) => optional,
+            (Some('(' | '<'), _) => !optional,
             _ => false,
         };
         if !is_sig {
             return None;
         }
         let f = match &ty.kind {
-            TypeExprKind::Union(members) if optional => members
-                .iter()
-                .find(|m| matches!(m.kind, TypeExprKind::Function { .. }))?,
+            TypeExprKind::Union(members) if optional => members.iter().find(|m| {
+                matches!(
+                    m.kind,
+                    TypeExprKind::Function { .. } | TypeExprKind::GenericFunction { .. }
+                )
+            })?,
             _ => ty,
+        };
+        // `m<T>(x: T): T`: a field of generic function type.
+        let (generics, f) = match &f.kind {
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                (self.generic_params(type_params), &**ty)
+            }
+            _ => (nil(), f),
         };
         let TypeExprKind::Function {
             params,
@@ -317,7 +327,16 @@ impl<'a> Printer<'a> {
         } else {
             cat![": ", self.ty(ret)]
         };
-        Some(cat![key, q, "(", join(&text(", "), docs), ")", ret, throws])
+        Some(cat![
+            key,
+            q,
+            generics,
+            "(",
+            join(&text(", "), docs),
+            ")",
+            ret,
+            throws
+        ])
     }
 
     /// A function type's parameters, the last one a rest parameter (`...xs: T[]`) when `rest`.
