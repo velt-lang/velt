@@ -204,9 +204,10 @@ impl Types {
             TyKind::Error => true,
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
-            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) | TyKind::Op(_, args) => {
-                any(args)
-            }
+            TyKind::Adt(_, args)
+            | TyKind::Dyn(_, args)
+            | TyKind::Tuple(args)
+            | TyKind::Op(_, args) => any(args),
             TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,

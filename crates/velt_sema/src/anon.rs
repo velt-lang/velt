@@ -84,7 +84,11 @@ impl Ctx<'_> {
                 let op = self.ty.intern(TyKind::Op(o, args));
                 let mut ps = vec![];
                 crate::types::collect_params(&self.ty, op, &mut ps);
-                let out = if ps.is_empty() { self.reduce_op(op) } else { op };
+                let out = if ps.is_empty() {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
                 if op != t {
                     if let Some(&s) = self.type_level.op_sites.get(&t) {
                         self.type_level.op_sites.entry(op).or_insert(s);

@@ -579,8 +579,7 @@ impl Ctx<'_> {
         if outermost {
             self.type_level.alias_site = Some(span);
         }
-        let defer =
-            !self.checking_unused_aliases && args.iter().any(|x| self.has_type_params(*x));
+        let defer = !self.checking_unused_aliases && args.iter().any(|x| self.has_type_params(*x));
         if defer {
             self.type_level.deferring += 1;
         }

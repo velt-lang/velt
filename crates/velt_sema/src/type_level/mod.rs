@@ -114,7 +114,8 @@ impl Ctx<'_> {
     /// Does `t` hold a deferred type (`TyKind::Op`)?
     pub(crate) fn mentions_op(&self, t: TyId) -> bool {
         let mut found = false;
-        self.ty.visit(t, &mut |k| found |= matches!(k, TyKind::Op(..)));
+        self.ty
+            .visit(t, &mut |k| found |= matches!(k, TyKind::Op(..)));
         found
     }
 

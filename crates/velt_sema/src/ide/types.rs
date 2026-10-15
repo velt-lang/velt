@@ -171,9 +171,7 @@ impl Analysis {
             | TyKind::Result(..)
             | TyKind::Symbol
             | TyKind::Simd(_)
-            | TyKind::Op(..) => {
-                TypeView::Other
-            }
+            | TyKind::Op(..) => TypeView::Other,
         }
     }
 

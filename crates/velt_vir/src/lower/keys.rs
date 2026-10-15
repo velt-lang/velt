@@ -44,7 +44,9 @@ impl Cx<'_> {
             TyKind::Never => "never".into(),
             TyKind::Error => "error".into(),
             // Only in a generic def's own fields: an instance's are reduced (`Cx::subst`).
-            TyKind::Op(velt_sema::hir::TyOp::Alias(a), args) => format!("op{a}<{}>", list(args, stack)),
+            TyKind::Op(velt_sema::hir::TyOp::Alias(a), args) => {
+                format!("op{a}<{}>", list(args, stack))
+            }
             // Anonymous object types are structural: one shape can be several defs (a generic
             // def's instance, sema's concrete def, Cx::canon), and its symbols must not depend
             // on which one a program happens to use.

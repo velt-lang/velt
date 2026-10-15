@@ -52,6 +52,12 @@ class Store<T> {
   }
 }
 
+// A truthiness test on a deferred type is chosen per instance: here a string, there a number.
+type Pick1<T> = T extends string ? string : number;
+function truthy<T>(x: T, v: Pick1<T>): boolean {
+  return v ? true : false;
+}
+
 function keysNamed<T>(k: OptionalKeys<T>): OptionalKeys<T> {
   return k;
 }
@@ -79,3 +85,4 @@ console.log(n * 2);
 
 const k: "b" | undefined = keysNamed<{ a: string; b?: number }>("b");
 console.log(k);
+console.log(truthy("a", ""), truthy("a", "x"), truthy(1, 0), truthy(1, 2));

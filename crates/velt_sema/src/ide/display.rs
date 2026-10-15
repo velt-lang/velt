@@ -38,7 +38,11 @@ impl Names {
             table: cx.ty.table.clone(),
             defs,
             aliases: cx.alias_names.clone(),
-            alias_decls: cx.aliases.iter().map(|a| a.decl.name.name.clone()).collect(),
+            alias_decls: cx
+                .aliases
+                .iter()
+                .map(|a| a.decl.name.name.clone())
+                .collect(),
         }
     }
 

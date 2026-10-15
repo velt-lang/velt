@@ -117,7 +117,9 @@ impl FnCx<'_, '_> {
                     None => Test::Object,
                 }
             }
-            TyKind::Param(_) => Test::Generic,
+            // Chosen per instance by lowering, like a type parameter's (a deferred type may be
+            // a string or a number there).
+            TyKind::Param(_) | TyKind::Op(..) => Test::Generic,
             TyKind::Unit | TyKind::Result(..) | TyKind::Simd(_) => Test::Rejected,
             _ => Test::Object,
         }
