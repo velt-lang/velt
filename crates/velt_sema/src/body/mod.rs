@@ -211,6 +211,9 @@ pub(crate) struct Frame {
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: std::collections::HashMap<LocalId, DefId>,
+    /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
+    /// them another `this` is not supported yet (`call_apply`).
+    pub method_values: std::collections::HashSet<LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
@@ -286,6 +289,7 @@ impl Frame {
             await_using: Default::default(),
             readonly_arrays: Default::default(),
             closure_consts: Default::default(),
+            method_values: Default::default(),
             tries: vec![],
             uncaught: vec![],
             super_ok: false,
