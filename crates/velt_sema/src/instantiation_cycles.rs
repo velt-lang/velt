@@ -10,8 +10,12 @@
 //! edge *grows* when that argument is more than the bare parameter (`T[]`, `Box<T>`). A program
 //! has finitely many instantiations iff no growing edge lies on a cycle, i.e. inside one
 //! strongly connected component. Instantiations come from direct calls (`Callee::Def`), closures
-//! (which share their enclosing function's parameters) and the methods a constructed or
-//! dynamically converted class runs ([`crate::dispatch`]).
+//! (which share their enclosing function's parameters), the methods a constructed or
+//! dynamically converted class runs ([`crate::dispatch`]) and method calls through a type
+//! parameter (`s.area<V>(…)`, `s: S`): those run the implementing method of whatever type `S`
+//! becomes, so they instantiate the method of every implementation of the interface (its
+//! owner's parameters come from inside `S`, which does not grow them; its own from the call's
+//! type arguments).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -21,6 +25,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::Dispatch;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
+use crate::inst_sites::ParamCall;
 use crate::types::collect_params;
 use crate::visit;
 
@@ -36,6 +41,8 @@ enum Site {
     /// A class value built or converted to an interface: its methods are instantiated with the
     /// type's arguments.
     Object(TyId),
+    /// A method call through a type parameter.
+    Param(ParamCall),
 }
 
 /// An edge of the expansion graph and the call that makes it.
@@ -88,6 +95,24 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span)>)> {
                 E::Closure(c) => Site::Closure(*c),
                 E::New { .. } => Site::Object(e.ty),
                 E::ToDyn { expr, .. } => Site::Object(expr.ty),
+                E::Call {
+                    callee:
+                        Callee::ParamMethod {
+                            iface,
+                            slot,
+                            method_type_args,
+                            ..
+                        },
+                    args,
+                } => {
+                    let Some(recv) = args.first() else { return };
+                    Site::Param(ParamCall {
+                        recv: recv.ty,
+                        iface: *iface,
+                        slot: *slot,
+                        margs: method_type_args.clone(),
+                    })
+                }
                 _ => return,
             };
             sites.push((site, e.span));
@@ -109,6 +134,7 @@ fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span)>)>) -> Vec<Edge> {
                     vec![(c, (0..n).map(|p| cx.ty.param(p)).collect())]
                 }
                 Site::Object(t) => object_calls(cx, &mut dispatch, t),
+                Site::Param(p) => param_calls(cx, &p),
             };
             for (g, targs) in calls {
                 call_edges(cx, f, g, &targs, span, &mut out);
@@ -127,6 +153,36 @@ fn object_calls(cx: &mut Ctx, dispatch: &mut Dispatch, t: TyId) -> Vec<(DefId, V
         }
     }
     calls
+}
+
+/// The methods a call through a type parameter may run, with type arguments in terms of the
+/// caller's parameters: the one of the receiver's implementation if that is known, else the
+/// method of every implementation, its owner's parameters standing for parts of the receiver.
+fn param_calls(cx: &mut Ctx, p: &ParamCall) -> Vec<(DefId, Vec<TyId>)> {
+    if !matches!(cx.ty.kind(p.recv), TyKind::Param(_)) {
+        if let Some(call) = p.resolve(cx) {
+            return vec![call];
+        }
+    }
+    let mut out = vec![];
+    for imp in cx.impls.iter().filter(|i| i.iface == p.iface) {
+        let Some(&m) = imp.methods.get(p.slot as usize) else {
+            continue;
+        };
+        let is_default = cx
+            .iface(p.iface)
+            .and_then(|i| i.methods.get(p.slot as usize))
+            .is_some_and(|d| d.default == Some(m));
+        let owner = if is_default {
+            imp.iface_args.len() + 1
+        } else {
+            imp.generics as usize
+        };
+        let mut targs = vec![p.recv; owner];
+        targs.extend(p.margs.iter().copied());
+        out.push((m, targs));
+    }
+    out
 }
 
 fn call_edges(cx: &Ctx, f: DefId, g: DefId, targs: &[TyId], span: Span, out: &mut Vec<Edge>) {

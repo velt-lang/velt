@@ -1038,10 +1038,42 @@ const n: Unbox<{ value: number }> = 42;
 console.log(getters.getName(), key, n); // Ann age 42
 ```
 
-Not supported yet (each is an error): these forms with an argument that is still a type parameter
-(`function f<T>(x: T): Getters<T>`, a generic class's or interface's field of such a type), which
-TypeScript keeps unevaluated until it is known; a mapped type over an array or tuple type, or over
-`string`; a template literal type with a `string` or `number` hole outside a pattern.
+**In generic code.** An alias whose body needs an argument that is still a type parameter
+(`function f<T>(x: T): Getters<T>`, a generic class's or interface's field `props:
+PropsAccessor<TProps>`) stays unevaluated, as in TypeScript, and is evaluated once the type
+arguments are known: at a call, at `new`, and for every instantiation the program reaches. In the
+generic body a value of such a type can be stored, passed and returned as that same type. Reading
+a field of it, assigning it to another type, or assigning anything else to it is not supported yet
+in the generic body, even where TypeScript allows it (`return x` from `x: T` into
+`PropsAccessor<T>`, `const s: string = t` for `t: IsString<T>`, `t.length`): it reports an error.
+Where TypeScript rejects such code too (TS2322, TS2339), the error is the same.
+
+```ts
+type PropsAccessor<P> = { readonly [K in keyof P]: P[K] };
+type IsString<T> = T extends string ? "yes" : "no";
+
+interface SetupContext<P> {
+  props: PropsAccessor<P>;
+}
+
+function setup<P>(props: PropsAccessor<P>): SetupContext<P> {
+  return { props };
+}
+
+function tag<T>(x: T, t: IsString<T>): IsString<T> {
+  return t;
+}
+
+const ctx = setup<{ title: string }>({ title: "hi" });
+console.log(ctx.props.title, tag(1, "no")); // hi no
+```
+
+Not supported yet (each is an error): these forms written directly (not through an alias) with an
+argument that is still a type parameter (`function f<T>(x: T extends string ? 1 : 2)`); reading a
+member of a deferred type in the generic body, which TypeScript answers from the type parameter's
+constraint (`T[K]` with `K extends keyof T`, a mapped type over `keyof T`); a mapped type over an
+array or tuple type, or over `string`; a template literal type with a `string` or `number` hole
+outside a pattern.
 
 ## Enums
 

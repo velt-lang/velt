@@ -257,6 +257,13 @@ impl Implicit {
                     self.reach_in(cx, x, env, stack, out);
                 }
             }
+            // A deferred type is made of its arguments, and may hold functions of them.
+            TyKind::Op(_, args) => {
+                for &x in args {
+                    self.reach_in(cx, x, env, stack, out);
+                }
+                out.fns = true;
+            }
             TyKind::Adt(d, args) => {
                 let (d, args) = (*d, args.clone());
                 if stack.contains(&d) {
