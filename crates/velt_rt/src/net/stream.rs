@@ -120,6 +120,13 @@ fn aborted_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionAborted, "the stream was aborted")
 }
 
+/// Reads up to this size go through [`READ_SCRATCH`].
+const SCRATCH: usize = 256 << 10;
+
+thread_local! {
+    static READ_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn buffer(max: u64) -> Vec<u8> {
     Vec::with_capacity(max.clamp(1, 16 << 20) as usize)
 }
@@ -130,11 +137,25 @@ pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u
         // The buffer is allocated once there is something to read, so a connection waiting
         // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
-        let mut buf = buffer(max);
-        match stream.try_read_buf(&mut buf) {
+        if max > SCRATCH as u64 {
+            let mut buf = buffer(max);
+            match stream.try_read_buf(&mut buf) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) => return Err(e),
+                Ok(_) => return Ok(buf),
+            }
+        }
+        // Read into this thread's scratch buffer and keep only what came: a message is usually
+        // far smaller than `max`, and a buffer of `max` for each read costs more than the copy.
+        let r = READ_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            scratch.clear();
+            scratch.reserve(max as usize);
+            stream.try_read_buf(&mut scratch).map(|_| scratch.to_vec())
+        });
+        match r {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(e),
-            Ok(_) => return Ok(buf),
+            r => return r,
         }
     }
 }
