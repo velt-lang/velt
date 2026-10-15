@@ -23,6 +23,7 @@ mod dispose_call;
 mod division;
 pub(crate) mod downcast;
 mod dynamic;
+mod env_globals;
 mod error_slots;
 mod error_view;
 mod errors;

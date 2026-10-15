@@ -218,7 +218,10 @@ impl FnCx<'_, '_> {
                     id.span,
                 );
             }
-            _ => self.unknown_name(id),
+            _ => match self.browser_global_read(id) {
+                Some(h) => return h,
+                None => self.unknown_name(id),
+            },
         }
         self.error_expr(id.span)
     }
