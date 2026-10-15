@@ -5,7 +5,8 @@
 //! microtask). Dropped unfinished, a started promise keeps running and its task disposes of the
 //! result; `block_on` waits for started promises (see executor.rs).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
@@ -167,7 +168,9 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
     };
     if detached {
         if let Some(d) = result_drop {
-            d(state(f));
+            if drop_unclaimed(f, d) {
+                return Poll::Ready(()); // freed once reported (`flush_unhandled`)
+            }
         }
         boxed::free(f);
     } else if let Some(w) = waiter {
@@ -236,10 +239,74 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
         return; // the driver finishes it and frees it
     }
     if let (false, Some(d)) = (delivered, result_drop) {
-        d(state(f));
+        if drop_unclaimed(f, d) {
+            return; // freed once reported (`flush_unhandled`)
+        }
     }
     boxed::free(f);
 }
+
+thread_local! {
+    /// The started promise whose result is being dropped right now (null: none).
+    static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
+    /// Rejected promises to report once the microtask queue is drained, with their drops.
+    static DEFERRED: RefCell<VecDeque<(*mut VeltFut, ResultDropFn)>> =
+        const { RefCell::new(VecDeque::new()) };
+}
+
+/// Drop the unclaimed result of finished promise `f` with `d`; true when it is an unhandled
+/// rejection kept to be reported once the microtask queue is drained, as in Node (velt_rt's
+/// task/local/unhandled.rs).
+unsafe fn drop_unclaimed(f: *mut VeltFut, d: ResultDropFn) -> bool {
+    if !executor::running() {
+        d(state(f));
+        return false;
+    }
+    DROPPING.with(|c| c.set(f));
+    d(state(f));
+    // Still set: `velt_rt_unhandled_defer` was not called (not a rejection).
+    if !DROPPING.with(|c| c.replace(std::ptr::null_mut())).is_null() {
+        return false;
+    }
+    DEFERRED.with(|q| q.borrow_mut().push_back((f, d)));
+    true
+}
+
+/// Called by a rejection's report before it reports: 1 when the runtime keeps the promise and
+/// reports it once the microtask queue is drained, 0 to report now.
+#[no_mangle]
+pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
+    DROPPING.with(|c| !c.replace(std::ptr::null_mut()).is_null()) as u8
+}
+
+/// The microtask queue is drained: report the rejections that waited for it (the first one
+/// ends the process).
+pub(super) fn flush_unhandled() {
+    while let Some((f, d)) = DEFERRED.with(|q| q.borrow_mut().pop_front()) {
+        // SAFETY: a finished promise kept with its unclaimed result (`drop_unclaimed`).
+        unsafe {
+            d(state(f));
+            boxed::free(f);
+        }
+    }
+}
+
+/// `velt_rt_task_gate`: one thread, so a timer's callback never runs during a task's poll and
+/// needs no gate (velt_rt's task/local/gate.rs).
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate() -> u64 {
+    0
+}
+
+/// `velt_rt_task_gate_wait`: ready at once (see [`velt_rt_task_gate`]).
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate_wait(_gate: u64) -> *mut VeltFut {
+    new_leaf(|_: &mut Context<'_>| Poll::Ready(()))
+}
+
+/// `velt_rt_task_gate_free`: nothing to release.
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate_free(_gate: u64) {}
 
 /// The task id `new Promise` compares (see velt_rt): one thread, so values never need copying
 /// between tasks and every task reports the same id.
