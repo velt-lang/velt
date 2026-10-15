@@ -37,7 +37,18 @@
 - `const` only fixes the binding: modifying a `const` object or array is fine, as in JS.
 - `using` and `await using` declare a `const` that is disposed at the end of the block
   ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)).
-- There is no `var`.
+- `var` directly in a function body (or at the top level of a module) declares what `let` does:
+  the variable belongs to the whole function either way. Elsewhere (in a nested block, a loop,
+  a `switch` or the head of a `for`), a `var` still belongs to the whole function, which `let`
+  can't express: that is reported as not supported yet; declare it with `let`.
+
+  ```ts
+  function digits(n: number): string {
+    var hi = Math.floor(n / 16), lo = n % 16;
+    return hi.toString(16) + lo.toString(16);
+  }
+  console.log(digits(171)); // ab
+  ```
 
 ## Conditions: truthiness
 

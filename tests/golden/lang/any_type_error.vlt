@@ -1,0 +1,8 @@
+// A value of another type leaving an `any` stops with a `TypeError` (issue #924). Node would
+// keep the string in the `number` variable; Velt checks the value where it enters typed code.
+function main(): void {
+  const v: any = "80";
+  console.log(v);
+  const port: number = v;
+  console.log(port);
+}

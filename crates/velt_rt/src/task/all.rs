@@ -59,7 +59,7 @@ impl Future for Child {
         }
         let f = self.fut.0;
         // SAFETY: `f` is a live VeltFut owned by this child.
-        if unsafe { ((*f).poll)(f, raw_cx(cx)) } != READY {
+        if unsafe { ((*f).poll)(f, raw_cx(cx).ptr()) } != READY {
             return Poll::Pending;
         }
         // SAFETY: the result slot holds `size` bytes; `dst` is the caller's results[i].
@@ -264,7 +264,7 @@ mod tests {
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
             // SAFETY: an owned, live heap future; freed once READY.
             unsafe {
-                if velt_rt_fut_poll(self.0 .0, raw_cx(cx)) == PENDING {
+                if velt_rt_fut_poll(self.0 .0, raw_cx(cx).ptr()) == PENDING {
                     return Poll::Pending;
                 }
                 velt_rt_fut_drop(self.0 .0);

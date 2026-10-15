@@ -177,7 +177,7 @@ impl<S: StateStore> Future for Compiled<S> {
         crate::panic::ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: the compiled poll function upholds the ABI for its own state.
-            match unsafe { poll(state, raw_cx(cx)) } {
+            match unsafe { poll(state, raw_cx(cx).ptr()) } {
                 READY => {
                     if let Some(t) = transfer {
                         // SAFETY: the finished state's result is at offset 0. The glue runs

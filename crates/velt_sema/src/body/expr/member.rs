@@ -583,6 +583,9 @@ impl FnCx<'_, '_> {
         // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
         let inner = self.expr(expr, hint, Want::Borrow);
+        if self.cx.dynamic(inner.ty).is_some() {
+            return self.cast_dynamic(inner, target);
+        }
         // `id as string`: a brand's value as its primitive.
         let inner = match self.cx.brand_base(inner.ty) == Some(target) {
             true => return self.unbrand(inner),
@@ -627,6 +630,11 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let inner = self.expr(expr, Some(target), want);
+        if self.cx.dynamic(inner.ty).is_some() && self.cx.dynamic(target).is_none() {
+            if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
+                return h;
+            }
+        }
         match self.try_coerce(inner, target) {
             Ok(h) => h,
             Err(h) => {

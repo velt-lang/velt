@@ -83,6 +83,11 @@ pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
                 throws = std::mem::take(&mut fcx.f.uncaught);
                 Some(h)
             }
+            None if f.optional && cx.dynamic(f.ty).is_some() => {
+                // `q?: any` left out holds the dynamic `undefined`, as in JavaScript.
+                let mut fcx = detached(cx, module, &names);
+                Some(fcx.dynamic_nothing(hir::Nothing::Undefined, f.ty, f.span))
+            }
             None if f.optional => Some(hir::Expr {
                 kind: H::Lit(hir::Lit::Null),
                 ty: f.ty,

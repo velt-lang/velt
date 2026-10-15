@@ -30,12 +30,14 @@ mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod tuple_types;
 mod type_assertion;
 mod type_decls;
 mod type_level;
 mod type_members;
 mod types;
 mod undefined;
+mod var_decls;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -111,6 +113,12 @@ pub(crate) struct Parser<'a> {
     fn_in_object: bool,
     /// The first `this: T` parameter parsed (the AST does not keep them).
     pub(crate) first_this_param: Option<std::ops::Range<u32>>,
+    /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
+    /// directly in it.
+    fn_body_next: bool,
+    /// The statement parsed next is directly in a function body or at the top level, where
+    /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
+    var_ok: bool,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -158,6 +166,8 @@ impl<'a> Parser<'a> {
             this_param: None,
             fn_in_object: false,
             first_this_param: None,
+            fn_body_next: false,
+            var_ok: false,
             computed_keys: BTreeSet::new(),
             no_in: false,
             ambient: None,

@@ -21,7 +21,7 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_generics(type_params, v);
             walk_type(ty, v);
         }
-        T::Construct(ty) => walk_type(ty, v),
+        T::Construct(ty) | T::TupleRest(ty) | T::TupleOptional(ty) => walk_type(ty, v),
         T::Function {
             params,
             ret,

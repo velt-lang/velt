@@ -1,0 +1,20 @@
+// A type annotation on a catch binding: `unknown` or `any`, as TypeScript allows.
+function risky(n: number): number {
+  if (n > 1) {
+    throw new Error(`too big: ${n}`);
+  }
+  return n;
+}
+
+try {
+  risky(2);
+} catch (e: unknown) {
+  console.log(e instanceof Error ? e.message : "unknown error");
+}
+
+try {
+  risky(3);
+} catch (err: any) {
+  console.log(String(err));
+}
+console.log(risky(1));

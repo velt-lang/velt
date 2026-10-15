@@ -247,7 +247,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> PResult<Expr> {
         let body = if self.at(Tok::LBrace) {
-            ArrowBody::Block(self.guarded(|p| p.parse_block())?)
+            ArrowBody::Block(self.guarded(|p| p.parse_fn_body())?)
         } else {
             ArrowBody::Expr(Box::new(self.guarded(|p| p.parse_assign())?))
         };

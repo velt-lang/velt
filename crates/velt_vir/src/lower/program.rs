@@ -24,6 +24,7 @@ impl<'h> Cx<'h> {
             native_inits: vec![],
             uses_placement: false,
             cell_checks: false,
+            no_await_steps: false,
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),

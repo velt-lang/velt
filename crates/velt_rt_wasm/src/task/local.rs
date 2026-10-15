@@ -41,7 +41,8 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     }
     let (id, st) = adopt(f, result_drop);
     let w = executor::waker(id);
-    let _ = drive(f, &st, &mut Context::from_waker(&w));
+    // The creator goes on after this first run: its `await`s take their steps.
+    let _ = executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
 }
 
 /// The owner hands promise `f` to another task: its result is transferred with `transfer` as
@@ -111,7 +112,7 @@ pub(super) unsafe fn give_up(f: *mut VeltFut) {
     // An unfinished started promise stays allocated until its task finishes it.
     super::velt_rt_fut_drop(f);
     if let Some(id) = task {
-        executor::run_now(id, turn);
+        executor::sync_run(|| executor::run_now(id, turn));
     }
 }
 
@@ -155,7 +156,7 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
         return Poll::Ready(());
     }
     let t = trailer(f);
-    if ((*t).poll)(state(f), raw_cx(cx)) != READY {
+    if ((*t).poll)(state(f), raw_cx(cx).ptr()) != READY {
         return Poll::Pending;
     }
     (*t).live = 0;

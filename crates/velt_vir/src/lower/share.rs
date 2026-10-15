@@ -135,6 +135,15 @@ impl FnLower<'_, '_> {
         let out = if self.cx.counted(ty) {
             self.retain(d.clone());
             d
+        } else if self.cx.share_kind(ty) == ShareKind::Closure {
+            // A new box with a share of the function value: the same environment, so the
+            // function keeps its identity (a clone would build another environment).
+            let vt = self.cx.ty(ty);
+            let b = self.alloc(vt);
+            let src = self.deref_param(data, ty);
+            let bp = self.operand_place(b.clone(), Ty::Ptr);
+            self.share_into(src, proj(&bp, Proj::Deref(vt)), ty);
+            b
         } else {
             if self.cx.share_kind(ty) == ShareKind::Object {
                 self.cx.facts.unmet = true;

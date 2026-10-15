@@ -24,12 +24,13 @@ mod unhandled;
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
-pub use micro::velt_rt_microtask;
 pub use module_state::velt_rt_module_state;
 pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, release_outside as module_release_outside,
     resume as module_resume, suspend as module_suspend,
 };
+pub(crate) use micro::{settled, ticket_pending};
+pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;
 
@@ -64,10 +65,28 @@ struct TaskCx {
     /// Something yielded during this poll (`yieldNow()`): it must not run again before the
     /// task's next poll (losers.rs).
     yielded: Cell<bool>,
+    /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
+    /// way. Generated code reads it through `cx` (`await_word`).
+    word: Cell<u32>,
+    /// The microtask being run is a waiter's step already (micro.rs).
+    credit: Cell<bool>,
 }
 
 thread_local! {
     static CURRENT: Cell<*const TaskCx> = const { Cell::new(std::ptr::null()) };
+}
+
+/// The await word of no task: always 0 (outside a task an `await` goes straight on).
+static NO_WORD: u32 = 0;
+
+/// The await word of the task being polled, for `cx` (task/mod.rs `raw_cx`).
+pub(crate) fn await_word() -> *const u32 {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    match unsafe { tcx.as_ref() } {
+        Some(t) => t.word.as_ptr(),
+        None => &NO_WORD,
+    }
 }
 
 /// The set of the task being polled (null outside a task or before its first started promise).
@@ -128,7 +147,7 @@ pub(super) unsafe fn run_here(f: *mut VeltFut) {
         node::queue(f);
         return;
     }
-    set::run_now(set, &*(*tcx).waker, f);
+    set::run_now(set, &*tcx, f);
 }
 
 /// Run `f` with the gate of the task being polled, created on first use (with the task's set,
@@ -195,6 +214,8 @@ impl SetPtr {
             module: &module,
             turn: self.3,
             yielded: Cell::new(false),
+            word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
+            credit: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
@@ -214,6 +235,7 @@ impl SetPtr {
                 task: &*waker,
                 root,
                 timers,
+                word: tcx.word.as_ptr(),
             });
         }
         root();
@@ -224,6 +246,7 @@ impl SetPtr {
                 task: &*waker,
                 root,
                 timers: None,
+                word: tcx.word.as_ptr(),
             });
         }
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
@@ -374,7 +397,13 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let set = task_set(&*tcx);
     node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
-    if node::poll_first(f) {
+    // The creator goes on after this first run, so the run's `await`s take their steps through
+    // the queue (micro.rs).
+    let t = &*tcx;
+    micro::sync_enter(t);
+    let finished = node::poll_first(f, t.word.as_ptr());
+    micro::sync_exit(t);
+    if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
         node::finish_first(f);
     } else {

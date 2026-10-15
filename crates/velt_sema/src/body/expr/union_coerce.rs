@@ -280,7 +280,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn outer_mode(e: &hir::Expr) -> Option<UseMode> {
+pub(super) fn outer_mode(e: &hir::Expr) -> Option<UseMode> {
     match e.kind {
         H::Local(_, m)
         | H::Field { mode: m, .. }

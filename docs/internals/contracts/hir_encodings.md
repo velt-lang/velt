@@ -642,3 +642,60 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
   strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
   either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
   HIR keeps one `BinOp::Eq` / `NotEq`.
+
+## any and unknown (issue #924, phase 1a)
+- `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
+  `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
+  implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
+  whose index is `Program::any_impl` (`Program::unknown` names the `unknown` interface). Converting a value to either type is `ToDyn` with that
+  index (for `unknown` too: both share one representation and one table per concrete type).
+- Sema unpacks before boxing, so a dynamic value always holds one concrete type: a literal type
+  becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
+  nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
+  of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
+  Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
+  integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
+  object), and at slots 1 to 4 the glue `AnyTruthy (data) -> bool`, `AnySame (a, b) -> bool`,
+  `AnyNumber (data) -> f64` (booleans, numbers and strings) and `AnyHash (data) -> u64` (agrees
+  with SameValueZero: numbers of every width hash their value as a float). Tables are memoized
+  per concrete type, so equal tables mean equal types. `===` / `Intrinsic::Same` and
+  `Intrinsic::Eq` / `Intrinsic::Hash` on a dynamic type (generic code, `Set` / `Map` keys)
+  compare the values held, as `AnyStrictEq` does (keys: numbers by SameValueZero).
+- An enum without payloads is boxed as its value (`Match` over its members, each boxing its
+  number or string), and an `AnyTo` an enum is a chain of `AnyStrictEq` tests against those
+  values (a `TypeError` when none matches). An optional field `q?: any` has the type `any`
+  itself (not `any | null`) and its default is the dynamic `undefined`; printing leaves it out
+  while it holds `undefined`.
+- `Intrinsic::AnyTo` converts out (assignment, argument, return, `as T`; an `unknown` only
+  with `as T` or after narrowing), checked at run time: the table must be `T`'s (a class
+  without type arguments: the class id is `T` or a subclass; a generic class: that
+  instantiation's table; `U | null`: `null` and `undefined` give `null`; a union or literal
+  `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
+  stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
+  owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
+  the place keeps (and later drops) its value.
+- A union with a dynamic member is that member (`any | null`, `any | string` are `any`; an
+  `unknown` likewise unless `any` is also a member). An `any | null` / `unknown | null` that
+  still arises (a generic `T | null` with `T = any`: `Map.get`, `find`, `Channel.receive`, a
+  generic class's field) is collapsed where user code reads it: the payload, or the dynamic
+  nothing (`undefined` for a standard library result, else the type's own nothing). `x ?? d`
+  on a dynamic `x` is `d` (boxed) when `x` holds `null` or `undefined`.
+- `typeof x` is `AnyTypeof`; `typeof x === "number"` (also `"string"`, `"boolean"`) narrows a
+  dynamic local with `Fact::Class(l, T)`, read as `AnyTo(Share(x))`; `instanceof C` narrows as
+  on any interface value (`Downcast`). Conditions use `AnyTruthy`. `===` / `!==` and `==` / `!=`
+  with an operand whose checked type is dynamic (or `any | null`) box the other operand and use
+  `AnyStrictEq` / `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value,
+  `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
+  of one object, such as a class and its base, compare the data pointers; `==` of an object
+  and a primitive stops with a `TypeError`).
+- A dynamic value is never boxed again: `ToDyn` never has a dynamic operand (an `any | null`
+  unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
+  interface value; lowering keeps its data pointer and takes the `any` table of the concrete
+  type from the interface table. Into a union or literal type, `AnyTo` is applied per member
+  behind a test (`AnyTypeof` for primitives, `PatKind::InstanceOf` for classes, `AnyStrictEq`
+  for literals), with `Intrinsic::Panic` (`TypeError`) when none passes. `console.log` and the format glue print the
+  value the table formats; a string at the top level prints without quotes.
+- Not yet (each a compile error, phase 1b and 2 of #924): member reads, writes and calls on
+  `any` (`x.f`, `x[k]`, `x(...)`), other operators, template literals and `String(x)`,
+  `JSON.stringify` of an `any`, iteration.

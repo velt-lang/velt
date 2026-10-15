@@ -59,7 +59,7 @@ impl Future for FutBody {
         ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: an owned, live heap future.
-            match unsafe { ((*f).poll)(f, raw_cx(cx)) } {
+            match unsafe { ((*f).poll)(f, raw_cx(cx).ptr()) } {
                 READY => Poll::Ready(()),
                 _ => Poll::Pending,
             }

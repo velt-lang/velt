@@ -1,0 +1,31 @@
+// check: no leaks
+// An `any` converted to a union that also allows `null` or `undefined` (#1103 review).
+class A {
+  a = 1;
+}
+class C {
+  c = 2;
+}
+type Color = "red" | "green";
+function main(): void {
+  const vals: any[] = [new A(), new C(), null];
+  for (const x of vals) {
+    const y: A | C | null = x;
+    console.log(y);
+  }
+  const vals2: any[] = [new C(), undefined];
+  for (const x of vals2) {
+    const z: A | C | undefined = x;
+    console.log(z);
+  }
+  const prims: any[] = ["s", 4, null];
+  for (const p of prims) {
+    const w: number | string | null = p;
+    console.log(w);
+  }
+  const red: any = "red";
+  const c: Color | null = red;
+  const none: any = null;
+  const d: Color | null = none;
+  console.log(c, d);
+}

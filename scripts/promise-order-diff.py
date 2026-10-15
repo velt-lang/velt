@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Differential test of promise callback order: generates programs mixing `then`, `catch`,
-`then(f, g)`, `finally`, `queueMicrotask`, `setTimeout`, the combinators and `await`, runs each
-with `velt run` and with Node (`--experimental-strip-types`), and compares stdout and the exit
-code.
+"""Differential test of promise callback and `await` order: generates programs mixing `then`,
+`catch`, `then(f, g)`, `finally`, `queueMicrotask`, `setTimeout`, the combinators, and async
+functions that await (started promises running side by side, awaits of settled promises, async
+functions awaiting async functions, promises settled by a stored `resolve` from another async
+function), runs each with `velt run` and with Node (`--experimental-strip-types`), and compares
+stdout and the exit code.
 
 Every program that differs is put in a class: `documented` when it uses a form whose order
-docs/reference/async.md lists as different from Node's (`await` in `main` or in an async source
-that awaits inside, `Promise.all`, `Promise.race`, a promise settled by a stored `resolve`),
-`unexpected` otherwise. A non-zero count of
-`unexpected` is a bug.
+docs/reference/async.md lists as different from Node's (`Promise.all`, `Promise.race`),
+`unexpected` otherwise. A non-zero count of `unexpected` is a bug.
 
-usage: promise-order-diff.py <velt executable> <work dir> [count] [seed] [jobs]
+usage: promise-order-diff.py <velt executable> <work dir> [count] [seed] [jobs] [mode]
+
+`mode`: `mixed` (default: callback chains, with async workers in some programs) or `await`
+(async workers in every program, callback chains in some).
 """
 
 import os
@@ -36,6 +39,24 @@ async function failing(m: string): Promise<number, Failed> {
 async function later(n: number): Promise<number, Failed> {
   await value(0);
   return n;
+}
+
+async function deeper(n: number): Promise<number, Failed> {
+  const a = await later(n);
+  const b = await Promise.resolve(a);
+  return b;
+}
+
+async function settle(f: (v: number) => void, n: number): Promise<void, Failed> {
+  await value(0);
+  f(n);
+}
+
+async function waitFor(name: string, p: Promise<number, Failed>): Promise<number, Failed> {
+  log(`${name} waits`);
+  const v = await p;
+  log(`${name} got ${v}`);
+  return v;
 }
 """
 
@@ -140,7 +161,81 @@ class Gen:
         body = "\n    ".join(ops)
         return f"{pre}  {src}\n    {body};\n"
 
-    def program(self):
+    def step(self, w, j, resolvers):
+        """One statement of async worker `w`."""
+        r = self.rng.random()
+        if r < 0.22:
+            return f"await value({j}); log(`{w} v{j}`);"
+        if r < 0.36:
+            return f"const x{j} = await Promise.resolve({j}); log(`{w} r${{x{j}}}`);"
+        if r < 0.48:
+            self.features.add("worker awaits an async function")
+            return f"const y{j} = await later({j}); log(`{w} l${{y{j}}}`);"
+        if r < 0.56:
+            self.features.add("worker awaits nested async functions")
+            return f"const z{j} = await deeper({j}); log(`{w} d${{z{j}}}`);"
+        if r < 0.64:
+            self.features.add("queueMicrotask")
+            return f'queueMicrotask(() => log("{w} qm{j}"));'
+        if r < 0.74:
+            self.features.add("worker chains then")
+            return f"Promise.resolve({j}).then((v) => log(`{w} then${{v}}`));"
+        if r < 0.82 and resolvers:
+            self.features.add("stored resolve")
+            k = self.rng.choice(resolvers)
+            return f"rr{k}({j}); log(`{w} resolved {k}`);"
+        if r < 0.90:
+            self.features.add("worker awaits a callback run later")
+            return f"await settle((v) => log(`{w} cb${{v}}`), {j}); log(`{w} s{j}`);"
+        return f'log("{w} sync{j}");'
+
+    def workers(self):
+        """Async workers started side by side, promises settled by stored `resolve`s, and the
+        awaits in `main` that collect them: (setup, after) statement lists."""
+        self.features.add("started promises")
+        setup, after = [], []
+        nres = self.rng.randint(0, 2)
+        for k in range(nres):
+            setup.append(
+                f"  const {{ promise: rp{k}, resolve: rr{k} }} = "
+                "Promise.withResolvers<number, Failed>();\n"
+            )
+            if self.rng.random() < 0.5:
+                setup.append(f'  const wt{k} = waitFor("r{k}", rp{k});\n')
+            else:
+                self.features.add("then on a stored resolve")
+                setup.append(
+                    f"  const wt{k} = rp{k}.then((v) => {{ log(`r{k} then ${{v}}`); return v; }});\n"
+                )
+            after.append(f"  log(`r{k} -> ${{await wt{k}}}`);\n")
+        resolvers = list(range(nres))
+        for i in range(self.rng.randint(1, 3)):
+            w = f"w{i}"
+            steps = [self.step(w, j, resolvers) for j in range(self.rng.randint(1, 5))]
+            body = " ".join([f'log("{w} start");'] + steps + [f"return {i};"])
+            setup.append(f"  const p{i} = (async (): Promise<number, Failed> => {{ {body} }})();\n")
+            if self.rng.random() < 0.3:
+                setup.append(f'  log("main after {w}");\n')
+            after.append(f"  log(`{w} -> ${{await p{i}}}`);\n")
+            if self.rng.random() < 0.3:
+                self.features.add("await in main")
+                after.append(f"  log(`main ${{await value({i})}}`);\n")
+        # Every stored resolve settles (its waiter would wait forever otherwise).
+        for k in resolvers:
+            setup.append(f"  rr{k}({10 + k});\n")
+        self.rng.shuffle(after)
+        return setup, after
+
+    def program(self, mode="mixed"):
+        if mode == "await" or self.rng.random() < 0.3:
+            setup, after = self.workers()
+            parts = list(setup)
+            if mode != "await" or self.rng.random() < 0.5:
+                for i in range(self.rng.randint(1, 2)):
+                    parts.insert(self.rng.randint(0, len(parts)), self.chain(f"c{i}", False))
+            parts.append('  log("sync end");\n')
+            parts.extend(after)
+            return PRELUDE + "\nasync function main() {\n" + "".join(parts) + "}\n"
         parts = []
         chains = self.rng.randint(1, 4)
         unhandled = self.rng.random() < 0.08
@@ -165,7 +260,7 @@ class Gen:
         return PRELUDE + "\nasync function main() {\n" + "".join(parts) + "}\n"
 
 
-DOCUMENTED = {"await in main", "source awaits inside", "all", "race", "withResolvers"}
+DOCUMENTED = {"all", "race"}
 
 
 def run(cmd, cwd):
@@ -182,11 +277,12 @@ def main():
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 1
     os.makedirs(work, exist_ok=True)
     jobs = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+    mode = sys.argv[6] if len(sys.argv) > 6 else "mixed"
     rng = random.Random(seed)
     programs = []
     for i in range(count):
         g = Gen(rng)
-        programs.append((i, g.program(), g.features))
+        programs.append((i, g.program(mode), g.features))
 
     def check(item):
         i, src, _ = item
@@ -220,7 +316,7 @@ def main():
             continue
         doc = sorted(features & DOCUMENTED)
         (documented if doc else unexpected).append((i, sorted(features)))
-    print(f"{count} programs (seed {seed}): {same} identical, {len(documented)} differ in a "
+    print(f"{count} programs (seed {seed}, {mode}): {same} identical, {len(documented)} differ in a "
           f"documented form, {len(unexpected)} differ otherwise, {len(failed)} do not compile")
     for i in failed:
         print(f"  does not compile: p{i}")

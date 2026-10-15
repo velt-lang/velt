@@ -28,6 +28,7 @@ pub mod hir;
 
 mod absent_fields;
 mod anon;
+mod any;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -227,6 +228,7 @@ fn check_on_current_thread(
         diags,
         impls,
         counted_objects,
+        any,
         ..
     } = cx;
     let defs = defs
@@ -242,6 +244,8 @@ fn check_on_current_thread(
         union_shapes,
         counted_objects,
         module_state,
+        any_impl: any.and_then(|a| a.imp),
+        unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
     };
     (Some(program), diags)
 }
