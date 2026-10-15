@@ -1,0 +1,173 @@
+// std/encoding/binary_string: `btoa` and `atob` (globals, as in Node): Base64 of a "binary
+// string", whose code units are bytes (0..255).
+//
+// Both read the string's UTF-8 bytes once: a code unit up to 0x7F is one byte, one from 0x80
+// to 0xFF the two bytes `C2`/`C3 xx`, and any larger one starts with a higher byte. `btoa`
+// collects the bytes in one buffer and encodes it with std/encoding's `base64Encode`; `atob`
+// decodes into one buffer of UTF-8 and turns it into a string with one runtime copy. Bad input
+// throws Node's `DOMException` (`InvalidCharacterError`, with Node's messages).
+
+import { IoResult } from "velt:io";
+import { base64Encode } from "velt:encoding";
+import { DOMException } from "velt:dom_exception";
+
+declare function velt_rt_bytes_from_str(s: string): u8[];
+declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
+
+// `=`
+const PAD: u8 = 61;
+
+/**
+ * The Base64 (standard alphabet, `=` padded) of `data`, whose code units are bytes, as Node's
+ * `btoa`. Throws a `DOMException` named `InvalidCharacterError` if a code unit is above 0xFF.
+ */
+export function btoa(data: string): string {
+  const text = velt_rt_bytes_from_str(data);
+  const n = text.length;
+  // At most one byte per byte of the text; cut to what it holds.
+  const bytes = Buffer.alloc(n);
+  let o: usize = 0;
+  let i: usize = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c < 0x80) {
+      bytes[o] = c;
+      i++;
+    } else if ((c == 0xc2 || c == 0xc3) && i + 1 < n) {
+      bytes[o] = ((c & 3) << 6) | (text[i + 1] & 0x3f);
+      i += 2;
+    } else {
+      throw invalidCharacter("Invalid character");
+    }
+    o++;
+  }
+  __intrinsic_array_truncate(bytes, o);
+  return base64Encode(bytes);
+}
+
+/**
+ * The bytes the Base64 `data` encodes, as a string with one code unit per byte, as Node's
+ * `atob` (WHATWG forgiving-base64): ASCII whitespace anywhere is ignored, and so is the
+ * padding (but at most two `=`, only at the end, and only where they complete a group of four).
+ * Throws a `DOMException` named `InvalidCharacterError` on any other character and on a length
+ * that cannot come from whole bytes.
+ */
+export function atob(data: string): string {
+  const text = velt_rt_bytes_from_str(data);
+  const n = text.length;
+  const table = classTable();
+  // Each decoded byte from 0x80 up takes two bytes of UTF-8; cut to what is written.
+  const out = Buffer.alloc(n / 4 * 6 + 4);
+  let o: usize = 0;
+  let i: usize = 0;
+  // Groups of four digits, the bulk of any input, are decoded where they stand.
+  while (i + 4 <= n) {
+    const a = table[text[i] as usize] as i64;
+    const b = table[text[i + 1] as usize] as i64;
+    const c = table[text[i + 2] as usize] as i64;
+    const d = table[text[i + 3] as usize] as i64;
+    if ((a | b | c | d) < 0) {
+      break;
+    }
+    const t = (a << 18) | (b << 12) | (c << 6) | d;
+    if ((t & 0x808080) == 0) {
+      out[o] = (t >> 16) as u8;
+      out[o + 1] = ((t >> 8) & 0xff) as u8;
+      out[o + 2] = (t & 0xff) as u8;
+      o += 3;
+    } else {
+      o = put(out, o, t >> 16);
+      o = put(out, o, (t >> 8) & 0xff);
+      o = put(out, o, t & 0xff);
+    }
+    i += 4;
+  }
+  // From the first group with whitespace or `=` on, what Node 22 checks, in its order: every
+  // character (only digits, whitespace and up to two final `=`), then that the digits can come
+  // from whole bytes, then that the `=` (if any) complete a group of four.
+  let digits = i;
+  let equals: usize = 0;
+  let acc: i64 = 0;
+  let bits: i64 = 0;
+  while (i < n) {
+    const v = table[text[i] as usize] as i64;
+    i++;
+    if (v >= 0) {
+      if (equals > 0) {
+        throw invalidCharacter("Invalid character");
+      }
+      digits++;
+      acc = ((acc << 6) | v) & 0xffffff;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        o = put(out, o, (acc >> bits) & 0xff);
+      }
+    } else if (v == PAD_CLASS) {
+      equals++;
+      if (equals > 2) {
+        throw invalidCharacter("Invalid character");
+      }
+    } else if (v != SPACE_CLASS) {
+      throw invalidCharacter("Invalid character");
+    }
+  }
+  if (digits % 4 == 1) {
+    throw invalidCharacter("The string to be decoded is not correctly encoded.");
+  }
+  if (equals > 0 && (digits + equals) % 4 != 0) {
+    throw invalidCharacter("Invalid character");
+  }
+  __intrinsic_array_truncate(out, o);
+  const r = velt_rt_bytes_to_str(out);
+  if (r.code != 0) {
+    panic("ICE: atob produced invalid UTF-8");
+  }
+  return r.value;
+}
+
+// Writes byte `b` (0..255) as the UTF-8 of code point `b` at `out[o]`; returns the end.
+function put(out: u8[], o: usize, b: i64): usize {
+  if (b < 0x80) {
+    out[o] = b as u8;
+    return o + 1;
+  }
+  out[o] = (0xc0 | (b >> 6)) as u8;
+  out[o + 1] = (0x80 | (b & 0x3f)) as u8;
+  return o + 2;
+}
+
+// In `classTable`: `=`, and the ASCII whitespace forgiving-base64 ignores.
+const PAD_CLASS: i64 = -2;
+const SPACE_CLASS: i64 = -3;
+
+// The value of every byte as a standard Base64 digit; `PAD_CLASS` for `=`, `SPACE_CLASS` for
+// TAB, LF, FF, CR and SPACE, and -1 for the others. Signed, so that one sign test finds a byte
+// that is not a digit among four.
+function classTable(): i8[] {
+  const table: i8[] = __intrinsic_array_with_capacity(256);
+  __intrinsic_array_set_len(table, 256);
+  for (let c: usize = 0; c < 256; c++) {
+    table[c] = -1;
+  }
+  for (let k: usize = 0; k < 26; k++) {
+    table[65 + k] = k as i8;
+    table[97 + k] = (26 + k) as i8;
+  }
+  for (let k: usize = 0; k < 10; k++) {
+    table[48 + k] = (52 + k) as i8;
+  }
+  table[43] = 62;
+  table[47] = 63;
+  table[PAD as usize] = PAD_CLASS as i8;
+  table[9] = SPACE_CLASS as i8;
+  table[10] = SPACE_CLASS as i8;
+  table[12] = SPACE_CLASS as i8;
+  table[13] = SPACE_CLASS as i8;
+  table[32] = SPACE_CLASS as i8;
+  return table;
+}
+
+function invalidCharacter(message: string): DOMException {
+  return new DOMException(message, "InvalidCharacterError");
+}

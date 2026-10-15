@@ -1,0 +1,7 @@
+DOMException [InvalidCharacterError]: Invalid character
+DOMException [AbortError]: m
+DOMException [Error]: m
+DOMException [Error]
+Custom: m
+[ DOMException [DataCloneError]: in an array ]
+{ error: DOMException [TimeoutError]: in an object }
