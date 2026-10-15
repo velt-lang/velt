@@ -215,7 +215,7 @@ static ORDER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 struct Sleeper {
     result: i64,
     tag: u32,
-    base: tokio::time::Instant,
+    base: std::time::Instant,
     ms: u64,
     sleep: *mut VeltFut,
 }
@@ -256,7 +256,7 @@ struct Deadlines {
 unsafe extern "C" fn deadlines_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Deadlines);
     if st.tag == 0 {
-        let base = tokio::time::Instant::now();
+        let base = std::time::Instant::now();
         for (slot, ms) in st.sleepers.iter_mut().zip([150u64, 50, 100]) {
             let init = Sleeper {
                 result: 0,

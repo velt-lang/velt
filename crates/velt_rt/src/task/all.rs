@@ -26,13 +26,13 @@
 //! buffer, which nobody else knows is (partly) initialized. `velt_rt_all_with_drop` takes a drop
 //! function for one result and runs it on exactly those slots when the join is dropped early.
 
+use super::coop::{consume_budget, has_budget_remaining, yield_now};
 use super::leaf::new_leaf;
 use super::{raw_cx, SendPtr, VeltFut, FUT_RESULT_OFFSET, READY};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::task::coop::{consume_budget, has_budget_remaining};
 
 /// Drops one result value in place: `void result_drop(void* slot)`.
 pub type ResultDropFn = unsafe extern "C" fn(slot: *mut u8);
@@ -237,7 +237,7 @@ unsafe fn new_join<const REJECT: bool>(
             }
             consume_budget().await;
             if !has_budget_remaining() {
-                tokio::task::yield_now().await;
+                yield_now().await;
             }
         }
         finished.disarm();

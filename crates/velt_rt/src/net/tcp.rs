@@ -8,6 +8,7 @@
 //! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
 use super::stream::{Ready, StreamObj, Writing};
+use super::sys::{TcpListener, TcpStream};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -17,7 +18,6 @@ use crate::task::VeltFut;
 use std::io;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.

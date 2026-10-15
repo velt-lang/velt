@@ -79,7 +79,7 @@ fn start(spec: &VeltCommand) -> Result<ChildObj, VeltErr> {
     // SAFETY: the spec is borrowed from Velt for the duration of the call.
     let cmd = unsafe { spec.build(modes) };
     // Spawning registers the child with the reactor: it needs the runtime context.
-    let _guard = crate::task::runtime::handle().enter();
+    let _guard = crate::task::runtime::enter();
     let mut child = tokio::process::Command::from(cmd)
         .spawn()
         .map_err(|e| spawn_error(&spec.program, &e))?;
