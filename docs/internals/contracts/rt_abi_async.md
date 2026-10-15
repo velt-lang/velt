@@ -257,7 +257,8 @@ own queue and `mio` poll; a task wakes on its home worker, a spawn stays on the 
 (from outside the workers: worker 0). A worker that used 85 % of a 10 ms window in CPU time with
 tasks waiting gets a helper on trial (`velt/spread.rs`): the rate of work (socket bytes plus task
 polls) is measured for 20 ms without it and 20 ms with it, and the helper stays only if the rate
-rose by 30 % of what one more worker could add; otherwise its tasks go back on their next wake. A
+rose by 30 % of what one more worker could add; otherwise its tasks go back on their next wake (a
+worker whose task polls average 20 µs of CPU or more takes a helper without a trial). A
 connection's socket moves its registration to the worker its task reads on (Unix). Tasks woken
 by I/O and timers run before queued work, and a worker with 256 or more queued tasks polls its
 reactor every 4 tasks.

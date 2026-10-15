@@ -79,6 +79,8 @@ fn thread_cpu() -> Duration {
 const WINDOW: Duration = Duration::from_millis(10);
 /// The share of a [`WINDOW`] a worker must have used to count as busy.
 const BUSY: f64 = 0.85;
+/// Mean CPU time per task poll from which a busy worker takes a helper without a trial.
+const HEAVY: Duration = Duration::from_micros(20);
 /// Below this share, a worker that started a trial counts as no longer loaded.
 const CALM: f64 = 0.5;
 
@@ -96,8 +98,10 @@ struct Local {
     trialing: Cell<bool>,
     /// The current window: when it started, and the thread's CPU time then; and the share of
     /// the last full window the worker used.
-    window: Cell<(Instant, Duration)>,
+    window: Cell<(Instant, Duration, u64)>,
     used: Cell<f64>,
+    /// The mean CPU time of a task poll in the last full window.
+    per_poll: Cell<Duration>,
 }
 
 thread_local! {
@@ -213,8 +217,9 @@ fn run(index: usize, mut poll: mio::Poll) {
         timers: RefCell::new(Timers::default()),
         polls: Cell::new(0),
         trialing: Cell::new(false),
-        window: Cell::new((Instant::now(), thread_cpu())),
+        window: Cell::new((Instant::now(), thread_cpu(), 0)),
         used: Cell::new(0.0),
+        per_poll: Cell::new(Duration::ZERO),
     };
     LOCAL.with(|l| l.set(&local));
     let me = &workers()[index];
@@ -306,17 +311,25 @@ fn publish(me: &Shared, local: &Local) {
 /// offer half of the waiting tasks to a sleeping worker; see [`spread`]).
 fn maybe_help(index: usize, local: &Local) {
     let now = Instant::now();
-    let (since, cpu) = local.window.get();
+    let (since, cpu, polls) = local.window.get();
     if now.duration_since(since) >= WINDOW {
         let cpu_now = thread_cpu();
+        let spent = cpu_now.saturating_sub(cpu);
         let wall = now.duration_since(since).as_secs_f64();
-        local
-            .used
-            .set(cpu_now.saturating_sub(cpu).as_secs_f64() / wall);
-        local.window.set((now, cpu_now));
+        local.used.set(spent.as_secs_f64() / wall);
+        let ran = local.polls.get().saturating_sub(polls).max(1);
+        local.per_poll.set(spent / ran as u32);
+        local.window.set((now, cpu_now, local.polls.get()));
     }
     let waiting = local.queue.borrow().len();
     let busy = waiting >= 2 && local.used.get() >= BUSY;
+    if busy && !local.trialing.get() && local.per_poll.get() >= HEAVY {
+        // Tasks that compute (tens of µs a poll): another core is sure to help, no trial.
+        if let Some(helper) = sleeping_helper(index) {
+            offer(index, local, helper);
+        }
+        return;
+    }
     if local.trialing.get() && local.used.get() < CALM {
         // Its load fell (not a moment's sleep between round trips: a window mostly idle).
         local.trialing.set(false);
@@ -330,15 +343,24 @@ fn maybe_help(index: usize, local: &Local) {
     if let spread::Step::Wait = spread::busy(index, Instant::now()) {
         return;
     }
-    let ws = workers();
-    // The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
-    let helper = (0..ws.len())
-        .filter(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
-        .min_by_key(|&i| ws[i].counters.work.load(Ordering::Relaxed));
+    let helper = sleeping_helper(index);
     spread::helping(index, helper);
-    let Some(helper) = helper else {
-        return;
-    };
+    if let Some(helper) = helper {
+        offer(index, local, helper);
+    }
+}
+
+/// The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
+fn sleeping_helper(index: usize) -> Option<usize> {
+    let ws = workers();
+    (0..ws.len())
+        .filter(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
+        .min_by_key(|&i| ws[i].counters.work.load(Ordering::Relaxed))
+}
+
+/// Offers half of the waiting tasks (not pinned ones) and wakes `helper` to take them.
+fn offer(index: usize, local: &Local, helper: usize) {
+    let ws = workers();
     let me = &ws[index];
     {
         let mut offered = me.offered.lock().unwrap_or_else(|e| e.into_inner());
