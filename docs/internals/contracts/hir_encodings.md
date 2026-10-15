@@ -550,7 +550,8 @@ type); it is `None` when no global has a slot, and then nothing below is emitted
 - Lowering emits `velt_rt_module_state(&DESC) -> ptr` for each access (rt_abi.md "Module
   state") and projects slot `i` of the tuple behind it; `DESC` is `{ size, align, init, drop }`,
   `init` the function evaluating every slot's `init` in order into the zeroed block, `drop`
-  the tuple's drop glue. A synchronous `velt_main` touches the state before calling `main`.
+  the tuple's drop glue. `velt_main` touches the state before calling `main` (sync or async), so
+  every initializer runs first, as in Node.
 
 ## Symbols
 

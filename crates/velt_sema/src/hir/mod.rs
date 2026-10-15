@@ -187,7 +187,7 @@ pub struct Program {
     pub module_state: Option<ModuleState>,
 }
 
-/// Module-level `let`s: one slot each in a per-task tuple (hir_encodings.md "Module state").
+/// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
 #[derive(Clone, Debug)]
 pub struct ModuleState {
     /// The state tuple: element `i` is the type of slot `i`.

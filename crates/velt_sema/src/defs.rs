@@ -403,9 +403,9 @@ pub(crate) struct GlobalInfo<'m> {
     pub init: Option<hir::Expr>,
     pub state: BodyState,
     pub src: GlobalSrc<'m>,
-    /// A module-level `let` (module state, #76): a slot of the per-task state, not a constant.
+    /// A module-level `let` (module state, #76): a slot of the module state, not a constant.
     pub mutable: bool,
-    /// Kept in the module state, evaluated once per task: a module-level `let`, or a `const`
+    /// Kept in the module state, evaluated once per process: a module-level `let`, or a `const`
     /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
     /// (a function from a call, #802).
     pub stored: bool,

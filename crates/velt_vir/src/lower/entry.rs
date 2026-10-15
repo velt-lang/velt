@@ -28,12 +28,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));
             return lw.finish_export();
         };
-        let f = lw.cx.fn_def(def);
-        if !f.is_async {
-            // An async `main` runs on a task of its own, whose module state it initializes on
-            // first access.
-            lw.init_module_state();
-        }
+        // Every module's initializers run before `main`, as Node evaluates the modules first
+        // (one module state per process; an async `main` hands it to the tasks).
+        lw.init_module_state();
         let f = lw.cx.fn_def(def);
         if f.is_async {
             lw.push_scope(ScopeKind::Block);

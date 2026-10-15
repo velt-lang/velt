@@ -29,11 +29,12 @@ The differences come from three rules:
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
   statements run in a generated `main`; only the root file may have them
   ([Scripts](../reference/modules.md#scripts-top-level-statements)).
-- A module-level `let` works as in Node, with one difference: each task has its own copy (a
-  spawned task starts from the initializers), so tasks never race on it; `shared(...)` is what
-  tasks share ([module state](../reference/variables.md#module-state)). A module constant that
-  is not a constant value (`new Map()`, a call with effects, a function from a call) is
-  evaluated once per task in the same way
+- A module-level `let` works as in Node: one per process, which every task (spawned tasks,
+  HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
+  Node's single thread between `await`s, so updates are never lost
+  ([module state](../reference/variables.md#module-state)). A module constant that is not a
+  constant value (`new Map()`, a call with effects, a function from a call) is evaluated once
+  per process in the same way
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.

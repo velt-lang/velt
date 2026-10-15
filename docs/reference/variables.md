@@ -129,27 +129,42 @@ function main() {
 }
 ```
 
-- **Per task.** Each task has its own module state: a task started with `spawn` (and an HTTP
-  request handler, which runs as a task) starts from the initializers, like a Node `Worker`
-  that loads the modules again. Within a task it behaves exactly like Node's single thread,
-  across `await`s and started promises. State that tasks share is `shared(...)` passed to
-  them ([Thread safety](async.md#thread-safety)). On WebAssembly, which runs every task on one
-  thread, the tasks share one module state.
+- **One per process**, as in Node: every task (a task started with `spawn`, an HTTP request
+  handler, a task on any core) reads and updates the same module state, so a module counter
+  that every request handler increments counts every request. Code that uses module state
+  runs as on Node's single thread: a task's code between two `await`s runs without any other
+  task's code that uses module state running at the same time, so `count++` or
+  `seen.set(k, (seen.get(k) ?? 0) + 1)` never loses an update, and what a task reads stays as
+  it is until its next `await`. Across an `await` other tasks may change it, as in Node.
+  Tasks run in parallel until they first use module state; from then on a task takes a
+  process-wide lock for its code between `await`s ([cost](#module-state-cost) below).
+- **Values from other tasks**: a value a task stores in module state (`seen.set(k, obj)`) is
+  then the module's, and every task that reads it gets that same object, as in Node. A value
+  from module state handed to `spawn`, sent on a channel or put into `shared(...)` is copied
+  like any value that is still referenced elsewhere
+  ([Thread safety](async.md#thread-safety)), since the module keeps it.
 - **Objects are shared, not copied**: `const a = items` refers to the module's array, so
   `a.push(1)` shows in `items`, as in JS.
 - **Imports are read-only bindings**: assigning an imported `let` is an error
   (``cannot assign to imported binding `x` ``), as in JavaScript; export a function that
   assigns it. Modifying its contents (`items.push(x)`) is fine.
 - A `const` whose value is not a constant (`new Map()`, an array of objects, a call with
-  effects) is kept the same way, evaluated once per task; assigning it is an error.
+  effects) is kept the same way, evaluated once per process, before `main`; every task sees
+  the same object. Assigning it is an error.
 - An initializer that reads a `let` declared after it (whose initializer has not run yet) is
   an error (``` `b` is read before its initializer runs ```), where JavaScript throws a
   `ReferenceError`. A read through a function the initializer calls is not caught.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
   function uses is module state, and its initializer runs before the first statement.
-- Cost: a program without module state pays nothing. Each read or write of a module-level
-  `let` is a call into the runtime that returns the task's state (a thread-local read).
+- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so
+  does a task that never uses it. Each read or write of a module-level `let` is a call into
+  the runtime that returns the state. A task takes the lock at its first use and at the start
+  of each later run between `await`s (one uncontended atomic operation when no other task
+  holds it). Tasks on other cores that use module state at the same moment wait for each
+  other, so keep long computations that many tasks run in parallel out of the code between
+  their `await`s that uses module state, or give them `shared(...)` state instead. A blocking
+  `Mutex` `with` lets the lock go while it waits, so the two locks never deadlock.
 - `velt dev`: code swapped into a running program starts its module state over, as after a
   restart ([hot reload](../tooling/dev.md)).
 
@@ -194,7 +209,7 @@ function main() {
 
 - Each element is a number or boolean literal, also negated or converted with `as`, or a module
   constant that is one. Any other array constant (strings, nested arrays, objects, computed
-  elements) is not a table but [module state](#module-state), evaluated once per task.
+  elements) is not a table but [module state](#module-state), evaluated once per process.
 - Used in any other way, a table is what every module constant is: evaluated at that use, here
   to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
   in a hot loop index the table or iterate it instead of passing it along.
@@ -218,7 +233,7 @@ function main() {
 A module constant whose initializer is a call is evaluated where it is used when that call is
 *pure*, so that evaluating it at each use gives what TypeScript's single evaluation at load
 gives; any other initializer (a call with effects, a class instance, a `Map`) makes it
-[module state](#module-state), evaluated once per task:
+[module state](#module-state), evaluated once per process:
 
 - the callee is a named function (a free function, a static method or an imported function,
   generic or not), not a function value or a method of a value;
@@ -265,7 +280,8 @@ function main() {
 ```
 
 A call that does not qualify makes the constant [module state](#module-state): it is
-evaluated once per task, before `main`, in module order, as Node evaluates it once at load.
+evaluated once per process, before `main`, in module order, as Node evaluates it once at load;
+every task sees the same value.
 A call that may throw or is `async` stays an error (``it may throw``): nothing could catch or
 await it there.
 A function from a call is kept the same way, so it is one value wherever it goes:

@@ -26,6 +26,10 @@ pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
 pub use micro::velt_rt_microtask;
 pub use module_state::velt_rt_module_state;
+pub(crate) use module_state::{
+    drop_at_exit as module_drop_at_exit, release_outside as module_release_outside,
+    resume as module_resume, suspend as module_suspend,
+};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;
 
@@ -51,8 +55,9 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
-    /// The task's module state (none until first accessed; module_state.rs).
-    state: *mut module_state::ModState,
+    /// Whether the task uses module state, and whether this poll holds the module lock
+    /// (module_state.rs).
+    module: *const module_state::PollState,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
@@ -149,14 +154,14 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
-/// module state.
+/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and
+/// whether it touched module state.
 struct SetPtr(
     *mut LocalSet,
     u64,
     Option<Arc<Timers>>,
     u32,
-    module_state::ModState,
+    module_state::TaskState,
 );
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
@@ -168,7 +173,7 @@ impl SetPtr {
         0,
         None,
         0,
-        module_state::ModState::NONE,
+        module_state::TaskState::NEW,
     );
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
@@ -179,12 +184,15 @@ impl SetPtr {
     /// `waker` must stay valid during the call.
     unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
         self.3 = next_turn(self.3);
+        // Declared first, dropped last: the module lock this poll took is released after
+        // everything else (module_state.rs).
+        let module = self.4.enter();
         let tcx = TaskCx {
             set: &mut self.0,
             waker,
             id: &mut self.1,
             timers: &mut self.2,
-            state: &mut self.4,
+            module: &module,
             turn: self.3,
             yielded: Cell::new(false),
         };
@@ -243,6 +251,8 @@ impl SetPtr {
 impl Drop for SetPtr {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // Promises of a task that used module state may hold objects from there.
+            let _lock = self.4.drop_guard();
             // SAFETY: created by `Box::into_raw` in `velt_rt_fut_start`, owned by `self`.
             drop(unsafe { Box::from_raw(self.0) });
         }
@@ -261,6 +271,12 @@ impl Default for Locals {
 }
 
 impl Locals {
+    /// The module lock while the task's own state is dropped outside a poll (a cancelled task),
+    /// when the task used module state (module_state.rs).
+    pub(super) fn drop_guard(&self) -> Option<impl Drop> {
+        self.set.4.drop_guard()
+    }
+
     /// Poll the task: its woken local promises, then `root` (with the set current). Local
     /// promises still running when `root` finishes move to an orphan task.
     pub fn poll_root(

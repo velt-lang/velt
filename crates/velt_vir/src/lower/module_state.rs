@@ -1,6 +1,6 @@
-//! Module state (module-level `let`s, hir_encodings.md "Module state"): every slot lives in a
-//! per-task block that `velt_rt_module_state(&DESC)` returns, allocated and initialized by
-//! `init` on the task's first access (rt_abi.md "Module state"). A program without module
+//! Module state (module-level `let`s, hir_encodings.md "Module state"): every slot lives in the
+//! process-wide block that `velt_rt_module_state(&DESC)` returns, allocated and initialized by
+//! `init` on the first access (rt_abi.md "Module state"). A program without module
 //! state gets none of this.
 
 use velt_sema::hir;
@@ -45,7 +45,7 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The current task's module state block (a `Ptr`).
+    /// The module state block (a `Ptr`).
     fn module_block(&mut self) -> Operand {
         let desc = self.cx.module_desc();
         let f = self

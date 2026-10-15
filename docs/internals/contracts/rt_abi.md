@@ -350,11 +350,15 @@ struct ModuleDesc { uint64_t size, align; void (*init)(void *state); void (*drop
 void *velt_rt_module_state(const struct ModuleDesc *desc);
 ```
 
-Returns the module state block of the task being polled (of the calling thread outside a
-task): allocated zeroed with `size`/`align` and filled by `init` on the task's first call (the
-block is current while `init` runs), dropped with `drop` when the task and its local promises
-are done. A call with a different descriptor than the block was made with (code swapped in by
-`velt dev`) gets a fresh block. On WebAssembly every task shares one block.
+Returns the process's module state block: allocated zeroed with `size`/`align` and filled by
+`init` on the first call (the block is current while `init` runs). It is not dropped while the
+program runs (only at exit under the debug runtime's `VELT_RC_STATS=1`, for the leak
+counters). A call with a different descriptor than the block was made with (code swapped in by
+`velt dev`) gets a block of its own. The call takes the process-wide *module lock* unless the
+thread holds it: inside a task until the end of the poll, and every later poll of that task
+takes it at its start; outside a task (a synchronous `main`) until `velt_rt_block_on` or until
+`main` returns. `velt_rt_mutex_lock` releases it while it blocks. On WebAssembly (one thread)
+there is no lock.
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.

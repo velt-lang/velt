@@ -156,6 +156,16 @@ impl BlockCount {
     }
 }
 
+/// Whether the counters are on (debug runtime with `VELT_RC_STATS=1`).
+// velt_rt_wasm compiles this file too and has no module state to drop.
+#[allow(dead_code)]
+pub(crate) fn counting() -> bool {
+    #[cfg(debug_assertions)]
+    return counters::enabled();
+    #[cfg(not(debug_assertions))]
+    false
+}
+
 /// Record the number of values left in channels at exit, dropped by the runtime (reported as
 /// `channel leftovers=<n>`).
 // velt_rt_wasm compiles this file too and drops no leftovers.

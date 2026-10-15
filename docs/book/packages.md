@@ -31,7 +31,7 @@ function main() {
 - `import * as ns` binds a namespace; `import type` imports names for type positions only.
 - `export default` and default imports don't exist: the compiler's error suggests the named
   form.
-- A module-level `let` is module state, as in Node, kept per task; importers see its current
+- A module-level `let` is module state, one per process as in Node; importers see its current
   value ([module state](../reference/variables.md#module-state)).
 - Standard library modules use the `velt:` prefix: `"velt:fs"`, `"velt:collections/set"`.
 

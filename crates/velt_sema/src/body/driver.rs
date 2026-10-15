@@ -178,7 +178,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
         let before = cx.diags.len();
         super::pure_init::check_init(cx, &name, i, ty);
-        // A module `const` that is not a constant is evaluated once per task, as Node evaluates
+        // A module `const` that is not a constant is evaluated once per process, as Node evaluates
         // it once (#802): kept in the module state instead of being an error. So is a function
         // from a call, whose identity shows.
         let top_level = owner.is_none() && !cx.modules[module].is_std;

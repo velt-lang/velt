@@ -1,4 +1,4 @@
-//! Module state (#76): module-level `let`s become slots of one per-task tuple
+//! Module state (#76): module-level `let`s become slots of one process-wide tuple
 //! (hir_encodings.md "Module state"). Slots are numbered in Node's module evaluation order: a
 //! depth-first walk over each module's imports in source order, a module after the modules it
 //! imports, and its own declarations in source order. The state's initializer evaluates them

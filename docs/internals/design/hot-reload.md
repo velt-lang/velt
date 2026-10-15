@@ -120,8 +120,8 @@ changed modules. Sema is now most of a reload's time (see "Measured"), so this i
 ## Decisions
 
 1. **Stable function keys**: symbols never depend on type-interning order.
-2. **Module state starts over.** Module-level `let`s (#76) live in a per-task block the runtime
-   keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
+2. **Module state starts over.** Module-level `let`s (#76) live in a process-wide block the
+   runtime keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
    fresh block from its own initializers, so nothing is migrated
    ([the Reference](../../reference/variables.md#module-state)). State in `shared(...)` or
    class instances owned by `main` or handlers carries over.
