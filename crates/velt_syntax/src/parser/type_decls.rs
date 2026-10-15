@@ -191,6 +191,9 @@ impl<'a> Parser<'a> {
                 p.add_index_signature(&mut index, sig);
                 return p.expect_member_end();
             }
+            if p.skip_call_signature() {
+                return p.expect_member_end();
+            }
             p.parse_interface_member(&mut decl)
         })?;
         let Some(index) = index else {

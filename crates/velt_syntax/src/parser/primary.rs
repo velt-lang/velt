@@ -37,6 +37,11 @@ impl<'a> Parser<'a> {
                 ExprKind::This
             }
             Tok::Kw(Kw::New) => self.parse_new()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::Dot => self.parse_import_meta()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::LParen => {
+                self.dynamic_import();
+                return Err(Fail);
+            }
             Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
             Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
                 self.bump(); // async
@@ -239,6 +244,26 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
+            // A numeric property name, as in TypeScript: `{ 7: v }` and `{ 0x10: v }` have the
+            // keys "7" and "16".
+            Tok::Int(_) => match self.literal_at_cursor() {
+                Some(Lit::Int {
+                    value,
+                    suffix: None,
+                }) if value < 1 << 53 => {
+                    let key = Ident {
+                        name: value.to_string(),
+                        span: self.cur_span(),
+                    };
+                    self.bump();
+                    self.expect(Tok::Colon)?;
+                    return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+                }
+                _ => {
+                    self.error_expected("property name");
+                    return Err(Fail);
+                }
+            },
             Tok::LBracket if self.at_symbol_key() => {
                 let key = self.parse_symbol_key()?;
                 self.expect(Tok::Colon)?;
@@ -249,6 +274,7 @@ impl<'a> Parser<'a> {
                 self.error("private names are only allowed in class bodies", span);
                 return Err(Fail);
             }
+            Tok::LBracket => return self.parse_computed_prop(),
             _ => {
                 self.error_expected("property name");
                 return Err(Fail);
@@ -262,6 +288,60 @@ impl<'a> Parser<'a> {
             return Err(Fail);
         }
         Ok(ObjectProp::Shorthand(key))
+    }
+
+    /// `[key]: value` with any expression as the key (a symbol key or a module constant,
+    /// `[KEY]`, is [`Self::parse_symbol_key`]'s). A string or integer literal key is the plain
+    /// key (`["a"]: 1` is `a: 1`). Any other key is known only at run time: the property is
+    /// written as a spread of a call of the prelude's [`COMPUTED_KEY_FN`], `...__computed_key(key,
+    /// value)`, which sema checks where a `Record` is built (the object has string keys).
+    fn parse_computed_prop(&mut self) -> PResult<ObjectProp> {
+        let lo = self.cur_lo();
+        self.bump(); // [
+        let key = self.allow_in(|p| p.parse_assign())?;
+        self.expect(Tok::RBracket)?;
+        let key_span = self.span_from(lo);
+        if self.at(Tok::LParen) {
+            self.error(
+                "a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression",
+                key_span,
+            );
+            return Err(Fail);
+        }
+        self.expect(Tok::Colon)?;
+        let value = self.parse_prop_value()?;
+        let plain = match &key.kind {
+            ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
+            ExprKind::Lit(Lit::Int {
+                value,
+                suffix: None,
+            }) if *value < 1 << 53 => Some(value.to_string()),
+            _ => None,
+        };
+        if let Some(name) = plain {
+            return Ok(ObjectProp::KeyValue(
+                Ident {
+                    name,
+                    span: key.span,
+                },
+                value,
+            ));
+        }
+        let callee = self.mk_expr(
+            ExprKind::Ident(Ident {
+                name: COMPUTED_KEY_FN.into(),
+                span: key_span,
+            }),
+            key_span,
+        );
+        let span = self.span_from(lo);
+        let call = ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args: vec![key, value],
+            optional: false,
+        };
+        Ok(ObjectProp::Spread(self.mk_expr(call, span)))
     }
 
     /// The value of an object-literal property, after `:`.

@@ -1,0 +1,2 @@
+overload_signature_asi_no_body.vlt:3:10: error: function implementation is missing or not immediately following the declaration of `f`
+overload_signature_asi_no_body.vlt:7:3: error: function implementation is missing or not immediately following the declaration of `m`

@@ -1,0 +1,22 @@
+// Computed keys known only at run time next to spreads, with no type expected: the value type
+// is the values' (the spreads must have it); a number key is its string, as in JavaScript.
+const r: Record<string, number> = { x: 1 };
+const k = "y" + "";
+const K2 = "lit";
+const a = { ...r, [k]: 2 };
+console.log(a);
+const b = { [k]: 2, ...{ z: 1 } };
+console.log(b);
+const c: Record<string, number> = { [K2]: 1, [k]: 2, ...r };
+console.log(c);
+{
+  const key = k + "2";
+  const d = { ...r, [key]: 3 };
+  console.log(d);
+}
+const i = 3;
+const n = { [i]: 1, [0x10]: 2, [i + 0.5]: 3, [-1]: 4 };
+console.log(n);
+console.log(Object.keys(n).join(","));
+const numeric = { a: 1, 7: 5, 0x10: 6, ["q"]: 7, [8]: 8 };
+console.log(numeric);

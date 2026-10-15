@@ -168,3 +168,38 @@ fn array_pattern_holes_stay_holes() {
 ",
     );
 }
+
+#[test]
+fn computed_keys() {
+    round_trips("const r = { a: 1, [o.tag]: 2, [k + \"!\"]: 3 };\n");
+    round_trips("function f(t: string) {\n  return { [t]: 1, ...rest };\n}\n");
+}
+
+#[test]
+fn import_meta() {
+    round_trips("const u = import.meta.url;\nconsole.log(import.meta.dirname);\n");
+}
+
+#[test]
+fn declare_global_and_module_blocks() {
+    round_trips("declare global {\n  // the hook\n  interface W {\n    a: number;\n  }\n}\n");
+    round_trips(
+        "declare module \"./m\" {\n  interface O {\n    b?: string;\n  }\n\n  export interface P {\n    c: number;\n  }\n}\n",
+    );
+}
+
+#[test]
+fn bracketed_and_numeric_keys_keep_their_spelling() {
+    // `[7]: 5` once printed as `7: 5`: brackets stay, and numeric names print as written.
+    round_trips("const r = { a: 1, [7]: 5, [\"lit\"]: 3, 8: 4, 0x10: 6 };\n");
+    round_trips("const s = { [\"q\"]: { [0]: 1 } };\n");
+}
+
+#[test]
+fn members_without_semicolons_parse() {
+    // A line break ends an interface or object type member, as in TypeScript.
+    let src =
+        "interface I {\n  a: number\n  m(): string\n}\ntype O = {\n  b: string\n  c?: number\n};\n";
+    let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
+    round_trips(&got);
+}

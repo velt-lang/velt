@@ -46,7 +46,10 @@ export function larger(a: i64, b: i64): i64 {
 }
 ```
 
-- Semicolons are required after statements. There is no automatic semicolon insertion.
+- Semicolons are required after statements. There is no automatic semicolon insertion, except
+  that a line break ends a signature without a body ([overloads](functions.md#overloads)) and
+  a member of a class, an interface or an object type (`interface P {` / `x: number` /
+  `y: number` / `}` on four lines).
 
 ## Identifiers
 
