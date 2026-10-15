@@ -18,7 +18,8 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
-use super::accessor_rmw::{binary, block, stmt, Rmw};
+use super::accessor_rmw::{binary, block, is_field_path, stmt, Rmw};
+use super::assign_paths::is_pure_value;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, TyId};
@@ -76,7 +77,17 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let prop = ident(INDEX, span);
-        self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+        if self.number_index(index) {
+            return self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span);
+        }
+        // An integer or computed index: evaluated once, after the object, as a number.
+        let mut stmts = vec![];
+        self.push_scope();
+        let recv = self.object_once(obj, &mut stmts);
+        let idx = self.index_once(index, &mut stmts);
+        let call = self.method_call_on(recv, &prop, &[], &[idx], None, span);
+        self.pop_scope();
+        self.temps_then(stmts, call, span)
     }
 
     /// `object[index] = value` (`op` None) or `object[index] op= value` on an indexer class;
@@ -95,10 +106,24 @@ impl FnCx<'_, '_> {
         };
         match op {
             // `xs[i] = v` as a statement: one call, its arguments evaluated in JS's order.
-            None if !as_value => {
+            None if !as_value && self.number_index(index) && is_pure_value(value) => {
                 let prop = ident(SET_INDEX, span);
                 let args = [index.clone(), value.clone()];
                 self.method_call_on(obj, &prop, &[], &args, None, span)
+            }
+            // Otherwise the object, the index and the value are evaluated first, in that order
+            // (`u[0] = u[1] = 7`: the value may use the object itself).
+            None if !as_value => {
+                let mut stmts = vec![];
+                self.push_scope();
+                let recv = self.receiver_once(obj, object, &mut stmts);
+                let idx = self.index_once(index, &mut stmts);
+                let v = self.expr(value, None, Want::Move);
+                self.bind_temp(NEW, v, &mut stmts);
+                let args = [idx, name_ref(NEW, span)];
+                let call = self.method_call_on(recv, &ident(SET_INDEX, span), &[], &args, None, span);
+                self.pop_scope();
+                self.temps_then(stmts, call, span)
             }
             None => self.indexer_assign_value(obj, object, index, value, span),
             Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) => {
@@ -251,13 +276,49 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
     }
 
-    /// `index` to evaluate once: a literal itself, else a temporary holding it.
+    /// `index` to evaluate once: a literal itself, else a temporary holding it, converted to a
+    /// number when it is an integer (`xs[k]` with `k: usize`, as for an array index).
     fn index_once(&mut self, index: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
         if let ast::ExprKind::Lit(_) = &index.kind {
             return index.clone();
         }
-        let i = self.expr(index, None, Want::Move);
+        let mut i = self.expr(index, None, Want::Move);
+        if self.cx.ty.is_int(i.ty) {
+            let (f64_, span) = (self.cx.ty.f64, i.span);
+            i = self.mk(H::Cast(Box::new(i)), f64_, span);
+        }
         self.bind_temp(INDEX_TEMP, i, stmts);
         name_ref(INDEX_TEMP, index.span)
+    }
+
+    /// Is `index` passed to `__index` as it is: a literal, or a variable or field path that
+    /// holds a number (an integer one is converted, and any other index is evaluated once,
+    /// after the object: [`Self::index_once`])?
+    fn number_index(&mut self, index: &ast::Expr) -> bool {
+        if let ast::ExprKind::Lit(_) = &index.kind {
+            return true;
+        }
+        self.peek_ty(index).is_some_and(|t| t == self.cx.ty.f64)
+    }
+
+    /// The object, evaluated once: itself when it is a variable or a path of fields, else a
+    /// temporary holding it.
+    fn object_once(&mut self, mut obj: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+        if is_field_path(&obj) {
+            return obj;
+        }
+        crate::body::places::set_place_mode(&mut obj, crate::hir::UseMode::Move);
+        let (ty, span) = (obj.ty, obj.span);
+        let l = self.bind_temp("<receiver>", obj, stmts);
+        self.mk(H::Local(l, crate::hir::UseMode::Borrow), ty, span)
+    }
+
+    /// `{ stmts; value }`, or `value` alone without statements.
+    fn temps_then(&mut self, stmts: Vec<hir::Stmt>, value: hir::Expr, span: Span) -> hir::Expr {
+        if stmts.is_empty() {
+            return value;
+        }
+        let ty = value.ty;
+        self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
     }
 }

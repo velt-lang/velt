@@ -57,8 +57,13 @@ function main() {
   `fetch` and `Response` / `Request` take them as a body, and `res.bytes()` /
   `res.arrayBuffer()` return a `Uint8Array` / an `ArrayBuffer`. Velt's own modules
   (`velt:crypto`, `velt:encoding`'s Base64 and hex, `Buffer.alloc`) work on `u8[]`, Velt's byte
-  array: `Uint8Array.fromBytes(b)` makes a `Uint8Array` of a `u8[]` without copying it, and
-  `xs.toBytes()` copies a `Uint8Array`'s elements into a `u8[]`.
+  array: `Uint8Array.fromBytes(b)` makes a `Uint8Array` of a copy of a `u8[]` (so the buffer
+  keeps its length whatever happens to `b` afterwards), and `xs.toBytes()` copies a
+  `Uint8Array`'s elements into a `u8[]`. An index may be an integer of any type (`xs[k]` with
+  `k: usize`), as for arrays.
+- **Across tasks**: a typed array (or buffer) sent to `spawn` or over a channel is copied, with
+  its buffer, as any value a task receives is ([Async](../reference/async.md)): the two tasks
+  don't share its bytes. Views of one buffer stay views of one buffer within a task.
 
 ```ts
 import { sha256 } from "velt:crypto";
@@ -76,4 +81,6 @@ Not supported yet: `BigInt64Array` and `BigUint64Array` (and `DataView`'s `getBi
 `setBigInt64`), which wait for `bigint` values (#1088); `SharedArrayBuffer`, resizable buffers,
 `Float16Array`; `ArrayBuffer.isView` of a value of any type (it takes an `ArrayBuffer`, a typed
 array, a `DataView` or `null` until `unknown` arrives, #924); constructing a typed array from an
-iterable that is not an array (use `Uint8Array.from(set)`).
+iterable that is not an array or a typed array (use `Uint8Array.from(set)`). A `Float64Array`
+holding Velt's `NaN` has the platform's NaN bytes (`0x7ff8…` on arm64, `0xfff8…` on x86-64),
+where V8's are `0x7ff8…`.

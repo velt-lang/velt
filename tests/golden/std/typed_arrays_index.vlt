@@ -45,4 +45,29 @@ function main() {
   c[1] = -3;
   c[0] -= 0.5;
   console.log(c);
+  // A chained assignment: the value is evaluated before the outer write, as in JS.
+  const m = new Uint8Array(3);
+  m[0] = m[1] = 300;
+  m[2] = m[0] += 1;
+  console.log(m);
+  // `from` takes another typed array (any iterable of numbers).
+  const i16 = new Int16Array([1, -2, 300]);
+  console.log(
+    Float64Array.from(i16),
+    Uint8Array.from(i16, (x) => x * 2),
+    Int8Array.from(new Float32Array([1.5, -1.5])),
+  );
+  // A length no buffer can have.
+  for (const n of [2 ** 50, 2 ** 53]) {
+    try {
+      new Float64Array(n);
+    } catch (e) {
+      console.log(`${e.name}: ${e.message}`);
+    }
+  }
+  try {
+    new ArrayBuffer(2 ** 50);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
 }

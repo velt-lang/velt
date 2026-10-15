@@ -307,7 +307,7 @@ export class Request {
 
   /** The body's bytes, in a `Uint8Array`. */
   async bytes(): Promise<Uint8Array, IoError | AbortError> {
-    return Uint8Array.fromBytes(await this.rawBytes());
+    return Uint8Array.wrap(await this.rawBytes());
   }
 
   /** The body's bytes, in an `ArrayBuffer`. */

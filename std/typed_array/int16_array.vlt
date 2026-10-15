@@ -26,7 +26,7 @@ import { ascending, elementsOf, layout, localeNumber, TypedArray } from "velt:ty
  * `new Int16Array([1, 2])` (a copy, converted), `new Int16Array(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class Int16Array extends TypedArray {
+export class Int16Array extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = 2;
 
@@ -66,16 +66,15 @@ export class Int16Array extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 2;
-    return (load16(b, o) as i16);
+    return (load16(this.buf.bytes, o) as i16);
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * 2;
-    store16(b, o, toUint32(v) as u16);
+    store16(this.buf.bytes, o, toUint32(v) as u16);
   }
 
   // The bytes of the elements, copied.

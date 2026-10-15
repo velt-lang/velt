@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Generates the typed arrays of `velt:typed_array`: std/typed_array/base.vlt (what they share)
-# and one module per array class (std/typed_array/uint8_array.vlt, …), with a global for each
-# (std/prelude/global/uint8_array.vlt, …), so a program loads only the classes it names or that
-# the std modules it uses import (`TextEncoder` and `fetch` take `Uint8Array` only). The same
+# and one module per array class (std/typed_array/uint8_array.vlt, …), and their two globals
+# (std/prelude/global/typed_array.vlt: `ArrayBuffer`, `DataView`, `Uint8Array`; and
+# typed_array_kinds.vlt: the other eight), so a program loads the classes it names or that the
+# std modules it uses import (`TextEncoder` and `fetch` take `Uint8Array` only). The same
 # API for nine element types, which Velt cannot write once (no generics over element types, and
 # each class prints and tests with `instanceof` under its own name). To change the API, change
 # this script and run it from the repository root, then `velt fmt` the files:
@@ -101,7 +102,9 @@ export function layout(
 ): Layout {
   if (typeof arg == "number") {
     const n = toIndex(arg);
-    if (n < 0) {
+    // V8: a byte length beyond 2^53 - 1 is an invalid length (a smaller one that can't be
+    // allocated fails in `ArrayBuffer`).
+    if (n < 0 || (n as number) * (size as number) > 9007199254740991) {
       throw new RangeError(`Invalid typed array length: ${arg}`);
     }
     return { buf: new ArrayBuffer((n as number) * (size as number)), off: 0, len: n as usize, values: null };
@@ -234,7 +237,7 @@ TEMPLATE = """
  * `new @C@([1, 2])` (a copy, converted), `new @C@(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class @C@ extends TypedArray {
+export class @C@ extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = @N@;
 
@@ -270,14 +273,13 @@ export class @C@ extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * @N@;
     return @READ@;
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * @N@;
     @WRITE@;
   }
@@ -754,11 +756,18 @@ export class @C@ extends TypedArray {
 
 UINT8_EXTRA = """
   /**
-   * A `Uint8Array` over `bytes`, without copying them (Velt: `u8[]` is Velt's byte array, as in
-   * `velt:crypto` and `velt:encoding`); the array takes the bytes over.
+   * A `Uint8Array` of a copy of `bytes` (Velt: `u8[]` is Velt's byte array, as in `velt:crypto`
+   * and `velt:encoding`). A copy, so the buffer keeps its length whatever happens to `bytes`.
    */
   static fromBytes(bytes: u8[]): Uint8Array {
-    return Uint8Array.view(ArrayBuffer.adopt(bytes), 0, bytes.length as usize);
+    return Uint8Array.wrap(bytes.slice());
+  }
+
+  // A `Uint8Array` over `bytes`, which it takes over (std only: `TextEncoder.encode`, a fetched
+  // body's `bytes()`, whose arrays nothing else holds).
+  private static wrap(bytes: u8[]): Uint8Array {
+    const n = bytes.length as usize;
+    return Uint8Array.view(ArrayBuffer.adopt(bytes), 0, n);
   }
 
   /** A copy of the elements as a `u8[]` (Velt's byte array, for `velt:crypto` and the like). */
@@ -799,13 +808,27 @@ def main():
         extra = UINT8_EXTRA if c == "Uint8Array" else ""
         for k, v in [("@K@", str(KINDS.index((c, n, read, write_, what)))), ("@C@", c), ("@N@", str(n)),
                      ("@READ@", read), ("@WRITE@", write_), ("@WHAT@", what), ("@EXTRA@", extra)]:
-            t = t.replace(k, v)
+            t = t.replace(k, v.replace("b[o", "this.buf.bytes[o").replace("(b, o", "(this.buf.bytes, o") if k in ("@READ@", "@WRITE@") else v)
         doc = CLASS_DOC.replace("@SNAKE@", snake(c)).replace("@C@", c).replace("@WHAT@", what)
         head = imports(t, BUFFER_NAMES, "velt:typed_array/buffer") + imports(t, BASE_NAMES, "velt:typed_array/base")
         write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
-        write(os.path.join(GLOBAL, snake(c) + ".vlt"),
-              "// Global (loaded when a module names it): `%s`, as in Node (docs/std/typed_array.md).\n" % c
-              + GENERATED + "export { %s } from \"velt:typed_array/%s\";\n" % (c, snake(c)))
+
+    # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`
+    # users meet), and the other eight classes. Each global file costs every compile a little
+    # (the loader reads them all), so not one per class.
+    others = [c for c, *_ in KINDS if c != "Uint8Array"]
+    write(os.path.join(GLOBAL, "typed_array.vlt"),
+          "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
+          "// as in Node (docs/std/typed_array.md); the other typed arrays are in typed_array_kinds.vlt.\n"
+          + GENERATED
+          + "export { ArrayBuffer } from \"velt:typed_array/buffer\";\n"
+          + "export { DataView } from \"velt:typed_array/data_view\";\n"
+          + "export { Uint8Array } from \"velt:typed_array/uint8_array\";\n")
+    write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),
+          "// Global (loaded when a module names one of these): the typed arrays other than `Uint8Array`,\n"
+          "// as in Node (docs/std/typed_array.md).\n"
+          + GENERATED
+          + "".join("export { %s } from \"velt:typed_array/%s\";\n" % (c, snake(c)) for c in others))
 
 
 main()

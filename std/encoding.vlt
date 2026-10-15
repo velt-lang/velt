@@ -6,10 +6,6 @@
 // runtime copy. Decoders throw `EncodingError` on malformed input.
 
 import { IoResult } from "velt:io";
-import { TypedArray } from "velt:typed_array/base";
-import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ArrayBuffer } from "velt:typed_array/buffer";
-import { DataView } from "velt:typed_array/data_view";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];
@@ -337,7 +333,7 @@ export function utf8Valid(data: u8[]): bool {
 }
 
 // Offset of the first byte that starts an invalid sequence, or -1.
-function firstInvalid(data: u8[]): i64 {
+export function firstInvalid(data: u8[]): i64 {
   let i: usize = 0;
   const n = data.length;
   while (i < n) {
@@ -392,149 +388,10 @@ function sequenceAt(data: u8[], i: usize): i64 {
 }
 
 // Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string.
-function validToString(bytes: u8[]): string {
+export function validToString(bytes: u8[]): string {
   const r = velt_rt_bytes_to_str(bytes);
   if (r.code != 0) {
     panic("ICE: std/encoding produced invalid UTF-8");
   }
   return r.value;
-}
-
-// ──────────────────────── TextEncoder, TextDecoder ────────────────────────
-
-// Whether `label` names UTF-8 in the WHATWG Encoding standard (ASCII case-insensitive, with
-// surrounding whitespace ignored).
-function isUtf8Label(label: string): bool {
-  const l = label.trim().toLowerCase();
-  return (
-    l == "utf-8" ||
-    l == "utf8" ||
-    l == "unicode-1-1-utf-8" ||
-    l == "unicode11utf8" ||
-    l == "unicode20utf8" ||
-    l == "x-unicode20utf8"
-  );
-}
-
-/** `TextDecoder`'s options. */
-export struct TextDecoderOptions {
-  /** Throw `EncodingError` on invalid UTF-8 instead of writing U+FFFD (default false). */
-  fatal?: bool;
-  /** Keep a leading byte order mark instead of dropping it (default false). */
-  ignoreBOM?: bool;
-}
-
-/**
- * The WHATWG `TextEncoder` (a global, as in Node): strings to UTF-8 bytes, in a `Uint8Array`.
- */
-export class TextEncoder {
-  /** Always `"utf-8"`. */
-  readonly encoding: string = "utf-8";
-
-  /** The UTF-8 bytes of `input` (a lone surrogate is written as U+FFFD, as in JS). */
-  encode(input: string = ""): Uint8Array {
-    return Uint8Array.fromBytes(velt_rt_bytes_from_str(input));
-  }
-
-  /**
-   * Writes the UTF-8 bytes of `source` into `destination`, as many whole characters as fit:
-   * `read` counts the UTF-16 code units taken, `written` the bytes.
-   */
-  encodeInto(source: string, destination: Uint8Array): TextEncoderEncodeIntoResult {
-    const room = destination.len;
-    const bytes = velt_rt_bytes_from_str(source);
-    let written: usize = 0;
-    let read: usize = 0;
-    let i: usize = 0;
-    const n = bytes.length as usize;
-    while (i < n) {
-      const b = bytes[i];
-      // The length of the UTF-8 sequence starting at `i`, and the code units it encodes.
-      const size: usize = b < 0x80 ? 1 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
-      if (written + size > room) {
-        break;
-      }
-      for (let k: usize = 0; k < size; k++) {
-        destination.buf.bytes[destination.off + written + k] = bytes[i + k];
-      }
-      written += size;
-      read += size == 4 ? 2 : 1;
-      i += size;
-    }
-    return { read: read as number, written: written as number };
-  }
-}
-
-/** What `TextEncoder.encodeInto` did: code units read, bytes written. */
-export struct TextEncoderEncodeIntoResult {
-  read: number;
-  written: number;
-}
-
-/**
- * The WHATWG `TextDecoder` (a global, as in Node) for UTF-8, the only encoding it takes: a
- * leading byte order mark is dropped (unless `ignoreBOM`), and invalid input becomes U+FFFD
- * (or throws `EncodingError` with `fatal`). One `decode` call decodes one whole input.
- */
-export class TextDecoder {
-  /** Always `"utf-8"`. */
-  readonly encoding: string = "utf-8";
-  /** Whether invalid input throws. */
-  readonly fatal: bool;
-  /** Whether a leading byte order mark is kept. */
-  readonly ignoreBOM: bool;
-
-  /** Throws `EncodingError` for a `label` that does not name UTF-8, as Node's RangeError. */
-  constructor(label: string = "utf-8", options: TextDecoderOptions = {}) {
-    if (!isUtf8Label(label)) {
-      throw new EncodingError(`The "${label}" encoding is not supported`);
-    }
-    this.fatal = options.fatal ?? false;
-    this.ignoreBOM = options.ignoreBOM ?? false;
-  }
-
-  /**
-   * The text `input` encodes: a typed array (its bytes), an `ArrayBuffer`, a `DataView`, or
-   * Velt's byte array `u8[]`.
-   */
-  decode(input: TypedArray | ArrayBuffer | DataView | u8[] = []): string {
-    if (input instanceof ArrayBuffer) {
-      return this.decodeBytes(input.bytes);
-    }
-    if (input instanceof TypedArray) {
-      return this.decodeRange(input.buf.bytes, input.off, input.len * input.__size());
-    }
-    if (input instanceof DataView) {
-      return this.decodeRange(input.buf.bytes, input.off, input.len);
-    }
-    return this.decodeBytes(input);
-  }
-
-  // The text of the `len` bytes of `bytes` from `off`.
-  private decodeRange(bytes: u8[], off: usize, len: usize): string {
-    if (off == 0 && len == (bytes.length as usize)) {
-      return this.decodeBytes(bytes);
-    }
-    return this.decodeBytes(bytes.slice(off as i64, (off + len) as i64));
-  }
-
-  private decodeBytes(input: u8[]): string {
-    let data = input;
-    if (
-      !this.ignoreBOM &&
-      input.length >= 3 &&
-      input[0] == 0xef &&
-      input[1] == 0xbb &&
-      input[2] == 0xbf
-    ) {
-      data = input.slice(3);
-    }
-    if (!this.fatal) {
-      return utf8DecodeLossy(data);
-    }
-    if (firstInvalid(data) >= 0) {
-      throw new EncodingError("The encoded data was not valid for encoding utf-8");
-    }
-    return validToString(data);
-  }
 }
