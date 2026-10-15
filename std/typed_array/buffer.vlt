@@ -194,11 +194,6 @@ export function relative(i: i64, len: usize): usize {
 
 // ───────────────────────────── element conversions ─────────────────────────────
 
-/** JS's `ToInt32(v)`: truncated, then wrapped modulo 2^32 into the signed range (NaN is 0). */
-export function toInt32(v: number): i32 {
-  return (v | 0) as i32;
-}
-
 /** JS's `ToUint32(v)`: truncated, then wrapped modulo 2^32 (NaN is 0). */
 export function toUint32(v: number): u32 {
   return ((v | 0) as i32) as u32;
