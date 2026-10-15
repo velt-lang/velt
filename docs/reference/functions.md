@@ -347,7 +347,10 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   (`this.gen = other()`) finishes its step, and the generator is closed and freed after it.
 - A generator cannot be copied or leave its thread: `clone()` of one, passing one to a spawned
   task (or sending it on a channel), putting one in `shared(...)` (also inside a `Mutex` or an
-  object) and capturing one in an async closure are errors, like for a promise. Behind an
+  object) and capturing one in an async closure that may run on another thread (see
+  [Captures](#captures)) are errors, like for a promise. An async closure that stays on its
+  task shares a generator it captured, as in JS (a stream's `pull` reading a generator:
+  `async () => (await chunks.next()).value`). Behind an
   interface value (`Iterator<T>`) the compiler cannot see it, and handing it to another thread
   stops the program instead. Pass the arguments and create the generator where it is used.
 - Not supported: `next(value)` (TS's `TNext`), `throw()`, and `await` in a (sync) generator
