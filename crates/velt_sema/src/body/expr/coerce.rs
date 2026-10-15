@@ -56,6 +56,9 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        if self.cx.unfreezes(h.ty, exp) {
+            return Err(h);
+        }
         // Two forms of one anonymous object type (a generic shape at concrete arguments and the
         // written shape, crate::anon): the same values, so only the type changes.
         if self.cx.canon(h.ty) == self.cx.canon(exp) {
@@ -258,6 +261,16 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.cx.unfreezes(found.ty, expected) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
+                    found.span,
+                )
+                .with_note(format!("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling; keep it `{f}`, or `Readonly<T>`")),
+            );
+            return;
+        }
         if let (Some(have), Some(want)) = (
             self.cx.ty.nothing_of(found.ty),
             self.cx.ty.nothing_of(expected),

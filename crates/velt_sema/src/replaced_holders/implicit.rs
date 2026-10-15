@@ -489,6 +489,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Hash
         | I::Eq
         | I::Same
+        | I::SameValue
         | I::Share
         | I::FieldAbsent
         | I::FieldPresent

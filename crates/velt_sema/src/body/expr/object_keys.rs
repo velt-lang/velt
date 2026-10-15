@@ -34,9 +34,9 @@ const NOT_AN_OBJECT: &str =
 
 /// A key of an object type: its name, whether it is listed only while present, and whether its
 /// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
-struct Key {
-    name: String,
-    optional: bool,
+pub(super) struct Key {
+    pub(super) name: String,
+    pub(super) optional: bool,
     presence: bool,
 }
 
@@ -268,7 +268,12 @@ impl FnCx<'_, '_> {
     /// The classes whose instances an interface value of `iface` (type `t`) can hold, deepest
     /// first; `None` (reported at `span`) when a type that is not a class implements it, whose
     /// values carry no class to tell them apart.
-    fn iface_classes(&mut self, iface: DefId, t: TyId, span: Span) -> Option<Vec<DefId>> {
+    pub(super) fn iface_classes(
+        &mut self,
+        iface: DefId,
+        t: TyId,
+        span: Span,
+    ) -> Option<Vec<DefId>> {
         let mut classes = vec![];
         for d in (0..self.cx.info.len() as u32).map(DefId) {
             let Some(a) = self.cx.adt(d) else { continue };
@@ -457,7 +462,7 @@ impl FnCx<'_, '_> {
 
     /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
     /// `None` (reported at `span`): `t` is not an object type, struct or class.
-    fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
+    pub(super) fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
         let d = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => Some(*d),
             _ => None,

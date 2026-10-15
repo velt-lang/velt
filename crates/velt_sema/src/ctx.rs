@@ -57,6 +57,13 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
+    /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).
+    pub frozen: HashMap<DefId, DefId>,
+    /// The values of `frozen`.
+    pub frozen_defs: HashSet<DefId>,
+    /// The program calls `Object.create(null)`: records may have no prototype.
+    pub null_proto_records: bool,
     /// Branded type definitions → their primitive (`crate::brands`).
     pub brands: HashMap<DefId, TyId>,
     /// (primitive, object part) → the brand's definition.
@@ -252,6 +259,9 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
+            frozen: HashMap::new(),
+            frozen_defs: HashSet::new(),
+            null_proto_records: false,
             brands: HashMap::new(),
             brand_keys: HashMap::new(),
             field_only: HashMap::new(),

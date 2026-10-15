@@ -322,6 +322,65 @@ impl Ctx<'_> {
         (d, params)
     }
 
+    /// The type of `Object.freeze(o)` for `o` of concrete anonymous object type `t`: its fields
+    /// all readonly, in a def of its own (`Ctx::frozen`; one per frozen shape) that lowering
+    /// sees as `t`'s. `None`: `t` is not such a type.
+    pub(crate) fn frozen_type(&mut self, t: TyId, module: usize) -> Option<TyId> {
+        let TyKind::Adt(d, args) = self.ty.kind(t).clone() else {
+            return None;
+        };
+        let a = self.adt(d)?;
+        if a.kind != AdtKind::Anon || !args.is_empty() || a.generics.len() != 0 {
+            return None;
+        }
+        if let Some(&f) = self.frozen.get(&d) {
+            return Some(self.ty.intern(TyKind::Adt(f, vec![])));
+        }
+        let fields: Vec<ShapeField> = a
+            .fields
+            .iter()
+            .map(|f| ShapeField {
+                readonly: true,
+                ..shape_field(f)
+            })
+            .collect();
+        let plain: Vec<ShapeField> = fields
+            .iter()
+            .map(|f| ShapeField {
+                readonly: false,
+                ..f.clone()
+            })
+            .collect();
+        let f = self.new_anon_def(&fields, 0, module);
+        let (twin, _) = self.anon_def_with(&plain, module);
+        self.readonly_twins.insert(f, (twin, None));
+        self.frozen.insert(d, f);
+        self.frozen_defs.insert(f);
+        Some(self.ty.intern(TyKind::Adt(f, vec![])))
+    }
+
+    /// Would converting a value of type `from` to `to` let a field of an `Object.freeze`
+    /// result be written (`to`, or a member of it, an object type with a field that is not
+    /// readonly)?
+    pub(crate) fn unfreezes(&mut self, from: TyId, to: TyId) -> bool {
+        if self.frozen_defs.is_empty() || from == to {
+            return false;
+        }
+        let from = self.ty.opt_payload(from).unwrap_or(from);
+        if !matches!(self.ty.kind(from), TyKind::Adt(d, _) if self.frozen_defs.contains(d)) {
+            return false;
+        }
+        let to = self.ty.opt_payload(to).unwrap_or(to);
+        let members = self.union_members(to).unwrap_or_else(|| vec![to]);
+        members.iter().any(|m| match self.ty.kind(*m) {
+            TyKind::Adt(d, _) => self
+                .adt(*d)
+                .is_some_and(|a| a.fields.iter().any(|f| !f.readonly)),
+            TyKind::Dyn(..) => true,
+            _ => false,
+        })
+    }
+
     /// A fresh anonymous object def with fields `norm` (over `n` type params).
     fn new_anon_def(&mut self, norm: &[ShapeField], n: usize, module: usize) -> DefId {
         let name = {

@@ -57,6 +57,25 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, nans))
     }
 
+    /// SameValue of two floats (`Object.is`): `x == y && (x != 0 || bits(x) == bits(y))`, or
+    /// both `NaN`.
+    fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
+        let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
+        let zero = Operand::Const(Const::Float(0.0), vt);
+        let nonzero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), zero));
+        let (bx, by) = (
+            self.float_bits(x.clone(), vt),
+            self.float_bits(y.clone(), vt),
+        );
+        let signs = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, bx, by));
+        let not_zeros = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, nonzero, signs));
+        let equal = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, eq, not_zeros));
+        let nx = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), x));
+        let ny = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, y.clone(), y));
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nx, ny));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, equal, nans))
+    }
+
     /// `a == b` for values of concrete type `ty` at two places (Bool operand).
     pub(in crate::lower) fn eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         if self.same_mode && self.cx.is_object(ty) {
@@ -82,6 +101,10 @@ impl FnLower<'_, '_> {
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
+            }
+            _ if self.value_mode && vt.is_float() => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.same_value(x, y, vt)
             }
             TyKind::Simd(_) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));

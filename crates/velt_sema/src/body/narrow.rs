@@ -89,7 +89,10 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => self.predicate_facts(callee, args, cond.span),
+            } => match self.is_array_test(callee, args) {
+                Some(arg) => self.is_array_facts(arg),
+                None => self.predicate_facts(callee, args, cond.span),
+            },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -451,6 +454,16 @@ impl FnCx<'_, '_> {
             t.push(Fact::NonNull(l));
         }
         (t, f)
+    }
+
+    /// Facts for `Array.isArray(e)`: its array members.
+    fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        let Some((l, nullable, u)) = self.local_with_members(e) else {
+            return (vec![], vec![]);
+        };
+        let pred =
+            |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), crate::hir::TyKind::Array(_));
+        self.split_facts(l, nullable, u, &pred, false)
     }
 
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff

@@ -71,6 +71,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_args: false,
             transfer_call: false,
             same_mode: false,
+            value_mode: false,
             key_mode: false,
             ctor_self: None,
             init_stack: vec![],
