@@ -261,3 +261,14 @@ export function __objectPrototypeKey(key: string): bool {
 export function __recordIn<V>(key: string, r: Record<string, V>): bool {
   return r.__has(key) || __objectPrototypeKey(key);
 }
+
+/**
+ * `{ [key]: value }` with a key known only at run time: the parser writes the property as a
+ * spread of this call (a one-entry record). Where a `Record` is built, sema sets the entry
+ * directly instead.
+ */
+export function __computed_key<V>(key: string, value: V): Record<string, V> {
+  const r: Record<string, V> = {};
+  r[key] = value;
+  return r;
+}

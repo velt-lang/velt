@@ -48,6 +48,7 @@ pub mod ide;
 mod index_signatures;
 mod infer;
 mod instantiation_cycles;
+mod interface_merge;
 mod intersections;
 mod js_api;
 mod json;
@@ -176,6 +177,8 @@ fn check_on_current_thread(
     opts: CheckOptions,
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    let (merged, merge_diags) = interface_merge::rewrite(modules);
+    let modules = merged.as_deref().unwrap_or(modules);
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = overloads::rewrite(modules);
@@ -198,6 +201,7 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
+        cx.diags.extend(merge_diags.iter().cloned());
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);

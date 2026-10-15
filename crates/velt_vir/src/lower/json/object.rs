@@ -89,6 +89,14 @@ impl FnLower<'_, '_> {
         self.json_skip_member(r, ctx, key, head, fail);
         self.switch_to(end);
         for (i, (name, nullable)) in fields.iter().enumerate() {
+            // The prelude `Error`'s `#name` (the only private field sema lets decoding reach):
+            // its default, as no key fills it.
+            if name == "#name" && matches!(self.cx.kind(tys[i]), TyKind::Str) {
+                let v = self.str_lit("Error");
+                let f = self.field_place(place, ty, i as u32);
+                self.assign(f, Rvalue::Use(v));
+                continue;
+            }
             if !nullable {
                 // A required symbol-keyed member is never filled: the decode fails.
                 let shown = velt_sema::property_order::symbol_key(name);

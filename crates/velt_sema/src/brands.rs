@@ -46,6 +46,7 @@ impl Ctx<'_> {
             generics: Generics::default(),
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: Default::default(),
             ctor: None,

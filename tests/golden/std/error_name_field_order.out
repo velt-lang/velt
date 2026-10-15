@@ -1,0 +1,31 @@
+A ctor before
+init A.a
+A ctor after
+init B.b
+init BName
+init B.b2
+init C.c
+init CName
+CName A.a B.b B.b2 C.c msg
+CName: msg
+A ctor before
+init A.a
+A ctor after
+init B.b
+init BName
+init B.b2
+BName: m2
+C2 before
+init x
+init BName
+init y
+init z
+C2 after BName
+Changed: q x y z
+C2 before
+init x
+init BName
+init y
+init z
+C2 after BName
+DD: w

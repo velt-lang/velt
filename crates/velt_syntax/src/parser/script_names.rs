@@ -36,6 +36,7 @@ pub(super) fn free_names(item: &Item) -> HashSet<String> {
             n.finish(&mut out);
         }
         ItemKind::Import(_)
+        | ItemKind::Augment(_)
         | ItemKind::Interface(_)
         | ItemKind::Enum(_)
         | ItemKind::TypeAlias(_)

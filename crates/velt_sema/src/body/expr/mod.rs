@@ -24,6 +24,7 @@ mod division;
 pub(crate) mod downcast;
 mod dynamic;
 mod error_slots;
+mod error_view;
 mod errors;
 mod fn_union_call;
 mod gen_closure;

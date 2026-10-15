@@ -1,0 +1,24 @@
+// A subclass's `name` getter is the name `String(e)`, `toString()` and templates use, also
+// through an `Error`-typed reference and a union, as `Error.prototype.toString` reads `this.name`.
+class Getter extends Error {
+  get name(): string {
+    return "Getter";
+  }
+}
+
+class Computed extends Error {
+  get name(): string {
+    return `Computed(${this.message.length})`;
+  }
+}
+
+const g = new Getter("m");
+console.log(g.name, String(g), g.toString(), `${g}`);
+const es: Error[] = [g, new Computed("four"), new Error("plain")];
+for (const e of es) {
+  console.log(e.name, "|", String(e), "|", e.toString());
+}
+function either(e: Getter | Computed): string {
+  return `${e.name}: ${e}`;
+}
+console.log(either(new Computed("ab")));

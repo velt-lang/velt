@@ -1,0 +1,10 @@
+// A signature ended by a line break must be followed by the implementation (TypeScript's
+// TS2391), and one ended by `}` too.
+function f(x: number): number
+const y = 1;
+
+class C {
+  m(x: number): number
+}
+
+console.log(y, new C());

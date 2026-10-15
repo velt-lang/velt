@@ -132,7 +132,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn root_expr(e: &hir::Expr) -> &hir::Expr {
+pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         H::Field { base, .. }
         | H::Index { base, .. }

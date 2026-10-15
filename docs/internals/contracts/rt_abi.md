@@ -426,6 +426,9 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
+  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
+  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
+  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and

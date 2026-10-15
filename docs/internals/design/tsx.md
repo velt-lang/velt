@@ -165,7 +165,7 @@ Accepted by `tsc`, but behaves differently:
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
 | `strict-null-eq` | `=== null` / `!== null` on values that are `undefined` in JS (below) | error (a fix: `==` / `!=`) | |
-| `object-in-template` | `${x}` of an `Error` (or a subclass without its own `toString()`) or a `Promise`: Velt prints it as `console.log` does, JavaScript as `Error: message` and `[object Promise]` | error | |
+| `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
 | `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
@@ -210,10 +210,9 @@ Notes on the rules as built, against the issue's first design:
   initializer of a variable annotated with one, an argument for an integer parameter, an
   integer field's value, nor in arithmetic or a comparison with any of those or with a declared
   integer, where a fraction wouldn't fit. There it has no fix.
-- `object-in-template` reports only errors and promises: every other value is written as
-  JavaScript's `String(x)` writes it (#613), through a class's `toString()` (own or inherited),
-  else `[object Object]`, or `[object Map]` for std's classes. An error class that declares
-  `toString()` itself passes; one that inherits it from a user base class is still reported.
+- `object-in-template` reports only promises: every other value is written as JavaScript's
+  `String(x)` writes it (#613), through a class's `toString()` (own or inherited, as
+  `Error`'s `"Error: message"`), else `[object Object]`, or `[object Map]` for std's classes.
 - `velt-global` and `velt-member` look only at names that resolve to the prelude or to a
   builtin; a function, class or method the program declares is never one. Every prelude export
   and member is classified as TypeScript-standard or Velt-only

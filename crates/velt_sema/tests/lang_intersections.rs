@@ -287,12 +287,18 @@ fn a_plain_primitive_or_another_brand_is_not_a_brand() {
 }
 
 #[test]
-fn interfaces_do_not_merge_and_the_note_says_so() {
-    let e = err_src("interface X { a: f64 } interface X { b: f64 } function main() {}");
-    assert!(
-        e.contains("Velt does not merge interface declarations"),
-        "{e}"
-    );
+fn an_interface_does_not_merge_with_a_class_and_the_note_says_so() {
+    // Either order: TypeScript merges an interface with a class of the same name.
+    for src in [
+        "interface X { a: f64 } class X { b = 1 } function main() {}",
+        "class X { b = 1 } interface X { a: f64 } function main() {}",
+    ] {
+        let e = err_src(src);
+        assert!(
+            e.contains("Velt merges an interface only with other interface declarations"),
+            "{e}"
+        );
+    }
 }
 
 #[test]

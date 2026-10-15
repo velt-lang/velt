@@ -377,7 +377,10 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
         DefInfo::Adt(a) => a
             .fields
             .iter()
-            .find(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o)))
+            .find(|f| {
+                f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                    && !cx.plain_private(f.private_to, &f.name)
+            })
             .map(|f| (f.name.clone(), f.span)),
         _ => None,
     }
@@ -550,9 +553,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 // type keeps to itself. A private field declared by a std type (a runtime
                 // handle, also inherited by a user class) has no JSON form at all.
                 DefInfo::Adt(a)
-                    if a.fields
-                        .iter()
-                        .any(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))) =>
+                    if a.fields.iter().any(|f| {
+                        f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                            && !cx.plain_private(f.private_to, &f.name)
+                    }) =>
                 {
                     return Some(t)
                 }
@@ -563,7 +567,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 {
                     a.fields
                         .iter()
-                        .filter(|f| parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        .filter(|f| {
+                            !cx.plain_private(f.private_to, &f.name)
+                                && (parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        })
                         .map(|f| f.ty)
                         .collect()
                 }

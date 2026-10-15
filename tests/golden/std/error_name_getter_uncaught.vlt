@@ -1,0 +1,9 @@
+// An uncaught error whose class redefines `name` with a getter reports that name.
+class Getter extends Error {
+  get name(): string {
+    return "Getter";
+  }
+}
+
+console.log("before");
+throw new Getter("m");

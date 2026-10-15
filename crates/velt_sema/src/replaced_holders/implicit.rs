@@ -444,7 +444,7 @@ fn field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
 /// runs them)?
 pub(super) fn has_field_inits(cx: &Ctx, d: DefId) -> bool {
     matches!(cx.info.get(d.0 as usize), Some(DefInfo::Adt(a))
-        if a.fields.iter().any(|f| f.default.is_some()))
+        if a.fields.iter().any(|f| f.default.is_some()) || !a.redefined.is_empty())
 }
 
 /// The arguments of intrinsic `i` whose values glue may format, serialise or deep-copy, calling

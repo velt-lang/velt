@@ -40,7 +40,8 @@ The differences come from three rules:
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
-- Semicolons are required (no automatic semicolon insertion).
+- Semicolons are required (no automatic semicolon insertion, except after an overload
+  signature).
 
 ## Numbers
 
@@ -179,7 +180,10 @@ contents.
   signatures without other members (`{ [key: string]: V }`, a `Record<string, V>`) work as in
   TypeScript ([Type queries](../reference/types.md#type-queries-and-keyof)).
 - Not available: mapped and conditional types, template literal types, the other utility types
-  (`Record` aside), index signatures next to named members, declaration merging, `namespace`.
+  (`Record` aside), index signatures next to named members, `namespace`. Interfaces merge, and
+  `declare global` / `declare module` blocks augment them
+  ([declaration merging](../reference/classes.md#declaration-merging)); other declarations
+  don't merge.
 
 ## Classes
 

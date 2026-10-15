@@ -121,16 +121,13 @@ impl FnLower<'_, '_> {
         };
         let obj = self.alloc_object_raw(ty);
         self.own_half_built(obj.clone(), ty);
-        let from = match self.cx.adt_def(d).ctor {
-            Some(ctor) => {
-                let cargs = self.cx.ctor_type_args(ctor, ty);
-                self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
-                self.ctor_fields(ctor)
-            }
-            None => 0,
-        };
+        let ctor = self.cx.adt_def(d).ctor;
+        if let Some(ctor) = ctor {
+            let cargs = self.cx.ctor_type_args(ctor, ty);
+            self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+        }
         if !self.dead() {
-            self.new_inits(&obj, ty, from);
+            self.new_inits(&obj, ty, ctor);
         }
         self.own_built(&obj);
         Operand::Copy(obj)
