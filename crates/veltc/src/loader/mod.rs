@@ -14,7 +14,13 @@
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
 //! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
 //!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
-//!   [`PackageResolver`] (vpm's installed package graph).
+//!   [`PackageResolver`] (vpm's installed package graph);
+//! - any other bare specifier (`"@sigx/reactivity"`, `"sigx/internals"`) → the TypeScript source
+//!   of an npm package in `node_modules` or the workspace, as its `package.json` `exports` name
+//!   it ([`vpm::npm`]).
+//!
+//! Non-std modules parse with the root package's `define` constants, and ambient
+//! `declare const`s come from modules and their packages' `.d.ts` files ([`ambient`]).
 //!
 //! The names an import spells must match the files on disk in case, on every OS ([`case`]); a
 //! file module hiding a folder module of another extension gets a warning ([`pick`]).
@@ -29,6 +35,7 @@
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
 
+mod ambient;
 mod case;
 mod globals;
 mod import_meta;
@@ -115,6 +122,8 @@ pub fn load_with_roots(
         extra_phase: false,
         dir_names: case::DirNames::default(),
         globals: vec![],
+        npm: vpm::npm::NpmResolver::default(),
+        ambient: ambient::Ambients::new(opts.packages),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -138,6 +147,7 @@ pub fn load_with_roots(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    loader.check_ambients();
     Ok(Loaded {
         modules: loader.modules,
         root: root_index,
@@ -163,6 +173,10 @@ struct Loader<'a, 'o> {
     dir_names: case::DirNames,
     /// The globals loaded on demand ([`globals`]) not loaded yet.
     globals: Vec<globals::Global>,
+    /// npm packages found so far ([`vpm::npm`]).
+    npm: vpm::npm::NpmResolver,
+    /// Build-time constants and ambient declarations ([`ambient`]).
+    ambient: ambient::Ambients,
 }
 
 impl Loader<'_, '_> {
@@ -232,19 +246,35 @@ impl Loader<'_, '_> {
         origin: Origin,
     ) -> usize {
         let file = self.sm.add(path, src);
-        let src = &self.sm.get(file).src;
-        let (mut ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
-            velt_syntax::parse_ts_file(file, src)
+        let is_std = matches!(origin, Origin::Std(_));
+        let plain_ts = vpm::sources::is_plain_ts(path);
+        let mut ast = if is_std {
+            let src = &self.sm.get(file).src;
+            let (ast, parse_diags) = if plain_ts {
+                velt_syntax::parse_ts_file(file, src)
+            } else {
+                velt_syntax::parse_file(file, src)
+            };
+            self.diags.extend(parse_diags);
+            ast
         } else {
-            velt_syntax::parse_file(file, src)
+            self.ambient.read_declarations(self.sm, path);
+            let opts = velt_syntax::ParseOptions {
+                plain_ts,
+                defines: self.ambient.defines(),
+            };
+            let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
+            self.diags.extend(parsed.diags);
+            self.ambient
+                .declared(parsed.ambient, file, parsed.is_module);
+            parsed.module
         };
         import_meta::fill(&mut ast, path);
-        self.diags.extend(parse_diags);
         let index = self.modules.len();
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
             path: canonical,
-            is_std: matches!(origin, Origin::Std(_)),
+            is_std,
             file,
             ast,
             imports: vec![],
@@ -285,6 +315,23 @@ impl Loader<'_, '_> {
                 self.error(format!("cannot read `{shown}`: {e}"), vec![], span);
             }
         }
+    }
+
+    /// Report the ambient constants that modules use but nothing gives a value
+    /// ([`ambient::Ambients::check`]).
+    fn check_ambients(&mut self) {
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let mentioned = |name: &str, owner: Option<velt_common::FileId>| {
+            modules
+                .iter()
+                .filter(|m| !m.is_std && owner.is_none_or(|f| f == m.file))
+                .any(|m| {
+                    globals::mentions(&sm.get(m.file).src, name)
+                        && !velt_syntax::scope::free_values(&m.ast, &|n| n == name).is_empty()
+                })
+        };
+        let found = self.ambient.check(&mentioned);
+        self.diags.extend(found);
     }
 
     /// Whether a loaded module has module path `path`.
@@ -392,13 +439,38 @@ impl Loader<'_, '_> {
         let (importer, from) = self.origins[index].clone();
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
-        let aliased = alias.is_some();
+        let mut aliased = alias.is_some();
+        // No npm package was found for the specifier: an error that follows says why the
+        // workspace walk may have missed it.
+        let mut npm_missed = false;
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
-            None => match resolve_spec(spec, dir) {
-                Ok(m) => m,
-                Err(msg) => return self.error(msg, vec![], span),
-            },
+            None => {
+                let classified = resolve_spec(spec, dir);
+                match npm_module(
+                    &mut self.npm,
+                    self.opts.packages,
+                    &importer,
+                    spec,
+                    &classified,
+                ) {
+                    Some(Ok(file)) => {
+                        aliased = true;
+                        ModuleRef::Relative { file }
+                    }
+                    Some(Err((msg, notes))) => return self.error(msg, notes, span),
+                    None => {
+                        npm_missed = matches!(classified, Ok(ModuleRef::Package { .. }));
+                        match classified {
+                            Ok(m) => m,
+                            Err(msg) => {
+                                let notes = self.npm.workspace_note(&importer);
+                                return self.error(msg, notes.into_iter().collect(), span);
+                            }
+                        }
+                    }
+                }
+            }
         };
         let target = match locate::target(
             module,
@@ -408,7 +480,12 @@ impl Loader<'_, '_> {
             self.opts.packages,
         ) {
             Ok(t) => t,
-            Err((msg, notes)) => return self.error(msg, notes, span),
+            Err((msg, mut notes)) => {
+                if npm_missed {
+                    notes.extend(self.npm.workspace_note(&importer));
+                }
+                return self.error(msg, notes, span);
+            }
         };
         let shown = pick::Shown {
             dir,
@@ -505,6 +582,29 @@ impl Loader<'_, '_> {
         self.diags.push(d);
         None
     }
+}
+
+/// The npm package module bare specifier `spec` names ([`vpm::npm`]), unless the importing
+/// package has a Velt dependency of that name (which wins) or `spec` is not bare
+/// (`classified`: what [`resolve_spec`] made of it). `None`: no npm package of that name.
+fn npm_module(
+    npm: &mut vpm::npm::NpmResolver,
+    packages: Option<&dyn PackageResolver>,
+    importer: &Path,
+    spec: &str,
+    classified: &Result<ModuleRef, String>,
+) -> Option<Result<PathBuf, vpm::npm::NpmError>> {
+    let bare = match classified {
+        Ok(ModuleRef::Package { name, .. }) => {
+            packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
+        }
+        Ok(_) => false,
+        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt:"),
+    };
+    if !bare {
+        return None;
+    }
+    npm.resolve(importer, spec)
 }
 
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).

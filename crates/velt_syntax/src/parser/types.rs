@@ -289,6 +289,31 @@ impl<'a> Parser<'a> {
                 span,
             }]
         } else {
+            // `typeof NAME` of a build-time constant (`define`) is the type of its literal.
+            if let Some(lit) = self.define_at_cursor() {
+                if !(self.nth(1) == Tok::Dot || self.nth(1) == Tok::Lt) {
+                    let span = self.cur_span();
+                    let named = |name: &str| TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: name.into(),
+                            span,
+                        }],
+                        args: vec![],
+                    };
+                    let kind = match lit {
+                        Lit::Bool(_) => named("boolean"),
+                        Lit::Str(_) => named("string"),
+                        Lit::Int { .. } | Lit::Float { .. } => named("number"),
+                        Lit::Null => TypeExprKind::Null,
+                        Lit::Undefined => TypeExprKind::Undefined,
+                    };
+                    self.bump();
+                    return Ok(TypeExpr {
+                        kind,
+                        span: self.span_from(lo),
+                    });
+                }
+            }
             vec![self.parse_ident()?]
         };
         while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {

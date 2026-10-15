@@ -8,7 +8,7 @@ helper), and explain it in your final report.
 | Contract | File | Producer → Consumer |
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
-| AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
+| AST | `crates/velt_syntax/src/ast.rs` + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
@@ -23,7 +23,8 @@ helper), and explain it in your final report.
 ```
 velt build main.vlt
   └─ driver (veltc): load main.vlt, follow imports, SourceMap
-      ├─ velt_syntax::parse_file       per file      → ast::Module
+      ├─ velt_syntax::parse_with       per file      → ast::Module (+ ambient declarations;
+      │                                                 parse_file for std and the formatter)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)

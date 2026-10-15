@@ -15,6 +15,10 @@ impl<'a> Parser<'a> {
             self.bump();
             return Ok(self.mk_expr(ExprKind::Lit(lit), span));
         }
+        if let Some(lit) = self.define_at_cursor() {
+            self.bump();
+            return Ok(self.mk_expr(ExprKind::Lit(lit), span));
+        }
         let kind = match self.peek() {
             Tok::Template(..) => self.parse_template()?,
             Tok::Lt if self.jsx_starts_here() => {
@@ -94,6 +98,17 @@ impl<'a> Parser<'a> {
         };
         let span = self.span_from(lo);
         Ok(self.mk_expr(kind, span))
+    }
+
+    /// The build-time constant the identifier at the cursor stands for (`define` in
+    /// package.vlt, as Vite's `define`): a reference that nothing in its scope declares
+    /// (`crate::scope::free_values`, found by a first parse).
+    pub(super) fn define_at_cursor(&mut self) -> Option<Lit> {
+        let t = self.tok(self.pos);
+        if t.kind != Tok::Ident {
+            return None;
+        }
+        self.define_at?.get(&t.lo).cloned()
     }
 
     /// Literal value of the current token (numbers, strings, `true`/`false`/`null`), if any.
@@ -286,6 +301,11 @@ impl<'a> Parser<'a> {
         if !shorthand_ok {
             self.error_expected("`:`");
             return Err(Fail);
+        }
+        // `{ __DEV__ }` with a `define`: `{ __DEV__: false }`.
+        if let Some(lit) = self.define_at.and_then(|d| d.get(&key.span.lo)).cloned() {
+            let value = self.mk_expr(ExprKind::Lit(lit), key.span);
+            return Ok(ObjectProp::KeyValue(key, value));
         }
         Ok(ObjectProp::Shorthand(key))
     }

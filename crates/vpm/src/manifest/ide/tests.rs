@@ -31,6 +31,7 @@ fn top_level_keys_not_yet_written() {
             "dependencies",
             "paths",
             "jsx",
+            "define",
             "native",
             "tsCompat"
         ]

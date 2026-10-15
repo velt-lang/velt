@@ -1,6 +1,8 @@
 //! `declare global { … }` and `declare module "spec" { … }` (TypeScript's augmentation): the
 //! declarations inside, an [`Augment`] item. Sema merges their interfaces into the declarations
-//! they augment.
+//! they augment. The variables of `declare global` (`var NAME: T;`) are ambient declarations
+//! when the caller asked for them (`crate::parse_with`, the `ambient` module), and an error
+//! otherwise.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -51,6 +53,21 @@ impl<'a> Parser<'a> {
             let item_lo = self.cur_lo();
             // `export` is allowed (and means nothing more) inside the block.
             let exported = self.eat_kw(Kw::Export);
+            if global && self.ambient.is_some() {
+                // `var NAME: T;` (or `declare var`, `const`, `let`): an ambient variable, for
+                // the caller that asked for them.
+                let declare = usize::from(self.at_kw(Kw::Declare));
+                if self.is_var_word(declare) {
+                    if declare == 1 {
+                        self.bump();
+                    }
+                    if self.parse_ambient_vars(true).is_err() {
+                        self.skip_to_block_end();
+                        return Err(Fail);
+                    }
+                    continue;
+                }
+            }
             let Ok(kind) = self.parse_augment_member(item_lo) else {
                 self.skip_to_block_end();
                 return Err(Fail);
