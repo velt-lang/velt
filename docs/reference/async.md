@@ -213,7 +213,9 @@ before it. So `p.then(f); await q;` with `q` settled runs the code after the `aw
 `f`; likewise an async function that awaits inside resumes earlier than in Node, relative to
 the callbacks queued meanwhile. `Promise.all` and `Promise.race` also settle in fewer steps than
 Node's (they keep `await` on them fast), which matters only for callbacks chained on them next
-to other callbacks.
+to other callbacks. A promise settled by a `resolve` or `reject` called later (kept from
+`Promise.withResolvers()` or a `new Promise` executor) settles at the task's next step, so
+callbacks queued meanwhile run before the ones chained on it.
 
 ```ts
 class Failed extends Error {}

@@ -112,30 +112,6 @@ fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker) -> R) -> Option<R> {
     Some(f(timers.get_or_insert_with(Default::default), task))
 }
 
-/// Wake `w` for an opened latch (task/latch.rs): a local promise of the task being polled runs
-/// now (queued if it is being polled already, or driven by its owner); any other waker is woken.
-pub(crate) fn wake_now(w: Waker) {
-    let tcx = CURRENT.with(Cell::get);
-    let set = current_set();
-    if !tcx.is_null() && !set.is_null() {
-        // SAFETY: the set of the task being polled, and its waker (`CURRENT` lives).
-        unsafe {
-            if let Some(g) = node::local_awaiter(&w, &(*set).shared) {
-                if !node::is_adopted(g) {
-                    set::run_now(set, &*(*tcx).waker, g);
-                    return;
-                }
-                // Driven by its owner: resume the owner.
-                if let Some(owner) = node::take_awaiter(g) {
-                    wake_now(owner);
-                    return;
-                }
-            }
-        }
-    }
-    w.wake();
-}
-
 /// Run local promise `f` of the task being polled now (queued if it is being polled already, or
 /// outside a task).
 pub(super) unsafe fn run_here(f: *mut VeltFut) {

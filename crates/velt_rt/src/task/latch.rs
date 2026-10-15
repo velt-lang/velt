@@ -2,19 +2,11 @@
 //! (std/prelude/promise.vlt). The settled value lives in Velt code (`shared<Mutex<…>>`); the
 //! latch only tells a waiting task that it was settled. Opening is thread-safe, so `resolve`
 //! may run on any task. No callbacks are stored (hot-reload rule, rt_abi_async.md §13.5).
-//!
-//! A waiter that is a local promise of the task opening the latch runs at once, like the
-//! reactions of a JS promise that `resolve` queues right away: a callback chained on a promise
-//! settled by a stored `resolve` is queued when `resolve` is called, not after the callbacks
-//! queued meanwhile (task/local `wake_now`).
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 
-use parking_lot::Mutex;
+use tokio::sync::Notify;
 
 use super::leaf::new_leaf;
 use super::VeltFut;
@@ -24,8 +16,7 @@ use crate::handle::Handle;
 #[derive(Default)]
 pub struct Latch {
     open: AtomicBool,
-    /// The wakers of the pending waits.
-    waiters: Mutex<Vec<Waker>>,
+    notify: Notify,
 }
 
 /// A new, closed latch (released with [`velt_rt_latch_free`]).
@@ -43,8 +34,7 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
     h.release();
 }
 
-/// Opens the latch and wakes every waiter (a local promise of this task runs now); opening an
-/// open latch does nothing. Not to be called while a lock its waiters take is held.
+/// Opens the latch and wakes every waiter; opening an open latch does nothing.
 ///
 /// # Safety
 /// `h` must be a live latch handle.
@@ -53,35 +43,7 @@ pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
     crate::io::publish_before_handoff();
     if !l.open.swap(true, Ordering::AcqRel) {
-        let waiters = std::mem::take(&mut *l.waiters.lock());
-        for w in waiters {
-            super::local::wake_now(w);
-        }
-    }
-}
-
-/// The future of `velt_rt_latch_wait`.
-struct Wait {
-    latch: Arc<Latch>,
-}
-
-impl Future for Wait {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let l = &self.latch;
-        if l.open.load(Ordering::Acquire) {
-            return Poll::Ready(());
-        }
-        let mut waiters = l.waiters.lock();
-        // Checked again under the lock: `velt_rt_latch_open` takes the waiters after opening.
-        if l.open.load(Ordering::Acquire) {
-            return Poll::Ready(());
-        }
-        if !waiters.iter().any(|w| w.will_wake(cx.waker())) {
-            waiters.push(cx.waker().clone());
-        }
-        Poll::Pending
+        l.notify.notify_waiters();
     }
 }
 
@@ -91,8 +53,15 @@ impl Future for Wait {
 /// `h` must be a live latch handle.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
-    new_leaf(Wait {
-        latch: h.clone_arc(),
+    let l = h.clone_arc();
+    new_leaf(async move {
+        loop {
+            let notified = l.notify.notified();
+            if l.open.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
     })
 }
 

@@ -6,7 +6,8 @@ code.
 
 Every program that differs is put in a class: `documented` when it uses a form whose order
 docs/reference/async.md lists as different from Node's (`await` in `main` or in an async source
-that awaits inside, `Promise.all`, `Promise.race`), `unexpected` otherwise. A non-zero count of
+that awaits inside, `Promise.all`, `Promise.race`, a promise settled by a stored `resolve`),
+`unexpected` otherwise. A non-zero count of
 `unexpected` is a bug.
 
 usage: promise-order-diff.py <velt executable> <work dir> [count] [seed] [jobs]
@@ -164,7 +165,7 @@ class Gen:
         return PRELUDE + "\nasync function main() {\n" + "".join(parts) + "}\n"
 
 
-DOCUMENTED = {"await in main", "source awaits inside", "all", "race"}
+DOCUMENTED = {"await in main", "source awaits inside", "all", "race", "withResolvers"}
 
 
 def run(cmd, cwd):

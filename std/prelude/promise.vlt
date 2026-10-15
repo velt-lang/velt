@@ -88,8 +88,7 @@ class PromiseSlot<T, E> {
   }
 
   // The first settlement wins; later calls of `resolve` or `reject` are ignored, like JS.
-  // Returns the latch to open once the lock is released (0: already settled): opening it runs
-  // a waiting promise of this task at once, which takes the outcome under the lock.
+  // Returns the latch to open once the lock is released (0: already settled).
   settle(outcome: Settlement<T, E>): u64 {
     if (this.outcome.length == 0) {
       this.outcome.push(outcome);
