@@ -1,0 +1,69 @@
+aGVsbG8= "" /wA= YQ== YWI= YWJj
+hello hello hello ""
+"YQ==" ok "a" [97]
+"YR==" ok "a" [97]
+"YQ" ok "a" [97]
+"YQ=" InvalidCharacterError (5): Invalid character
+"YQ= =" ok "a" [97]
+"YQ=\n=" ok "a" [97]
+"YWI=" ok "ab" [97,98]
+"YWI" ok "ab" [97,98]
+"YWJj" ok "abc" [97,98,99]
+"YWJjZA" ok "abcd" [97,98,99,100]
+"aGVs\tbG8\n" ok "hello" [104,101,108,108,111]
+"\fYQ==\r\n" ok "a" [97]
+" Y Q = = " ok "a" [97]
+"   " ok "" []
+"=" InvalidCharacterError (5): Invalid character
+"==" InvalidCharacterError (5): Invalid character
+"===" InvalidCharacterError (5): Invalid character
+"====" InvalidCharacterError (5): Invalid character
+"Y===" InvalidCharacterError (5): Invalid character
+"YQ==YQ==" InvalidCharacterError (5): Invalid character
+"Y=Q=" InvalidCharacterError (5): Invalid character
+"YQ===" InvalidCharacterError (5): Invalid character
+"a" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"abcde" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"ab\u000bcd" InvalidCharacterError (5): Invalid character
+"ab cd" InvalidCharacterError (5): Invalid character
+"ab-_" InvalidCharacterError (5): Invalid character
+"ab+/" ok "i¿¿" [105,191,191]
+"€" InvalidCharacterError (5): Invalid character
+"YĀQ=" InvalidCharacterError (5): Invalid character
+"*" InvalidCharacterError (5): Invalid character
+"aGVsbG8==" InvalidCharacterError (5): Invalid character
+"ab=c" InvalidCharacterError (5): Invalid character
+"ab===" InvalidCharacterError (5): Invalid character
+"/w==" ok "ÿ" [255]
+"/+8=" ok "ÿï" [255,239]
+"AAAA" ok "\u0000\u0000\u0000" [0,0,0]
+"A=" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"A==" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"A=\n" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"Y\f==" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"YQ=Y" InvalidCharacterError (5): Invalid character
+"9YABa=" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"9YABa==" InvalidCharacterError (5): The string to be decoded is not correctly encoded.
+"YWJjZA=" InvalidCharacterError (5): Invalid character
+"YWJjZA==\n" ok "abcd" [97,98,99,100]
+"é" ok 6Q==
+"þÿ" ok /v8=
+"aĀ" InvalidCharacterError (5): Invalid character
+"€" InvalidCharacterError (5): Invalid character
+"😀" InvalidCharacterError (5): Invalid character
+"" ok f4A=
+"Ünïcödé" ok 3G7vY/Zk6Q==
+"\ud800" InvalidCharacterError (5): Invalid character
+InvalidCharacterError Invalid character 5 true true
+InvalidCharacterError: Invalid character InvalidCharacterError: Invalid character
+true InvalidCharacterError: The string to be decoded is not correctly encoded.
+344 AAECAwQFBgcICQoLDA0ODxAR 8PHy8/T19vf4+fr7/P3+/w==
+256 true true
+115000 153336 VGhlIHF1aWNrIGJyb3duIGZveCDp/yBUaGUgcXVp Zm94IOn/IA==
+true
+157372 true true
+"Error" "" 0 "Error"
+Error 0 Error: just a message
+IndexSizeError=1 DOMStringSizeError=0 HierarchyRequestError=3 WrongDocumentError=4 InvalidCharacterError=5 NoDataAllowedError=0 NoModificationAllowedError=7 NotFoundError=8 NotSupportedError=9 InUseAttributeError=10 InvalidStateError=11 SyntaxError=12 InvalidModificationError=13 NamespaceError=14 InvalidAccessError=15 ValidationError=0 TypeMismatchError=17 SecurityError=18 NetworkError=19 AbortError=20 URLMismatchError=21 QuotaExceededError=22 TimeoutError=23 InvalidNodeTypeError=24 DataCloneError=25 EncodingError=0 Error=0 MyOwnName=0
+1 5 8 20 23 25 16
+true true AbortError 20 AbortError: This operation was aborted

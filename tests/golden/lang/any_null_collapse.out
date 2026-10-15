@@ -1,0 +1,16 @@
+nil true false true object dflt
+u false true true undefined dflt
+arr false false false object [ 1, 2, 3 ]
+  taken arr
+n false false false number 7
+  taken n
+missing false true true undefined dflt
+3
+8
+true false true
+true true
+true false
+undefined null
+[ null, undefined, 1 ]
+true
+true string

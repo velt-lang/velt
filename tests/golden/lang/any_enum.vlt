@@ -1,0 +1,30 @@
+// check: no leaks
+// An enum value in an `any` / `unknown` is its number or string, as in JavaScript (#1103
+// review); converting back finds the member with that value.
+enum Color {
+  Red,
+  Green,
+  Blue = 10,
+}
+enum Dir {
+  Up = "UP",
+  Down = "DOWN",
+}
+const c: any = Color.Green;
+const d: any = Dir.Down;
+console.log(c, d, typeof c, typeof d, c === 1, d === "DOWN", c === Color.Green, d === Dir.Down);
+const back: Color = c;
+const dback: Dir = d;
+console.log(back === Color.Green, dback === Dir.Down, back, dback);
+const xs: any[] = [Color.Red, Color.Blue, Dir.Up];
+console.log(xs, xs.indexOf(10), xs.includes("UP"));
+const u: unknown = Color.Blue;
+console.log(u, (u as Color) === Color.Blue);
+const n: any = 10;
+const b2: Color = n;
+console.log(b2 === Color.Blue);
+const s: any = "UP";
+const d2: Dir = s;
+console.log(d2 === Dir.Up, String(d2));
+const maybe: Color | null = c;
+console.log(maybe === Color.Green);

@@ -11,7 +11,8 @@ import { Deque } from "velt:collections/deque";
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
 scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
 `Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
-`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder` and `structuredClone`.
+`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`, `atob`,
+`DOMException` and `structuredClone`.
 `velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions

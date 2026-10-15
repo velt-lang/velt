@@ -56,6 +56,8 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    // Before any type is resolved: `any | null` is `any` (crate::unions).
+    crate::any::add_impl(cx);
     cx.name_symbol_keys();
     field_only::declare(cx);
     crate::type_defaults::check_all(cx);
