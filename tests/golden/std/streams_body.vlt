@@ -1,6 +1,7 @@
 // check: no leaks
-// A ReadableStream of Uint8Array chunks as a Response body (sigx's server renderer streams its
-// document this way), and a ReadableStream<string> turned into one, as in Node.
+// The shapes of sigx's server renderer as in Node: a ReadableStream of Uint8Array chunks made
+// by pulling (`chunksToBytes`), one of strings (`renderStream`), read and decoded; and a
+// response's body read as a ReadableStream.
 function chunksToBytes(parts: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let i = 0;
@@ -30,16 +31,40 @@ function renderStream(parts: string[]): ReadableStream<string> {
   });
 }
 
+async function readAll(s: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = s.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) {
+      break;
+    }
+    total += r.value.byteLength;
+    chunks.push(r.value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  return merged;
+}
+
 async function main() {
-  const res = new Response(chunksToBytes(["<html>", "<body>héllo</body>", "</html>"]), {
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
-  console.log(res.headers.get("content-type"), res.bodyUsed);
-  console.log(await res.text(), res.bodyUsed);
-  const bytes = await new Response(chunksToBytes(["ab", "c"])).bytes();
-  console.log(bytes);
-  const buf = await new Response(chunksToBytes([])).arrayBuffer();
-  console.log(buf.byteLength);
+  const page = await readAll(chunksToBytes(["<html>", "<body>héllo</body>", "</html>"]));
+  console.log(new TextDecoder().decode(page), page.length);
+  let n = 0;
+  for await (const chunk of chunksToBytes(["ab", "c"])) {
+    n += chunk.length;
+  }
+  console.log(n);
+  const early = chunksToBytes(["x", "y"]);
+  for await (const chunk of early) {
+    console.log(chunk);
+    break;
+  }
   // A string stream, encoded chunk by chunk.
   const encoder = new TextEncoder();
   const out: string[] = [];
@@ -52,4 +77,10 @@ async function main() {
     out.push(new TextDecoder().decode(encoder.encode(r.value)));
   }
   console.log(out.join(""));
+  // A response's body is a ReadableStream of Uint8Array chunks.
+  const res = new Response("héllo, body");
+  const body = res.body;
+  if (body != null) {
+    console.log(body.locked, new TextDecoder().decode(await readAll(body)), res.bodyUsed);
+  }
 }

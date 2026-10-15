@@ -6,22 +6,13 @@ import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
 import { ArrayBuffer, BufferView } from "velt:typed_array/core";
-import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ReadableStream } from "velt:streams";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
- * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `ReadableStream` of
- * `Uint8Array`s, or a `BodyStream`).
+ * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`; a
+ * `ReadableStream` body waits for #1129).
  */
-export type BodyInit =
-  | string
-  | u8[]
-  | BufferView
-  | ArrayBuffer
-  | URLSearchParams
-  | ReadableStream<Uint8Array>
-  | BodyStream;
+export type BodyInit = string | u8[] | BufferView | ArrayBuffer | URLSearchParams | BodyStream;
 
 /**
  * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; `velt_rt_http_fetch_send`
@@ -70,9 +61,6 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof BodyStream) {
     return { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
   }
-  if (body instanceof ReadableStream) {
-    return { kind: 3, text: "", bytes: [], stream: BodyStream.from(streamBytes(body)), implied: 0 };
-  }
   // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
   if (body instanceof BufferView) {
     const o = body.off as i64;
@@ -83,13 +71,6 @@ export function bodyParts(body: BodyInit | null): BodyParts {
     return { kind: 2, text: "", bytes: body.bytes.slice(), stream: null, implied: 0 };
   }
   return { kind: 2, text: "", bytes: body, stream: null, implied: 0 };
-}
-
-// The chunks of a `ReadableStream` body as Velt byte arrays (each copied once).
-async function* streamBytes(s: ReadableStream<Uint8Array>): AsyncGenerator<u8[], Error> {
-  for await (const chunk of s) {
-    yield chunk.toBytes();
-  }
 }
 
 /** The bytes of a stream, in one array. */

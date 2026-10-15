@@ -1,5 +1,6 @@
-text/html; charset=utf-8 false
-<html><body>héllo</body></html> true
-Uint8Array(3) [ 97, 98, 99 ]
-0
+<html><body>héllo</body></html> 32
+3
+Uint8Array(1) [ 120 ]
+cancelled
 <p>x</p>
+false héllo, body true

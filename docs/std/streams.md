@@ -32,13 +32,11 @@ async function main() {
   for await (const x of numbers()) {
     console.log(x); // 1, 2, 3
   }
-  const page = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode("<p>hi</p>"));
-      controller.close();
-    },
-  });
-  console.log(await new Response(page).text()); // <p>hi</p>
+  const body = new Response("<p>hi</p>").body;            // a ReadableStream<Uint8Array>
+  if (body != null) {
+    const r = await body.getReader().read();
+    console.log(r.done ? "" : new TextDecoder().decode(r.value)); // <p>hi</p>
+  }
 }
 ```
 
@@ -61,9 +59,9 @@ async function main() {
   `return`, a throw) cancels the stream and releases it.
 - **`ReadableStream.from(iterable)`** reads an async iterable (an async generator); an error
   it throws reaches the reader as an `Error` with its text.
-- **Bodies**: `new Response(stream)` and `new Request(url, { body: stream })` take a
-  `ReadableStream<Uint8Array>`, and `res.body` / `req.body` are one ([fetch](fetch.md)), pulled
-  only as they are read.
+- **Bodies**: `res.body` / `req.body` are a `ReadableStream<Uint8Array>` ([fetch](fetch.md)),
+  pulled only as they are read. A `ReadableStream` is not a body yet (`new Response(stream)`,
+  #1129): pass `BodyStream.from(gen())` with an async generator of `u8[]` chunks.
 - `console.log(stream)` prints what Node prints: `ReadableStream { locked: false, state:
   'readable', supportsBYOB: false }`.
 

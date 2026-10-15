@@ -86,7 +86,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   be held in memory: each chunk is at most 64 KiB, however much a compressed body expands. It is
   `null` for a status without a body (101, 103, 204, 205, 304), for a `HEAD` request's response
   and for a response made without one. Reading it uses the body up, as `text()` does; getting
-  it does not. A `ReadableStream` of `Uint8Array`s is also a body: `new Response(stream)`.
+  it does not. A `ReadableStream` is not a body yet (`new Response(stream)`, #1129): stream a
+  body with [`BodyStream`](#bodystream).
 - A body the server compressed (`content-encoding: gzip`, `deflate` or `br`, or several of
   them, such as `deflate, gzip`: up to five) is decoded as it arrives, whichever way you read
   it; the headers stay as received. A list naming another coding leaves the body as sent, and
