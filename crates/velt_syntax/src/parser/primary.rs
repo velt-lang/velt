@@ -386,7 +386,8 @@ impl<'a> Parser<'a> {
             let setter = self.at_word("set");
             self.bump();
             let name = self.parse_prop_key()?;
-            let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)? else {
+            let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)?
+            else {
                 unreachable!("ICE: a method property is a key and a value");
             };
             self.check_accessor_params(&arrow, setter, kw);
@@ -449,7 +450,10 @@ impl<'a> Parser<'a> {
     /// A getter takes no parameters and a setter one (as in TypeScript).
     fn check_accessor_params(&mut self, arrow: &Expr, setter: bool, kw: Span) {
         let ExprKind::Arrow {
-            params, ret, type_params, ..
+            params,
+            ret,
+            type_params,
+            ..
         } = &arrow.kind
         else {
             return;

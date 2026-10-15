@@ -258,15 +258,12 @@ impl FnCx<'_, '_> {
                     values.push((key.name.clone(), h));
                     slots[slot] = Some(Slot::Call(index));
                 }
-                (Written::Value(v), Some(slot), _) => {
-                    // A value for a getter method: returned by it.
-                    let ret = methods[slot].ret;
-                    let h = self.prop_value(&key, v, Some(ret));
-                    let h = self.coerce(h, ret);
-                    let exp = self.fn_type(vec![], ret, None);
-                    let h = self.const_fn(h, exp);
-                    values.push((key.name.clone(), h));
-                    slots[slot] = Some(Slot::Call(index));
+                (Written::Value(_), Some(slot), _) => {
+                    self.cx.err(
+                        format!("`{}` is a getter of `{iname}`: write it as `get {}() {{ … }}` in the object literal", methods[slot].name, key.name),
+                        key.span,
+                    );
+                    ok = false;
                 }
                 (Written::Value(v), None, Some(fi)) => {
                     let fty = fields[fi].1;
@@ -297,9 +294,11 @@ impl FnCx<'_, '_> {
             if m.default.is_some() {
                 slots[slot] = Some(Slot::Default);
             } else if ok {
-                let what = if m.is_getter { "getter" } else { "method" };
-                let name = m.name.strip_prefix("set ").unwrap_or(&m.name);
-                let what = if m.name.starts_with("set ") { "setter" } else { what };
+                let (what, name) = match m.name.strip_prefix("set ") {
+                    Some(name) => ("setter", name),
+                    None if m.is_getter => ("getter", m.name.as_str()),
+                    None => ("method", m.name.as_str()),
+                };
                 self.cx.err(
                     format!("missing {what} `{name}` of `{iname}` in object literal"),
                     span,
@@ -327,7 +326,9 @@ impl FnCx<'_, '_> {
         if !ok || values.iter().any(|(_, h)| self.cx.ty.has_error(h.ty)) {
             return self.error_expr(span);
         }
-        self.build_iface_object(iface, &iname, &iargs, dyn_ty, &methods, slots, values, module, span)
+        self.build_iface_object(
+            iface, &iname, &iargs, dyn_ty, &methods, slots, values, module, span,
+        )
     }
 
     /// The struct, its implementation of `iface` and the interface value (module docs).
@@ -368,9 +369,9 @@ impl FnCx<'_, '_> {
             .iter()
             .map(|(n, h)| (n.clone(), norm(self.cx, h.ty)))
             .collect();
-        let d = self
-            .cx
-            .hidden_struct_def(&format!("{iname} literal"), &field_tys, ps.len(), module);
+        let d =
+            self.cx
+                .hidden_struct_def(&format!("{iname} literal"), &field_tys, ps.len(), module);
         let own: Vec<TyId> = (0..ps.len() as u32).map(|i| self.cx.ty.param(i)).collect();
         let self_ty = self.cx.ty.intern(TyKind::Adt(d, own));
         let niargs: Vec<TyId> = iargs.iter().map(|a| norm(self.cx, *a)).collect();
@@ -421,7 +422,10 @@ impl FnCx<'_, '_> {
                         _ => fty,
                     };
                     let name = format!("{iname} literal.<get>");
-                    let target = Target::Field { index: j, fn_ty: fty };
+                    let target = Target::Field {
+                        index: j,
+                        fn_ty: fty,
+                    };
                     synth_method(self.cx, &host, self_ty, name, vec![], ret, false, target)
                 }
                 (Slot::Default, None) => unreachable!("ICE: a field slot has no default"),
@@ -493,15 +497,5 @@ impl FnCx<'_, '_> {
         let params = m.params.iter().map(|p| p.ty).collect();
         let t = self.fn_type(params, m.ret, Some(throws));
         self.coerce(h, t)
-    }
-
-    /// A function of type `fn_ty` (no parameters) returning `h`'s value, evaluated now.
-    fn const_fn(&mut self, h: hir::Expr, fn_ty: TyId) -> hir::Expr {
-        self.cx.err(
-            "a value for a getter of an interface in an object literal is not supported yet: write `get name() { return value; }`",
-            h.span,
-        );
-        let _ = fn_ty;
-        self.error_expr(h.span)
     }
 }

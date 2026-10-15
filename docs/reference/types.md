@@ -1097,8 +1097,10 @@ console.log(b.v); // hi
 - **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
-  a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data). A generator method `*name() { ... }` (`async *name()`) is
+  a method is not supported yet (an object literal is plain data). Getters and setters
+  (`get x() {}`, `set x(v) {}`) are supported where the literal implements an interface with
+  methods ([Object literals implementing interfaces](#object-literals-implementing-interfaces)),
+  not yet in a literal of an object type. A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
   `name: function* () { ... }` is; a generator method with a symbol key only as
   `*[Symbol.iterator]()`
@@ -1476,6 +1478,54 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   generator function.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
+
+### Object literals implementing interfaces
+
+Where an interface with methods is expected (an annotation, a parameter, a return type or
+`satisfies`), an object literal implements it, as a class that declares `implements` does:
+
+- A method is a function value: `m(x) { … }`, `m: (x) => …` or `async m(x) { … }`. Its
+  parameter types may be left out: they come from the interface's method.
+- A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
+  method of the interface (`get f(): T`) takes a getter, and a setter method (`set f(v: T)`) a
+  setter `set f(v) { … }`, which runs on each `x.f = v`.
+- A method with a default body and an optional field may be left out (the field is `null`);
+  every other member must be given, and a member the interface doesn't declare is an error.
+- The value is an interface value: its members are read and called through the interface.
+
+```ts
+interface Counter {
+  next(step: number): number;
+  readonly count: number;
+}
+
+function counter(): Counter {
+  let n = 0;
+  return {
+    next(step) {
+      n += step;
+      return n;
+    },
+    get count() {
+      return n;
+    },
+  };
+}
+
+const c = counter();
+c.next(2);
+c.next(3);
+console.log(c.count); // 5
+```
+
+- The methods use the variables around them, as arrows do; `this` in them is not supported yet.
+- A generic interface method (`map<R>(f: (x: T) => R): R`) cannot be a function value: declare a
+  class that implements the interface.
+- A method that throws must be allowed to by the interface method's function type, as for any
+  function value: an optional method (`m?(x: T): R`) is a field of function type, which
+  doesn't allow throwing unless it says `throws`.
+- `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
+  interface values).
 
 ## any and unknown
 
