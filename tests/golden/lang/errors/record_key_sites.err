@@ -1,0 +1,11 @@
+record_key_sites.vlt:32:13: error: `boolean` cannot be a `Record` key
+record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
+required because `C.constructor` uses it as a `Record` key
+record_key_sites.vlt:33:13: error: `f64` cannot be a `Record` key
+record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
+record_key_sites.vlt:34:31: error: `i64` cannot be a `Record` key
+record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
+required because `wrap` uses it as a `Record` key
+record_key_sites.vlt:35:19: error: `string[]` cannot be a `Record` key
+record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
+required because `Sq.area` uses it as a `Record` key

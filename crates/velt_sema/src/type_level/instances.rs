@@ -1,41 +1,23 @@
 //! Deferred types at every instantiation (#934 phase 2). A generic function's types may hold a
 //! deferred type over its type parameters (`props: PropsAccessor<T>`); lowering instantiates the
-//! function with concrete arguments and needs the reduced type there, but evaluates no types
-//! itself (`hir::Program::type_ops`). This pass carries each function's deferred types through
-//! its call sites to concrete arguments, like `record_keys::check_instantiations` carries record
-//! keys: from a generic callee to every caller (substituted), from a closure to its enclosing
-//! function, and to every function that mentions a class type whose methods are dispatched
-//! dynamically ([`crate::dispatch`]). A concrete one is reduced ([`Ctx::reduce_op`]), which
-//! reports what can't be evaluated at that instantiation; struct, class and object types are
+//! function with concrete arguments and needs the reduced type there, but evaluates no types itself
+//! (`hir::Program::type_ops`). This pass carries each function's deferred types through its call
+//! sites to concrete arguments, like `record_keys::check_instantiations` carries record keys: from
+//! a generic definition to every instantiation site (substituted; calls, function values, `new` and
+//! generic methods called through a type parameter: [`crate::inst_sites`]), from a closure to its
+//! enclosing function, and to every function that mentions a class type whose methods are
+//! dispatched dynamically ([`crate::dispatch`]). A concrete one is reduced ([`Ctx::reduce_op`]),
+//! which reports what can't be evaluated at that instantiation; struct, class and object types are
 //! walked through their fields, so a field of a deferred type is reduced too.
 
 use std::collections::{HashMap, HashSet};
 
-use velt_common::Span;
-
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{Dispatch, Rounds};
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
+use crate::hir::{DefId, TyId, TyKind};
+use crate::inst_sites::{self, resolve_param_calls, ParamCall};
 use crate::types::{children, collect_params};
-use crate::visit;
-
-/// The types one function body mentions, and the definitions it instantiates.
-#[derive(Default)]
-struct Uses {
-    types: Vec<(TyId, Span)>,
-    calls: Vec<(DefId, Vec<TyId>, Span)>,
-    closures: Vec<DefId>,
-    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
-}
-
-impl Uses {
-    fn reads(&self) -> impl Iterator<Item = DefId> + '_ {
-        let calls = self.calls.iter().map(|(d, _, _)| *d);
-        let dyn_calls = self.dyn_calls.iter().map(|(d, _, _)| *d);
-        calls.chain(self.closures.iter().copied()).chain(dyn_calls)
-    }
-}
 
 /// Reduces every deferred type an instantiation reaches. Nothing to do (and no cost) in a
 /// program without deferred types.
@@ -43,7 +25,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
     if cx.type_level.op_sites.is_empty() {
         return;
     }
-    let mut uses = collect(cx);
+    let mut uses = inst_sites::collect(cx, true);
     let mut dispatch = Dispatch::default();
     for (_, u) in &mut uses {
         for (t, span) in &u.types {
@@ -59,18 +41,25 @@ pub(crate) fn reach(cx: &mut Ctx) {
     let mut rounds = Rounds::new(uses.len(), reads);
     // The generic deferred types each function's instances need.
     let mut needs: HashMap<DefId, Vec<TyId>> = HashMap::new();
+    // The param calls whose receiver is generic in each function.
+    let mut pneeds: HashMap<DefId, Vec<ParamCall>> = HashMap::new();
     // Concrete deferred types reduced so far.
     let mut reduced: HashSet<TyId> = HashSet::new();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         let mut found: Vec<TyId> = vec![];
+        let mut pending: Vec<ParamCall> = u.param_calls.iter().map(|(p, _)| p.clone()).collect();
         for (d, targs, _) in &u.calls {
             for k in needs.get(d).into_iter().flatten() {
                 found.push(at(cx, *k, targs));
             }
+            for p in pneeds.get(d).into_iter().flatten() {
+                pending.push(p.subst(cx, targs));
+            }
         }
         for c in &u.closures {
             found.extend(needs.get(c).into_iter().flatten().copied());
+            pending.extend(pneeds.get(c).into_iter().flatten().cloned());
         }
         for (m, args, _) in &u.dyn_calls {
             for k in needs.get(m).into_iter().flatten() {
@@ -80,12 +69,29 @@ pub(crate) fn reach(cx: &mut Ctx) {
                     found.push(at(cx, *k, args));
                 }
             }
+            for p in pneeds.get(m).into_iter().flatten() {
+                pending.extend(p.instantiate(cx, args));
+            }
+        }
+        let generic = resolve_param_calls(cx, &mut rounds, i, pending, &mut |cx, m, args| {
+            for k in needs.get(&m).into_iter().flatten() {
+                found.push(at(cx, *k, args));
+            }
+            let ps = pneeds.get(&m).into_iter().flatten();
+            ps.map(|p| p.subst(cx, args)).collect()
+        });
+        let mut grew = false;
+        for p in generic {
+            let n = pneeds.entry(*f).or_default();
+            if !n.contains(&p) {
+                n.push(p);
+                grew = true;
+            }
         }
         let mut walked = HashSet::new();
         for (t, _) in &u.types {
             ops_in(cx, *t, &mut walked, &mut found);
         }
-        let mut grew = false;
         while let Some(k) = found.pop() {
             if has_params(cx, k) {
                 let n = needs.entry(*f).or_default();
@@ -160,46 +166,4 @@ fn member_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
         DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
         _ => vec![],
     }
-}
-
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
-    let mut out = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
-        let Some(Def::Fn(f)) = d else { continue };
-        let mut u = Uses::default();
-        let mut seen: HashSet<TyId> = HashSet::new();
-        let span = f.body.block.span;
-        for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
-            if seen.insert(t) {
-                u.types.push((t, span));
-            }
-        }
-        for l in &f.body.locals {
-            if seen.insert(l.ty) {
-                u.types.push((l.ty, l.span));
-            }
-        }
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            if seen.insert(e.ty) {
-                u.types.push((e.ty, e.span));
-            }
-            match &e.kind {
-                E::Call {
-                    callee: Callee::Def(d, targs),
-                    ..
-                } if !targs.is_empty() => {
-                    for t in targs {
-                        if seen.insert(*t) {
-                            u.types.push((*t, e.span));
-                        }
-                    }
-                    u.calls.push((*d, targs.clone(), e.span));
-                }
-                E::Closure(c) => u.closures.push(*c),
-                _ => {}
-            }
-        });
-        out.push((DefId(i as u32), u));
-    }
-    out
 }

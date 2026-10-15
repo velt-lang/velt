@@ -1042,9 +1042,11 @@ console.log(getters.getName(), key, n); // Ann age 42
 (`function f<T>(x: T): Getters<T>`, a generic class's or interface's field `props:
 PropsAccessor<TProps>`) stays unevaluated, as in TypeScript, and is evaluated once the type
 arguments are known: at a call, at `new`, and for every instantiation the program reaches. In the
-generic body such a type relates only to itself: a value of it can be stored, passed and returned,
-but reading a field of it, or assigning anything else to it, is an error (TypeScript: TS2339,
-TS2322).
+generic body a value of such a type can be stored, passed and returned as that same type. Reading
+a field of it, assigning it to another type, or assigning anything else to it is not supported yet
+in the generic body, even where TypeScript allows it (`return x` from `x: T` into
+`PropsAccessor<T>`, `const s: string = t` for `t: IsString<T>`, `t.length`): it reports an error.
+Where TypeScript rejects such code too (TS2322, TS2339), the error is the same.
 
 ```ts
 type PropsAccessor<P> = { readonly [K in keyof P]: P[K] };

@@ -47,6 +47,7 @@ mod hooks;
 pub mod ide;
 mod index_signatures;
 mod infer;
+mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
 mod intersections;
