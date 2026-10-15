@@ -9,6 +9,7 @@
 //! | 1 | `AnyTruthy`: `(data: ptr) -> bool` |
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
+//! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -24,17 +25,18 @@ use crate::vir::{
 
 pub(super) const SLOT_TAG: i128 = 0;
 const SLOT_TRUTHY: i128 = 1;
-const SLOT_SAME: i128 = 2;
-const SLOT_NUMBER: i128 = 3;
+pub(super) const SLOT_SAME: i128 = 2;
+pub(super) const SLOT_NUMBER: i128 = 3;
+pub(super) const SLOT_HASH: i128 = 4;
 
 pub(super) const TAG_UNDEFINED: u64 = 0;
-const TAG_NULL: u64 = 1;
-const TAG_BOOLEAN: u64 = 2;
-const TAG_NUMBER: u64 = 3;
-const TAG_STRING: u64 = 4;
+pub(super) const TAG_NULL: u64 = 1;
+pub(super) const TAG_BOOLEAN: u64 = 2;
+pub(super) const TAG_NUMBER: u64 = 3;
+pub(super) const TAG_STRING: u64 = 4;
 const TAG_SYMBOL: u64 = 5;
 const TAG_FUNCTION: u64 = 6;
-const TAG_OBJECT: u64 = 7;
+pub(super) const TAG_OBJECT: u64 = 7;
 
 /// `typeof` text of each tag.
 const TYPEOF: [&str; 8] = [
@@ -119,6 +121,10 @@ impl Cx<'_> {
                 SLOT_SAME,
                 Const::Func(self.func(Work::Glue(Glue::AnySame, ty))),
             ),
+            (
+                SLOT_HASH,
+                Const::Func(self.func(Work::Glue(Glue::AnyHash, ty))),
+            ),
         ];
         if matches!(
             self.types.kind(ty),
@@ -135,7 +141,7 @@ impl Cx<'_> {
 
 impl FnLower<'_, '_> {
     /// The value of concrete type `ty` an `any`'s data pointer `data` stands for.
-    fn any_value_place(&mut self, data: vir::Local, ty: TyId) -> Place {
+    pub(super) fn any_value_place(&mut self, data: vir::Local, ty: TyId) -> Place {
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
             Place::local(data)
         } else {
@@ -268,7 +274,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `(data, descriptor)` of the `any` operand `v`.
-    fn any_parts(&mut self, v: Operand, ty: TyId) -> (Operand, Operand) {
+    pub(super) fn any_parts(&mut self, v: Operand, ty: TyId) -> (Operand, Operand) {
         let p = self.place_of(v, ty);
         (
             Operand::Copy(proj(&p, Proj::Field(0))),
@@ -277,7 +283,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The tag word of descriptor `desc`.
-    fn any_tag_of(&mut self, desc: Operand) -> Operand {
+    pub(super) fn any_tag_of(&mut self, desc: Operand) -> Operand {
         let off = cint(8 * (SLOT_TAG + 7), Ty::U64);
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, desc, off));
         let pp = self.operand_place(p, Ty::Ptr);
@@ -288,7 +294,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Call descriptor slot `slot` of `desc` with `args`.
-    fn any_slot_call(&mut self, desc: Operand, slot: i128, args: Vec<Operand>, ret: Ty) -> Operand {
+    pub(super) fn any_slot_call(
+        &mut self,
+        desc: Operand,
+        slot: i128,
+        args: Vec<Operand>,
+        ret: Ty,
+    ) -> Operand {
         let f = self.dispatch(desc, slot);
         let params = vec![Ty::Ptr; args.len()];
         let out = Place::local(self.temp(ret));
@@ -299,6 +311,14 @@ impl FnLower<'_, '_> {
         };
         self.call(callee, args, Some(out.clone()), false);
         Operand::Copy(out)
+    }
+
+    /// Does the `any` at `p` hold anything but `undefined`?
+    pub(super) fn any_defined(&mut self, p: &Place) -> Operand {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc);
+        let undef = cint(TAG_UNDEFINED as i128, Ty::U64);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, tag, undef))
     }
 
     /// Does the `any` at `p` hold a string?
@@ -345,140 +365,6 @@ impl FnLower<'_, '_> {
         let v = self.expr(a);
         let (data, desc) = self.any_parts(v, t);
         self.any_slot_call(desc, SLOT_TRUTHY, vec![data], Ty::Bool)
-    }
-
-    /// `a === b` (`loose`: `a == b`) of two `any`s.
-    pub(super) fn any_eq(&mut self, a: &hir::Expr, b: &hir::Expr, loose: bool) -> Operand {
-        let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
-        let va = self.expr(a);
-        let vb = self.expr(b);
-        let (da, xa) = self.any_parts(va, ta);
-        let (db, xb) = self.any_parts(vb, tb);
-        let out = Place::local(self.temp(Ty::Bool));
-        let done = self.new_block();
-        let set = |lw: &mut Self, v: Operand| {
-            lw.assign(out.clone(), Rvalue::Use(v));
-            lw.goto(done);
-        };
-        // The same type: the type's own `===`.
-        let same_ty = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, xa.clone(), xb.clone()));
-        let (same_bb, other_bb) = (self.new_block(), self.new_block());
-        self.branch(same_ty, same_bb, other_bb);
-        self.switch_to(same_bb);
-        let r = self.any_slot_call(
-            xa.clone(),
-            SLOT_SAME,
-            vec![da.clone(), db.clone()],
-            Ty::Bool,
-        );
-        set(self, r);
-        // Different types: one object seen through two static types (a class and its base,
-        // an interface value) is itself; numbers of two widths compare by value; `==` also
-        // converts.
-        self.switch_to(other_bb);
-        let tag_a = self.any_tag_of(xa.clone());
-        let tag_b = self.any_tag_of(xb.clone());
-        let obj = cint(TAG_OBJECT as i128, Ty::U64);
-        let a_obj = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, tag_a.clone(), obj.clone()),
-        );
-        let b_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag_b.clone(), obj));
-        let objs = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::BitAnd, a_obj.clone(), b_obj.clone()),
-        );
-        let (objs_bb, not_objs_bb) = (self.new_block(), self.new_block());
-        self.branch(objs, objs_bb, not_objs_bb);
-        self.switch_to(objs_bb);
-        let r = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, da.clone(), db.clone()));
-        set(self, r);
-        self.switch_to(not_objs_bb);
-        let num = cint(TAG_NUMBER as i128, Ty::U64);
-        let a_num = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, tag_a.clone(), num.clone()),
-        );
-        let b_num = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag_b.clone(), num));
-        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_num, b_num));
-        let (nums_bb, rest_bb) = (self.new_block(), self.new_block());
-        self.branch(both, nums_bb, rest_bb);
-        self.switch_to(nums_bb);
-        let r = self.any_numbers_equal(&da, &xa, &db, &xb);
-        set(self, r);
-        self.switch_to(rest_bb);
-        if !loose {
-            set(self, Operand::Const(Const::Bool(false), Ty::Bool));
-        } else {
-            // `null == undefined`; a nothing equals nothing else.
-            let one = cint(TAG_NULL as i128, Ty::U64);
-            let a_nil = self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::Le, tag_a.clone(), one.clone()),
-            );
-            let b_nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag_b.clone(), one));
-            let any_nil = self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::BitOr, a_nil.clone(), b_nil.clone()),
-            );
-            let (nil_bb, prim_bb) = (self.new_block(), self.new_block());
-            self.branch(any_nil, nil_bb, prim_bb);
-            self.switch_to(nil_bb);
-            let r = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_nil, b_nil));
-            set(self, r);
-            // Booleans, numbers and strings of different types: compared as numbers.
-            self.switch_to(prim_bb);
-            let a_p = self.any_tag_primitive(&tag_a);
-            let b_p = self.any_tag_primitive(&tag_b);
-            let prims = self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::BitAnd, a_p.clone(), b_p.clone()),
-            );
-            let (conv_bb, no_bb) = (self.new_block(), self.new_block());
-            self.branch(prims, conv_bb, no_bb);
-            self.switch_to(conv_bb);
-            let r = self.any_numbers_equal(&da, &xa, &db, &xb);
-            set(self, r);
-            // An object and a boolean, number or string: JavaScript converts the object with
-            // `ToPrimitive` (`[] == 0` is `true`), which is not there yet: stop rather than
-            // answer `false`.
-            self.switch_to(no_bb);
-            let a_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, a_obj, b_p));
-            let b_case = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, b_obj, a_p));
-            let mixed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, a_case, b_case));
-            let (mixed_bb, false_bb) = (self.new_block(), self.new_block());
-            self.branch(mixed, mixed_bb, false_bb);
-            self.switch_to(mixed_bb);
-            self.panic_msg(
-                "TypeError: `==` between an object and a boolean, number or string is not supported yet (#924); compare with `===`, or convert the object first",
-            );
-            self.terminate(Terminator::Unreachable);
-            self.switch_to(false_bb);
-            set(self, Operand::Const(Const::Bool(false), Ty::Bool));
-        }
-        self.switch_to(done);
-        Operand::Copy(out)
-    }
-
-    /// Is `tag` a boolean, number or string?
-    fn any_tag_primitive(&mut self, tag: &Operand) -> Operand {
-        let lo = cint(TAG_BOOLEAN as i128, Ty::U64);
-        let hi = cint(TAG_STRING as i128, Ty::U64);
-        let ge = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ge, tag.clone(), lo));
-        let le = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag.clone(), hi));
-        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ge, le))
-    }
-
-    fn any_numbers_equal(
-        &mut self,
-        da: &Operand,
-        xa: &Operand,
-        db: &Operand,
-        xb: &Operand,
-    ) -> Operand {
-        let x = self.any_slot_call(xa.clone(), SLOT_NUMBER, vec![da.clone()], Ty::F64);
-        let y = self.any_slot_call(xb.clone(), SLOT_NUMBER, vec![db.clone()], Ty::F64);
-        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
     }
 
     /// `AnyTo`: the value of type `ty` the owned `any` `a` holds, or a `TypeError`.

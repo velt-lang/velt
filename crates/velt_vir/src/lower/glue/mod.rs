@@ -98,6 +98,7 @@ pub(crate) enum Glue {
     AnyTruthy,
     AnySame,
     AnyNumber,
+    AnyHash,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -147,6 +148,7 @@ impl Glue {
             Glue::AnyTruthy => "anytruthy",
             Glue::AnySame => "anysame",
             Glue::AnyNumber => "anynumber",
+            Glue::AnyHash => "anyhash",
         }
     }
 
@@ -179,6 +181,7 @@ impl Glue {
             Glue::AnyTruthy => (vec![Ptr], Bool),
             Glue::AnySame => (vec![Ptr, Ptr], Bool),
             Glue::AnyNumber => (vec![Ptr], F64),
+            Glue::AnyHash => (vec![Ptr], U64),
         }
     }
 }
@@ -225,6 +228,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyTruthy => lw.any_truthy_body(args[0], ty),
             Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
             Glue::AnyNumber => lw.any_number_body(args[0], ty),
+            Glue::AnyHash => lw.any_hash_body(args[0], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

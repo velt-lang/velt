@@ -637,9 +637,17 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 - The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
-  object), and at slots 1 to 3 the glue `AnyTruthy (data) -> bool`, `AnySame (a, b) -> bool`
-  and `AnyNumber (data) -> f64` (booleans, numbers and strings). Tables are memoized per
-  concrete type, so equal tables mean equal types.
+  object), and at slots 1 to 4 the glue `AnyTruthy (data) -> bool`, `AnySame (a, b) -> bool`,
+  `AnyNumber (data) -> f64` (booleans, numbers and strings) and `AnyHash (data) -> u64` (agrees
+  with SameValueZero: numbers of every width hash their value as a float). Tables are memoized
+  per concrete type, so equal tables mean equal types. `===` / `Intrinsic::Same` and
+  `Intrinsic::Eq` / `Intrinsic::Hash` on a dynamic type (generic code, `Set` / `Map` keys)
+  compare the values held, as `AnyStrictEq` does (keys: numbers by SameValueZero).
+- An enum without payloads is boxed as its value (`Match` over its members, each boxing its
+  number or string), and an `AnyTo` an enum is a chain of `AnyStrictEq` tests against those
+  values (a `TypeError` when none matches). An optional field `q?: any` has the type `any`
+  itself (not `any | null`) and its default is the dynamic `undefined`; printing leaves it out
+  while it holds `undefined`.
 - `Intrinsic::AnyTo` converts out (assignment, argument, return, `as T`; an `unknown` only
   with `as T` or after narrowing), checked at run time: the table must be `T`'s (a class
   without type arguments: the class id is `T` or a subclass; a generic class: that

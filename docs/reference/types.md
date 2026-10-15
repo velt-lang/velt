@@ -1520,7 +1520,12 @@ converted (a class instance through its base class, an interface value, a functi
 twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
-give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored.
+give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
+a left-out optional field `q?: any` holds `undefined`. An enum value is its number or string
+in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
+value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
+`a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
+itself, `-0` is `0`), objects by identity.
 Differences from Node: `null` and `undefined` converted to `T | null` both give `null`
 (a `T | null` has no `undefined`; convert to `T | undefined` to keep it); `==` between an
 object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object

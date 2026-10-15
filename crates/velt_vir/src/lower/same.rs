@@ -15,6 +15,10 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
+        if self.cx.is_dynamic(ty) {
+            return self.any_same_places(a, b, false);
+        }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
             // copied: no fact (one would box them).

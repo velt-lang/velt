@@ -81,6 +81,32 @@ impl Ctx<'_> {
         self.dynamic(t).is_some()
     }
 
+    /// The dynamic `undefined` as an `exp` (`any` / `unknown`): what a left-out `q?: any`
+    /// field holds.
+    pub(crate) fn dynamic_undefined(
+        &mut self,
+        exp: TyId,
+        span: velt_common::Span,
+    ) -> Option<crate::hir::Expr> {
+        use crate::hir::{Expr, ExprKind, Lit};
+        let impl_index = self.any_impl()?;
+        let ty = self.dynamic_nothing_ty(Nothing::Undefined);
+        let null = Expr {
+            kind: ExprKind::Lit(Lit::Null),
+            ty,
+            span,
+        };
+        let kind = ExprKind::ToDyn {
+            expr: Box::new(null),
+            impl_index,
+        };
+        Some(Expr {
+            kind,
+            ty: exp,
+            span,
+        })
+    }
+
     /// The type of the value a dynamic `null` (`Nothing::Null`) or `undefined` holds:
     /// `boolean | null` / `boolean | undefined`, whose nothing it is.
     pub(crate) fn dynamic_nothing_ty(&mut self, n: Nothing) -> TyId {
