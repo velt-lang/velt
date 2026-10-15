@@ -27,6 +27,11 @@ pub trait PackageResolver {
         let _ = importer;
         None
     }
+
+    /// The build's `define` constants (name → literal source), from the root package.
+    fn defines(&self) -> std::collections::BTreeMap<String, String> {
+        Default::default()
+    }
 }
 
 impl PackageResolver for vpm::PackageGraph {
@@ -40,6 +45,10 @@ impl PackageResolver for vpm::PackageGraph {
 
     fn jsx_import_source(&self, importer: &Path) -> Option<String> {
         vpm::PackageGraph::jsx_import_source(self, importer)
+    }
+
+    fn defines(&self) -> std::collections::BTreeMap<String, String> {
+        vpm::PackageGraph::defines(self)
     }
 }
 

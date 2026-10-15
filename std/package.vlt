@@ -37,6 +37,11 @@ export type Package = {
   paths?: Record<string, string>;
   /// How the package's modules compile JSX.
   jsx?: Jsx;
+  /// Build-time constants, as Vite's `define`: `{ __DEV__: "false" }`. Each value is the source
+  /// of a literal (`true`, `false`, `null`, a number, or a quoted string such as `"\"1.0\""`);
+  /// every use of the name as a value is that literal, so `if (__DEV__)` branches fold. Only the
+  /// root package's apply.
+  define?: Record<string, string>;
   /// A Rust crate in the package, built into a native library.
   native?: Native;
   /// Folders whose modules stay valid TypeScript too, such as `["src/components", "src/models"]`:

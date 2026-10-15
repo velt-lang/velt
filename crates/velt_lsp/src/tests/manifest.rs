@@ -71,6 +71,7 @@ fn completion_and_hover_come_from_the_schema() {
             "registry",
             "paths",
             "jsx",
+            "define",
             "tsCompat"
         ]
     );

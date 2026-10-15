@@ -61,11 +61,20 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             "invalid module specifier `{spec}` (use `./relative/path`, `velt:x` or a package name)"
         ));
     }
-    let (name, sub) = match spec.split_once('/') {
-        Some((n, s)) => (n, Some(s.to_string())),
-        None => (spec, None),
+    // A scoped name (`@scope/name`) spans two segments, as in npm.
+    let name_end = match spec.strip_prefix('@').and_then(|rest| rest.find('/')) {
+        Some(slash) => {
+            let after = &spec[slash + 2..];
+            slash + 2 + after.find('/').unwrap_or(after.len())
+        }
+        None => spec.find('/').unwrap_or(spec.len()),
     };
-    if !vpm::manifest::is_valid_package_name(name) {
+    let name = &spec[..name_end];
+    let sub = spec
+        .get(name_end..)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .map(str::to_string);
+    if !vpm::manifest::is_valid_dependency_name(name) {
         return Err(format!(
             "invalid package name `{name}` in module specifier `{spec}`"
         ));
@@ -195,6 +204,20 @@ mod tests {
             }
         );
         assert_eq!(
+            resolve_spec("@sigx/reactivity/internals", dir).unwrap(),
+            ModuleRef::Package {
+                name: "@sigx/reactivity".into(),
+                sub: Some("internals".into())
+            }
+        );
+        assert_eq!(
+            resolve_spec("@sigx/reactivity", dir).unwrap(),
+            ModuleRef::Package {
+                name: "@sigx/reactivity".into(),
+                sub: None
+            }
+        );
+        assert_eq!(
             resolve_spec("http/client", dir).unwrap(),
             ModuleRef::Package {
                 name: "http".into(),
@@ -218,6 +241,9 @@ mod tests {
             "pkg/../x",
             "pkg/x.vlt",
             "pkg/x.ts",
+            "@sigx",
+            "@sigx/",
+            "@Sigx/x",
         ] {
             assert!(
                 resolve_spec(bad, dir).is_err(),

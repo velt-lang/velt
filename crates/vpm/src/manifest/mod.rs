@@ -72,6 +72,11 @@ pub struct Manifest {
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
+    /// `define`: build-time constants, name → the source of a literal (`"false"`,
+    /// `"\"1.0.1\""`), as Vite's `define`: every use of the name as a value in the build's
+    /// modules is that literal ([`define_literal`]). Only the root package's apply.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub define: BTreeMap<String, String>,
     /// `tsCompat`: folders, relative to the package root, whose modules stay in the
     /// TypeScript/Velt common subset (`velt check --ts-compat` and the language server lint
     /// them; docs/internals/design/tsx.md). `/`-separated, inside the package, none inside
@@ -357,6 +362,9 @@ fn check_keyword(word: &str) -> Result<(), String> {
 }
 
 pub(crate) fn check_name(name: &str) -> Result<(), String> {
+    if name.starts_with('@') {
+        return check_scoped_name(name, "package name");
+    }
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
     }
@@ -397,6 +405,9 @@ fn check_import_source(source: &str) -> Result<(), String> {
 }
 
 fn check_dependency_name(name: &str) -> Result<(), String> {
+    if name.starts_with('@') {
+        return check_scoped_name(name, "dependency name");
+    }
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
     }
@@ -418,6 +429,11 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
 pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
     if dep.version().is_none() && dep.path().is_none() {
         return Err(format!("dependency `{name}` needs a `version` or a `path`"));
+    }
+    if split_scoped(name).is_some() && dep.path().is_none() {
+        return Err(format!(
+            "dependency `{name}` needs a `path`: registries hold unscoped packages only"
+        ));
     }
     if let Some(req) = dep.version() {
         semver::VersionReq::parse(req).map_err(|e| {
@@ -463,6 +479,102 @@ fn check_native_wasm(wasm: bool) -> Result<(), String> {
         Err("is not supported yet: packages with native code cannot target WebAssembly".into())
     } else {
         Ok(())
+    }
+}
+
+/// The literal a `define` value stands for: `true`, `false`, `null`, a non-negative number, or
+/// a string literal in double or single quotes (`"\"1.0.1\""`, `"'prod'"`). Like Vite's
+/// `define`, the value is the source of an expression; only literals are supported.
+pub fn define_literal(text: &str) -> Result<velt_syntax::ast::Lit, String> {
+    use velt_syntax::ast::Lit;
+    let t = text.trim();
+    let bad = || {
+        format!(
+            "`{text}` is not a literal: write `true`, `false`, `null`, a number, or a quoted string such as `\"\\\"1.0\\\"\"`"
+        )
+    };
+    match t {
+        "true" => return Ok(Lit::Bool(true)),
+        "false" => return Ok(Lit::Bool(false)),
+        "null" => return Ok(Lit::Null),
+        _ => {}
+    }
+    if t.starts_with('"') {
+        return serde_json::from_str::<String>(t)
+            .map(Lit::Str)
+            .map_err(|_| bad());
+    }
+    if let Some(inner) = t.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        if inner.contains(['\'', '\\']) {
+            return Err(bad());
+        }
+        return Ok(Lit::Str(inner.to_string()));
+    }
+    if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(value) = t.parse::<u128>() {
+            return Ok(Lit::Int {
+                value,
+                suffix: None,
+            });
+        }
+    }
+    if t.starts_with(|c: char| c.is_ascii_digit()) {
+        if let Ok(value) = t.parse::<f64>() {
+            if value.is_finite() {
+                return Ok(Lit::Float {
+                    value,
+                    suffix: None,
+                });
+            }
+        }
+    }
+    Err(bad())
+}
+
+/// Whether `name` is an identifier a `define` can replace (`__DEV__`, `$x`).
+pub fn is_define_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+/// A scoped name's scope and name (`@sigx/reactivity` → (`sigx`, `reactivity`)), as npm writes
+/// them; `None` for an unscoped name.
+pub fn split_scoped(name: &str) -> Option<(&str, &str)> {
+    name.strip_prefix('@')?.split_once('/')
+}
+
+/// Whether `name` may name a package in `package.vlt` (`name` and `dependencies`): a valid
+/// [package name](is_valid_package_name), or a scoped one, `@scope/name`, whose two parts are
+/// lowercase words like a package name's. Registries hold unscoped packages only, so a scoped
+/// package is a local (`path`) dependency.
+pub fn is_valid_dependency_name(name: &str) -> bool {
+    match split_scoped(name) {
+        Some((scope, rest)) => is_valid_scope_part(scope) && is_valid_scope_part(rest),
+        None => is_valid_package_name(name),
+    }
+}
+
+/// One part of a scoped name: lowercase letters and digits starting with one, words joined by
+/// single `-` or `_`, not a Windows device name (each part is a directory in `node_modules`).
+fn is_valid_scope_part(part: &str) -> bool {
+    let mut chars = part.chars();
+    !is_windows_device_name(part)
+        && name_separators_ok(part)
+        && matches!(chars.next(), Some('a'..='z' | '0'..='9'))
+        && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
+}
+
+/// The message names the value, not the field: callers prefix it.
+fn check_scoped_name(name: &str, what: &str) -> Result<(), String> {
+    if is_valid_dependency_name(name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid scoped {what} `{name}` (`@scope/name`, each part lowercase letters and digits with single `-` or `_` between words)"
+        ))
     }
 }
 

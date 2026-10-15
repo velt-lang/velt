@@ -50,6 +50,13 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
             .map(|s| format!("importSource: {}", string_lit(s)));
         fields.push(format!("jsx: {}", inline_object(source)));
     }
+    if !m.define.is_empty() {
+        let defines = m
+            .define
+            .iter()
+            .map(|(name, value)| format!("{}: {}", key(name), string_lit(value)));
+        fields.push(format!("define: {}", multiline_object(defines)));
+    }
     if let Some(native) = &m.native {
         let mut parts = Vec::new();
         if native.path != DEFAULT_NATIVE_PATH {
@@ -120,6 +127,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             o.insert("importSource".into(), json!(source));
         }
         out.insert("jsx".into(), Value::Object(o));
+    }
+    if !m.define.is_empty() {
+        out.insert("define".into(), json!(m.define));
     }
     if let Some(native) = &m.native {
         out.insert(
