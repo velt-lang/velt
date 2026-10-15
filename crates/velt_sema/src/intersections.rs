@@ -43,6 +43,9 @@ impl Ctx<'_> {
             }
             operands.push((ty, p.span));
         }
+        if let Some(t) = self.literal_meet(&operands, t.span) {
+            return t;
+        }
         // A primitive with object types is a branded type.
         let bases: Vec<usize> = (0..operands.len())
             .filter(|&i| self.brandable(operands[i].0))
@@ -187,7 +190,13 @@ impl Ctx<'_> {
     }
 
     /// The intersection of `a` and `b`; `Err` says why no value has both types.
-    fn meet(&mut self, a: TyId, b: TyId, module: usize, depth: u32) -> Result<TyId, String> {
+    pub(crate) fn meet(
+        &mut self,
+        a: TyId,
+        b: TyId,
+        module: usize,
+        depth: u32,
+    ) -> Result<TyId, String> {
         if a == b {
             return Ok(a);
         }

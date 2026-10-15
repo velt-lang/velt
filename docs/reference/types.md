@@ -957,7 +957,8 @@ error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function
 default parameter is not supported yet (#936).
 
 `keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
-string }` is `"a" | "b"`), and on a `Record` with literal keys it is the key type.
+string }` is `"a" | "b"`; a key a mapped type made from a number literal stays that number:
+`keyof { [K in 1 | 2]: K }` is `1 | 2`), and on a `Record` with literal keys it is the key type.
 
 ```ts
 const DEFAULTS = { host: "localhost", port: 8080 };
@@ -988,6 +989,58 @@ function value; `typeof import("./m")`; type arguments after the name (`typeof f
 fields and methods); `keyof` of a class, of a type parameter (#350) and of a string-keyed `Record`
 (TypeScript's `string | number`). A local's type is its declared type: TypeScript's `typeof x`
 sees a narrowing (`if (x !== null)`) that Velt's doesn't.
+
+### Conditional, mapped and template literal types
+
+TypeScript's type-level forms work as in TypeScript where their type arguments are known: an
+alias like `type Getters<T> = …` is evaluated at each use (`Getters<User>`), at compile time, and
+the result is an ordinary object type, union or literal type.
+
+- **Conditional types** `C extends E ? T : F`: `C` is tested for assignability to `E`
+  (structurally for object types). When `C` is a type parameter written alone, the test is made
+  for each member of a union (`boolean` is `true | false`; `never` gives `never`);
+  `[C] extends [E]` tests the whole type. As with `--strict`, function parameters are compared
+  contravariantly, an optional field does not fill a required one, an object type whose fields
+  are all optional takes only an object type with none of its own or one field in common (`{ b: 1 }
+  extends { a?: 1 }` is false), `{}` takes any value but `null` and `undefined`, and number
+  literals compare by value (`1` and `1.0` are one type). Two `Record`s relate by their type
+  arguments (the key the other way round), else by their fields: `Record<"a" | "b", 1>` extends
+  `Record<string, number>`.
+  `infer X` in `E` names the part of `C` it stands for: in a generic type, an object type's field,
+  a function type, a tuple, or a template literal pattern. An `infer` that finds nothing is
+  TypeScript's `unknown`, which Velt supports only as `NonNullable<X>` (`{}`). An `infer X` in
+  several function parameters finds their intersection.
+- **Mapped types** `{ readonly [K in S as N]?: V }`: one field per key of the literal union `S`.
+  Over `keyof X`, each field keeps `X`'s `?` and `readonly` unless `+`, `-` or a modifier says
+  otherwise; `-?` also removes `undefined` from the field's type. `as N` renames a key, and a key
+  renamed to `never` is dropped; keys renamed alike have the union of the values. A number literal
+  key stays a number. With `keyof T` for a type parameter `T`, a union argument gives the union of
+  each member's mapped type. Inside these forms, `T[K]` of an optional field is
+  `F | undefined`, as TypeScript reads it.
+- **Template literal types** `` `on${K}` ``: the union of the strings they spell, with
+  `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`; after `extends` they are patterns
+  (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
+  is `"true" | "false"`, and a hole of literal types each of them spelled out
+  (`` `${boolean}x` `` is `"truex" | "falsex"`).
+- `NonNullable<T>`, `Exclude<T, U>` and `Extract<T, U>`; `string & K` with `K` a string literal
+  type is `K`; `keyof` of a union is the keys its members share.
+
+```ts
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+type OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
+type Unbox<T> = T extends { value: infer V } ? V : never;
+
+type User = { name: string; age?: number };
+const getters: Getters<User> = { getName: () => "Ann", getAge: () => 36 };
+const key: OptionalKeys<User> = "age";
+const n: Unbox<{ value: number }> = 42;
+console.log(getters.getName(), key, n); // Ann age 42
+```
+
+Not supported yet (each is an error): these forms with an argument that is still a type parameter
+(`function f<T>(x: T): Getters<T>`, a generic class's or interface's field of such a type), which
+TypeScript keeps unevaluated until it is known; a mapped type over an array or tuple type, or over
+`string`; a template literal type with a `string` or `number` hole outside a pattern.
 
 ## Enums
 
