@@ -55,6 +55,7 @@ mod json;
 mod known;
 mod literals;
 mod moves;
+mod nested_closures;
 mod object_copies;
 mod overloads;
 mod ownership;
@@ -186,6 +187,8 @@ fn check_on_current_thread(
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let closures = nested_closures::rewrite(modules);
+    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
@@ -203,6 +206,10 @@ fn check_on_current_thread(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.diags.extend(merge_diags.iter().cloned());
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
+        }
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);

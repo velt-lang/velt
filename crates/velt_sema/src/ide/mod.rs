@@ -93,6 +93,8 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = crate::overloads::rewrite(modules);
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
+    let closures = crate::nested_closures::rewrite(modules);
+    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let new_cx = |held_borrows: bool| {
         let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
         cx.stack_budget = stack_budget;
@@ -104,6 +106,10 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         if let Some(o) = &overloaded {
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
+        }
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
         }
         cx.ide = Some(Box::default());
         if !modules.is_empty() {

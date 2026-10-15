@@ -1,0 +1,28 @@
+// Not supported yet: a capturing nested function that calls itself, or one used before a
+// local it uses is declared.
+function walk(root: number): number {
+  const limit = root;
+  function down(n: number): number {
+    return n >= limit ? n : down(n + 1);
+  }
+  function ping(n: number): number {
+    return n > limit ? n : pong(n + 1);
+  }
+  function pong(n: number): number {
+    return ping(n * 2);
+  }
+  return down(0) + ping(1);
+}
+
+function early(): number {
+  const later = () => twice(); // runs after `k` is set: fine in JS
+  const k = 2;
+  function twice(): number {
+    return k * 2;
+  }
+  return later();
+}
+
+function main() {
+  console.log(walk(3), early());
+}

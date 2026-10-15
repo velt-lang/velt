@@ -1,0 +1,5 @@
+nested_closure_unsupported.vlt:5:12: error: `down` uses local variables of the enclosing function and calls itself: not supported yet
+pass the locals it uses as parameters, or declare it at module level
+nested_closure_unsupported.vlt:8:12: error: `ping` uses local variables of the enclosing function and calls itself through `pong`: not supported yet
+nested_closure_unsupported.vlt:11:12: error: `pong` uses local variables of the enclosing function and calls itself through `ping`: not supported yet
+nested_closure_unsupported.vlt:20:12: error: `twice` is used before `k`, a local it uses, is declared: not supported yet

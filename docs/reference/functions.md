@@ -50,8 +50,30 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   console.log(label(...p), label(...p, "!")); // x=4 x=4!
   ```
 - A function or method may have [overloads](#overloads) in TypeScript's form.
-- **Nested functions** may be declared inside blocks but cannot capture locals
-  (``` `x` cannot be captured by a nested function```); use an arrow function.
+- **Nested functions** may be declared inside blocks, and are hoisted to the start of their
+  block as in JS (a call before the declaration works). One that uses the enclosing function's
+  locals (or another such nested function) is a closure, with the
+  [captures](#captures) of an arrow function: it sees every later change of what it uses, may
+  assign it, and may be passed on or returned as a value. Not supported yet: such a closure
+  calling itself, directly or through other nested functions (``…calls itself: not supported
+  yet``; pass the locals it uses as parameters, or declare it at module level), and a use
+  before a local it uses is declared, which JS allows when the call runs later (declare the
+  local first). A generic nested function cannot use the enclosing function's locals.
+
+  ```ts
+  function tally(words: string[]): string {
+    const seen = new Map<string, number>();
+    let total = 0;
+    for (const w of words) add(w);   // before the declaration
+    return `${total} ${seen.get("a")}`;
+
+    function add(w: string): void {
+      seen.set(w, (seen.get(w) ?? 0) + 1);
+      total += 1;
+    }
+  }
+  console.log(tally(["a", "b", "a"])); // 3 2
+  ```
 
 ## Overloads
 
@@ -632,8 +654,8 @@ async function main() {
   type of its body or its `return`s, by the rules of [Return types](#return-types)
   (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
   level it is an ordinary generic function; in a function body it is a generic function nested
-  there, so each call instantiates it, and like any [nested function](#declarations) it cannot
-  use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
+  there, so each call instantiates it, and like any generic [nested function](#declarations) it
+  cannot use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
   a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
   anywhere else (an argument, a `let`) is an error:
 

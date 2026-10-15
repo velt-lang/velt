@@ -237,6 +237,9 @@ impl FnCx<'_, '_> {
             self.cx.not_found(msg, &id.name, id.span);
             return;
         }
+        if self.in_kept_nested() {
+            return; // reported by `nested_closures` (recursion, or a use before a local)
+        }
         if self.generic_arrow {
             self.cx.error(
                 Diagnostic::error(
@@ -256,6 +259,14 @@ impl FnCx<'_, '_> {
             .with_note("nested declarations cannot use the local variables of enclosing functions")
             .with_note("use an arrow function instead: `const f = (...) => { ... };`"),
         );
+    }
+
+    /// Checking a capturing nested function `nested_closures` reported and left a declaration.
+    fn in_kept_nested(&self) -> bool {
+        !self.cx.kept_nested.is_empty()
+            && self
+                .body_def
+                .is_some_and(|d| self.cx.kept_nested.contains(&self.cx.fn_info(d).name_span))
     }
 
     fn def_value(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>, want: Want) -> hir::Expr {
