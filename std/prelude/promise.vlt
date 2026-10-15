@@ -151,7 +151,9 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
     const here = velt_rt_task_id();
     if (here == home || here == 0 || !__intrinsic_needs_transfer(value)) {
       const v = here == home ? value : __intrinsic_transfer(value);
-      openLatch(guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v }))));
+      openLatch(
+        guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v }))),
+      );
     } else {
       const later = fulfillLater<T, E>(forResolve.clone(), guard.clone(), value);
     }
