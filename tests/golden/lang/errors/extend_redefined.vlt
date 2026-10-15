@@ -1,11 +1,31 @@
-// A subclass may not redefine a method an `extend` block gives a base class (its own method or
-// one of its own `extend` blocks): `extend` methods are not virtual yet.
-class Shape {}
+// A subclass may not redefine a member an `extend` block gives a base class (a method, an
+// accessor, a field or parameter property, or one of its own `extend` blocks), and a subclass's
+// `extend` block may not redefine a member the base declares: `extend` methods are not virtual
+// yet (#1133).
+class Shape {
+  name(): string {
+    return "shape";
+  }
+}
 
 class Square extends Shape {
   kind(): string {
     return "square";
   }
+}
+
+class Field extends Shape {
+  kind: () => string = () => "field";
+}
+
+class Param extends Shape {
+  constructor(public label: string) {
+    super();
+  }
+}
+
+class Setter extends Shape {
+  set kind(v: string) {}
 }
 
 class Tiny extends Square {}
@@ -14,11 +34,21 @@ extend Shape {
   kind(): string {
     return "shape";
   }
+
+  get label(): string {
+    return "shape";
+  }
 }
 
 extend Tiny {
   kind(): string {
     return "tiny";
+  }
+}
+
+extend Square {
+  name(): string {
+    return "square-ext";
   }
 }
 

@@ -18,6 +18,13 @@ class Square extends Shape {
 
 class Tiny extends Square {}
 
+// A static of the subclass doesn't hide an inherited `extend` instance method.
+class Named extends Shape {
+  static describe(): string {
+    return "static";
+  }
+}
+
 extend Shape {
   describe(): string {
     return `a ${this.name()}`;
@@ -27,4 +34,5 @@ extend Shape {
 function main() {
   console.log(new Square().describe(), new Tiny().describe());
   console.log(new Square().both());
+  console.log(new Named().describe(), Named.describe());
 }
