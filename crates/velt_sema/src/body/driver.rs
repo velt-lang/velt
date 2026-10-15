@@ -189,9 +189,13 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                 crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
             );
         // A constant that depends on itself stays an error (its value is never known).
-        let cycle = cx.diags[before..]
-            .iter()
-            .any(|d| d.message.contains("depends on itself"));
+        // So does one that may throw or is a promise: module state is initialized where
+        // nothing can catch or await.
+        let cycle = cx.diags[before..].iter().any(|d| {
+            ["depends on itself", "may throw", "is async"]
+                .iter()
+                .any(|m| d.message.contains(m))
+        });
         if top_level && (errors || function) && !cycle && ty != cx.ty.error {
             cx.diags.truncate(before);
             stored = true;

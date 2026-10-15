@@ -193,10 +193,8 @@ function main() {
 ```
 
 - Each element is a number or boolean literal, also negated or converted with `as`, or a module
-  constant that is one (``an element of module constant `K` is not a literal``). Strings, nested
-  arrays and objects are not tables (``only arrays of numbers or booleans can be module
-  constants``), and neither is an array inside a struct or tuple constant: create those in
-  `main` and pass them on.
+  constant that is one. Any other array constant (strings, nested arrays, objects, computed
+  elements) is not a table but [module state](#module-state), evaluated once per task.
 - Used in any other way, a table is what every module constant is: evaluated at that use, here
   to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
   in a hot loop index the table or iterate it instead of passing it along.
@@ -230,9 +228,8 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
   `spawn`, external functions). It may allocate, construct objects and create closures, as
   `component` does below: the closures it returns run later as ordinary code;
 - a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
-  object, array or class instance (``it returns a closure that keeps mutable state (`n`)``).
-  In Node the constant is one closure whose state carries over from call to call; a new
-  closure at each use would start over each time;
+  object, array or class instance. Otherwise the constant is module state, one closure whose
+  state carries over from call to call, as in Node;
 - the result is a value: a number, string, struct, tuple or enum. A function from a call is
   kept as module state, so that it is one value as in Node, and so are class instances, arrays
   and maps (a new array at each use would change what `X.push(1)` does; an array of number
@@ -269,6 +266,8 @@ function main() {
 
 A call that does not qualify makes the constant [module state](#module-state): it is
 evaluated once per task, before `main`, in module order, as Node evaluates it once at load.
+A call that may throw or is `async` stays an error (``it may throw``): nothing could catch or
+await it there.
 A function from a call is kept the same way, so it is one value wherever it goes:
 
 ```ts
