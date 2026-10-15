@@ -120,10 +120,11 @@ changed modules. Sema is now most of a reload's time (see "Measured"), so this i
 ## Decisions
 
 1. **Stable function keys**: symbols never depend on type-interning order.
-2. **Language rule: no mutable module-level state.** Module scope holds only constants,
-   functions and types; mutable shared state lives in `shared(...)` or class instances owned by
-   `main` or handlers. This is what makes swapping migration-free
-   ([the Reference](../../reference/variables.md#no-mutable-module-state)).
+2. **Module state starts over.** Module-level `let`s (#76) live in a per-task block the runtime
+   keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
+   fresh block from its own initializers, so nothing is migrated
+   ([the Reference](../../reference/variables.md#module-state)). State in `shared(...)` or
+   class instances owned by `main` or handlers carries over.
 3. **Runtime rule: no cached code pointers.** Only vtables (through relocations) and future
    headers store code addresses; the HTTP handler descriptor is replaced per server on a swap,
    and every runtime API that takes callbacks must follow the same pattern.

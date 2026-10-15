@@ -29,6 +29,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return lw.finish_export();
         };
         let f = lw.cx.fn_def(def);
+        if !f.is_async {
+            // An async `main` runs on a task of its own, whose module state it initializes on
+            // first access.
+            lw.init_module_state();
+        }
+        let f = lw.cx.fn_def(def);
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);

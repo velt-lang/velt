@@ -592,7 +592,7 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
             .init
             .as_ref()
             .is_some_and(|i| !matches!(i.kind, H::Lit(_) | H::FnRef(..)));
-        if !fresh || !identity_compared(cx, g.ty, 0) {
+        if !fresh || g.stored || !identity_compared(cx, g.ty, 0) {
             continue;
         }
         let name = g.name.clone();

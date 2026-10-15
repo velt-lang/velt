@@ -315,6 +315,45 @@ pub extern "C" fn velt_rt_task_id() -> u64 {
     1
 }
 
+/// What the compiler emits once per program with module state (velt_rt's
+/// task/local/module_state.rs).
+#[repr(C)]
+pub struct ModuleDesc {
+    pub size: u64,
+    pub align: u64,
+    pub init: unsafe extern "C" fn(*mut u8),
+    pub drop: unsafe extern "C" fn(*mut u8),
+}
+
+thread_local! {
+    /// The program's module state: one thread, and every task reports the same id
+    /// (`velt_rt_task_id`), so the tasks share one block.
+    static MODULE_STATE: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+/// The module state, allocated zeroed and initialized by `desc.init` on first access.
+///
+/// # Safety
+/// `desc` must point to the program's module descriptor.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc) -> *mut u8 {
+    let p = MODULE_STATE.with(Cell::get);
+    if !p.is_null() {
+        return p;
+    }
+    let d = &*desc;
+    let layout =
+        std::alloc::Layout::from_size_align((d.size as usize).max(1), (d.align as usize).max(1))
+            .expect("ICE: module state layout");
+    let p = std::alloc::alloc_zeroed(layout);
+    if p.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    MODULE_STATE.with(|c| c.set(p));
+    (d.init)(p);
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

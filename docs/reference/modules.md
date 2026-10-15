@@ -42,8 +42,8 @@ A program starts at `function main()` (or `async function main()`) in its root f
 a TS or JS file, at its top-level statements: when the root file has statements outside
 declarations, they run in order in a generated `main` (`async` when one of them awaits). A
 top-level `const` or `let` moves into that `main` with them, unless a function, class, struct,
-`extend` block or module constant refers to it; then it stays a module constant (with the
-rules of [module state](variables.md#no-mutable-module-state)).
+`extend` block or module constant refers to it; then it stays at module level
+([module state](variables.md#module-state)).
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant

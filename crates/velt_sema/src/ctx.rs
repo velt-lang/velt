@@ -99,6 +99,8 @@ pub(crate) struct Ctx<'m> {
     /// for because they are shared: lowering counts them from its first pass
     /// (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
+    /// Module-level `let`s in initialization order (`crate::module_state`).
+    pub module_slots: Vec<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -268,6 +270,7 @@ impl<'m> Ctx<'m> {
             laid_out: HashSet::new(),
             canon_memo: HashMap::new(),
             counted_objects: Vec::new(),
+            module_slots: Vec::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

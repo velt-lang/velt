@@ -147,7 +147,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
         BodyState::Unchecked => {}
     }
-    let (module, qual, owner) = (g.module, g.qual_name.clone(), g.src.owner);
+    let (module, qual, owner, mutable) = (g.module, g.qual_name.clone(), g.src.owner, g.mutable);
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
     let saved = std::mem::take(&mut cx.display_params);
@@ -163,6 +163,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         (None, _) => {
             let what = if owner.is_some() {
                 "static fields must be initialized"
+            } else if mutable {
+                "a module-level `let` must be initialized"
             } else {
                 "`const` declarations must be initialized"
             };
@@ -171,14 +173,31 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
-    if let Some(i) = &init {
+    let mut stored = mutable;
+    if let (Some(i), false) = (&init, mutable) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
+        let before = cx.diags.len();
         super::pure_init::check_init(cx, &name, i, ty);
+        // A module `const` that is not a constant is evaluated once per task, as Node evaluates
+        // it once (#802): kept in the module state instead of being an error. So is a function
+        // from a call, whose identity shows.
+        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let errors = cx.diags[before..].iter().any(|d| d.is_error());
+        let function = super::pure_init::has_call(i)
+            && matches!(
+                cx.ty.kind(ty),
+                crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
+            );
+        if top_level && (errors || function) {
+            cx.diags.truncate(before);
+            stored = true;
+        }
     }
     cx.display_params = saved;
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
         g.ty = ty;
         g.init = init;
+        g.stored = stored;
         g.state = BodyState::Done;
     }
 }

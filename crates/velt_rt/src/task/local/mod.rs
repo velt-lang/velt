@@ -15,6 +15,7 @@
 mod gate;
 mod losers;
 mod micro;
+mod module_state;
 mod node;
 mod set;
 mod timers;
@@ -24,6 +25,7 @@ pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
 pub use micro::velt_rt_microtask;
+pub use module_state::velt_rt_module_state;
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;
 
@@ -49,6 +51,8 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
+    /// The task's module state (none until first accessed; module_state.rs).
+    state: *mut module_state::ModState,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
@@ -145,14 +149,27 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
+/// module state.
+struct SetPtr(
+    *mut LocalSet,
+    u64,
+    Option<Arc<Timers>>,
+    u32,
+    module_state::ModState,
+);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
+    const NONE: SetPtr = SetPtr(
+        std::ptr::null_mut(),
+        0,
+        None,
+        0,
+        module_state::ModState::NONE,
+    );
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -167,6 +184,7 @@ impl SetPtr {
             waker,
             id: &mut self.1,
             timers: &mut self.2,
+            state: &mut self.4,
             turn: self.3,
             yielded: Cell::new(false),
         };

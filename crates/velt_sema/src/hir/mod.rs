@@ -182,6 +182,18 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The program's module state (module-level `let`s), `None` when it has none
+    /// (hir_encodings.md "Module state").
+    pub module_state: Option<ModuleState>,
+}
+
+/// Module-level `let`s: one slot each in a per-task tuple (hir_encodings.md "Module state").
+#[derive(Clone, Debug)]
+pub struct ModuleState {
+    /// The state tuple: element `i` is the type of slot `i`.
+    pub ty: TyId,
+    /// The global of each slot, in initialization order (Node's module evaluation order).
+    pub slots: Vec<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -410,9 +422,13 @@ pub struct GlobalDef {
     pub name: String,
     pub ty: TyId,
     /// Evaluated at each use (a constant expression, or pure calls and closures, sema
-    /// `body::pure_init`), except a table: an array literal that lowering stores once as data.
+    /// `body::pure_init`), except a table: an array literal that lowering stores once as data,
+    /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
     pub init: Expr,
     pub span: Span,
+    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
+    /// that is read, written and borrowed like a field.
+    pub slot: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]

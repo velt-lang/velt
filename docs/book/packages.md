@@ -31,8 +31,8 @@ function main() {
 - `import * as ns` binds a namespace; `import type` imports names for type positions only.
 - `export default` and default imports don't exist: the compiler's error suggests the named
   form.
-- Modules hold declarations only. State that changes lives in values created by `main` and
-  passed where they're needed ([why](../reference/variables.md#no-mutable-module-state)).
+- A module-level `let` is module state, as in Node, kept per task; importers see its current
+  value ([module state](../reference/variables.md#module-state)).
 - Standard library modules use the `velt:` prefix: `"velt:fs"`, `"velt:collections/set"`.
 
 All rules are in [Modules and packages](../reference/modules.md) in the Reference.

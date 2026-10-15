@@ -343,6 +343,19 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do.
 
+## Module state [additive, #76]
+
+```c
+struct ModuleDesc { uint64_t size, align; void (*init)(void *state); void (*drop)(void *state); };
+void *velt_rt_module_state(const struct ModuleDesc *desc);
+```
+
+Returns the module state block of the task being polled (of the calling thread outside a
+task): allocated zeroed with `size`/`align` and filled by `init` on the task's first call (the
+block is current while `init` runs), dropped with `drop` when the task and its local promises
+are done. A call with a different descriptor than the block was made with (code swapped in by
+`velt dev`) gets a fresh block. On WebAssembly every task shares one block.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

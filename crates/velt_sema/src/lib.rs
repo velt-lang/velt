@@ -53,6 +53,7 @@ mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_state;
 mod moves;
 mod object_copies;
 mod overloads;
@@ -217,6 +218,7 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let module_state = module_state::build(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let ctx::Ctx {
@@ -239,6 +241,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        module_state,
     };
     (Some(program), diags)
 }
@@ -290,6 +293,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);
+    cx.module_slots = module_state::order(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held
