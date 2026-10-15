@@ -171,22 +171,35 @@ impl<'a> Printer<'a> {
     }
 
     /// The keyword of `var`: `var` when the source has it (the AST reads `var` as `let`),
-    /// also for a further declarator of a `var` (whose span starts at its pattern).
+    /// also for a further declarator of a `var` (whose span starts at its pattern): the one
+    /// before its comma was a `var` declarator. Decided from the declaration's own position.
     fn var_keyword(&mut self, var: &VarDecl) -> &'static str {
+        if var.kind != VarKind::Let {
+            return var.kind.keyword();
+        }
         let written = crate::source::slice(self.src, var.span);
         let starts = |kw: &str| {
             written
                 .strip_prefix(kw)
                 .is_some_and(|rest| rest.starts_with(|c: char| c.is_whitespace()))
         };
-        let is_var =
-            var.kind == VarKind::Let && (starts("var") || (self.after_var && !starts("let")));
-        self.after_var = is_var;
+        let is_var = starts("var") || (!starts("let") && self.follows_var(var.span.lo));
         if is_var {
+            self.var_ends.insert(var.span.hi);
             "var"
         } else {
-            var.kind.keyword()
+            "let"
         }
+    }
+
+    /// Is the declarator starting at `lo` a further declarator (after a comma) of a `var`?
+    fn follows_var(&self, lo: u32) -> bool {
+        let before = self.src[..lo as usize].trim_end();
+        let Some(before) = before.strip_suffix(',') else {
+            return false;
+        };
+        let prev_end = before.trim_end().len() as u32;
+        self.var_ends.contains(&prev_end)
     }
 
     /// `pattern: T = init`: a declaration without its keyword (`for (let a = 1, b = 2; …)`).

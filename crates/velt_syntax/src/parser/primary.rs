@@ -395,7 +395,9 @@ impl<'a> Parser<'a> {
             return self.finish_method_prop(lo, name, false).map(Some);
         }
         let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::LParen);
+            || (self.at_kw(Kw::Async)
+                && Self::is_name(self.nth(1))
+                && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);
         let is_generator = self.nth(off) == Tok::Star;
         let at_name = |p: &mut Self, k: usize| {

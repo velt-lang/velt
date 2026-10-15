@@ -215,6 +215,43 @@ fn var_declarations_keep_var() {
 }
 
 #[test]
+fn async_generic_object_literal_methods() {
+    round_trips(
+        "const o = {
+  async go<T>(x: T): Promise<T> {
+    return x;
+  },
+};
+console.log(o);
+",
+    );
+}
+
+#[test]
+fn let_after_var_stays_let() {
+    // A `for (let …)` after a `var` statement (its declaration starts at the name).
+    round_trips(
+        "function f(): void {\n  var x = 1;\n  for (let i = 0; i < 1; i++) {}\n  for (let i = 0, j = 1; i < j; i++) {}\n  console.log(x);\n}\n",
+    );
+    let got = format_source("function f(): void {\n  var x = 1;\n  let y = 2, z = 3;\n}\n").unwrap();
+    assert_eq!(got, "function f(): void {\n  var x = 1;\n  let y = 2;\n  let z = 3;\n}\n");
+}
+
+#[test]
+fn var_keeps_var_across_nested_declarations() {
+    // The first initializer contains declarations; the next declarator is still a `var`.
+    let got = format_source(
+        "function f() {\n  var a = () => { let x = 1; return x; }, b = 2;\n  var c = { m() { const q = 1; return q; } }, d = 3;\n  let e = () => { var y = 1; return y; }, g = 4;\n  return b + d + g;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        got,
+        "function f() {\n  var a = () => {\n    let x = 1;\n    return x;\n  };\n  var b = 2;\n  var c = {\n    m() {\n      const q = 1;\n      return q;\n    },\n  };\n  var d = 3;\n  let e = () => {\n    var y = 1;\n    return y;\n  };\n  let g = 4;\n  return b + d + g;\n}\n"
+    );
+    round_trips(&got);
+}
+
+#[test]
 fn optional_parameters_in_function_types() {
     round_trips("type F = (app: App, options?: Options) => void;\n");
     round_trips("type F = (x?: string | null) => string;\n");

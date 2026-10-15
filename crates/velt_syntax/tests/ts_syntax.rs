@@ -154,6 +154,31 @@ fn object_literal_generic_methods() {
 }
 
 #[test]
+fn object_literal_async_generic_methods() {
+    let e = expr("x = { async go<T>(x: T): Promise<T> { return x; } }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let ObjectProp::KeyValue(name, f) = &ps[0] else {
+        panic!()
+    };
+    assert_eq!(name.name, "go");
+    let ExprKind::Arrow {
+        type_params,
+        is_async,
+        ..
+    } = &f.kind
+    else {
+        panic!()
+    };
+    assert_eq!(type_params[0].name.name, "T");
+    assert!(is_async);
+}
+
+#[test]
 fn optional_parameters_in_function_types() {
     let m = parse_ok("type F = (app: App, options?: Options) => void;");
     assert_eq!(alias_ty(&m, 0), "fn(App, (Options | null)) => void");
