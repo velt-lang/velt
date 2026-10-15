@@ -469,3 +469,16 @@ fn this_parameters_and_the_this_type() {
     };
     assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
 }
+
+#[test]
+fn catch_binding_annotations() {
+    parse_ok("try { f(); } catch (e: unknown) { g(e); }");
+    parse_ok("try { f(); } catch ({ message }: any) { g(message); }");
+    let ts1196 =
+        "a catch clause variable's type annotation must be `any` or `unknown` if specified";
+    assert_eq!(errors("try { f(); } catch (e: Error) { g(e); }"), [ts1196]);
+    assert_eq!(
+        errors("try { f(); } catch (e: unknown[]) { g(e); }"),
+        [ts1196]
+    );
+}

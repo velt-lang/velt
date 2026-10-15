@@ -272,12 +272,31 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `catch (e: unknown)` / `catch (e: any)`: TypeScript allows only these annotations on the
+    /// catch binding (else TS1196). They are dropped: the binding has the caught value's type.
+    fn catch_annotation(&mut self) -> PResult<()> {
+        if !self.eat(Tok::Colon) {
+            return Ok(());
+        }
+        let ty = self.parse_type()?;
+        let ok = matches!(&ty.kind, TypeExprKind::Named { path, args }
+            if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "any" | "unknown"));
+        if !ok {
+            self.error(
+                "a catch clause variable's type annotation must be `any` or `unknown` if specified",
+                ty.span,
+            );
+        }
+        Ok(())
+    }
+
     fn parse_try(&mut self) -> PResult<StmtKind> {
         self.bump(); // try
         let body = self.parse_block()?;
         let catch = if self.eat_kw(Kw::Catch) {
             let binding = if self.eat(Tok::LParen) {
                 let p = self.parse_binding_pattern()?;
+                self.catch_annotation()?;
                 self.expect(Tok::RParen)?;
                 Some(p)
             } else {

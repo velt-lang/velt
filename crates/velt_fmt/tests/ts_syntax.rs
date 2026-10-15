@@ -232,3 +232,9 @@ fn generic_method_signatures_in_object_types() {
     round_trips("type S = { run<T>(fn: () => T): T | undefined; stop(): void };\n");
     round_trips("interface I {\n  wrap?<A>(a: A): A;\n  name: string;\n}\n");
 }
+
+#[test]
+fn catch_binding_annotations() {
+    round_trips("try {\n  f();\n} catch (e: unknown) {\n  g(e);\n}\n");
+    round_trips("try {\n  f();\n} catch (err: any) {\n  g(err);\n}\n");
+}
