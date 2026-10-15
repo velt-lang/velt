@@ -1,0 +1,11 @@
+// Module state cannot hold a promise: it is initialized before `main`, and a promise has one
+// owner while every task reads the state.
+async function later(): Promise<number> {
+  return 1;
+}
+let p = later();
+let t = spawn(later());
+let maybe: Promise<number> | null = null;
+async function main() {
+  console.log(await p, await t, maybe == null);
+}
