@@ -14,3 +14,17 @@ pub const IMPORT_META_FIELDS: [&str; 3] = ["url", "filename", "dirname"];
 /// `Record<string, V>`). The callee's span is the bracketed key, which tells it from a written
 /// call.
 pub const COMPUTED_KEY_FN: &str = "__computed_key";
+
+/// Member name of the computed key `[Symbol.dispose]` (a method declaration
+/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an `Ident` with this exact
+/// name. No plain identifier can collide with it.
+pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
+
+/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
+
+/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
+
+/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";

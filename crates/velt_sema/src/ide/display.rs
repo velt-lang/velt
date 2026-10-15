@@ -167,9 +167,9 @@ fn type_name(d: &DefInfo) -> TypeName {
         DefInfo::Adt(a) if a.kind == crate::hir::AdtKind::Anon => {
             TypeName::Anon(a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect())
         }
-        DefInfo::Adt(a) => TypeName::Named(a.name.clone()),
-        DefInfo::Enum(e) => TypeName::Named(e.name.clone()),
-        DefInfo::Iface(i) => TypeName::Named(i.name.clone()),
+        DefInfo::Adt(a) => TypeName::Named(crate::namespaces::written(&a.name).into_owned()),
+        DefInfo::Enum(e) => TypeName::Named(crate::namespaces::written(&e.name).into_owned()),
+        DefInfo::Iface(i) => TypeName::Named(crate::namespaces::written(&i.name).into_owned()),
         // Function values display with their parameter names (the IDE records a
         // `TyKind::Closure(def)` type for closures and named functions used as values).
         DefInfo::Fn(f) => {

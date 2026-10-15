@@ -66,18 +66,13 @@ fn export_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
     }
     let reexports = imports_of(cx, t).filter(|(imp, exported)| *exported && !imp.all);
     for (imp, _) in reexports {
-        let Some(n) = imp.names.iter().find(|n| bound_name(n).name == name) else {
+        let Some(source) = imp.names.iter().find_map(|n| renamed(n, name)) else {
             continue;
         };
         if imp.from.is_empty() {
-            return local_at(cx, t, &n.name.name, depth + 1);
+            return local_at(cx, t, &source, depth + 1);
         }
-        return export_at(
-            cx,
-            import_target(cx, t, &imp.from)?,
-            &n.name.name,
-            depth + 1,
-        );
+        return export_at(cx, import_target(cx, t, &imp.from)?, &source, depth + 1);
     }
     imports_of(cx, t)
         .filter(|(imp, exported)| *exported && imp.all)
@@ -94,13 +89,79 @@ fn local_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
     let imported = imports_of(cx, t)
         .filter(|(imp, exported)| !exported && !imp.from.is_empty())
         .find_map(|(imp, _)| {
-            let n = imp.names.iter().find(|n| bound_name(n).name == name)?;
-            Some((imp, n))
+            let source = imp.names.iter().find_map(|n| renamed(n, name))?;
+            Some((imp, source))
         });
     match imported {
-        Some((imp, n)) => export_at(cx, import_target(cx, t, &imp.from)?, &n.name.name, depth),
+        Some((imp, source)) => export_at(cx, import_target(cx, t, &imp.from)?, &source, depth),
         None => cx.scopes[t].items.get(name).copied(),
     }
+}
+
+/// The name in the source module of the name `name` that import or export list entry `n`
+/// binds, if it binds it: `a` for `b` in `a as b`, and for a member of a namespace `N`
+/// (`N.T`, `crate::namespaces`), `M.T` when the entry is `M as N`.
+fn renamed(n: &ast::ImportName, name: &str) -> Option<String> {
+    let bound = &bound_name(n).name;
+    if name == bound {
+        return Some(n.name.name.clone());
+    }
+    let rest = name.strip_prefix(bound.as_str())?.strip_prefix('.')?;
+    Some(format!("{}.{rest}", n.name.name))
+}
+
+/// The members `x` of a namespace `name` (the items named `name.x`) that module `t` exports.
+pub(crate) fn namespace_exports(cx: &Ctx, t: usize, name: &str) -> Vec<(String, Item)> {
+    let prefix = format!("{name}.");
+    all_exports(cx, t)
+        .into_iter()
+        .filter_map(|(n, it)| Some((n.strip_prefix(&prefix)?.to_string(), it)))
+        .collect()
+}
+
+/// The namespace members (`N.x`, as `x`) named by entry `n` of an export list of module `t`:
+/// declared in `t` or imported into it (`from` empty), or exported by module `from`.
+fn list_members(
+    cx: &Ctx,
+    t: usize,
+    imp: &ast::Import,
+    n: &ast::ImportName,
+    depth: u32,
+) -> Vec<String> {
+    let mut names = vec![];
+    let source = if imp.from.is_empty() {
+        let imported = imports_of(cx, t)
+            .filter(|(i, exported)| !exported && !i.from.is_empty())
+            .find_map(|(i, _)| {
+                let m = i.names.iter().find(|m| bound_name(m).name == n.name.name)?;
+                Some((import_target(cx, t, &i.from)?, m.name.name.clone()))
+            });
+        match imported {
+            Some(s) => Some(s),
+            None => {
+                let prefix = format!("{}.", n.name.name);
+                names.extend(
+                    cx.scopes[t]
+                        .items
+                        .keys()
+                        .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string)),
+                );
+                None
+            }
+        }
+    } else {
+        import_target(cx, t, &imp.from).map(|target| (target, n.name.name.clone()))
+    };
+    if let Some((target, name)) = source {
+        let mut all = vec![];
+        export_names(cx, target, &mut all, depth + 1);
+        let prefix = format!("{name}.");
+        names.extend(
+            all.iter()
+                .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string)),
+        );
+    }
+    names
 }
 
 fn export_names(cx: &Ctx, t: usize, out: &mut Vec<String>, depth: u32) {
@@ -112,7 +173,12 @@ fn export_names(cx: &Ctx, t: usize, out: &mut Vec<String>, depth: u32) {
         if !exported {
             continue;
         }
-        out.extend(imp.names.iter().map(|n| bound_name(n).name.clone()));
+        for n in &imp.names {
+            let bound = &bound_name(n).name;
+            out.push(bound.clone());
+            let members = list_members(cx, t, imp, n, depth);
+            out.extend(members.into_iter().map(|x| format!("{bound}.{x}")));
+        }
         if imp.all {
             if let Some(target) = import_target(cx, t, &imp.from) {
                 export_names(cx, target, out, depth + 1);

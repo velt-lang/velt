@@ -2,7 +2,7 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl, VarKind,
+    Augment, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl, VarKind,
 };
 
 use super::lists::delimited;
@@ -55,6 +55,7 @@ impl<'a> Printer<'a> {
                 cat!["declare ", asyncness, sig, ";"]
             }
             ItemKind::Augment(a) => self.augment(a, item.span.hi),
+            ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
     }
@@ -71,7 +72,22 @@ impl<'a> Printer<'a> {
         if a.items.is_empty() {
             return cat![head, " {}"];
         }
-        let entries: Vec<Top> = a.items.iter().map(Top::Item).collect();
+        self.block_items(head, &a.items, end)
+    }
+
+    /// `[declare] namespace N { … }` (the item ends at `end`).
+    fn namespace(&mut self, n: &Namespace, end: u32) -> Doc {
+        let declare = if n.declare { "declare " } else { "" };
+        let head = cat![declare, "namespace ", n.name.name.clone()];
+        if n.items.is_empty() {
+            return cat![head, " {}"];
+        }
+        self.block_items(head, &n.items, end)
+    }
+
+    /// `head { items }`, the block ending at `end`.
+    fn block_items(&mut self, head: Doc, items: &[Item], end: u32) -> Doc {
+        let entries: Vec<Top> = items.iter().map(Top::Item).collect();
         let body = self.lines(
             &entries,
             end.saturating_sub(1),
@@ -126,15 +142,22 @@ impl<'a> Printer<'a> {
     /// `type X = T;` — a union too long for one line gets one `| member` per line.
     fn type_alias(&mut self, alias: &TypeAlias) -> Doc {
         // An interface with an index signature, which the parser gives as an alias.
-        if let TypeExprKind::IndexSig {
-            fields,
-            key,
-            value,
-            readonly,
-        } = &alias.ty.kind
-        {
+        let members = match &alias.ty.kind {
+            TypeExprKind::IndexSig {
+                fields,
+                key,
+                value,
+                readonly,
+            } => Some(super::types::index_sig_members(
+                fields, key, value, *readonly,
+            )),
+            TypeExprKind::Callable { sigs, members } => {
+                Some(super::types::callable_members(sigs, members))
+            }
+            _ => None,
+        };
+        if let Some(members) = members {
             if slice(self.src, alias.ty.span).starts_with("interface") {
-                let members = super::types::index_sig_members(fields, key, value, *readonly);
                 let body = self.index_sig_lines(&members, alias.ty.span.hi);
                 let head = cat![
                     "interface ",

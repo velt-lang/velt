@@ -69,6 +69,51 @@ Re-exports make one module the public face of others: `export { x, y as z } from
 module exports itself or lists by name wins). Re-exports bind nothing in the re-exporting
 module; importers get the original declaration, and go-to-definition lands there too.
 
+## Namespaces
+
+A `namespace` groups types under one name, as in TypeScript: its members are written `N.T`
+outside it and `T` inside it (a type parameter of the same name hides a member). Namespaces
+nest (`A.B.T`), `namespace A.B { … }` declares `A` holding `B`, blocks with the same name are
+one namespace, and a namespace may share its name with an interface or a type
+(`interface Shape` and `Shape.Circle` are different types).
+
+```ts
+namespace Geo {
+  export interface Point {
+    x: number;
+    y: number;
+  }
+  type Pair = [Point, Point]; // without `export`: only inside `Geo`
+  export type Segment = { ends: Pair; length: number };
+}
+
+const a: Geo.Point = { x: 0, y: 0 };
+const b: Geo.Point = { x: 3, y: 4 };
+const s: Geo.Segment = { ends: [a, b], length: 5 };
+console.log(s.ends[1].x, s.length); // 3 5
+```
+
+- Only members declared with `export` are visible outside (`Geo.Pair` is TypeScript's TS2694,
+  ``namespace `Geo` has no exported member `Pair` ``); in a `declare namespace` every member is.
+  A member declared without `export` is visible only in its own block, not in another block
+  of the same namespace; two blocks may each declare their own unexported member of the same
+  name (two interfaces declared so do not merge).
+- Inside a namespace, a name used as a type means a type or interface (a nested namespace of
+  the same name does not hide an outer type), and the first part of `B.T` a namespace.
+- A namespace named like an imported type or value merges with it, as in TypeScript: the bare
+  name is the import, `N.T` the namespace's member (`import { N } from "./lib"` with
+  `export type N = number` there, next to `namespace N { export type T = string }`). A
+  namespace can't share its name with an imported namespace, `import * as N` or the import of
+  another module's `namespace N` (TypeScript's TS2440: ``import declaration conflicts with
+  local declaration of `N` ``).
+- An exported namespace is imported and re-exported by its name, like a type
+  (`import { type Geo } from "./geo"`, `export type { Geo } from "./geo"`), and through
+  `import * as m` as `m.Geo.Point`.
+- `declare global { namespace JSX { … } }` declares the namespace in its module, as a
+  `declare namespace` (a global visible in other modules is not supported yet).
+- A namespace holds type aliases, interfaces and namespaces. Values in a namespace (`const`,
+  `function`, `class`, `enum`: a run-time object in TypeScript) are not supported yet.
+
 ## Module specifiers
 
 | Specifier | Resolves to |

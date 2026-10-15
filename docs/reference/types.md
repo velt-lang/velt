@@ -1144,9 +1144,28 @@ console.log(b.v); // hi
   (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
   optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
   type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
-  Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
-  `new(…)` in an object type is never a method, while in a class it is) are not supported yet
-  and are reported.
+  A call signature alone (`interface F { (x: T): R }`, `type F = { (x: T): R }`) declares the
+  function type `(x: T) => R`: a value of it is called as `f(x)`, any function or arrow of that
+  type is one, and `typeof f` is `"function"`. With members or other call signatures, an object
+  type or interface with call signatures is a function with properties or an overloaded
+  function (TypeScript's `((x: T) => R) & { stop(): void }`), which is not supported yet
+  (#921); a generic call signature (`<T>(x: T): T`) is a generic function type and a
+  construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
+  a method, while in a class it is) a construct type, both planned
+  ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
+  call signature (`(x?: number): void`) are not supported yet, and a parameter initializer
+  there (`(x = 1): void`) is an error, as in TypeScript. An interface with call signatures
+  merges with the other declarations of its name, but not yet in `declare global` or
+  `declare module`, nor inside a function body.
+
+```ts
+interface Formatter {
+  (value: number, unit: string): string;
+}
+
+const fmt: Formatter = (value, unit) => `${value} ${unit}`;
+console.log(fmt(3, "kg"), typeof fmt); // 3 kg function
+```
 
 ```ts
 type Handler = {

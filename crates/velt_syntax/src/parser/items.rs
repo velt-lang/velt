@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
+    pub(super) fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
         let kind = match self.cur_kw() {
             Some(Kw::Import) => {
                 if !import_ok {
@@ -134,6 +134,10 @@ impl<'a> Parser<'a> {
                 ItemKind::Var(var)
             }
             Some(Kw::Declare) if self.at_augment() => ItemKind::Augment(self.parse_augment()?),
+            Some(Kw::Declare) if self.at_namespace(1) => {
+                ItemKind::Namespace(self.parse_namespace()?)
+            }
+            None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
             _ if self.at_var_decl() => {
                 let var = self.parse_var_decl()?;
@@ -518,13 +522,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
+    /// `type Name<T> = T;` (the `;` may be left out before the `}` of a block, namespace or
+    /// `declare global` and at the end of the file, as everywhere in TypeScript).
+    pub(super) fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
         let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
-        self.expect_semi()?;
+        if !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
+            self.expect_semi()?;
+        }
         Ok(TypeAlias { name, generics, ty })
     }
 

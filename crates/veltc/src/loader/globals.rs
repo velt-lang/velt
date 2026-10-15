@@ -124,6 +124,9 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
                     names.insert(id.name.as_str());
                 }
             }
+            ast::ItemKind::Namespace(n) => {
+                names.insert(n.name.name.as_str());
+            }
             ast::ItemKind::Extend(_) | ast::ItemKind::Augment(_) => {}
         }
     }

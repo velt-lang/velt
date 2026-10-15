@@ -258,6 +258,21 @@ fn not_declared_before<'a>(
             .map(|f| &f.ty)
             .chain([&key.ty, &**value])
             .find_map(|a| not_declared_before(a, rest)),
+        K::Callable { sigs, members } => sigs
+            .iter()
+            .flat_map(|s| {
+                let sig = &s.sig;
+                let bounds = sig
+                    .generics
+                    .iter()
+                    .flat_map(|g| g.bounds.iter().chain(&g.default));
+                bounds
+                    .chain(sig.params.iter().map(|p| &p.ty))
+                    .chain(&sig.ret)
+                    .chain(&sig.throws)
+            })
+            .chain(std::iter::once(&**members))
+            .find_map(|a| not_declared_before(a, rest)),
         K::KeyOf(t) => not_declared_before(t, rest),
         K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
             .into_iter()

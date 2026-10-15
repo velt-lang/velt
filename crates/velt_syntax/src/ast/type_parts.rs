@@ -1,9 +1,20 @@
-//! Parts of type expressions (part of the `ast` contract): index signature keys and object type
-//! fields.
+//! Parts of type expressions (part of the `ast` contract): index signature keys, object type
+//! fields and call signatures.
 
 use velt_common::Span;
 
-use super::{Ident, TypeExpr};
+use super::{FnSig, Ident, TypeExpr};
+
+/// A call signature `(x: T): R` / `<T>(x: T): T`, or with `construct` a construct signature
+/// `new (x: T): C`, in an interface or object type. `sig.name` is empty (zero-width, at the
+/// `(` or `<`); a missing return type is `sig.ret: None`.
+#[derive(Clone, Debug)]
+pub struct CallSig {
+    pub sig: FnSig,
+    pub construct: bool,
+    /// From `new` (or the signature's start) to the end of its return type.
+    pub span: Span,
+}
 
 /// The key of an index signature, `[name: ty]` (the name is documentation only).
 #[derive(Clone, Debug)]
