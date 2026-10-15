@@ -216,7 +216,16 @@ impl FnLower<'_, '_> {
     /// non-0 (await_order.rs): it is lowered again without any step code.
     /// Returns whether step code was emitted.
     pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
-        if self.dead() || self.in_std() || self.cx.no_await_steps {
+        if self.in_std() {
+            return false;
+        }
+        self.step(drop_held)
+    }
+
+    /// The step itself ([`await_step`](Self::await_step)), in std code too: async generators
+    /// take Node's steps in every caller (generator.rs).
+    pub(super) fn step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
+        if self.dead() || self.cx.no_await_steps {
             return false;
         }
         let cx = self.poll_cx();

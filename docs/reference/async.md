@@ -221,8 +221,10 @@ the callbacks and `await`s waiting for that promise right away, as Node does.
 
 Where the order still differs from Node's: `Promise.all` and `Promise.race` settle in fewer
 steps (they keep `await` on them fast), which matters only for callbacks and `await`s running
-next to them. Async generators (`for await` over an `async function*`, `g.next()`) take fewer
-steps per value than Node's. A promise settled from another task resumes its waiters at that
+next to them. Async generators take Node's steps (a `yield` awaits its value, `return()` awaits
+before it closes the body), except for calls queued behind a running one: such a call starts one
+step later than in Node, and the code after an `await` of an earlier call can run after it
+rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
 task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
 `resolve` called later resumes its waiters at the executor's next step.
 
