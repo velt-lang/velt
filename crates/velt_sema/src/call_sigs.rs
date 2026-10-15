@@ -84,9 +84,8 @@ fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
 /// The modules with every module-level interface that has signatures rewritten into a type
 /// alias, or `None` when there is none; with the errors found.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>) {
-    let callable = |i: &ast::Item| {
-        matches!(&i.kind, ast::ItemKind::Interface(d) if !d.call_sigs.is_empty())
-    };
+    let callable =
+        |i: &ast::Item| matches!(&i.kind, ast::ItemKind::Interface(d) if !d.call_sigs.is_empty());
     if !modules.iter().any(|m| m.ast.items.iter().any(callable)) {
         return (None, vec![]);
     }
@@ -101,7 +100,9 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
                     .into_iter()
                     .map(|item| match item.kind {
                         ast::ItemKind::Interface(d) if !d.call_sigs.is_empty() => ast::Item {
-                            kind: ast::ItemKind::TypeAlias(interface_alias(d, item.span, &mut diags)),
+                            kind: ast::ItemKind::TypeAlias(interface_alias(
+                                d, item.span, &mut diags,
+                            )),
                             ..item
                         },
                         _ => item,
@@ -122,7 +123,11 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
 }
 
 /// The type alias an interface with signatures declares (at `span`).
-fn interface_alias(decl: ast::InterfaceDecl, span: Span, diags: &mut Vec<Diagnostic>) -> ast::TypeAlias {
+fn interface_alias(
+    decl: ast::InterfaceDecl,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) -> ast::TypeAlias {
     let mut fields: Vec<ast::ObjectTypeField> = decl
         .fields
         .into_iter()

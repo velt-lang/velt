@@ -157,7 +157,16 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
                     private,
                 };
                 let ambient = ns.declare;
-                cx.namespace(ns, item.span, &[], &[], item.exported, ambient, None, &mut out);
+                cx.namespace(
+                    ns,
+                    item.span,
+                    &[],
+                    &[],
+                    item.exported,
+                    ambient,
+                    None,
+                    &mut out,
+                );
             }
             _ => out.push(item),
         }
@@ -365,11 +374,17 @@ impl Rewrite<'_> {
         if !namespace && self.params.iter().any(|p| p == name) {
             return None;
         }
-        (1..=self.path.len()).rev().map(|n| &self.path[..n]).find(|p| {
-            let level = p.len() - 1;
-            self.members.get(*p).is_some_and(|m| m.has(name, namespace))
-                || self.locals.get(level).is_some_and(|m| m.has(name, namespace))
-        })
+        (1..=self.path.len())
+            .rev()
+            .map(|n| &self.path[..n])
+            .find(|p| {
+                let level = p.len() - 1;
+                self.members.get(*p).is_some_and(|m| m.has(name, namespace))
+                    || self
+                        .locals
+                        .get(level)
+                        .is_some_and(|m| m.has(name, namespace))
+            })
     }
 
     fn ty(&self, t: &mut ast::TypeExpr) {

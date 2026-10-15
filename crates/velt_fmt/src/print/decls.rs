@@ -3,8 +3,8 @@
 
 use crate::source::has_modifier;
 use velt_syntax::ast::{
-    CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
-    TypeDecl, TypeExpr, Variant,
+    CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod,
+    Method, TypeDecl, TypeExpr, Variant,
 };
 
 use super::Printer;

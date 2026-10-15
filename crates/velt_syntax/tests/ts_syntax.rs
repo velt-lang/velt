@@ -284,7 +284,10 @@ type P = { new (x: number): P; (y: string): P };",
     let ItemKind::Interface(h) = &m.items[2].kind else {
         panic!("not an interface: {:?}", m.items[2]);
     };
-    assert_eq!((h.call_sigs.len(), h.fields.len(), h.methods.len()), (1, 1, 1));
+    assert_eq!(
+        (h.call_sigs.len(), h.fields.len(), h.methods.len()),
+        (1, 1, 1)
+    );
     assert_eq!(h.extends.len(), 1);
     let ItemKind::TypeAlias(p) = &m.items[3].kind else {
         panic!("not a type alias: {:?}", m.items[3]);

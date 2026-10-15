@@ -6,7 +6,8 @@
 
 use velt_common::Span;
 use velt_syntax::ast::{
-    CallSig, Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind,
+    CallSig, Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr,
+    TypeExprKind,
 };
 
 use super::decls::braced;

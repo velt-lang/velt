@@ -259,7 +259,10 @@ fn not_declared_before<'a>(
             .iter()
             .flat_map(|s| {
                 let sig = &s.sig;
-                let bounds = sig.generics.iter().flat_map(|g| g.bounds.iter().chain(&g.default));
+                let bounds = sig
+                    .generics
+                    .iter()
+                    .flat_map(|g| g.bounds.iter().chain(&g.default));
                 bounds
                     .chain(sig.params.iter().map(|p| &p.ty))
                     .chain(&sig.ret)

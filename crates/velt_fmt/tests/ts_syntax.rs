@@ -268,8 +268,10 @@ fn construct_and_generic_function_types_in_unions_keep_their_parentheses() {
 
 #[test]
 fn call_signatures_are_formatted() {
-    let got = format_source("interface F { (x:number):string; n:number }\ntype T = {(x:number):string}\n")
-        .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    let got = format_source(
+        "interface F { (x:number):string; n:number }\ntype T = {(x:number):string}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
     assert_eq!(
         got,
         "interface F {\n  (x: number): string;\n  n: number;\n}\n\ntype T = { (x: number): string };\n"
@@ -281,8 +283,10 @@ fn call_signatures_are_formatted() {
 
 #[test]
 fn a_type_alias_may_end_at_the_closing_brace() {
-    let got = format_source("namespace N { type U = string }\ndeclare global {\n  namespace G { type V = number }\n}\n")
-        .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    let got = format_source(
+        "namespace N { type U = string }\ndeclare global {\n  namespace G { type V = number }\n}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
     assert_eq!(
         got,
         "namespace N {\n  type U = string;\n}\n\ndeclare global {\n  namespace G {\n    type V = number;\n  }\n}\n"

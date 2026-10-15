@@ -64,7 +64,11 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
                     ast::ItemKind::Interface(d) if d.call_sigs.is_empty() => d,
                     ast::ItemKind::Interface(d) => {
                         let s = &d.call_sigs[0];
-                        diags.push(unsupported_in_block("call signatures", s.span, block.module.is_none()));
+                        diags.push(unsupported_in_block(
+                            "call signatures",
+                            s.span,
+                            block.module.is_none(),
+                        ));
                         continue;
                     }
                     // An interface with an index signature (the parser gives it as an alias).
@@ -301,7 +305,9 @@ fn unsupported_in_block(what: &str, span: Span, global: bool) -> Diagnostic {
         format!("an interface with {what} in {place} is not supported yet"),
         span,
     )
-    .with_note("declare the interface in a module (`export interface …`) and import it where it is used")
+    .with_note(
+        "declare the interface in a module (`export interface …`) and import it where it is used",
+    )
 }
 
 /// Reports member `member` of interface `iface` declared in two merged declarations.
