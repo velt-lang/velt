@@ -266,12 +266,7 @@ impl<'a> Parser<'a> {
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
             Tok::Template(..) => self.parse_template_type(),
             Tok::Ident if self.at_word("infer") && Self::is_ident_like(self.nth(1)) => {
-                self.bump(); // infer
-                let name = self.parse_ident()?;
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Infer(name),
-                    span: self.span_from(lo),
-                })
+                self.parse_infer_type(lo)
             }
             // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
             // resolves to the class of the method.

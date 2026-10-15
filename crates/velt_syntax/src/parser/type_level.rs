@@ -108,6 +108,16 @@ impl Parser<'_> {
     }
 
     /// `` `a${T}b` `` in a type: a template literal type.
+    /// `infer X` (at `infer`, starting at `lo`).
+    pub(super) fn parse_infer_type(&mut self, lo: u32) -> PResult<TypeExpr> {
+        self.bump(); // infer
+        let name = self.parse_ident()?;
+        Ok(TypeExpr {
+            kind: TypeExprKind::Infer(name),
+            span: self.span_from(lo),
+        })
+    }
+
     pub(super) fn parse_template_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         let Tok::Template(idx, part) = self.peek() else {
