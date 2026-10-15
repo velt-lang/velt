@@ -1,0 +1,48 @@
+// check: no leaks
+// A closing WebSocket does not wait for ever for a peer that stopped reading: the flusher gets
+// a bounded time to write what is queued (30 s through the public API; the internal pieces are
+// driven here with 300 ms), then the stream is aborted and the queue reports the failure.
+import { connect, listen } from "velt:net";
+import { OP_BINARY, OP_CLOSE, closePayload } from "velt:websocket/frame";
+import { SendQueue, CLOSED, FAILED, START, STATUS } from "velt:websocket/queue";
+import { Reader } from "velt:websocket/reader";
+import { finish, flush } from "velt:websocket/writer";
+
+async function main() {
+  // A peer that accepts and then never reads.
+  const listener = await listen("127.0.0.1:0");
+  const peer = spawn(async () => await listener.accept());
+  const stream = await connect(`127.0.0.1:${listener.port}`);
+  const silent = await peer;
+
+  // 64 MB: far more than the socket buffers take.
+  const tx = shared(new Mutex<SendQueue>(new SendQueue(false, new Reader(true, []))));
+  const chunk = Buffer.alloc(1048576);
+  let started = 0;
+  for (let i = 0; i < 64; i++) {
+    const r = tx.with((q) => q.pushBytes(OP_BINARY, chunk));
+    if ((r & START) != 0) {
+      started++;
+      spawn(flush(stream, tx.clone()));
+    }
+  }
+  console.log("flushers started:", started);
+  await sleep(50);
+  console.log("still writing:", tx.with((q) => q.flushing && q.stopped == ""));
+
+  const bye = closePayload(1000);
+  const r = tx.with((q) => q.pushBytes(OP_CLOSE, bye));
+  console.log("close queued:", (r & STATUS) != CLOSED && (r & STATUS) != FAILED);
+  const t0 = performance.now();
+  await finish(stream, tx, 300);
+  const took = performance.now() - t0;
+  console.log("bounded:", took >= 250 && took < 10000);
+  console.log("stopped:", tx.with((q) => q.stopped), "flushing:", tx.with((q) => q.flushing));
+  // Nothing more is queued, and finishing again returns at once.
+  console.log("refused:", (tx.with((q) => q.pushBytes(OP_BINARY, [1u8])) & STATUS) == FAILED);
+  await finish(stream, tx, 300);
+  tx.with((q) => q.release());
+  stream.close();
+  silent.close();
+  listener.close();
+}

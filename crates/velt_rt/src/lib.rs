@@ -28,6 +28,7 @@ pub mod fmt;
 pub mod fnv;
 pub mod freed;
 pub mod fs;
+pub mod global;
 pub mod handle;
 pub mod hash;
 pub mod html;
@@ -66,7 +67,6 @@ pub mod timer;
 pub mod tls;
 pub mod transfer_map;
 pub mod weak;
-pub mod ws;
 
 pub use crate::str::VeltStr;
 

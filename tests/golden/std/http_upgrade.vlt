@@ -1,0 +1,94 @@
+// check: no leaks
+// `upgradeConnection`: a `serve` handler takes over its connection as a std/net stream.
+import { serve, isUpgradeRequest, upgradeConnection } from "velt:http";
+import { connect, connectTls, TcpStream } from "velt:net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+// The custom protocol: every line comes back in upper case; "bye" ends it.
+async function shout(conn: TcpStream) {
+  // Written before the handler has returned the 101: goes out right after it.
+  await conn.write("READY\n");
+  let pending = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      break;
+    }
+    pending += text;
+    let end = pending.indexOf("\n");
+    while (end >= 0) {
+      const line = pending.slice(0, end);
+      pending = pending.slice(end + 1);
+      if (line == "bye") {
+        conn.shutdown();
+        conn.close();
+        return;
+      }
+      await conn.write(line.toUpperCase() + "\n");
+      end = pending.indexOf("\n");
+    }
+  }
+  conn.close();
+}
+
+async function handler(req: Request): Promise<Response> {
+  if (!isUpgradeRequest(req, "shout")) {
+    return new Response(`plain ${new URL(req.url).pathname}`);
+  }
+  const up = upgradeConnection(req, "Shout", { "x-version": "1" });
+  try {
+    upgradeConnection(req, "shout");
+    console.log("unexpected");
+  } catch (e) {
+    console.log("second take:", e.code);
+  }
+  spawn(shout(up.stream));
+  return up.response;
+}
+
+// The request, then (once the 101 has arrived, as HTTP requires) the protocol's lines.
+async function talk(conn: TcpStream) {
+  await conn.write("GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: shout\r\n\r\n");
+  let reply = "";
+  while (!reply.includes("\r\n\r\n")) {
+    reply += await conn.readString();
+  }
+  await conn.write("one\ntwo\n");
+  await conn.write("three\nbye\n");
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      break;
+    }
+    reply += text;
+  }
+  const head = reply.slice(0, reply.indexOf("\r\n\r\n")).toLowerCase().split("\r\n");
+  console.log(head[0]);
+  console.log(head.filter((l) => !l.startsWith("date:")).slice(1).sort().join(" | "));
+  console.log(JSON.stringify(reply.slice(reply.indexOf("\r\n\r\n") + 4)));
+  conn.close();
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, handler);
+  await talk(await connect(`127.0.0.1:${server.port}`));
+  // The same path without the upgrade is an ordinary request; so is one for another protocol.
+  console.log(await (await fetch(`http://127.0.0.1:${server.port}/up`)).text());
+  const other = await fetch(`http://127.0.0.1:${server.port}/other`, {
+    headers: { connection: "Upgrade", upgrade: "websocket" },
+  });
+  console.log(other.status, await other.text());
+  await server.shutdown();
+
+  const secure = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, handler);
+  await talk(await connectTls(`localhost:${secure.port}`, { ca: TEST_CA, alpn: ["http/1.1"] }));
+  await secure.shutdown();
+
+  // A request that never reached a server has nothing to take.
+  try {
+    upgradeConnection(new Request("http://localhost/"), "shout");
+    console.log("unexpected");
+  } catch (e) {
+    console.log(e.code, e.message);
+  }
+}

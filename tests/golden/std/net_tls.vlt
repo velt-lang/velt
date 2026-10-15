@@ -1,0 +1,122 @@
+// check: no leaks
+// TLS streams in std/net: `listenTls` / `connectTls` give ordinary `TcpStream`s.
+import { connect, connectTls, listenTls, TcpStream } from "velt:net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+// Echoes until the peer shuts its side down, then says how much it saw.
+async function echo(conn: TcpStream) {
+  let total = 0;
+  while (true) {
+    const chunk = await conn.read();
+    if (chunk.length == 0) {
+      break;
+    }
+    total += chunk.length;
+    await conn.writeBytes(chunk);
+  }
+  await conn.write(`|${total}`);
+  conn.shutdown();
+  conn.close();
+}
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+async function main() {
+  const server = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const accepting = spawn(async () => {
+    for (let i = 0; i < 4; i++) {
+      const conn = await server.accept();
+      spawn(async () => {
+        try {
+          await echo(conn);
+        } catch (e) {
+          // A client that never completed the handshake.
+          conn.close();
+        }
+      });
+    }
+  });
+
+  // One task reads while another writes.
+  const a = await connectTls(`localhost:${server.port}`, { ca: TEST_CA });
+  console.log("peer is the server:", a.peerAddr() == `127.0.0.1:${server.port}`);
+  const reader = spawn(readAll(a));
+  for (let i = 0; i < 3; i++) {
+    await a.write(`part ${i};`);
+  }
+  await a.writeBytes(Buffer.alloc(100000));
+  a.shutdown();
+  const got = await reader;
+  console.log(got.slice(0, 21), got.length, got.slice(got.length - 7));
+  a.close();
+
+  // The address's host is the name checked unless `serverName` says otherwise.
+  const b = await connectTls(`127.0.0.1:${server.port}`, { ca: TEST_CA, serverName: "localhost" });
+  await b.write("named");
+  b.shutdown();
+  console.log(await readAll(b));
+  b.close();
+
+  // An untrusted certificate, and a name the certificate is not for.
+  try {
+    await connectTls(`localhost:${server.port}`);
+    console.log("unexpected");
+  } catch (e) {
+    console.log("untrusted:", e.message.includes("certificate"));
+  }
+  try {
+    await connectTls(`localhost:${server.port}`, { ca: TEST_CA, serverName: "example.com" });
+    console.log("unexpected");
+  } catch (e) {
+    console.log("wrong name:", e.message.includes("certificate"));
+  }
+  await accepting;
+  server.close();
+
+  // Bad PEM is reported when listening.
+  try {
+    await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: "nope" });
+    console.log("unexpected");
+  } catch (e) {
+    console.log(e.code, e.message.startsWith("invalid key PEM"));
+  }
+
+  // `abort` fails a read that is waiting, and whatever comes after.
+  const plain = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const silent = spawn(async () => {
+    const conn = await plain.accept();
+    const first = await conn.readString();
+    return [conn.peerAddr() != "", first == "hello"];
+  });
+  const c = await connectTls(`localhost:${plain.port}`, { ca: TEST_CA });
+  await c.write("hello");
+  console.log("server saw:", await silent);
+  const waiting = spawn(async () => {
+    try {
+      await c.read();
+      return "read returned";
+    } catch (e) {
+      return `read failed: ${e.message}`;
+    }
+  });
+  await sleep(20);
+  c.abort();
+  console.log(await waiting);
+  try {
+    await c.write("more");
+    console.log("unexpected");
+  } catch (e) {
+    console.log("write failed:", e.message);
+  }
+  c.close();
+  plain.close();
+}

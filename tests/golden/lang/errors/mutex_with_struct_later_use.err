@@ -1,0 +1,2 @@
+mutex_with_struct_later_use.vlt:17:3
+error: `t` is still used after `with` stored it in the locked value, which got a copy

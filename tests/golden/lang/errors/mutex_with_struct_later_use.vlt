@@ -1,0 +1,19 @@
+// A struct that holds an object of its own (an array here) is not a handle: the copy a `with`
+// callback stores in the locked value has its own array, so using the variable afterwards is an
+// error, as for a class instance (mutex_with_later_use). A struct of plain fields and `shared`
+// values is fine (lang/mutex_with_handle_struct).
+struct Tagged {
+  id: u64;
+  tags: string[];
+  hits: shared<i64>;
+}
+
+function main() {
+  const all = shared(new Mutex<Tagged[]>([]));
+  const t = Tagged { id: 1, tags: ["a"], hits: shared(0) };
+  all.with((a) => {
+    a.push(t);
+  });
+  t.tags.push("b");
+  console.log(all.with((a) => a.length));
+}

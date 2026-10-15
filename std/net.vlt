@@ -1,4 +1,5 @@
-// std/net: TCP over the runtime (docs/internals/contracts/rt_abi_async.md §6).
+// std/net: TCP, and TLS over TCP, over the runtime (docs/internals/contracts/rt_abi_async.md
+// §6). A TLS connection (`connectTls`, a `listenTls` listener) is a `TcpStream` like any other.
 //
 // Handles: the runtime's `VeltListener` / `VeltStream` are opaque `u64` handles (rt_abi_async.md
 // §3.2), declared and defined as `u64` on every target.
@@ -14,7 +15,7 @@
 //   in flight, so `close()` may be called at any time.
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
-import { writeBytesTo } from "velt:net_bytes";
+import { tryWriteTo, writeBytesTo } from "velt:net_bytes";
 
 declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_listener_port(l: u64): u32;
@@ -27,7 +28,20 @@ declare async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResu
 declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus>;
 declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
 declare function velt_rt_tcp_peer_addr(s: u64): string;
+declare function velt_rt_tcp_abort(s: u64);
 declare function velt_rt_tcp_close(s: u64);
+declare async function velt_rt_tcp_listen_tls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64>>;
+declare async function velt_rt_tcp_connect_tls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+): Promise<IoResult<u64>>;
 
 /** A bound listening socket. */
 export struct TcpListener {
@@ -35,7 +49,10 @@ export struct TcpListener {
   port: number;
   private handle: u64;
 
-  /** Waits for the next connection (TCP_NODELAY is on). */
+  /**
+   * Waits for the next connection (TCP_NODELAY is on). On a `listenTls` listener the TLS
+   * handshake runs with the stream's first read or write, which throws if it fails (10 s limit).
+   */
   async accept(): Promise<TcpStream> {
     return TcpStream { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
   }
@@ -75,6 +92,16 @@ export struct TcpStream {
     checkIo(await writeBytesTo(this.handle, data));
   }
 
+  /**
+   * Writes what the socket takes of `data` right now, without waiting, and returns the number
+   * of bytes written (0 when it takes nothing now, while an earlier `write` is still going on,
+   * for a TLS stream, and after an error, which the next `write` reports). For protocols that send small messages: when everything was
+   * written there is nothing to await.
+   */
+  tryWrite(data: u8[]): i64 {
+    return tryWriteTo(this.handle, data);
+  }
+
   /** Half-close: the peer reads end of stream; this side can still read. */
   shutdown() {
     checkIo(velt_rt_tcp_shutdown(this.handle));
@@ -83,6 +110,14 @@ export struct TcpStream {
   /** The peer's "ip:port" ("" once the handle is closed). */
   peerAddr(): string {
     return velt_rt_tcp_peer_addr(this.handle);
+  }
+
+  /**
+   * Fails the operations in flight on this stream (a `write` to a peer that stopped reading
+   * would otherwise never finish) and every later one; nothing more is sent or received. The handle stays open until `close()`.
+   */
+  abort() {
+    velt_rt_tcp_abort(this.handle);
   }
 
   /**
@@ -103,4 +138,44 @@ export async function listen(addr: string): Promise<TcpListener> {
 /** Connects to "host:port". */
 export async function connect(addr: string): Promise<TcpStream> {
   return TcpStream { handle: unwrapIo(await velt_rt_tcp_connect(addr)) };
+}
+
+export struct TlsListenOptions {
+  /** The certificate chain, PEM text. */
+  cert: string;
+  /** Its private key, PEM text. */
+  key: string;
+  /** The protocols to offer with ALPN, most preferred first (default: none). */
+  alpn?: string[];
+}
+
+/**
+ * `listen` for TLS connections: `accept` gives streams that are encrypted with `opts.cert`.
+ * Throws `IoError` "EINVAL" for a certificate or key that is not valid PEM.
+ */
+export async function listenTls(addr: string, opts: TlsListenOptions): Promise<TcpListener> {
+  const alpn = (opts.alpn ?? []).join(",");
+  const handle = unwrapIo(await velt_rt_tcp_listen_tls(addr, opts.cert, opts.key, alpn));
+  return TcpListener { port: velt_rt_tcp_listener_port(handle), handle: handle };
+}
+
+export struct TlsConnectOptions {
+  /** The name the server's certificate must be for (default: the host in the address). */
+  serverName?: string;
+  /** Extra trusted CA certificates (PEM), e.g. a private or test CA. */
+  ca?: string;
+  /** The protocols to offer with ALPN, most preferred first (default: none). */
+  alpn?: string[];
+}
+
+/**
+ * Connects to "host:port" over TLS; resolves once the handshake is done (the server's
+ * certificate is checked against the built-in roots and `opts.ca`).
+ */
+export async function connectTls(addr: string, opts: TlsConnectOptions = {}): Promise<TcpStream> {
+  const alpn = (opts.alpn ?? []).join(",");
+  const name = opts.serverName ?? "";
+  return TcpStream {
+    handle: unwrapIo(await velt_rt_tcp_connect_tls(addr, name, opts.ca ?? "", alpn)),
+  };
 }

@@ -245,10 +245,11 @@ impl Stores<'_, '_, '_, '_> {
         }
         // An explicit `.clone()` is a fresh object: nothing to report.
         let x = unshared(e);
-        // A struct of plain fields (a handle) behaves the same as its copy here.
+        // A struct of plain fields (a handle) behaves the same as its copy here, and so does
+        // one that also holds `shared` values: its copy reaches the same shared objects.
         let identity = self.cx.class_of(x.ty).is_some()
             || matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
-            || holds_shared(self.cx, x.ty);
+            || (holds_shared(self.cx, x.ty) && !is_handle(self.cx, self.s, x.ty, 0));
         let outer = place_root(x).and_then(|l| self.r.captured_var(self.def, l));
         if let (Some(outer), true) = (outer, identity) {
             self.inward.push((outer, e.span, itself));
@@ -304,6 +305,40 @@ impl Stores<'_, '_, '_, '_> {
         }
         self.note_inward(e, dest, true);
         Ok(false)
+    }
+}
+
+/// A struct whose fields are plain values, strings, `shared` values or such structs (std's
+/// handles: a `TcpStream`, a `WebSocket` with its `shared` queue), none of them ever assigned:
+/// nothing in it belongs to one copy only, and no copy can change, so a copy and the original
+/// are interchangeable.
+fn is_handle(cx: &mut Ctx, s: &Summaries, t: crate::hir::TyId, depth: u32) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if cx.is_copy(t) || cx.is_string_value(t) {
+        return true;
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::Shared(_) => true,
+        TyKind::Option(e) => is_handle(cx, s, e, depth + 1),
+        TyKind::Adt(d, args)
+            if Some(d) != cx.mutex_ty() && cx.class_of(t).is_none() && !s.assigned.contains(&d) =>
+        {
+            let Some(fields) = cx.adt(d).map(|a| {
+                a.fields
+                    .iter()
+                    .map(|f| f.ty)
+                    .collect::<Vec<crate::hir::TyId>>()
+            }) else {
+                return false;
+            };
+            fields.into_iter().all(|f| {
+                let f = cx.subst(f, &args);
+                is_handle(cx, s, f, depth + 1)
+            })
+        }
+        _ => false,
     }
 }
 
