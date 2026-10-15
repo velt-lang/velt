@@ -116,13 +116,135 @@ fn method_signatures_in_object_types_and_optional_interface_methods() {
     assert_eq!(i.fields[0].name.name, "q");
     assert!(i.fields[0].optional);
     assert_eq!(i.methods[0].sig.name.name, "run");
+}
+
+#[test]
+fn generic_method_signatures_are_fields_of_generic_function_type() {
+    let m = parse_ok("type G = { run<T>(f: () => T): T | undefined; stop(): void };");
     assert_eq!(
-        errors("type G = { run<T>(f: () => T): T };"),
-        vec!["generic method signatures are only supported in interfaces: declare `run` in an interface"]
+        alias_ty(&m, 0),
+        "{run: <T>fn(fn() => T) => (T | undefined); stop: fn() => void}"
+    );
+    let m = parse_ok("interface I { wrap?<A>(a: A): A; name: string }");
+    let ItemKind::Interface(i) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(i.fields[0].name.name, "wrap");
+    assert!(i.fields[0].optional);
+    assert_eq!(ty(&i.fields[0].ty), "(<A>fn(A) => A | null)");
+}
+
+#[test]
+fn object_literal_generic_methods() {
+    let e = expr("x = { match<R>(arms: Arms<R>): R { return arms.ok(); }, n: 1 }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let ObjectProp::KeyValue(name, f) = &ps[0] else {
+        panic!()
+    };
+    assert_eq!(name.name, "match");
+    let ExprKind::Arrow { type_params, .. } = &f.kind else {
+        panic!()
+    };
+    assert_eq!(type_params[0].name.name, "R");
+}
+
+#[test]
+fn object_literal_async_generic_methods() {
+    let e = expr("x = { async go<T>(x: T): Promise<T> { return x; } }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let ObjectProp::KeyValue(name, f) = &ps[0] else {
+        panic!()
+    };
+    assert_eq!(name.name, "go");
+    let ExprKind::Arrow {
+        type_params,
+        is_async,
+        ..
+    } = &f.kind
+    else {
+        panic!()
+    };
+    assert_eq!(type_params[0].name.name, "T");
+    assert!(is_async);
+}
+
+#[test]
+fn optional_parameters_in_function_types() {
+    let m = parse_ok("type F = (app: App, options?: Options) => void;");
+    assert_eq!(alias_ty(&m, 0), "fn(App, (Options | null)) => void");
+    let m = parse_ok("type F = (scoped?: any) => any[];");
+    assert_eq!(alias_ty(&m, 0), "fn((any | null)) => any[]");
+    assert_eq!(
+        errors("type F = (a?: number, b: string) => void;"),
+        ["a required parameter cannot follow an optional parameter"]
     );
     assert_eq!(
-        errors("interface I { wrap?<A>(a: A): A }"),
-        vec!["an optional method signature can't be generic yet: `wrap?` is a field of function type, and function types have no type parameters"]
+        errors("type F = (...a?: number[]) => void;"),
+        ["a rest parameter cannot be optional"]
+    );
+}
+
+#[test]
+fn optional_and_rest_tuple_elements() {
+    let m = parse_ok(
+        "type A = [name: string, age: number]; type B = [platform?: P]; type C = [string, number?]; type D = readonly [Ref, ...A]; type E = [first: string, ...rest: number[]];",
+    );
+    assert_eq!(alias_ty(&m, 0), "[string, number]");
+    assert_eq!(alias_ty(&m, 1), "[P?]");
+    assert_eq!(alias_ty(&m, 2), "[string, number?]");
+    assert_eq!(alias_ty(&m, 3), "[Ref, ...A]");
+    assert_eq!(alias_ty(&m, 4), "[string, ...number[]]");
+    assert_eq!(
+        errors("type A = [x?: number, y: string];"),
+        ["a required element cannot follow an optional element"]
+    );
+    assert_eq!(
+        errors("type A = [...number[], x?: string];"),
+        ["an optional element cannot follow a rest element"]
+    );
+    assert_eq!(
+        errors("type A = [...x?: number[]];"),
+        ["a tuple member cannot be both optional and rest"]
+    );
+}
+
+#[test]
+fn var_declarations() {
+    let m = parse_ok("function f() { var r = 1, v = r == 1 ? r : 2; return v; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(f.body.stmts.len(), 3);
+    let StmtKind::Var(v) = &f.body.stmts[1].kind else {
+        panic!()
+    };
+    assert_eq!(v.kind, VarKind::Let);
+    parse_ok("var top = 1; export var other = 2;");
+    parse_ok("const g = () => { var x = 1; return x; };");
+    parse_ok("const o = { m() { var x = 1; return x; } };");
+    let nested = "`var` in a nested block, a loop or a `switch` is not supported yet";
+    assert_eq!(
+        errors("function f() { if (true) { var x = 1; } }"),
+        [nested]
+    );
+    assert_eq!(errors("function f() { while (true) var x = 1; }"), [nested]);
+    assert_eq!(
+        errors("function f() { switch (1) { case 1: var x = 1; } }"),
+        [nested]
+    );
+    assert_eq!(
+        errors("function f() { for (var i = 0; i < 3; i++) {} }"),
+        ["`var` in the head of a `for` loop is not supported yet"]
     );
 }
 
@@ -371,4 +493,17 @@ fn this_parameters_and_the_this_type() {
         panic!()
     };
     assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
+}
+
+#[test]
+fn catch_binding_annotations() {
+    parse_ok("try { f(); } catch (e: unknown) { g(e); }");
+    parse_ok("try { f(); } catch ({ message }: any) { g(message); }");
+    let ts1196 =
+        "a catch clause variable's type annotation must be `any` or `unknown` if specified";
+    assert_eq!(errors("try { f(); } catch (e: Error) { g(e); }"), [ts1196]);
+    assert_eq!(
+        errors("try { f(); } catch (e: unknown[]) { g(e); }"),
+        [ts1196]
+    );
 }

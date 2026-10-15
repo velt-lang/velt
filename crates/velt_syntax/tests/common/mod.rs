@@ -176,6 +176,8 @@ pub fn ty(t: &TypeExpr) -> String {
             format!("<{}>{}", names.join(", "), ty(t))
         }
         TypeExprKind::Construct(t) => format!("new {}", ty(t)),
+        TypeExprKind::TupleRest(t) => format!("...{}", ty(t)),
+        TypeExprKind::TupleOptional(t) => format!("{}?", ty(t)),
         TypeExprKind::Predicate {
             param,
             ty: t,
