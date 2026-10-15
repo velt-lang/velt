@@ -235,14 +235,16 @@ fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
     }
 }
 
-/// Where a key that failed at a call comes from: the generic function that uses it.
+/// Where a key that failed at a call comes from: the generic function that uses it, or the
+/// class or struct whose field initializers do (instantiated by `new`).
 fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
-    let Some(Def::Fn(f)) = &cx.defs[origin.0 as usize] else {
-        return None;
+    let name = match (&cx.defs[origin.0 as usize], &cx.info[origin.0 as usize]) {
+        (Some(Def::Fn(f)), _) => f.name.as_str(),
+        (_, DefInfo::Adt(a)) => a.name.as_str(),
+        _ => return None,
     };
-    let std = f.name.starts_with("std/");
-    (origin != here && !std)
-        .then(|| format!("required because `{}` uses it as a `Record` key", f.name))
+    let std = name.starts_with("std/");
+    (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
 }
 
 /// The record key types `t` contains, also through the fields of structs, classes and unions
