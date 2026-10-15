@@ -48,6 +48,8 @@ The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp`, `TextEnco
 (and the names next to them) are loaded only by programs that mention one of those names (or
 hold a regex literal), so the others don't pay for compiling them; a module that imports or
 declares such a name itself (`import { Response } from "./api"`) uses its own and
-doesn't load the global. Integer helpers (`gcd`,
+doesn't load the global. Likewise a program that uses `Response` or `Request` loads the typed
+arrays behind `res.bytes()` and `res.arrayBuffer()` only when it mentions `bytes` or
+`arrayBuffer` (or names a typed array). Integer helpers (`gcd`,
 `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is imported from the
 [standard library](../std/README.md).

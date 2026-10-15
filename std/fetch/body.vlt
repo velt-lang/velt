@@ -5,10 +5,8 @@
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
-import { TypedArray } from "velt:typed_array/base";
+import { ArrayBuffer, BufferView } from "velt:typed_array/core";
 import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ArrayBuffer } from "velt:typed_array/buffer";
-import { DataView } from "velt:typed_array/data_view";
 import { ReadableStream } from "velt:streams";
 
 /**
@@ -19,9 +17,8 @@ import { ReadableStream } from "velt:streams";
 export type BodyInit =
   | string
   | u8[]
-  | TypedArray
+  | BufferView
   | ArrayBuffer
-  | DataView
   | URLSearchParams
   | ReadableStream<Uint8Array>
   | BodyStream;
@@ -76,24 +73,14 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   if (body instanceof ReadableStream) {
     return { kind: 3, text: "", bytes: [], stream: BodyStream.from(streamBytes(body)), implied: 0 };
   }
-  // A typed array, buffer or view: its bytes, copied (as JS does).
-  if (body instanceof TypedArray) {
+  // A typed array or `DataView` (a `BufferView`), or a buffer: its bytes, copied (as JS does).
+  if (body instanceof BufferView) {
     const o = body.off as i64;
     const bytes = body.buf.bytes.slice(o, o + ((body.len * body.__size()) as i64));
     return { kind: 2, text: "", bytes: bytes, stream: null, implied: 0 };
   }
   if (body instanceof ArrayBuffer) {
     return { kind: 2, text: "", bytes: body.bytes.slice(), stream: null, implied: 0 };
-  }
-  if (body instanceof DataView) {
-    const o = body.off as i64;
-    return {
-      kind: 2,
-      text: "",
-      bytes: body.buf.bytes.slice(o, o + (body.len as i64)),
-      stream: null,
-      implied: 0,
-    };
   }
   return { kind: 2, text: "", bytes: body, stream: null, implied: 0 };
 }

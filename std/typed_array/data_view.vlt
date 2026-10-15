@@ -22,6 +22,7 @@ import {
   toUint32,
   toUint8,
 } from "velt:typed_array/buffer";
+import { BufferView } from "velt:typed_array/core";
 
 /**
  * A view of a byte range of an `ArrayBuffer` for numbers of any size at any offset (JS
@@ -29,11 +30,7 @@ import {
  * Multi-byte values are big-endian unless `littleEndian` is true, as in JS. An access outside
  * the view throws a `RangeError`.
  */
-export class DataView {
-  private buf: ArrayBuffer;
-  private off: usize;
-  private len: usize;
-
+export class DataView extends BufferView {
   /**
    * A view of `buffer` from `byteOffset`, of `byteLength` bytes or up to its end; `RangeError`
    * as in JS when the range is outside the buffer.
@@ -53,9 +50,7 @@ export class DataView {
       }
       len = n as usize;
     }
-    this.buf = buffer;
-    this.off = start;
-    this.len = len;
+    super(buffer, start, len);
   }
 
   /** The buffer the view is of. */

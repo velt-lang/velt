@@ -3,10 +3,8 @@
 // Base64 or hex does not load the typed arrays they take and give.
 
 import { EncodingError, firstInvalid, utf8DecodeLossy, validToString } from "velt:encoding";
-import { TypedArray } from "velt:typed_array/base";
 import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ArrayBuffer } from "velt:typed_array/buffer";
-import { DataView } from "velt:typed_array/data_view";
+import { ArrayBuffer, BufferView } from "velt:typed_array/core";
 
 // `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
 declare function velt_rt_bytes_from_str(s: string): u8[];
@@ -106,15 +104,12 @@ export class TextDecoder {
    * The text `input` encodes: a typed array (its bytes), an `ArrayBuffer`, a `DataView`, or
    * Velt's byte array `u8[]`.
    */
-  decode(input: TypedArray | ArrayBuffer | DataView | u8[] = []): string {
+  decode(input: BufferView | ArrayBuffer | u8[] = []): string {
     if (input instanceof ArrayBuffer) {
       return this.decodeBytes(input.bytes);
     }
-    if (input instanceof TypedArray) {
+    if (input instanceof BufferView) {
       return this.decodeRange(input.buf.bytes, input.off, input.len * input.__size());
-    }
-    if (input instanceof DataView) {
-      return this.decodeRange(input.buf.bytes, input.off, input.len);
     }
     return this.decodeBytes(input);
   }

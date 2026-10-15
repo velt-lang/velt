@@ -15,9 +15,8 @@
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { Uint8Array } from "velt:typed_array/uint8_array";
-import { ArrayBuffer } from "velt:typed_array/buffer";
 import { ReadableStream } from "velt:streams";
+import { Uint8Array } from "velt:typed_array/uint8_array";
 import {
   BodyInit,
   BodyStream,
@@ -390,15 +389,8 @@ export class Response {
     return this.#data ?? [];
   }
 
-  /** The body's bytes, in a `Uint8Array`. */
-  async bytes(): Promise<Uint8Array, IoError | AbortError> {
-    return Uint8Array.wrap(await this.rawBytes());
-  }
-
-  /** The body's bytes, in an `ArrayBuffer`. */
-  async arrayBuffer(): Promise<ArrayBuffer, IoError | AbortError> {
-    return ArrayBuffer.adopt(await this.rawBytes());
-  }
+  // `bytes()` and `arrayBuffer()` are in velt:fetch/typed, loaded with the typed arrays they
+  // give (std/prelude/global/fetch_bytes.vlt).
 
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
   private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {

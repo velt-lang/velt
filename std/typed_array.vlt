@@ -3,7 +3,7 @@
 // `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array` and `Float64Array`. Each is also a
 // global of its own (std/prelude/global/), so a program loads only the classes it names.
 
-export { ArrayBuffer } from "velt:typed_array/buffer";
+export { ArrayBuffer } from "velt:typed_array/core";
 export { DataView } from "velt:typed_array/data_view";
 export { Int8Array } from "velt:typed_array/int8_array";
 export { Uint8Array } from "velt:typed_array/uint8_array";
