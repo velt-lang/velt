@@ -22,6 +22,7 @@ mod discriminated;
 mod dispose_call;
 mod division;
 pub(crate) mod downcast;
+mod dynamic;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -57,6 +58,7 @@ mod overload_call;
 mod process;
 mod promise_new;
 mod promise_reads;
+mod promise_then;
 mod push_items;
 mod record;
 mod record_call;
@@ -123,6 +125,9 @@ impl FnCx<'_, '_> {
         let h = self.with_lets(temps, h);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
+        // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an
+        // optional field) is an `any` in user code, as in TypeScript.
+        let h = self.collapse_dynamic_option(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);

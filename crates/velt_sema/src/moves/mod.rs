@@ -22,7 +22,8 @@ use velt_common::{Diagnostic, Span};
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Capture, Def, DefId, LocalDef, LocalId, Pat, PatKind, Stmt, StmtKind, TyId, UseMode,
+    Block, Capture, Def, DefId, LocalDef, LocalId, Pat, PatKind, Stmt, StmtKind, TyId, TyKind,
+    UseMode,
 };
 use loops::LoopFlow;
 use state::{join, Flow, MoveKind, State};
@@ -48,6 +49,8 @@ struct Moves<'a> {
     /// Per local of the function: is its value shared (`Ctx::is_shared_value`) rather than
     /// moved when an escaping closure captures it and it is used again?
     shared: Vec<bool>,
+    /// Per local of the function: does it hold a promise (one consumer: a note on its moves)?
+    promise: Vec<bool>,
     report: bool,
     errors: Vec<Diagnostic>,
     loops: Vec<LoopFlow>,
@@ -117,6 +120,14 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .iter()
         .map(|tys| tys.iter().map(|&t| cx.is_copy(t)).collect())
         .collect();
+    let promise: Vec<Vec<bool>> = local_tys
+        .iter()
+        .map(|tys| {
+            tys.iter()
+                .map(|&t| matches!(cx.ty.kind(t), TyKind::Promise(..)))
+                .collect()
+        })
+        .collect();
     let shared: Vec<Vec<bool>> = local_tys
         .into_iter()
         .map(|tys| tys.into_iter().map(|t| cx.is_shared_value(t)).collect())
@@ -180,6 +191,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 .collect(),
             nested: vec![],
             shared: shared[i].clone(),
+            promise: promise[i].clone(),
             writers: &writers,
             generators: &generators,
             boxed: HashSet::new(),
@@ -571,6 +583,15 @@ impl Moves<'_> {
     fn moved_error(&self, i: usize, moved_at: Option<(Span, MoveKind)>, span: Span) -> Diagnostic {
         let name = &self.locals[i].name;
         let d = Diagnostic::error(format!("use of moved value `{name}`"), span);
+        if self.promise.get(i).copied().unwrap_or(false) {
+            let d = match moved_at {
+                Some((at, _)) => d.with_label(at, "the promise was taken here"),
+                None => d,
+            };
+            return d.with_note(format!(
+                "a promise has one consumer in Velt: `then`, `catch`, `finally`, `await` and the combinators each take it, while TypeScript lets several share one promise; chain the calls (`{name}.then(f).then(g)`), or keep the promise `then` returns and use that"
+            ));
+        }
         match moved_at {
             Some((at, MoveKind::Closure)) => d.with_label(at, "value moved into closure here").with_note(format!(
                 "`{name}` was moved into a closure that is stored or returned; use `shared({name})` to share it, or `{name}.clone()` to give the closure its own copy"

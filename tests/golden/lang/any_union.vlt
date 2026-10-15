@@ -1,0 +1,36 @@
+// check: no leaks
+// An `any` converted to a union or a literal type takes the first member whose run-time test
+// it passes (#924); an `any` converts to `unknown` as it is.
+type Color = "red" | "green";
+
+class A {
+  x: number = 1;
+}
+
+class B {
+  y: number = 2;
+}
+
+function pick(a: any): string {
+  const f: number | string = a;
+  return typeof f + ":" + String(f);
+}
+
+function main(): void {
+  console.log(pick(1), pick("s"));
+  const r: any = "red";
+  const c: Color = r as Color;
+  console.log(c, c === "red");
+  const one: "green" = "green" as any;
+  console.log(one);
+  const ab: any = new B();
+  const u: A | B = ab;
+  console.log(u instanceof B, u);
+  const bs: boolean | number = true as any;
+  console.log(bs);
+  const k: unknown = ab;
+  const k2: unknown = ab as unknown;
+  const mk = (): unknown => ab;
+  const ks: unknown[] = [ab, 1];
+  console.log(typeof k, typeof k2, typeof mk(), ks.length, k === ab);
+}

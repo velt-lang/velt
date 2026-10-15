@@ -1,0 +1,16 @@
+// Prelude: `any` and `unknown`, the dynamic value (issue #924, docs/reference/types.md "any
+// and unknown").
+//
+// Both are interfaces every type implements (the compiler adds the implementation): a value
+// converted to one is boxed with its type's descriptor, the interface table. They share one
+// representation; `unknown` must be narrowed before use, `any` converts to a typed value with
+// a check at run time (a `TypeError` when the value has another type).
+//
+// The file name sorts last, so the prelude modules before it keep their indexes (and the
+// symbols of programs that use no `any` stay the same).
+
+/** A value of any type, checked at run time where it enters typed code. */
+export interface any {}
+
+/** A value of any type that must be narrowed (`typeof`, `instanceof`, `as`) before use. */
+export interface unknown {}

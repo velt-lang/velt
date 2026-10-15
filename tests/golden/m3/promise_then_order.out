@@ -1,0 +1,22 @@
+chains: sync done
+a 1
+b 2
+microtask
+a again
+b again
+flattened 51
+outer
+second
+then after both
+inner
+x starts
+y starts
+x,y
+z starts
+main: sync done
+then z
+queued last
+finally z
+later settles
+then later
+end

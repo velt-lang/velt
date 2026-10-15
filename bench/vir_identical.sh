@@ -46,9 +46,12 @@ emit_all() {
 # Two kinds of glue are named after a type's index in the compiler's type table (the disposal of
 # an unclaimed promise result, `_Gunclaimed_205`, and a field initializer that can throw,
 # `_Ginit_E211_…`). The index moves whenever the standard library declares one more type: the
-# same function under another name, so the index is left out of the comparison.
+# same function under another name, so the index is left out of the comparison. So is the file
+# index in the name of an instance specialized for its caller's location (`_L23_31_15`: file,
+# line, column), which moves when the prelude gains a module (the program's own files come
+# after the prelude's).
 names() {
-  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g; s/_Ginit_E[0-9]+_/_Ginit_EN_/g' "$1"
+  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g; s/_Ginit_E[0-9]+_/_Ginit_EN_/g; s/_L[0-9]+_([0-9]+_[0-9]+)/_LN_\1/g' "$1"
 }
 
 emit_all "$base" "$base_std" "$tmp/base"

@@ -32,6 +32,7 @@ mod fields;
 mod intrinsic;
 mod nothing;
 mod numeric;
+mod table;
 
 use std::collections::HashMap;
 
@@ -41,6 +42,7 @@ pub use fields::{FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{FloatTy, IntTy, SimdTy};
+pub use table::TyTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -127,52 +129,6 @@ pub enum LitValue {
     Bool(bool),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct TyTable {
-    kinds: Vec<TyKind>,
-    map: std::collections::HashMap<TyKind, TyId>,
-}
-
-impl TyTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // An option of an option is the inner option, with the inner one's nothing (`T | null |
-        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
-        if let TyKind::Option(inner, _) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
-                return inner;
-            }
-        }
-        if let Some(&id) = self.map.get(&kind) {
-            return id;
-        }
-        let id = TyId(self.kinds.len() as u32);
-        self.kinds.push(kind.clone());
-        self.map.insert(kind, id);
-        id
-    }
-
-    pub fn kind(&self, id: TyId) -> &TyKind {
-        &self.kinds[id.0 as usize]
-    }
-
-    /// Lookup without inserting.
-    pub fn get(&self, kind: &TyKind) -> Option<TyId> {
-        self.map.get(kind).copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.kinds.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.kinds.is_empty()
-    }
-}
-
 // ─────────────────────────── Program & defs ───────────────────────────
 
 #[derive(Clone, Debug)]
@@ -198,6 +154,11 @@ pub struct Program {
     /// Every deferred type (`TyKind::Op`) with concrete arguments that an instantiation of a
     /// generic definition reaches, and the type it reduces to (no `Op` in it).
     pub type_ops: HashMap<TyId, TyId>,
+    /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
+    pub any_impl: Option<u32>,
+    /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
+    /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
+    pub unknown: Option<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

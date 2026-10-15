@@ -25,8 +25,9 @@ function's `return`s ([Return types](functions.md#return-types)), and everything
 inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
 alias may refer to itself only when it is an object type, or an intersection of object types,
 written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
-fields ([Intersection types](#intersection-types)). There is no `any`
-or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
+fields ([Intersection types](#intersection-types)). `any` and `unknown` hold a value of any
+type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
+([`velt:json`](../std/json.md)).
 
 The names TypeScript does not have (`i8`…`i64`, `isize`, `u8`…`u64`, `usize`, `f32`, `f64`,
 `bool`) are like library globals: a type alias, class, interface or enum of the module with
@@ -1505,3 +1506,63 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   generator function.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
+
+## any and unknown
+
+`any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
+value converts to either. An `any` converts back to every type, and the value is checked where it
+enters typed code: a value of another type stops the program with a `TypeError` (Node would
+keep the wrong value). An `unknown` must be narrowed first (`typeof`, `instanceof`), or
+converted with `as T`, which is checked the same way. Both are the same value at run time.
+
+```ts
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function main(): void {
+  const p = new Point(1);
+  const a: any = p;
+  const q: Point = a; // checked: `a` holds a `Point`
+  console.log(q === p, typeof a); // true object
+  const n: any = null;
+  console.log(n == undefined, n === undefined); // true false
+  const u: unknown = "text";
+  if (typeof u === "string") {
+    console.log(u.length); // 4
+  }
+}
+```
+
+What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
+`T | null`, unions and class instances, checked against the class and its subclasses, and an
+instance of a generic class against that very instantiation (`Box<number>`); into a
+union or a literal type such as `"red" | "green"` the value takes the first member it is: a
+`typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
+literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
+operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
+`console.log`. An object is itself in an `any` whatever its static type was when it was
+converted (a class instance through its base class, an interface value, a function converted
+twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
+with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
+`m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
+give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
+a left-out optional field `q?: any` holds `undefined`. An enum value is its number or string
+in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
+value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
+`a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
+itself, `-0` is `0`), objects by identity.
+Differences from Node: `null` and `undefined` converted to `T | null` both give `null`
+(a `T | null` has no `undefined`; convert to `T | undefined` to keep it); `==` between an
+object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object
+with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
+convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
+optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
+today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
+`x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
+`JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
+error.

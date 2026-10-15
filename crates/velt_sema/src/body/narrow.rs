@@ -384,6 +384,18 @@ impl FnCx<'_, '_> {
 
     /// Facts of `typeof x === tag`.
     fn typeof_facts(&mut self, operand: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+        // `any` / `unknown`: read as the primitive type the tag names.
+        if let Some(l) = self.own_dynamic_local(operand) {
+            {
+                let t = match tag {
+                    "number" => self.cx.ty.f64,
+                    "string" => self.cx.ty.str_,
+                    "boolean" => self.cx.ty.bool_,
+                    _ => return (vec![], vec![]),
+                };
+                return (vec![Fact::Class(l, t)], vec![]);
+            }
+        }
         let Some((l, nullable, u)) = self.local_with_members(operand) else {
             return (vec![], vec![]);
         };

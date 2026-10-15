@@ -35,6 +35,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }
+        if self.cx.dynamic(sty).is_some() {
+            return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+        }
+        if self.cx.maybe_dynamic(sty) {
+            // `any | null`: the `any` it is.
+            if let Some(any) = self.any_ty() {
+                let s = self.coerce(s, any);
+                return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+            }
+        }
         let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
@@ -82,6 +92,23 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(operand, None, Want::Borrow);
+        if self.cx.dynamic(s.ty).is_some() {
+            let str_ = self.cx.ty.str_;
+            let t = self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+            let want = self.str_lit(tag, span);
+            let op = if negate {
+                hir::BinOp::NotEq
+            } else {
+                hir::BinOp::Eq
+            };
+            let b = self.cx.ty.bool_;
+            let kind = H::Binary {
+                op,
+                lhs: Box::new(t),
+                rhs: Box::new(want),
+            };
+            return self.mk(kind, b, span);
+        }
         // The nothing arm answers `"undefined"` for a `T | undefined` and `"object"` for a
         // `T | null`.
         let nothing = self.cx.ty.nothing_of(s.ty);

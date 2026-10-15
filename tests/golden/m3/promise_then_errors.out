@@ -1,0 +1,12 @@
+caught a
+a = -1
+reason b
+caught thrown after 1
+c = 0
+finally d
+d = 4
+finally e
+rethrown e
+cleanup runs
+f = 6
+g = 7

@@ -59,6 +59,8 @@ pub(super) enum Rt {
     FutPeek,
     FutBox,
     FutStart,
+    /// An unhandled rejection waits for the task's microtasks (`build_unclaimed`).
+    UnhandledDefer,
     FutDetach,
     FutTransfer,
     XferBegin,
@@ -106,6 +108,8 @@ pub(super) enum Rt {
     MutexUnlock,
     // M4: string builder and JSON pull reader (rt_abi_async.md §12)
     StrEq,
+    /// JavaScript's `Number(s)` of a string (`any` == conversions, any.rs).
+    StrToNumber,
     StrbufNew,
     /// A template literal's builder made from a fresh part's buffer (`build_sized`).
     StrbufAdopt,
@@ -221,6 +225,7 @@ impl Rt {
             Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
+            Rt::UnhandledDefer => f("velt_rt_unhandled_defer", vec![], U8),
             Rt::FutDetach => f("velt_rt_fut_detach", vec![Ptr, Ptr], Unit),
             Rt::FutTransfer => f("velt_rt_fut_transfer", vec![Ptr, Ptr], Unit),
             Rt::XferBegin => f("velt_rt_xfer_begin", vec![], Unit),
@@ -283,6 +288,7 @@ impl Rt {
         let f = |s, params, ret| (s, params, ret, false);
         match self {
             Rt::StrEq => f("velt_rt_str_eq", vec![Ptr, Ptr], U8),
+            Rt::StrToNumber => f("velt_rt_str_to_number", vec![Ptr], F64),
             Rt::StrbufNew => f("velt_rt_strbuf_new", vec![U64, Ptr], Unit),
             Rt::StrbufAdopt => f("velt_rt_strbuf_adopt", vec![Ptr, Ptr, U64, Ptr], U8),
             Rt::StrbufPushStr => f("velt_rt_strbuf_push_str", vec![Ptr, Ptr], Unit),

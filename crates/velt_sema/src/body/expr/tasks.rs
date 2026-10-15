@@ -146,7 +146,7 @@ impl FnCx<'_, '_> {
                 ..
             }
         );
-        if !promise || spawned {
+        if !promise || spawned || self.is_promise_callback_call(e, h) {
             return;
         }
         let mut d = Diagnostic::error(
