@@ -258,7 +258,7 @@ impl FnCx<'_, '_> {
     /// The receiver to read and write through: `obj` itself when evaluating it again has no
     /// effect (a variable, `this`, a path of fields), else a temporary holding it. A path through
     /// a getter (`h.inner.value++`) runs that getter once, as in JS.
-    fn receiver_once(
+    pub(super) fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
         object: &ast::Expr,
@@ -275,7 +275,7 @@ impl FnCx<'_, '_> {
 
     /// `if` condition under which `old op= v` assigns: `old == null` for `??=`, `!old` for
     /// `||=`, `old` for `&&=`.
-    fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
+    pub(super) fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
         let test = match op {
             ast::BinaryOp::Nullish => {
                 let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
@@ -294,7 +294,12 @@ impl FnCx<'_, '_> {
     }
 
     /// `const <name> = init` (appended to `stmts`), visible by `name` in the innermost scope.
-    fn bind_temp(&mut self, name: &str, init: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> LocalId {
+    pub(super) fn bind_temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> LocalId {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
@@ -305,7 +310,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The value of temporary `l` as the result of the block.
-    fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
+    pub(super) fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
         let mode = if self.cx.is_copy(ty) {
             UseMode::Copy
         } else {
@@ -316,7 +321,7 @@ impl FnCx<'_, '_> {
 }
 
 /// Is `e` a variable or a path of fields of one (no getter or other call on the way)?
-fn is_field_path(e: &hir::Expr) -> bool {
+pub(super) fn is_field_path(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } => is_field_path(base),
@@ -324,7 +329,7 @@ fn is_field_path(e: &hir::Expr) -> bool {
     }
 }
 
-fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
+pub(super) fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
     synth(
         ast::ExprKind::Binary {
             op,
@@ -335,11 +340,11 @@ fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast:
     )
 }
 
-fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
+pub(super) fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
     hir::Stmt { kind, span }
 }
 
-fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
+pub(super) fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
     hir::Block {
         stmts,
         value: value.map(Box::new),

@@ -37,7 +37,12 @@ const KEEP: usize = 1 << 16;
 pub unsafe extern "C" fn velt_rt_strbuf_inspect_layout(buf: *mut VeltStrBuf, start: u64) {
     let start = start as usize;
     let text = &(*buf).as_bytes()[start..];
-    if text.len() <= FITS && text.iter().filter(|&&b| b == b',').count() < 6 {
+    // Short and on one line: left as it is. A custom inspect's multi-line text (a big
+    // `ArrayBuffer`) is laid out at any length, to be indented where it is nested.
+    if text.len() <= FITS
+        && text.iter().filter(|&&b| b == b',').count() < 6
+        && !text.contains(&b'\n')
+    {
         return;
     }
     SCRATCH.with(|scratch| {
