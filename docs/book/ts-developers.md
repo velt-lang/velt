@@ -258,8 +258,9 @@ surprise ([Error handling](errors.md)).
 - `spawn(f())` runs a task on another core; the runtime is multi-threaded. Data shared between
   tasks must be `shared(...)` or a `Mutex`, and data races are compile errors.
 - A promise's type carries its error type: `Promise<T, E>`.
-- Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
-  to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
+- `then`, `catch` and `finally` work as in Node, callbacks in Node's order
+  ([Async](../reference/async.md#then-catch-and-finally)); `await` is the cheaper way to
+  sequence async code.
 - A value that may or may not be a promise (`View | Promise<View>`) is told apart with
   `x instanceof Promise` (a thenable check like `typeof x.then === "function"` doesn't apply).
   An async arrow passed where such a union is returned returns the promise, as in TS, and one
@@ -341,7 +342,8 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted), but a chained access reads the changed array as in TypeScript (`xs.sort().join(",")`); other uses of the result are an error with the fix; `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |
 | `xs.length = 0` | the same: setting `length` drops the elements past it; a larger `length` panics (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
-| `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
+| `p.then(f).catch(g)` | the same; `catch(g)` gives the promise's value type | `catch` changing the value type |
+| `p.then(f); p.then(g);`, or `p.then(f)` and later `await p` | a promise has one consumer: the second use is ``use of moved value``; chain the calls or keep the promise `then` returns | shared promises (#212) |
 | `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
 | `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | the same layout, `[runtime, script, ...args]`: the script is the source file under `velt run`, the executable for a built program; each read is a new array, so changing it in place is an error (copy it first) | — |

@@ -49,6 +49,11 @@ pub fn type_queries<'a>(t: &'a ast::TypeExpr, f: &mut dyn FnMut(&'a [ast::Ident]
     walk_type(t, &mut Queries(f));
 }
 
+/// Visit type `t` and every type nested in it.
+pub fn walk_type_expr<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
+    walk_type(t, v);
+}
+
 /// Visit every node of `module`.
 pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     for item in &module.items {

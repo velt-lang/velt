@@ -106,6 +106,17 @@ pub(crate) struct LocalSet {
     /// The nodes being polled right now, innermost first ([`polling`]): a node never runs
     /// again from inside its own poll.
     running: *const Running,
+    /// The task's microtask queue (micro.rs).
+    pub(super) micro: super::micro::Queue,
+    /// How many adopted nodes are being polled right now, one inside the other (node/owner.rs
+    /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
+    /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
+    pub(super) adopting: u32,
+    /// Rejected promises nobody handles, reported once the microtask queue is drained
+    /// (unhandled.rs; each holds a reference).
+    pub(super) unhandled: Vec<*mut VeltFut>,
+    /// The task's gate (none until it first creates a timer; gate.rs).
+    pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -121,6 +132,10 @@ impl LocalSet {
             members: Vec::new(),
             pending: VecDeque::new(),
             running: std::ptr::null(),
+            micro: super::micro::Queue::new(),
+            adopting: 0,
+            unhandled: Vec::new(),
+            gate: None,
         })
     }
 
@@ -128,6 +143,11 @@ impl LocalSet {
     pub(super) fn is_idle(&self) -> bool {
         self.members.is_empty()
     }
+}
+
+/// Has `set` queued microtasks?
+pub(super) unsafe fn has_microtasks(set: *mut LocalSet) -> bool {
+    !(*set).micro.is_empty()
 }
 
 /// Add unfinished node `f` to the members of `set` (taking a reference).
@@ -222,10 +242,29 @@ pub(super) unsafe fn run(d: &mut Driver<'_>, f: *mut VeltFut) {
     let Some(w) = node::finish(f) else {
         return;
     };
-    match node::local_awaiter(&w, &(*d.set).shared) {
-        Some(g) => run(d, g),
-        None if w.will_wake(d.task) => (d.root)(),
-        None => w.wake(),
+    resume(d, w);
+}
+
+/// Resume whoever `w` wakes, right away: a local promise of the set runs now (one driven by its
+/// owner resumes the owner instead: the owner polls it), the task's root is polled, any other
+/// waker is woken. From inside a poll (`run_now`), a promise being polled up the stack goes on
+/// later.
+pub(super) unsafe fn resume(d: &mut Driver<'_>, mut w: Waker) {
+    loop {
+        match node::local_awaiter(&w, &(*d.set).shared) {
+            Some(g) if node::is_adopted(g) => match node::take_awaiter(g) {
+                Some(owner) => {
+                    w = owner;
+                    continue;
+                }
+                None => node::queue(g),
+            },
+            Some(g) if !(*d.set).running.is_null() && is_running(d.set, g) => node::queue(g),
+            Some(g) => run(d, g),
+            None if w.will_wake(d.task) => (d.root)(),
+            None => w.wake(),
+        }
+        return;
     }
 }
 
@@ -266,6 +305,9 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     for ran in 0..(*set).pending.len() {
         if root_at == Some(ran) {
             (d.root)();
+            if has_microtasks(set) {
+                super::micro::drain(d);
+            }
         }
         if !has_budget_remaining() {
             d.task.wake_by_ref();
@@ -278,6 +320,10 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let fl = h.flags.fetch_and(!QUEUED, AcqRel);
         if fl & (DONE | CANCELLED) == 0 && h.member.load(Relaxed) != NO_MEMBER {
             run(d, f);
+            // A job ended: the microtasks it queued run before the next one (micro.rs).
+            if has_microtasks(set) {
+                super::micro::drain(d);
+            }
         }
         node::release(f);
     }
@@ -287,11 +333,18 @@ impl Drop for LocalSet {
     /// The task was dropped (cancelled, or it finished while promises it started are unfinished and
     /// could not be handed on): cancel what is left.
     fn drop(&mut self) {
+        if let Some(g) = &self.gate {
+            g.leave();
+        }
         self.shared.closed.store(true, SeqCst);
         {
             let _g = self.shared.closing.lock();
             // SAFETY: the set is closed: this is the queue's last consumer.
             unsafe { self.shared.release_queued() };
+        }
+        for f in self.unhandled.drain(..) {
+            // SAFETY: a deferred rejection holds a reference (unhandled.rs).
+            unsafe { node::release(f) };
         }
         for SendPtr(f) in self.pending.drain(..) {
             // SAFETY: the queue held a reference.

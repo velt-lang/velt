@@ -342,6 +342,20 @@ impl<'a> Walker<'a> {
                 self.ty(value);
             }
             ast::TypeExprKind::KeyOf(t) => self.ty(t),
+            ast::TypeExprKind::Conditional(c) => {
+                [&c.check, &c.extends, &c.then, &c.else_]
+                    .into_iter()
+                    .for_each(|t| self.ty(t));
+            }
+            ast::TypeExprKind::Mapped(m) => {
+                self.ty(&m.source);
+                m.name.iter().for_each(|t| self.ty(t));
+                self.ty(&m.value);
+            }
+            ast::TypeExprKind::TemplateLiteral { types, .. } => {
+                types.iter().for_each(|t| self.ty(t))
+            }
+            ast::TypeExprKind::Infer(_) => {}
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null

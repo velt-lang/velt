@@ -1,0 +1,28 @@
+// A `setTimeout` callback never runs before the callbacks queued by the code that scheduled
+// it, however busy the machine is: every round prints the same lines in the same order, as in
+// Node.
+
+async function round(k: number) {
+  Promise.resolve(1)
+    .then(() => console.log(`${k} a1`))
+    .then(() => console.log(`${k} a2`))
+    .then(() => console.log(`${k} a3`));
+  await new Promise<void>((resolve) => {
+    setTimeout(async () => {
+      console.log(`${k} timeout`);
+      resolve();
+    }, 0);
+    Promise.resolve(2)
+      .then(() => console.log(`${k} b1`))
+      .then(() => console.log(`${k} b2`))
+      .then(() => console.log(`${k} b3`));
+    queueMicrotask(() => console.log(`${k} microtask`));
+    console.log(`${k} sync`);
+  });
+}
+
+async function main() {
+  for (let k = 0; k < 30; k++) {
+    await round(k);
+  }
+}

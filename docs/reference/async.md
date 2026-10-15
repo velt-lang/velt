@@ -172,6 +172,78 @@ as it goes, like Node. A combinator
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
 
+## `then`, `catch` and `finally`
+
+Promises have JavaScript's callback methods. Each takes the promise (it has one owner) and
+returns a new promise, which starts at once like any stored promise:
+
+- `p.then(f)`: `f(value)` once `p` fulfills; a rejection passes through to the new promise.
+- `p.then(f, g)`: `g(reason)` when `p` rejects (both callbacks give the same type).
+  `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
+  `p.then(f)`, as in JS.
+- `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
+  promise's value type (**Planned**: a `catch` that changes the value type, `T | U`).
+- `p.finally(h)`: `h()` either way, then the value or the reason passes through.
+
+A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a
+promise of what `load` resolves to, settled in as many steps as in Node (one to adopt the
+returned promise, one after it settles). The new promise rejects with what `p` rejects with (unless
+it is handled) and with what the callback throws; a callback may throw a different error type
+only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept as a statement
+(`p.then(f);`) is not a floating promise: it runs to completion, and a rejection nobody handles
+is reported as uncaught, like a dropped promise, once the callbacks queued before it have run
+(as in Node). `queueMicrotask(f)` runs `f` the same way. Both need async code around them:
+in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
+starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
+statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
+
+A promise has one consumer, as everywhere in Velt: `then`, `catch`, `finally`, `await` and the
+combinators each take it. TypeScript lets several consumers share a promise (`p.then(f);
+p.then(g);`, or `p.then(f)` and later `await p`); in Velt the second use is ``use of moved
+value``, with a note: chain the calls, or keep the promise `then` returns (**Planned**: shared
+promises, #212).
+
+Callbacks run in Node's order: after the code that is running, in the order they were queued
+(each task has a microtask queue), and before timers and I/O: a `setTimeout` callback never
+runs before the callbacks queued by the task that scheduled it. `finally` passes the value or
+the reason on two steps after its callback, as in Node, and `Promise.allSettled` and
+`Promise.any` settle in the step Node's do. Chains interleave as in Node
+(`a.then(f1).then(f2)` next to `b.then(g1).then(g2)` runs `f1 g1 f2 g2`). `await` does not go
+through the queue, so a program that uses no callbacks runs exactly as without them. That is
+where Velt's order differs from Node's: code after an `await` resumes as soon as the promise
+settles (or at once when it already has), while in Node it waits behind the callbacks queued
+before it. So `p.then(f); await q;` with `q` settled runs the code after the `await` before
+`f`; likewise an async function that awaits inside resumes earlier than in Node, relative to
+the callbacks queued meanwhile. `Promise.all` and `Promise.race` also settle in fewer steps than
+Node's (they keep `await` on them fast), which matters only for callbacks chained on them next
+to other callbacks. A promise settled by a `resolve` or `reject` called later (kept from
+`Promise.withResolvers()` or a `new Promise` executor) settles at the task's next step, so
+callbacks queued meanwhile run before the ones chained on it.
+
+```ts
+class Failed extends Error {}
+
+async function load(id: number): Promise<string, Failed> {
+  if (id < 0) {
+    throw new Failed(`no item ${id}`);
+  }
+  return `item ${id}`;
+}
+
+async function main() {
+  load(-1)
+    .catch((e) => e.message)
+    .then((m) => console.log(m));
+  const shown = load(1)
+    .then((item) => item.toUpperCase())
+    .finally(() => console.log("loaded"));
+  queueMicrotask(() => console.log("queued"));
+  console.log("first");
+  console.log(await shown);
+  // first, queued, no item -1, loaded, ITEM 1
+}
+```
+
 ## Async iteration
 
 `for await (const x of src)` awaits each element of an async iterable

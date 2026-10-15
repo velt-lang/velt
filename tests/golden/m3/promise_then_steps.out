@@ -1,0 +1,30 @@
+finally t1
+finally runs
+async finally runs
+finally t2
+finally t3
+finally t4
+finally passes 1 on
+async finally passes x on
+finally t5
+flat t1
+flat t2
+flat t3
+flat t4
+flat 11
+catch flat 7
+flat t5
+combinators t1
+combinators t2
+allSettled 2
+any 2
+any rejects
+combinators t3
+combinators t4
+sync end
+absent t1
+then(null, g) w
+then(undefined, g) u
+then(f, null) 3
+absent t2
+absent t3

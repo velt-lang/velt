@@ -79,6 +79,8 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// The state of type-level evaluation (`crate::type_level`).
+    pub(crate) type_level: crate::type_level::State,
     /// The program (not std) writes `undefined`, as a type or a value. The checks that only
     /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
     /// skipped otherwise; the type table alone cannot tell, since the prelude declares
@@ -261,6 +263,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            type_level: Default::default(),
             writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],

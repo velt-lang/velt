@@ -70,6 +70,7 @@ mod symbols;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
+mod type_level;
 mod type_queries;
 mod types;
 mod undefined_args;
