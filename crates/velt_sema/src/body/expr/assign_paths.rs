@@ -22,7 +22,7 @@ pub(super) fn is_pure_place(e: &ast::Expr) -> bool {
     }
 }
 
-fn is_pure_value(e: &ast::Expr) -> bool {
+pub(super) fn is_pure_value(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Lit(_) => true,
         ast::ExprKind::Unary { expr, .. } => is_pure_value(expr),

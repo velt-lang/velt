@@ -150,11 +150,17 @@ export function inspectBuffer(bytes: u8[], indent: usize = 0): string {
   return `ArrayBuffer {\n${pad}  ${first},\n${pad}  ${second}\n${pad}}`;
 }
 
-/** `new ArrayBuffer(n)`'s length, as JS's `ToIndex`: an error for a negative or huge `n`. */
+/**
+ * `new ArrayBuffer(n)`'s length, as JS's `ToIndex`: an error for a negative or huge `n`, and
+ * V8's allocation failure for one beyond a 47-bit address space (which no allocation can have).
+ */
 function bufferLength(n: number): usize throws RangeError {
   const i = toIndex(n);
   if (i < 0) {
     throw new RangeError("Invalid array buffer length");
+  }
+  if (i > 140737488355328) {
+    throw new RangeError("Array buffer allocation failed");
   }
   return i as usize;
 }

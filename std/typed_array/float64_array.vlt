@@ -25,7 +25,7 @@ import { ascending, elementsOf, layout, localeNumber, TypedArray } from "velt:ty
  * `new Float64Array([1, 2])` (a copy, converted), `new Float64Array(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class Float64Array extends TypedArray {
+export class Float64Array extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = 8;
 
@@ -65,16 +65,15 @@ export class Float64Array extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 8;
-    return loadF64(b, o);
+    return loadF64(this.buf.bytes, o);
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * 8;
-    storeF64(b, o, v);
+    storeF64(this.buf.bytes, o, v);
   }
 
   // The bytes of the elements, copied.

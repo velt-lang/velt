@@ -12,3 +12,8 @@ Float64Array(2) [ 0.30000000000000004, 0.6000000000000001 ] true
 44 4
 82
 Uint8ClampedArray(2) [ 254, 0 ]
+Uint8Array(3) [ 45, 44, 45 ]
+Float64Array(3) [ 1, -2, 300 ] Uint8Array(3) [ 2, 252, 88 ] Int8Array(2) [ 1, -1 ]
+RangeError: Invalid typed array length: 1125899906842624
+RangeError: Invalid typed array length: 9007199254740992
+RangeError: Array buffer allocation failed

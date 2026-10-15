@@ -18,7 +18,7 @@ import { ascending, elementsOf, layout, localeNumber, TypedArray } from "velt:ty
  * `new Uint8ClampedArray([1, 2])` (a copy, converted), `new Uint8ClampedArray(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class Uint8ClampedArray extends TypedArray {
+export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = 1;
 
@@ -58,16 +58,15 @@ export class Uint8ClampedArray extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 1;
-    return b[o];
+    return this.buf.bytes[o];
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * 1;
-    b[o] = toUint8Clamp(v);
+    this.buf.bytes[o] = toUint8Clamp(v);
   }
 
   // The bytes of the elements, copied.

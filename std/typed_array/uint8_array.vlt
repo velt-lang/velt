@@ -18,7 +18,7 @@ import { ascending, elementsOf, layout, localeNumber, TypedArray } from "velt:ty
  * `new Uint8Array([1, 2])` (a copy, converted), `new Uint8Array(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class Uint8Array extends TypedArray {
+export class Uint8Array extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = 1;
 
@@ -58,16 +58,15 @@ export class Uint8Array extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 1;
-    return b[o];
+    return this.buf.bytes[o];
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * 1;
-    b[o] = toUint8(v);
+    this.buf.bytes[o] = toUint8(v);
   }
 
   // The bytes of the elements, copied.
@@ -542,11 +541,18 @@ export class Uint8Array extends TypedArray {
   }
 
   /**
-   * A `Uint8Array` over `bytes`, without copying them (Velt: `u8[]` is Velt's byte array, as in
-   * `velt:crypto` and `velt:encoding`); the array takes the bytes over.
+   * A `Uint8Array` of a copy of `bytes` (Velt: `u8[]` is Velt's byte array, as in `velt:crypto`
+   * and `velt:encoding`). A copy, so the buffer keeps its length whatever happens to `bytes`.
    */
   static fromBytes(bytes: u8[]): Uint8Array {
-    return Uint8Array.view(ArrayBuffer.adopt(bytes), 0, bytes.length as usize);
+    return Uint8Array.wrap(bytes.slice());
+  }
+
+  // A `Uint8Array` over `bytes`, which it takes over (std only: `TextEncoder.encode`, a fetched
+  // body's `bytes()`, whose arrays nothing else holds).
+  private static wrap(bytes: u8[]): Uint8Array {
+    const n = bytes.length as usize;
+    return Uint8Array.view(ArrayBuffer.adopt(bytes), 0, n);
   }
 
   /** A copy of the elements as a `u8[]` (Velt's byte array, for `velt:crypto` and the like). */

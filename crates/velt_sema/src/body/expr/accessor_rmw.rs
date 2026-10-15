@@ -321,7 +321,7 @@ impl FnCx<'_, '_> {
 }
 
 /// Is `e` a variable or a path of fields of one (no getter or other call on the way)?
-fn is_field_path(e: &hir::Expr) -> bool {
+pub(super) fn is_field_path(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } => is_field_path(base),

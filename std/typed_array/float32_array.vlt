@@ -25,7 +25,7 @@ import { ascending, elementsOf, layout, localeNumber, TypedArray } from "velt:ty
  * `new Float32Array([1, 2])` (a copy, converted), `new Float32Array(buffer, byteOffset, length)` (a view of
  * `buffer`, sharing it), or a copy of another typed array.
  */
-export class Float32Array extends TypedArray {
+export class Float32Array extends TypedArray implements Iterable<number> {
   /** The size of an element in bytes. */
   static readonly BYTES_PER_ELEMENT: number = 4;
 
@@ -65,16 +65,15 @@ export class Float32Array extends TypedArray {
 
   // Element `i` (in range).
   private get(i: usize): number {
-    const b = this.buf.bytes;
+    // `this.buf.bytes` read in place: a local holding it would count a reference per access.
     const o = this.off + i * 4;
-    return loadF32(b, o);
+    return loadF32(this.buf.bytes, o);
   }
 
   // Writes element `i` (in range).
   private put(i: usize, v: number) {
-    const b = this.buf.bytes;
     const o = this.off + i * 4;
-    storeF32(b, o, v as f32);
+    storeF32(this.buf.bytes, o, v as f32);
   }
 
   // The bytes of the elements, copied.

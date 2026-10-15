@@ -65,7 +65,9 @@ export function layout(
 ): Layout {
   if (typeof arg == "number") {
     const n = toIndex(arg);
-    if (n < 0) {
+    // V8: a byte length beyond 2^53 - 1 is an invalid length (a smaller one that can't be
+    // allocated fails in `ArrayBuffer`).
+    if (n < 0 || (n as number) * (size as number) > 9007199254740991) {
       throw new RangeError(`Invalid typed array length: ${arg}`);
     }
     return {
