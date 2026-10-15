@@ -328,6 +328,21 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
+## SIMD [additive]
+
+A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
+8-byte aligned in memory (loads and stores are unaligned), passed and returned by value between
+Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes, as in an array.
+A mask lane is all ones or all zeros.
+
+The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
+them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
+verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
+inline. They never cross the C ABI, so no target's vector calling convention is involved.
+`load` and `store` take the array (a pointer to its header) and an element index, and do not
+check it: the prelude's methods do.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 
@@ -411,6 +426,9 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
+  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
+  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
+  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and

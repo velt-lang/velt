@@ -184,6 +184,7 @@ impl<'a> Walker<'a> {
         }
         match &item.kind {
             ast::ItemKind::Import(import) => self.import(import),
+            ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
             ast::ItemKind::Function(f) => self.function(&f.sig, Some(&f.body)),
             ast::ItemKind::ExternFn(sig) => self.function(sig, None),
             ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
@@ -343,6 +344,7 @@ impl<'a> Walker<'a> {
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Undefined
             | ast::TypeExprKind::Void
             | ast::TypeExprKind::Query(_) => {}
         }

@@ -22,14 +22,6 @@ function main() {
   const extra: AB = { a: 1, b: 2, c: 3 };
 }
 
-// TypeScript merges interface declarations; Velt asks for one, or an intersection.
-interface Shape {
-  w: number;
-}
-interface Shape {
-  h: number;
-}
-
 // An alias can refer to itself through `&` only when its parts are object types written out.
 type Base = { value: number };
 type Tree = Base & { kids: Tree[] };

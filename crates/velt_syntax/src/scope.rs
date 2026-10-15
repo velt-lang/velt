@@ -82,7 +82,10 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Struct(t) | ItemKind::Class(t) => self.bind(&t.name, names),
             ItemKind::Enum(e) => self.bind(&e.name, names),
             ItemKind::Var(v) => self.pattern_names(&v.pattern, names),
-            ItemKind::Interface(_) | ItemKind::TypeAlias(_) | ItemKind::Extend(_) => {}
+            ItemKind::Interface(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Extend(_)
+            | ItemKind::Augment(_) => {}
         }
     }
 
@@ -156,6 +159,7 @@ impl<'a> Walker<'a, '_> {
             }
             ItemKind::Var(v) => self.var(v),
             ItemKind::TypeAlias(a) => self.ty(&a.ty),
+            ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
             ItemKind::ExternFn(sig) => self.signature(sig),
             ItemKind::Import(_) => {}
         }
@@ -219,7 +223,7 @@ impl<'a> Walker<'a, '_> {
                 self.ty(value);
             }
             T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
-            T::Literal(_) | T::Null | T::Void => {}
+            T::Literal(_) | T::Null | T::Undefined | T::Void => {}
         }
     }
 

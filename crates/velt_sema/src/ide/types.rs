@@ -43,7 +43,7 @@ pub enum TypeView {
     Void,
     /// `never`.
     Never,
-    /// `T | null`.
+    /// `T | null`, and `T | undefined` (issue #930, phase 1).
     Nullable(TypeRef),
     /// `T[]`.
     Array(TypeRef),
@@ -158,7 +158,7 @@ impl Analysis {
             TyKind::Unit => TypeView::Void,
             TyKind::Never => TypeView::Never,
             TyKind::Literal(v) => TypeView::Literal(literal_kind(v)),
-            TyKind::Option(x) => TypeView::Nullable(here(*x)),
+            TyKind::Option(x, _) => TypeView::Nullable(here(*x)),
             TyKind::Array(x) => TypeView::Array(here(*x)),
             TyKind::Tuple(xs) => TypeView::Tuple(list(xs)),
             TyKind::Map(k, v) => TypeView::Map(here(*k), here(*v)),
@@ -167,7 +167,9 @@ impl Analysis {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => TypeView::Fn,
             TyKind::Adt(d, args) | TyKind::Dyn(d, args) => self.view_def(*d, &list(args)),
             TyKind::Param(_) => TypeView::Param(self.show_type(&t)),
-            TyKind::Error | TyKind::Result(..) | TyKind::Symbol => TypeView::Other,
+            TyKind::Error | TyKind::Result(..) | TyKind::Symbol | TyKind::Simd(_) => {
+                TypeView::Other
+            }
         }
     }
 

@@ -238,6 +238,13 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         let seen = crate::object_copies::Seen::Serialized;
         cx.object_copies.observe(t, span, seen);
     }
+    if let Some(what) = undefined_problem(cx, t, parse) {
+        cx.error(Diagnostic::error(
+            format!("{what} is not supported yet"),
+            span,
+        ));
+        return true;
+    }
     let mut stack = vec![];
     let Some(bad) = unserializable(cx, t, &mut stack, parse) else {
         return false;
@@ -370,9 +377,113 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
         DefInfo::Adt(a) => a
             .fields
             .iter()
-            .find(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o)))
+            .find(|f| {
+                f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                    && !cx.plain_private(f.private_to, &f.name)
+            })
             .map(|f| (f.name.clone(), f.span)),
         _ => None,
+    }
+}
+
+/// What this phase of `undefined` (issue #930) cannot convert yet: `JSON.parse` into a type
+/// that holds a `T | undefined` anywhere, and `JSON.stringify` of a value that may be
+/// `undefined` itself (Node returns `undefined`, not a string) or of a `Map` / `Record` value
+/// that may be. Object fields (left out) and array elements (`null`) are written as Node does.
+/// A class in the value whose `toJSON()` may return `undefined` is not: Node leaves such a
+/// field out and writes `null` for such an array element, where the glue writes what the
+/// method returned.
+fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str> {
+    let undef = |cx: &Ctx, t: TyId| cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+    if parse {
+        let mut stack = vec![t];
+        let mut seen = HashSet::new();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if undef(cx, t) {
+                return Some("`JSON.parse` into a type that may hold `undefined`");
+            }
+            stack.extend(children(cx.ty.kind(t)));
+            if let TyKind::Adt(d, _) = cx.ty.kind(t) {
+                stack.extend(raw_field_tys(cx, *d));
+            }
+        }
+        return None;
+    }
+    if undef(cx, t) {
+        return Some("`JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string)");
+    }
+    let mut stack = vec![t];
+    let mut seen = HashSet::new();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        if let TyKind::Adt(d, args) = cx.ty.kind(t).clone() {
+            let map = [cx.prelude_adt("Map"), cx.prelude_adt("Record")].contains(&Some(d));
+            if map && args.iter().any(|a| undef(cx, *a)) {
+                return Some(
+                    "`JSON.stringify` of a `Map` or `Record` whose values may be `undefined`",
+                );
+            }
+            // A class with `toJSON()` is written as what the method returns, its own or a
+            // subclass's (the value may be an instance of one).
+            let mut to_json = false;
+            let classes = match cx.writes_undefined {
+                true => with_subclasses(cx, d, &args),
+                false => vec![],
+            };
+            for (c, c_args) in classes {
+                if let Some((_, ret)) = crate::hooks::hook(cx, c, &c_args, crate::hooks::TO_JSON) {
+                    if undef(cx, ret) {
+                        return Some(
+                            "`JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself)",
+                        );
+                    }
+                    to_json |= c == d;
+                    stack.push(ret);
+                }
+            }
+            if !to_json {
+                stack.extend(raw_field_tys(cx, d));
+            }
+        }
+        stack.extend(children(cx.ty.kind(t)));
+    }
+    None
+}
+
+/// Class `d<args>` and every class that extends it (each with its own type parameters as its
+/// arguments); nothing for a type that is not a class.
+fn with_subclasses(cx: &mut Ctx, d: DefId, args: &[TyId]) -> Vec<(DefId, Vec<TyId>)> {
+    if cx.adt(d).is_none_or(|a| a.kind != AdtKind::Class) {
+        return vec![];
+    }
+    let mut out = vec![(d, args.to_vec())];
+    for s in (0..cx.info.len() as u32).map(DefId) {
+        let Some(n) = cx
+            .adt(s)
+            .filter(|a| s != d && a.kind == AdtKind::Class)
+            .map(|a| a.generics.len())
+        else {
+            continue;
+        };
+        if cx.class_extends(s, d) {
+            let own = (0..n as u32).map(|i| cx.ty.param(i)).collect();
+            out.push((s, own));
+        }
+    }
+    out
+}
+
+/// The declared field types of struct / class `d` (and the payloads of enum `d`'s variants).
+fn raw_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a.fields.iter().map(|f| f.ty).collect(),
+        Some(DefInfo::Enum(e)) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+        _ => vec![],
     }
 }
 
@@ -397,7 +508,7 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
-        TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {
@@ -442,9 +553,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 // type keeps to itself. A private field declared by a std type (a runtime
                 // handle, also inherited by a user class) has no JSON form at all.
                 DefInfo::Adt(a)
-                    if a.fields
-                        .iter()
-                        .any(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))) =>
+                    if a.fields.iter().any(|f| {
+                        f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))
+                            && !cx.plain_private(f.private_to, &f.name)
+                    }) =>
                 {
                     return Some(t)
                 }
@@ -455,7 +567,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 {
                     a.fields
                         .iter()
-                        .filter(|f| parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        .filter(|f| {
+                            !cx.plain_private(f.private_to, &f.name)
+                                && (parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        })
                         .map(|f| f.ty)
                         .collect()
                 }

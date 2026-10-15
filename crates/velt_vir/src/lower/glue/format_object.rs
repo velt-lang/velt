@@ -62,7 +62,7 @@ impl FnLower<'_, '_> {
         shown
             .iter()
             .zip(flags)
-            .map(|((_, _, t), opt)| opt && matches!(self.cx.kind(*t), TyKind::Option(_)))
+            .map(|((_, _, t), opt)| opt && matches!(self.cx.kind(*t), TyKind::Option(..)))
             .collect()
     }
 

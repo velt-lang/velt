@@ -30,7 +30,7 @@ fn type_args_closure(cx: &Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
 fn parts(cx: &Ctx, t: TyId) -> Vec<TyId> {
     match cx.ty.kind(t) {
         TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
-        TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => vec![*x],
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => vec![*x],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
             params,
@@ -227,7 +227,7 @@ impl Program {
                     self.instance(cx, f, g, depth + 1)
                 })
             }
-            (TyKind::Option(x), TyKind::Option(y)) => self.instance(cx, x, y, depth + 1),
+            (TyKind::Option(x, _), TyKind::Option(y, _)) => self.instance(cx, x, y, depth + 1),
             (TyKind::Tuple(a), TyKind::Tuple(b)) => self.pairs(cx, &a, &b, depth),
             _ => false,
         }
@@ -251,7 +251,7 @@ pub(super) fn close_shared(cx: &mut Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
             continue;
         }
         match cx.ty.kind(t).clone() {
-            TyKind::Option(x) => work.push(x),
+            TyKind::Option(x, _) => work.push(x),
             TyKind::Tuple(ts) => work.extend(ts),
             TyKind::Adt(d, args) => {
                 let kind = adt_kind(cx, d);

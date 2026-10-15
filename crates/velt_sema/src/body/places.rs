@@ -106,6 +106,7 @@ impl FnCx<'_, '_> {
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        self.readonly_element_write(e);
         if let H::Global(d) = root_expr(e).kind {
             let name = self
                 .cx
@@ -131,7 +132,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn root_expr(e: &hir::Expr) -> &hir::Expr {
+pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         H::Field { base, .. }
         | H::Index { base, .. }

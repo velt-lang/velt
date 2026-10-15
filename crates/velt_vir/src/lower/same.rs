@@ -24,7 +24,7 @@ impl FnLower<'_, '_> {
             return self.identity(a, b, ty);
         }
         match self.cx.kind(ty) {
-            TyKind::Option(_) | TyKind::Tuple(_) | TyKind::Result(..) => self.same_glue(a, b, ty),
+            TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => self.same_glue(a, b, ty),
             TyKind::Adt(d, _) if !self.cx.is_c_like_enum(d) => self.same_glue(a, b, ty),
             _ => self.eq_values(a, b, ty),
         }

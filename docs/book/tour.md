@@ -19,8 +19,8 @@ const s = `a=${a} x=${x}`;               // template literals; "a=" + a is "a=7"
 ```
 
 Types are required on function signatures and inferred everywhere else. Conditions work as in
-JavaScript (`0`, `NaN`, `""` and `null` are falsy; `if (!user) return;` is a null check that
-narrows `user`), and `null` is the only "nothing": there is no `undefined`. See [Types](../reference/types.md) and
+JavaScript (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `if (!user) return;` is a null
+check that narrows `user`), and `null` and `undefined` are two values, as in Node. See [Types](../reference/types.md) and
 [Variables and conditions](../reference/variables.md).
 
 ## Functions and errors

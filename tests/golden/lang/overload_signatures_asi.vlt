@@ -1,0 +1,26 @@
+// Overload signatures without a semicolon: automatic semicolon insertion ends a bodiless
+// signature at a line break, as in TypeScript.
+export function f(x: number): number
+export function f(x: string): string
+export function f(x: number | string): number | string {
+  return x;
+}
+
+function twice(x: number): number
+function twice(x: string): string
+function twice(x: number | string): number | string {
+  return typeof x === "number" ? x * 2 : x + x;
+}
+
+class Box {
+  get(i: number): number
+  get(s: string): string
+  get(v: number | string): number | string {
+    return v;
+  }
+}
+
+console.log(f(1), f("a"));
+console.log(twice(21), twice("ab"));
+const b = new Box();
+console.log(b.get(3), b.get("c"));

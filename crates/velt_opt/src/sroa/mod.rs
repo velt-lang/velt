@@ -125,10 +125,10 @@ pub(crate) fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
                 _ => return false,
             },
             Ty::Unit => return false,
-            scalar => {
-                let n = scalar.scalar_size().unwrap_or(0);
-                (n, n)
-            }
+            scalar => (
+                scalar.scalar_size().unwrap_or(0),
+                scalar.scalar_align().unwrap_or(1),
+            ),
         };
         fields.push((offset, size, align.max(1)));
     }

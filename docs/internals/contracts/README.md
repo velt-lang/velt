@@ -26,7 +26,7 @@ velt build main.vlt
       ├─ velt_syntax::parse_with       per file      → ast::Module (+ ambient declarations;
       │                                                 parse_file for std and the formatter)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
-      ├─ velt_vir::lower_with (+ verify)              → vir::Program (with source locations)
+      ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
       │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
@@ -41,7 +41,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
 - `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, native_inits })` fills them (the driver
-  calls it); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
+  calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
+  hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
   `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,
@@ -71,6 +72,13 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
+
+## SIMD (additive VIR and HIR extension)
+- `vir::Ty::V128`: a 128-bit vector, a scalar (registers, signatures) of 16 bytes aligned to 8
+  (`Ty::scalar_align`). Only moved, loaded and stored; its one constant is `Const::Int(0)`;
+  `Rvalue::Unary`, `Binary` and `Cast` on it are rejected by `verify`. Operations are calls of
+  `velt_simd_*` externs, which backends emit inline (`velt_vir::simd`, rt_abi.md "SIMD").
+- `hir::TyKind::Simd(SimdTy)`: the vector and mask types; Copy, no drop, not equatable.
 
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param

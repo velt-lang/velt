@@ -6,6 +6,7 @@
 //! statement/item-level error recovery.
 
 pub mod ast;
+mod ast_names;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;
@@ -157,6 +158,17 @@ fn parse_source(
 /// Where JSX starts is decided by the parser, so this parses the file.
 pub fn comment_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
     on_parser_thread(|| parse_with_comments(FileId(0), src).2)
+}
+
+/// The first `this: T` parameter of `src` (`function f(this: T, x: A)`, `(this: void) => R`),
+/// if any. The AST does not keep them, so tools that print the AST back (`velt fmt`) must not
+/// rewrite such a file.
+pub fn first_this_param(src: &str) -> Option<std::ops::Range<u32>> {
+    on_parser_thread(|| {
+        let mut parser = parser::Parser::new(FileId(0), src);
+        let _ = parser.parse_module();
+        parser.first_this_param.clone()
+    })
 }
 
 /// Debug dump of a module for snapshot tests.

@@ -744,3 +744,24 @@ fn ambient_declarations_of_modules_are_not_global() {
         ["`LOCAL` is declared here but has no value"]
     );
 }
+
+#[test]
+fn declare_global_in_a_declaration_file_gives_variables_and_keeps_interfaces() {
+    // `declare global` is parsed once (`parse_augment`): its interfaces are an augmentation,
+    // its variables ambient declarations, read from a package's `.d.ts` too.
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/src/globals.d.ts",
+        "export {};\ndeclare global {\n  var __HOOK__: number;\n  interface Hooks {\n    a: number;\n  }\n}\n",
+    );
+    let root = t.write(
+        "lib/src/main.ts",
+        "export {};\ndeclare global {\n  var __OTHER__: string;\n  interface Window {\n    x: number;\n  }\n}\nconsole.log(__HOOK__);\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`__HOOK__` is declared here but has no value"]
+    );
+}

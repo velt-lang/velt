@@ -1,0 +1,9 @@
+// A subclass redefines `Error.toString` without `override`, as TypeScript code does; calls
+// through `Error` dispatch to it.
+class Shown extends Error {
+  toString(): string {
+    return "shown";
+  }
+}
+const es: Error[] = [new Shown("x"), new Error("y")];
+for (const e of es) console.log(String(e), e.toString(), `${e}`);

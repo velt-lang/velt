@@ -38,6 +38,7 @@
 mod ambient;
 mod case;
 mod globals;
+mod import_meta;
 mod jsx;
 mod locate;
 mod pick;
@@ -247,7 +248,7 @@ impl Loader<'_, '_> {
         let file = self.sm.add(path, src);
         let is_std = matches!(origin, Origin::Std(_));
         let plain_ts = vpm::sources::is_plain_ts(path);
-        let ast = if is_std {
+        let mut ast = if is_std {
             let src = &self.sm.get(file).src;
             let (ast, parse_diags) = if plain_ts {
                 velt_syntax::parse_ts_file(file, src)
@@ -268,6 +269,7 @@ impl Loader<'_, '_> {
                 .declared(parsed.ambient, file, parsed.is_module);
             parsed.module
         };
+        import_meta::fill(&mut ast, path);
         let index = self.modules.len();
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
@@ -361,6 +363,11 @@ impl Loader<'_, '_> {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
                     Some((imp.from.clone(), imp.from_span))
                 }
+                // `declare module "spec" { … }` augments that module: it is loaded as an import.
+                ast::ItemKind::Augment(ast::Augment {
+                    module: Some((spec, span)),
+                    ..
+                }) => Some((spec.clone(), *span)),
                 _ => None,
             })
             .collect();

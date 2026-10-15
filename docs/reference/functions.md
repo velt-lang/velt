@@ -94,6 +94,9 @@ function main() {
   implementation is. Methods overload the same way, `static` ones too, and a subclass's
   override of the implementation is what the signatures call; `override` on the signatures
   overrides the base class's.
+- A signature ends at its `;` or, as TypeScript's automatic semicolon insertion has it, at a
+  line break (`function f(x: number): number` on a line of its own), as does a
+  `declare function`.
 - `import { f }`, a re-export and an export list (`export { f }`) bring the signatures along.
   Where a function type is expected (`const h: (s: string) => string = describe`, a callback
   argument), an overloaded function is the first signature that fits it; elsewhere
@@ -142,8 +145,8 @@ returns that method's type, and its `return`s are checked against it. Arrow func
 the same rules when no function type is expected; where one is, its result type applies.
 Generic arrow functions (`const id = <T>(x: T) => x`) follow them too.
 
-A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
-Velt doesn't have. Return `null` and give the function a `T | null` type instead.
+A `return;` next to `return value;` is not supported yet (TypeScript returns `undefined` there):
+write `return undefined;` and give the function a `T | undefined` type.
 
 A function may use itself (or other functions whose return types are being inferred) anywhere
 outside its `return` expressions, as in TypeScript: `count` below returns `i64`. Only when its
@@ -381,9 +384,8 @@ function main() {
 
 - `function* (…): Generator<T> { … }` and `async function* (…): AsyncGenerator<T> { … }` are
   generator function values, optionally named (`function* walk(…)`); their type is `(…) =>
-  Generator<T, E>` with the body's error type as `E` (a call never throws). Velt has no other
-  `function` expressions: write an [arrow function](#arrow-functions-and-function-types), which
-  TS code can do too.
+  Generator<T, E>` with the body's error type as `E` (a call never throws). Other `function`
+  expressions are [function expressions](#function-expressions).
 - At module level, `const g = function* (…) { … };` is the generator function `g`.
 - Elsewhere it is a closure that uses the variables around it as JS does: its generators see
   the objects it captured (`xs.push(3)` after creating a generator shows up in it), a variable
@@ -526,12 +528,47 @@ shared with the callee (`xs.push(1)` or `p.x = 2` inside the function is visible
 caller); numbers, bools and strings are copies. Which parameters a function
 modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 
+## Function expressions
+
+```ts
+const twice = function <T>(x: T): T[] {
+  return [x, x];
+};
+const later = async function (n: number): Promise<number> {
+  return n + 1;
+};
+
+async function main() {
+  const id = "xx-yx".replace(/[xy]/g, function (c) {
+    return c === "x" ? "a" : "b";
+  });
+  console.log(id, twice(1), await later(1)); // aa-ba [ 1, 1 ] 2
+}
+```
+
+- `function (params) { … }` as a value, optionally named (`function square(n) { … }`),
+  `async` or generic, is the [arrow function](#arrow-functions-and-function-types) with the
+  same parameters, result and body: parameter types may be left out where a function type is
+  expected, as for an arrow.
+- Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
+  is TS's error ``'this' implicitly has type 'any' because it does not have a type
+  annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
+  (`function (this: T, …)`) it is not supported yet: take the object as an ordinary parameter,
+  or write a class method. In a function expression that is the value of an object-literal
+  property (`{ v: 1, get: function () { return this.v; } }`), where TS types `this` as the
+  literal, `this` is not supported yet either.
+- A `this: T` parameter (first in a function's or method's parameter list) declares the type of
+  `this` and is no parameter: callers don't pass it. `this: void` says the function doesn't
+  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet, so it leaves
+  a file with one as written and reports it.
+- The name of a named expression inside its own body (recursion) is not supported yet: declare
+  the function with `function name(…) { … }`.
+
 ## Arrow functions and function types
 
 - **Arrow functions** `(x: T) => expr` and `(x) => { … }` are closures. Parameter types are
-  inferred where a function type is expected. There are no `function` expressions other than
-  [generator function expressions](#generator-function-expressions), and no
-  `this` rebinding: `this` inside an arrow is the enclosing method's `this`.
+  inferred where a function type is expected. There is no `this` rebinding: `this` inside an
+  arrow is the enclosing method's `this`.
 - Arrow parameters take defaults and may be optional, like a function's: with
   `const fmt = (n: number, digits = 2) => n.toFixed(digits);`, `fmt(3.14159)` is `"3.14"`. A
   call through the `const` fills in left-out arguments; an unannotated parameter takes its

@@ -128,7 +128,7 @@ impl Ambients {
                 Some(lit) => {
                     if let Some(declared) = decl.ty.as_ref().and_then(primitive) {
                         let actual = lit_type(lit);
-                        if actual != declared && actual != "null" {
+                        if actual != declared && !matches!(actual, "null" | "undefined") {
                             let written = self.written.get(name).map_or("", String::as_str);
                             out.push(Diagnostic::error(
                                 format!(
@@ -184,6 +184,7 @@ fn lit_type(lit: &Lit) -> &'static str {
         Lit::Str(_) => "string",
         Lit::Int { .. } | Lit::Float { .. } => "number",
         Lit::Null => "null",
+        Lit::Undefined => "undefined",
     }
 }
 

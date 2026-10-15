@@ -1,0 +1,34 @@
+// Interface declaration merging: repeated declarations in one module, `declare global`, and
+// `declare module` augmenting an interface another module declares (here through a re-export).
+import { show, type Options } from "./_interface_merging_reexport.vlt";
+
+declare module "./_interface_merging_reexport.vlt" {
+  interface Options {
+    size?: number;
+  }
+}
+
+declare global {
+  interface Pack {
+    id: string;
+  }
+}
+
+declare global {
+  interface Pack {
+    weight: number;
+  }
+}
+
+interface Point {
+  x: number;
+}
+interface Point {
+  y: number;
+}
+
+const p: Point = { x: 1, y: 2 };
+const o: Options = { name: "a", size: 3 };
+const k: Pack = { id: "k", weight: 2 };
+console.log(p.x + p.y, show(o), k.id, k.weight);
+console.log(show({ name: "b" }));

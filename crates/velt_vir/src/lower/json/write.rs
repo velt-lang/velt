@@ -1,6 +1,6 @@
 //! `JSON.stringify` glue: append the JSON text of a value to a string builder.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::key::JsonKey;
 use crate::lower::hooks::Hook;
@@ -84,7 +84,7 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
-            TyKind::Option(e) => self.json_write_option(buf, place, ty, e, key),
+            TyKind::Option(e, _) => self.json_write_option(buf, place, ty, e, key),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
                 self.json_write_array(buf, &arr, e)
@@ -284,8 +284,9 @@ impl FnLower<'_, '_> {
                 }
                 f
             });
+            // A field that holds `undefined` is left out, as JavaScript does (issue #930).
             match (optional, self.cx.kind(fty)) {
-                (true, TyKind::Option(e)) => {
+                (opt, TyKind::Option(e, n)) if opt || n == Nothing::Undefined => {
                     if !pending.is_empty() {
                         self.push_text(buf, &pending);
                         pending.clear();
@@ -306,7 +307,7 @@ impl FnLower<'_, '_> {
                         }
                     };
                     let prev = sep;
-                    match flag_place {
+                    match flag_place.filter(|_| n == Nothing::Null) {
                         Some(present) => {
                             let (yes, done) = (self.new_block(), self.new_block());
                             self.branch(Operand::Copy(present), yes, done);

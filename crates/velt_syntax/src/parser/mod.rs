@@ -7,9 +7,13 @@
 
 mod ambient;
 mod arrow;
+mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
@@ -28,6 +32,7 @@ mod switch;
 mod symbol_keys;
 mod type_assertion;
 mod type_decls;
+mod type_members;
 mod types;
 mod undefined;
 
@@ -95,6 +100,16 @@ pub(crate) struct Parser<'a> {
     pub(crate) define_at: Option<&'a HashMap<u32, Lit>>,
     /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
     pub(crate) saw_module_syntax: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and whether `T` is `void`.
+    this_param: Option<(Span, bool)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (the AST does not keep them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -139,11 +154,15 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
             ambient: None,
             define_at: None,
             saw_module_syntax: false,
+            import_meta: None,
         }
     }
 
@@ -279,6 +298,25 @@ impl<'a> Parser<'a> {
 
     fn expect_semi(&mut self) -> PResult<()> {
         self.expect(Tok::Semi)
+    }
+
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace)
+            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
     }
 
     /// The literal payload of a token.

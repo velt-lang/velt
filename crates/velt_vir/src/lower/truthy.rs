@@ -37,7 +37,7 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)))
             }
             TyKind::Literal(l) => bool_const(lit_truthy(&l)),
-            TyKind::Option(e) => return self.option_truthy_into(out, p, t, e),
+            TyKind::Option(e, _) => return self.option_truthy_into(out, p, t, e),
             TyKind::Adt(..) if self.cx.is_union(t) => return self.union_truthy_into(out, p, t),
             TyKind::Adt(d, _) if self.is_enum(t) && self.cx.is_c_like_enum(d) => {
                 return self.enum_truthy_into(out, p, d)

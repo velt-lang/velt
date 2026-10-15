@@ -1,0 +1,99 @@
+// check: no leaks
+// A subclass instance typed as its base class crosses a channel, a `shared(Mutex)` lock and a
+// task's result by its runtime class (#1057): its own fields go with it, never shared between
+// the tasks.
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+class Base {
+  go(): number {
+    return 0;
+  }
+  poke(): void {}
+}
+
+class D extends Base {
+  xs: number[];
+  f: () => number;
+  constructor(xs: number[]) {
+    super();
+    this.xs = xs;
+    this.f = () => xs.length;
+  }
+  override go(): number {
+    return this.xs.length + this.f();
+  }
+  override poke(): void {
+    this.xs.push(7);
+  }
+}
+
+class E extends D {
+  ys: string[] = ["a"];
+  override go(): number {
+    return super.go() + this.ys.length;
+  }
+  override poke(): void {
+    super.poke();
+    this.ys.push("b");
+  }
+}
+
+async function consume(ch: Channel<Base>): Promise<number> {
+  let n = 0;
+  for await (const t of ch) {
+    for (let i = 0; i < 10000; i++) {
+      n += t.go();
+    }
+    t.poke();
+    n += t.go();
+  }
+  return n;
+}
+
+async function make(xs: number[]): Promise<Base> {
+  const e = new E(xs);
+  e.poke();
+  return e;
+}
+
+function asBase(xs: number[]): Base {
+  return new E(xs);
+}
+
+async function lock(m: shared<Mutex<Base>>): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < 200; i++) {
+    n += m.with((t) => t.go());
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main(): Promise<void> throws ChannelClosed {
+  const xs = [1, 2, 3];
+
+  const ch = channel<Base>();
+  const c = spawn(consume(ch));
+  await ch.send(new E(xs));
+  await ch.send(new D(xs));
+  await ch.send(new E(xs));
+  let busy = 0;
+  for (let i = 0; i < 10000; i++) {
+    const ys = xs;
+    busy += ys.length;
+  }
+  ch.close();
+  console.log(await c, busy, xs.length);
+
+  const r = await spawn(make(xs));
+  r.poke();
+  console.log(r.go(), xs.length);
+
+  const m = shared(new Mutex<Base>(asBase(xs)));
+  const ts: Promise<number>[] = [];
+  for (let i = 0; i < 4; i++) {
+    ts.push(spawn(lock(m.clone())));
+  }
+  const got = await Promise.all(ts);
+  console.log(got.length, got[0], m.with((t) => t.go()), xs.length);
+}

@@ -235,7 +235,7 @@ fn is_fn(cx: &Ctx, t: TyId) -> bool {
 
 /// Is `t` a function value or an optional one (`((x: T) => U) | null`)?
 fn fn_or_null(cx: &Ctx, t: TyId) -> bool {
-    is_fn(cx, t) || matches!(cx.ty.kind(t), TyKind::Option(x) if is_fn(cx, *x))
+    is_fn(cx, t) || matches!(cx.ty.kind(t), TyKind::Option(x, _) if is_fn(cx, *x))
 }
 
 fn has_params(cx: &Ctx, t: TyId) -> bool {
@@ -530,7 +530,12 @@ pub(crate) fn check(cx: &mut Ctx) {
     for (i, d) in cx.info.iter().enumerate() {
         let inits: Vec<&Expr> = match d {
             DefInfo::Global(g) => g.init.iter().collect(),
-            DefInfo::Adt(a) => a.fields.iter().filter_map(|f| f.default.as_ref()).collect(),
+            DefInfo::Adt(a) => a
+                .fields
+                .iter()
+                .filter_map(|f| f.default.as_ref())
+                .chain(a.redefined.iter().filter_map(|r| r.init.as_ref()))
+                .collect(),
             _ => continue,
         };
         if inits.is_empty() {
@@ -727,7 +732,7 @@ fn contains_itself(cx: &Ctx, d: DefId) -> bool {
             TyKind::Adt(x, _) if adt_kind(cx, *x) != Some(AdtKind::Class) => {
                 work.extend(field_types(cx, *x))
             }
-            TyKind::Option(x) => work.push(*x),
+            TyKind::Option(x, _) => work.push(*x),
             TyKind::Tuple(ts) => work.extend(ts.iter().copied()),
             _ => {}
         }

@@ -103,7 +103,7 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
                     names.insert(id.name.as_str());
                 }
             }
-            ast::ItemKind::Extend(_) => {}
+            ast::ItemKind::Extend(_) | ast::ItemKind::Augment(_) => {}
         }
     }
     names

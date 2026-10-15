@@ -94,6 +94,27 @@ pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
         field.default = default;
         field.default_throws = throws;
     }
+    // An inherited field given an initializer here (an error class's `name = "AppError"`).
+    let redefined = cx.adt(d).expect("ICE: adt").redefined.clone();
+    for (k, r) in redefined.iter().enumerate() {
+        let Some(e) = decl
+            .fields
+            .iter()
+            .find(|af| af.name.name == r.name)
+            .and_then(|af| af.default.as_ref())
+        else {
+            continue;
+        };
+        let fty = cx.adt(d).expect("ICE: adt").fields[r.field].ty;
+        let mut fcx = detached(cx, module, &names);
+        fcx.owner = Some(d);
+        fcx.fn_name = format!("{qual}.{}", r.name);
+        let h = fcx.expr_coerce(e, fty, Want::Move);
+        let throws = std::mem::take(&mut fcx.f.uncaught);
+        let r = &mut cx.adt_mut(d).redefined[k];
+        r.init = Some(h);
+        r.throws = throws;
+    }
     cx.display_params = saved;
 }
 
@@ -253,7 +274,8 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         _ => Some(super::returns::ret_of(cx, def, cx.fn_info(def).name_span)),
     };
     let f = cx.fn_info(def).clone();
-    let env = TyEnv::new(f.module, &f.generics.names);
+    let mut env = TyEnv::new(f.module, &f.generics.names);
+    env.this_ty = f.this_type();
     // An async body returns the promise's payload, which is also the HIR `ret` (the signature,
     // `FnInfo::ret`, and the type of a call stay `Promise<T>`); `None` while it is inferred.
     let body_ret = declared.map(|r| if f.is_async { cx.ty.async_result(r) } else { r });
@@ -380,6 +402,10 @@ impl FnCx<'_, '_> {
         for p in &f.params {
             // `mutable` is set when the body assigns or modifies the param (`mark_mutated`).
             let l = self.new_local(&p.name, p.ty, false, p.span, LocalKind::Param);
+            if let Some(crate::defs::FnSource::Decl(d)) = f.source {
+                let written = d.sig.params.iter().find(|q| q.name.name == p.name);
+                self.note_readonly_array(l, written.map(|q| &q.ty));
+            }
             self.f.scopes[0].names.entry(p.name.clone()).or_insert(l);
             self.rec_local_decl(l);
             params.push(hir::Param {

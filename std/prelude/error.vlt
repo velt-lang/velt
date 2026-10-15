@@ -13,8 +13,114 @@ export class Error {
   /** What went wrong, for people. */
   message: string;
 
+  // `name`, kept out of what `console.log` and `JSON.stringify` show (as in Node, where it is
+  // on the prototype unless assigned, and then shown by the stack's first line).
+  #name: string = "Error";
+
   /** An error with the given `message`. */
-  constructor(message: string) {
+  constructor(message: string = "") {
     this.message = message;
+  }
+
+  /**
+   * The kind of error: `"Error"`, `"TypeError"`, …; a subclass may assign its own
+   * (`this.name = "AppError"`). `String(e)` and an uncaught error's report start with it.
+   */
+  get name(): string {
+    return this.#name;
+  }
+
+  /** Sets the name `String(e)` and an uncaught error's report start with. */
+  set name(value: string) {
+    this.#name = value;
+  }
+
+  /** `"<name>: <message>"`, just the name without a message, or just the message without a name. */
+  toString(): string {
+    return errorText(this.name, this.message);
+  }
+
+  /**
+   * The first line of Node's report of this error when nothing catches it, for a value of class
+   * `cls` (the compiler calls it): `toString()`'s text as `Error`'s writes it, with the class
+   * in front when its `name` ends in `Error` and is not the class's own name
+   * (`E [TypeError]: m`; `MyTypeError: m` when the class's name contains it).
+   */
+  __uncaughtHeader(cls: string): string {
+    const name = this.name;
+    const text = errorText(name, this.message);
+    if (!name.endsWith("Error") || name == cls) {
+      return text;
+    }
+    const rest = text.slice(name.length as i64);
+    if (cls.includes(name)) {
+      return `${cls}${rest}`;
+    }
+    return `${cls} [${name}]${rest}`;
+  }
+}
+
+// `Error.prototype.toString` of an error with `name` and `message`.
+function errorText(name: string, message: string): string {
+  if (name == "") {
+    return message;
+  }
+  if (message == "") {
+    return name;
+  }
+  return `${name}: ${message}`;
+}
+
+/** A value is not of the expected type (thrown by the runtime in JavaScript). */
+export class TypeError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "TypeError";
+  }
+}
+
+/** A number is outside the range of allowed values. */
+export class RangeError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "RangeError";
+  }
+}
+
+/** Text could not be parsed. */
+export class SyntaxError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "SyntaxError";
+  }
+}
+
+/** A name that does not exist was referenced. */
+export class ReferenceError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "ReferenceError";
+  }
+}
+
+/** Kept for compatibility with JavaScript, which no longer throws it. */
+export class EvalError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "EvalError";
+  }
+}
+
+/** A URI-handling function was given a malformed URI. */
+export class URIError extends Error {
+  /** An error with the given `message`. */
+  constructor(message: string = "") {
+    super(message);
+    this.name = "URIError";
   }
 }

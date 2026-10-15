@@ -89,6 +89,7 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             _ => format!("keyof {}", written(t)),
         },
         T::Null => "null".into(),
+        T::Undefined => "undefined".into(),
         T::Void => "void".into(),
         T::Predicate { param, ty, asserts } => {
             let asserts = if *asserts { "asserts " } else { "" };
@@ -138,5 +139,6 @@ fn literal(l: &ast::SignedLit) -> String {
         ast::Lit::Str(s) => format!("{s:?}"),
         ast::Lit::Bool(b) => b.to_string(),
         ast::Lit::Null => "null".into(),
+        ast::Lit::Undefined => "undefined".into(),
     }
 }

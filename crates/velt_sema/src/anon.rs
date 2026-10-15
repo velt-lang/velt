@@ -81,7 +81,7 @@ impl Ctx<'_> {
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(a, b) => TyKind::Map(c(self, a), c(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| c(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(c(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
@@ -130,7 +130,7 @@ impl Ctx<'_> {
         let plain = |cx: &Self, m: TyId| {
             !matches!(
                 cx.ty.kind(m),
-                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+                TyKind::Option(..) | TyKind::Unit | TyKind::Never | TyKind::Error
             ) && cx.union_def(m).is_none()
         };
         if !members.iter().all(|m| plain(self, *m)) {
@@ -348,6 +348,7 @@ impl Ctx<'_> {
             generics,
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: HashMap::new(),
             ctor: None,

@@ -29,6 +29,7 @@ pub(super) fn item_has_local(item: &ast::Item) -> bool {
             .filter_map(|m| m.body.as_ref())
             .any(block_has),
         I::Var(v) => v.init.as_ref().is_some_and(expr_has),
+        I::Augment(a) => a.items.iter().any(item_has_local),
         I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => false,
     }
 }
@@ -149,6 +150,7 @@ impl Rewriter {
                     self.expr(e);
                 }
             }
+            I::Augment(a) => a.items.iter_mut().for_each(|i| self.item(i)),
             I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => {}
         }
     }

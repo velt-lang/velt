@@ -59,7 +59,8 @@ impl FnCx<'_, '_> {
         callee: &ast::Expr,
         args: &[ast::Expr],
     ) -> Option<CheckedPredicate> {
-        let (target, index) = self.predicate_of(callee)?;
+        let (target, index) = self.predicate_of(callee, false)?;
+        let target = target?;
         let arg = args.get(index)?;
         // The variable itself (not `(x = next())`): the check reads it again after the call.
         if !is_plain_name(arg) {
@@ -251,8 +252,94 @@ impl FnCx<'_, '_> {
         Some(self.bool_match(read, yes, span))
     }
 
-    /// The type predicate's type and parameter index of the function `callee` names.
-    fn predicate_of(&mut self, callee: &ast::Expr) -> Option<(TyId, usize)> {
+    /// The facts that hold after the expression statement `e` when it is a call of an
+    /// assertion function (`asserts v is T`, `asserts v`) on a local: what a `true` result of
+    /// the predicate `v is T` (or of the test `v`) gives.
+    pub(super) fn assertion_facts(&mut self, e: &ast::Expr) -> Option<CheckedPredicate> {
+        let ast::ExprKind::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let (target, index) = self.predicate_of(callee, true)?;
+        let arg = args.get(index)?;
+        if !is_plain_name(arg) {
+            return None;
+        }
+        let when_true = match target {
+            None => self.narrowing(arg).0,
+            Some(target) => {
+                let (l, nullable, u) = self.local_with_members(arg)?;
+                match self.cx.class_of(target) {
+                    Some((class, _)) => self.class_facts(arg, class).0,
+                    None => self.predicate_type_facts(l, nullable, u, target)?.0,
+                }
+            }
+        };
+        let local = self.named_local(arg)?;
+        if when_true.is_empty() {
+            return None;
+        }
+        let name = match &callee.kind {
+            ast::ExprKind::Ident(id) => id.name.clone(),
+            _ => String::new(),
+        };
+        let ty = match target {
+            Some(t) => self.cx.display(t),
+            None => "truthy".into(),
+        };
+        Some(CheckedPredicate {
+            local,
+            when_true,
+            when_false: vec![],
+            name,
+            ty,
+        })
+    }
+
+    /// After the call of assertion function `p` (at `span`): checks that its local is what the
+    /// assertion says (a `TypeError` when the function returned although it is not, as for a
+    /// predicate that answers wrongly), and narrows it for the rest of the block.
+    pub(super) fn assertion_checked(
+        &mut self,
+        p: CheckedPredicate,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        if let Some(test) = self.fact_test(p.local, &p.when_true, span) {
+            let msg = format!(
+                "TypeError: the assertion function `{}` returned for a value that is not {}",
+                p.name,
+                match p.ty.as_str() {
+                    "truthy" => "truthy".to_string(),
+                    t => format!("`{t}`"),
+                }
+            );
+            let msg = self.str_lit(&msg, span);
+            let never = self.cx.ty.never;
+            let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+            let unit = self.unit_expr(span);
+            let kind = H::If {
+                cond: Box::new(test),
+                then: Box::new(unit),
+                els: Box::new(fail),
+            };
+            let check = self.mk(kind, self.cx.ty.unit, span);
+            out.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(check),
+                span,
+            });
+        }
+        p.when_true.iter().for_each(|f| self.narrow(f));
+    }
+
+    /// The type predicate's type (`None` for `asserts v`) and parameter index of the function
+    /// `callee` names: of a predicate `v is T`, or with `asserts` of an assertion.
+    fn predicate_of(&mut self, callee: &ast::Expr, asserts: bool) -> Option<(Option<TyId>, usize)> {
         let ast::ExprKind::Ident(id) = &callee.kind else {
             return None;
         };
@@ -271,12 +358,15 @@ impl FnCx<'_, '_> {
         };
         let ast::TypeExprKind::Predicate {
             param,
-            ty: Some(ty),
-            asserts: false,
+            ty,
+            asserts: a,
         } = &decl.sig.ret.as_ref()?.kind
         else {
             return None;
         };
+        if *a != asserts || (ty.is_none() && !asserts) {
+            return None;
+        }
         if !decl.sig.generics.is_empty() {
             return None;
         }
@@ -285,11 +375,14 @@ impl FnCx<'_, '_> {
             .params
             .iter()
             .position(|p| p.name.name == param.name)?;
+        let Some(ty) = ty else {
+            return Some((None, index));
+        };
         // Resolved again here (its errors were reported with the signature), quietly.
         let mark = crate::body::recheck::Mark::here(self.cx);
         let t = self.cx.resolve_type(ty, &TyEnv::new(module, &[]));
         mark.rollback(self.cx);
-        (!self.cx.ty.has_error(t)).then_some((t, index))
+        (!self.cx.ty.has_error(t)).then_some((Some(t), index))
     }
 }
 

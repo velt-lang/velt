@@ -25,6 +25,7 @@ pub mod collate;
 pub mod exponential;
 pub mod fixed;
 pub mod number;
+pub mod radix;
 pub mod replace;
 pub mod search;
 pub mod slice;

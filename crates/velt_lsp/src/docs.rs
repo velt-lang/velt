@@ -179,7 +179,7 @@ impl FileDocs {
     fn item(&mut self, item: &ast::Item) {
         let lo = item.span.lo;
         match &item.kind {
-            ast::ItemKind::Import(_) => {}
+            ast::ItemKind::Import(_) | ast::ItemKind::Augment(_) => {}
             ast::ItemKind::Function(f) => self.sig(&f.sig, lo),
             ast::ItemKind::ExternFn(sig) => self.sig(sig, lo),
             ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
@@ -288,6 +288,7 @@ impl FileDocs {
             }
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Undefined
             | ast::TypeExprKind::Void
             | ast::TypeExprKind::Query(_) => {}
         }

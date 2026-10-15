@@ -121,7 +121,7 @@ fn object_fields(cx: &mut Ctx, t: TyId) -> Vec<(String, TyId, bool)> {
         .into_iter()
         .map(|(n, ft)| {
             let ft = cx.subst(ft, &args);
-            let required = !matches!(cx.ty.kind(ft), TyKind::Option(_));
+            let required = !matches!(cx.ty.kind(ft), TyKind::Option(..));
             (n, ft, required)
         })
         .collect()

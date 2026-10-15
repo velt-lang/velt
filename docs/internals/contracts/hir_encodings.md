@@ -15,7 +15,13 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
   class); `new` evaluates the rest (those of the classes below the one declaring the
   constructor, or all of them without one) after the constructor returns. Sema's throw sets
-  follow the same split.
+  follow the same split. `FieldDef::default` is always the declaring class's initializer;
+  `AdtDef::inherited_inits` (additive) lists the initializers classes give fields they
+  inherit (an error class's `name = "AppError"` sets the prelude `Error`'s `#name`), the base
+  classes' first, each with its field, the declaring class's depth (0: no base class) and the
+  own field `at` it runs before (that class's field count: after its last). They belong to
+  the split of the declaring class: whoever runs that class's initializers runs each of them
+  as `this.<field> = init` (dropping the old value) right before field `at`'s, in list order.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -577,7 +583,7 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
   VIR type. A generic union whose members are not all plain types (a union or nullable member)
   keeps its own variants.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
-  (`T | null | null` is `T | null`). `WrapSome` and `UnwrapSome` of a value whose type is already
+  (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.
 - `FieldDef::presence` (additive): an optional field whose declared type is nullable
   (`a?: T | null`), in an object type or struct (not a class). It keeps an absent key apart from a
@@ -588,3 +594,32 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
   presence field) reads it. `JSON.stringify` and `console.log` write a present `null` and leave
   out an absent field, and `JSON.parse` sets the flag when the key is there. Copy, clone and
   equality glue include the flag.
+
+## Undefined (issue #930, phase 1)
+- `TyKind::Option(T, Nothing)`: `Nothing::Null` is `T | null` (every option before #930),
+  `Nothing::Undefined` is `T | undefined`, and `Nothing::Both` is `T | null | undefined`, which
+  sema reports as not supported yet (`Ctx::union_with`), so lowering never sees it. A union
+  `A | B | undefined` is `Option(union, Undefined)`.
+- `T | undefined` has the layout of `T | null` (the nothing is the null marker: flag `0`, the
+  null pointer, `false`); only what observes the nothing differs: `console.log`, template
+  strings and `String(x)` write `undefined`, `typeof` gives `"undefined"`, and `JSON.stringify`
+  leaves out an object field holding `undefined` (also a non-optional one; a presence flag is
+  not consulted) and writes an array element as `null`. Lowering keys glue for
+  `T | undefined` apart from `T | null` (`OptionU<T>`).
+- `hir::Lit::Null` is the nothing of its option type: `undefined` when that type is
+  `T | undefined`. `void e` is a `Block` of `StmtKind::Expr(e)` and that literal; as a
+  statement, `void e;` is `StmtKind::Expr(e)`.
+- An option of an option keeps the inner option's `Nothing`: generic code's `U | null` with
+  `U = T | undefined` is `T | undefined`, so its nothing is JavaScript's `undefined` (`pop`,
+  `?.`). Generic code that keeps a `U | null` of a parameter given a `T | undefined` could not
+  tell its own `null` from the value's `undefined` (and the reverse); sema reports such
+  instantiations (`undefined_args`, following calls, closures, methods and the generic types a
+  definition uses to a fixpoint) until the three-state encoding lands. As a backstop,
+  `velt_vir::lower_checked` reports an error (not an ICE) for an instance whose substitution
+  makes an option of an option with another `Nothing`; `lower_with` and `lower` panic (`ICE:`)
+  there instead.
+- AST (additive): `ast::BinaryOp::StrictEq` / `StrictNotEq` are `===` / `!==`; `Eq` / `NotEq`
+  are `==` / `!=` (before #930 both spellings were `Eq` / `NotEq`). `BinaryOp::loose()` maps the
+  strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
+  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
+  HIR keeps one `BinOp::Eq` / `NotEq`.

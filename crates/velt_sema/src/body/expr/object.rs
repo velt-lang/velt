@@ -8,6 +8,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::untyped;
+use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::defs::FieldInfo;
@@ -261,6 +262,9 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
+        if let Some(props) = self.local_computed_keys(props) {
+            return self.object_lit(&props, exp, span);
+        }
         let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
             Some(u) => match self.union_member_for(props, u) {
                 Ok(Some(m)) => Some(m),
@@ -309,6 +313,14 @@ impl FnCx<'_, '_> {
         if self.reserved_keys(props) {
             return self.error_expr(span);
         }
+        if super::record_literal::has_computed_entry(props) {
+            // `{ [k]: v }` with a key known only at run time: TypeScript's type has a string
+            // index signature (`{ [x: string]: V }`), which is a `Record<string, V>`.
+            if let Some(d) = self.cx.prelude_adt("Record") {
+                let error = self.cx.ty.error;
+                return self.record_literal(d, error, error, props, span);
+            }
+        }
         if super::spread::has_spread(props) {
             return self.spread_object(props, None, None, span);
         }
@@ -328,6 +340,53 @@ impl FnCx<'_, '_> {
             fields: hs,
         };
         self.mk(kind, ty, span)
+    }
+
+    /// `props` with each `[x]: v` whose `x` is a local (a key known only at run time, not a
+    /// module constant naming a symbol or string) written as the parser writes other such keys
+    /// (`...__computed_key(x, v)`, `record_literal::computed_entry`); `None` if there is none.
+    fn local_computed_keys(&self, props: &[ast::ObjectProp]) -> Option<Vec<ast::ObjectProp>> {
+        let local = |p: &ast::ObjectProp| match p {
+            ast::ObjectProp::KeyValue(k, _) if crate::symbols::is_computed_key(k) => {
+                let inner = &k.name[1..k.name.len() - 1];
+                // A local, or a module variable whose value is not a key the compiler knows
+                // (`const k = prefix + "x"`).
+                !inner.contains('.')
+                    && (self.local_hides(inner)
+                        || (self.cx.resolve_key(self.module, k).is_err()
+                            && matches!(self.cx.lookup_item(self.module, inner),
+                                Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)))))
+            }
+            _ => false,
+        };
+        if !props.iter().any(local) {
+            return None;
+        }
+        let out = props
+            .iter()
+            .map(|p| match p {
+                ast::ObjectProp::KeyValue(k, v) if local(p) => {
+                    let name = ast::Ident {
+                        name: k.name[1..k.name.len() - 1].to_string(),
+                        span: k.span,
+                    };
+                    let key = synth(ast::ExprKind::Ident(name), k.span);
+                    let callee = ast::Ident {
+                        name: ast::COMPUTED_KEY_FN.into(),
+                        span: k.span,
+                    };
+                    let call = ast::ExprKind::Call {
+                        callee: Box::new(synth(ast::ExprKind::Ident(callee), k.span)),
+                        type_args: vec![],
+                        args: vec![key, v.clone()],
+                        optional: false,
+                    };
+                    ast::ObjectProp::Spread(synth(call, k.span.to(v.span)))
+                }
+                _ => p.clone(),
+            })
+            .collect();
+        Some(out)
     }
 
     /// Reports a `__proto__: v` entry of an object literal, which in JavaScript sets the prototype
@@ -588,6 +647,13 @@ impl FnCx<'_, '_> {
                 .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
                 .collect();
             let expected = self.cx.subst_known(fields[i].ty, &known);
+            if fields[i].optional {
+                let slot = crate::body::OptionalSlot::Field;
+                match value {
+                    Some(v) => self.optional_slot(v, slot),
+                    None => self.optional_slots.push((pname.span, slot)),
+                }
+            }
             let kind = self.cx.adt(d).map_or(AdtKind::Struct, |a| a.kind);
             let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
             let h = self.field_value(pname, *value, Some(expected), watched);

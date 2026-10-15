@@ -539,7 +539,7 @@ fn reference_part(cx: &Ctx, t: TyId, depth: u32) -> Option<&'static str> {
         TyKind::Shared(_) => Some("a shared value"),
         TyKind::Promise(..) => Some("a promise"),
         TyKind::Dyn(..) => Some("an interface"),
-        TyKind::Option(x) => reference_part(cx, x, depth + 1),
+        TyKind::Option(x, _) => reference_part(cx, x, depth + 1),
         TyKind::Tuple(xs) => xs.iter().find_map(|x| reference_part(cx, *x, depth + 1)),
         TyKind::Adt(d, args) => {
             if let Some(a) = cx.adt(d) {
@@ -572,7 +572,7 @@ fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
         TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Array(_) | TyKind::Map(..) => true,
         TyKind::Dyn(..) | TyKind::Shared(_) | TyKind::Promise(..) => true,
         TyKind::Adt(d, _) => cx.adt(d).is_some(),
-        TyKind::Option(x) => identity_compared(cx, x, depth + 1),
+        TyKind::Option(x, _) => identity_compared(cx, x, depth + 1),
         TyKind::Tuple(xs) => xs.iter().any(|x| identity_compared(cx, *x, depth + 1)),
         _ => false,
     }

@@ -131,7 +131,7 @@ fn contains_by_value(
             tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Tuple(ts) => ts,
-        TyKind::Option(x) => vec![x],
+        TyKind::Option(x, _) => vec![x],
         TyKind::Result(a, b) => vec![a, b],
         _ => vec![],
     };
@@ -434,7 +434,32 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     }
     let start = all.len();
     let own = std::mem::take(&mut cx.adt_mut(d).fields);
+    let error_class = all.iter().any(|g| cx.plain_private(g.private_to, &g.name));
+    let mut redefined = vec![];
     for f in own {
+        // `name` of an error class is `Error`'s accessor: a declaration `name: string;` is that
+        // (assignments go through it), one with an initializer (`name = "AppError"`) sets it
+        // with the class's other initializers.
+        if error_class && f.name == "name" {
+            if f.has_default && !f.optional {
+                let i = all
+                    .iter()
+                    .position(|g| cx.plain_private(g.private_to, &g.name))
+                    .expect("ICE: error class without `#name`");
+                redefined.push(crate::defs::Redefined {
+                    field: i,
+                    at: all.len(),
+                    name: f.name.clone(),
+                    init: None,
+                    throws: vec![],
+                });
+            } else if !f.has_default
+                && !matches!(cx.ty.kind(f.declared), TyKind::Str | TyKind::Literal(_))
+            {
+                cx.err("`name` is inherited from `Error` as a `string`", f.span);
+            }
+            continue;
+        }
         // A subclass's `#x` is a field of its own next to the base class's (ES private names).
         let private_name = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
         if !private_name && all.iter().any(|g: &FieldInfo| g.name == f.name) {
@@ -449,6 +474,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let a = cx.adt_mut(d);
     a.fields = all;
     a.own_fields_start = start;
+    a.redefined = redefined;
     cx.laid_out.insert(d);
 }
 

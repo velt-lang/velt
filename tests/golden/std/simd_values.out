@@ -1,0 +1,9 @@
+field 7 13 2
+array 5 40 0 0,10,20,30,40
+nullable 30 true
+object 8 7 seven
+map 2 8
+closure 7 14
+await 42 8
+generator 12
+undefined false true 6 undefined

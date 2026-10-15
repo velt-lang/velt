@@ -5,10 +5,10 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::is_null;
+use crate::body::narrow::{is_null, nothing_word};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, TyId, TyKind, UseMode};
+use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, TyKind, UseMode};
 
 /// What an assignment writes to.
 enum AssignTarget {
@@ -206,6 +206,21 @@ impl FnCx<'_, '_> {
             .adt(d)
             .and_then(|a| a.fields.get(*index as usize))
             .is_some_and(|f| f.readonly);
+        if readonly && self.is_import_meta_type(base.ty) {
+            // `import.meta.url = …` is reported as a write to the module constant; a write
+            // through a copy (`const m = import.meta; m.url = …`) the same way, as in Node the
+            // copy is `import.meta` itself.
+            if !matches!(crate::body::places::root_expr(base).kind, H::Global(_)) {
+                self.cx.err(
+                    format!(
+                        "cannot assign to a field of module-level constant `{}`",
+                        ast::IMPORT_META
+                    ),
+                    place.span,
+                );
+            }
+            return;
+        }
         let in_ctor = self.f.kind == crate::defs::FnKind::Ctor
             && matches!(base.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This);
         if readonly && !in_ctor {
@@ -214,6 +229,19 @@ impl FnCx<'_, '_> {
                 prop.span,
             );
         }
+    }
+
+    /// Is `ty` the type of this module's `import.meta` (`ast::IMPORT_META`)?
+    fn is_import_meta_type(&mut self, ty: TyId) -> bool {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, ast::IMPORT_META)
+        else {
+            return false;
+        };
+        if !matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)) {
+            return false;
+        }
+        crate::body::driver::ensure_global(self.cx, d);
+        self.cx.global(d).is_some_and(|g| g.ty == ty)
     }
 
     /// A read of a place that was built for writing (compound assignment / `++` value).
@@ -664,8 +692,15 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if is_null(second) && self.cx.ty.opt_payload(first.ty).is_none() {
-            return Some(self.cx.ty.option(first.ty));
+        if let Some(word) = nothing_word(second) {
+            let n = if word == "null" {
+                Nothing::Null
+            } else {
+                Nothing::Undefined
+            };
+            if self.cx.ty.opt_payload(first.ty).is_none() {
+                return Some(self.cx.ty.option_of(first.ty, n));
+            }
         }
         Some(first.ty)
     }

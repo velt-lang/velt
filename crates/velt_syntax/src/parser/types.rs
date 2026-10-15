@@ -47,65 +47,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Type after `as`. Unions are limited to a trailing `| null` and string literals
-    /// (`k as "a" | "b"`) so `x as u8 | y` stays a bit-or, and generic arguments are speculative
-    /// so `a as i64 < b` stays a comparison.
-    pub(super) fn parse_cast_type(&mut self) -> PResult<TypeExpr> {
-        let lo = self.cur_lo();
-        if self.at_kw(Kw::Const) {
-            // `as const`: the type named `const` (sema keeps the value as it is).
-            let span = self.cur_span();
-            self.bump();
-            return Ok(TypeExpr {
-                kind: TypeExprKind::Named {
-                    path: vec![Ident {
-                        name: "const".into(),
-                        span,
-                    }],
-                    args: vec![],
-                },
-                span,
-            });
-        }
-        let mut ty = if self.at_ident_like() && !self.at_keyof() {
-            let named = self.parse_named_type_with(true)?;
-            self.parse_array_suffixes(lo, named)
-        } else {
-            self.parse_type_no_union()?
-        };
-        let strings = matches!(
-            &ty.kind,
-            TypeExprKind::Literal(SignedLit {
-                lit: Lit::Str(_),
-                ..
-            })
-        );
-        let more = |p: &mut Self| {
-            p.at(Tok::Pipe)
-                && (p.nth(1) == Tok::Kw(Kw::Null) || strings && matches!(p.nth(1), Tok::Str(_)))
-        };
-        if more(self) {
-            let mut members = vec![ty];
-            while more(self) {
-                self.bump();
-                if self.at(Tok::Kw(Kw::Null)) {
-                    members.push(TypeExpr {
-                        kind: TypeExprKind::Null,
-                        span: self.cur_span(),
-                    });
-                    self.bump();
-                } else {
-                    members.push(self.parse_type_no_union()?);
-                }
-            }
-            ty = TypeExpr {
-                kind: TypeExprKind::Union(members),
-                span: self.span_from(lo),
-            };
-        }
-        Ok(ty)
-    }
-
     /// Class name after `instanceof` (generic arguments are speculative, as after `as`).
     pub(super) fn parse_instanceof_type(&mut self) -> PResult<TypeExpr> {
         if !self.at_ident_like() {
@@ -123,24 +64,32 @@ impl<'a> Parser<'a> {
                 return p.parse_readonly_type();
             }
             let prim = p.parse_type_prim()?;
-            let mut ty = p.parse_array_suffixes(lo, prim);
-            // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
-            // and the like keep their meaning).
-            while p.at(Tok::LBracket) && matches!(p.nth(1), Tok::Str(_)) {
-                p.bump();
-                let key = p.parse_type()?;
-                p.expect(Tok::RBracket)?;
-                let indexed = TypeExpr {
-                    kind: TypeExprKind::Indexed {
-                        object: Box::new(ty),
-                        key: Box::new(key),
-                    },
-                    span: p.span_from(lo),
-                };
-                ty = p.parse_array_suffixes(lo, indexed);
-            }
-            Ok(ty)
+            let ty = p.parse_array_suffixes(lo, prim);
+            p.parse_indexed_suffixes(lo, ty)
         })
+    }
+
+    /// `T["k"]` / `T["a" | "b"]` after type `ty` (from `lo`): an indexed access (string keys
+    /// only, so `x as T[0]` and the like keep their meaning), with `[]` suffixes after it.
+    pub(super) fn parse_indexed_suffixes(
+        &mut self,
+        lo: u32,
+        mut ty: TypeExpr,
+    ) -> PResult<TypeExpr> {
+        while self.at(Tok::LBracket) && matches!(self.nth(1), Tok::Str(_)) {
+            self.bump();
+            let key = self.parse_type()?;
+            self.expect(Tok::RBracket)?;
+            let indexed = TypeExpr {
+                kind: TypeExprKind::Indexed {
+                    object: Box::new(ty),
+                    key: Box::new(key),
+                },
+                span: self.span_from(lo),
+            };
+            ty = self.parse_array_suffixes(lo, indexed);
+        }
+        Ok(ty)
     }
 
     /// `readonly` as a type operator: before an array or tuple type (`readonly T[]`,
@@ -187,7 +136,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_array_suffixes(&mut self, lo: u32, mut ty: TypeExpr) -> TypeExpr {
+    pub(super) fn parse_array_suffixes(&mut self, lo: u32, mut ty: TypeExpr) -> TypeExpr {
         while self.at(Tok::LBracket) && self.nth(1) == Tok::RBracket {
             self.bump();
             self.bump();
@@ -256,8 +205,29 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
-            Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Undefined,
+                    span,
+                })
+            }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
+            // resolves to the class of the method.
+            Tok::Kw(Kw::This) => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: "this".into(),
+                            span,
+                        }],
+                        args: vec![],
+                    },
+                    span,
+                })
+            }
             _ if self.at_keyof() => {
                 self.bump(); // keyof
                 let inner = self.parse_type_no_union()?;
@@ -322,25 +292,22 @@ impl<'a> Parser<'a> {
             // `typeof NAME` of a build-time constant (`define`) is the type of its literal.
             if let Some(lit) = self.define_at_cursor() {
                 if !(self.nth(1) == Tok::Dot || self.nth(1) == Tok::Lt) {
-                    let name = match lit {
-                        Lit::Bool(_) => "boolean",
-                        Lit::Str(_) => "string",
-                        Lit::Int { .. } | Lit::Float { .. } => "number",
-                        Lit::Null => "null",
-                    };
                     let span = self.cur_span();
-                    self.bump();
-                    let kind = if name == "null" {
-                        TypeExprKind::Null
-                    } else {
-                        TypeExprKind::Named {
-                            path: vec![Ident {
-                                name: name.into(),
-                                span,
-                            }],
-                            args: vec![],
-                        }
+                    let named = |name: &str| TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: name.into(),
+                            span,
+                        }],
+                        args: vec![],
                     };
+                    let kind = match lit {
+                        Lit::Bool(_) => named("boolean"),
+                        Lit::Str(_) => named("string"),
+                        Lit::Int { .. } | Lit::Float { .. } => named("number"),
+                        Lit::Null => TypeExprKind::Null,
+                        Lit::Undefined => TypeExprKind::Undefined,
+                    };
+                    self.bump();
                     return Ok(TypeExpr {
                         kind,
                         span: self.span_from(lo),
@@ -404,7 +371,13 @@ impl<'a> Parser<'a> {
             if self.at_index_signature() {
                 let sig = self.parse_index_signature(flo, readonly)?;
                 self.add_index_signature(&mut index, sig);
-                if !self.eat(Tok::Semi) && !self.eat(Tok::Comma) {
+                if !self.eat_type_member_end() {
+                    break;
+                }
+                continue;
+            }
+            if self.skip_call_signature() {
+                if !self.eat_type_member_end() {
                     break;
                 }
                 continue;
@@ -427,7 +400,7 @@ impl<'a> Parser<'a> {
                 readonly,
                 span: self.span_from(flo),
             });
-            if !self.eat(Tok::Semi) && !self.eat(Tok::Comma) {
+            if !self.eat_type_member_end() {
                 break;
             }
         }
@@ -597,6 +570,9 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         let mut rest = false;
+        // `(this: T, …) => R`: the type of `this`, no parameter (`fn_exprs`).
+        self.parse_this_param()?;
+        self.this_param = None;
         while !self.at(Tok::RParen) {
             if rest {
                 let span = self.cur_span();
@@ -647,7 +623,7 @@ impl<'a> Parser<'a> {
     }
 
     /// With `speculative_args`, a `<` that does not parse as type arguments is left alone.
-    fn parse_named_type_with(&mut self, speculative_args: bool) -> PResult<TypeExpr> {
+    pub(super) fn parse_named_type_with(&mut self, speculative_args: bool) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         // `unique symbol` (the type of a `const` holding a symbol) is one name, which sema reads
         // as `symbol`: which symbol a constant holds is known from its initializer.

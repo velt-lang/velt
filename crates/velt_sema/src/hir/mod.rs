@@ -28,13 +28,19 @@
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
+mod fields;
 mod intrinsic;
+mod nothing;
+mod numeric;
 
 use std::collections::HashMap;
 
 use velt_common::Span;
 
+pub use fields::{FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
+pub use nothing::Nothing;
+pub use numeric::{FloatTy, IntTy, SimdTy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -48,44 +54,6 @@ pub struct LocalId(pub u32);
 pub struct TyId(pub u32);
 
 // ───────────────────────────── Types (M1) ─────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum IntTy {
-    I8,
-    I16,
-    I32,
-    I64,
-    ISize,
-    U8,
-    U16,
-    U32,
-    U64,
-    USize,
-}
-
-impl IntTy {
-    pub fn is_signed(self) -> bool {
-        matches!(
-            self,
-            IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::ISize
-        )
-    }
-    /// Width in bits, assuming a 64-bit target for isize/usize.
-    pub fn bits(self) -> u32 {
-        match self {
-            IntTy::I8 | IntTy::U8 => 8,
-            IntTy::I16 | IntTy::U16 => 16,
-            IntTy::I32 | IntTy::U32 => 32,
-            IntTy::I64 | IntTy::U64 | IntTy::ISize | IntTy::USize => 64,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FloatTy {
-    F32,
-    F64,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TyKind {
@@ -107,8 +75,8 @@ pub enum TyKind {
     Array(TyId),
     Map(TyId, TyId),
     Tuple(Vec<TyId>),
-    /// `T | null`
-    Option(TyId),
+    /// `T | null`, `T | undefined` or `T | null | undefined` (which nothings: `Nothing`).
+    Option(TyId, Nothing),
     /// Lowering-internal `Result<ret, E>` ABI of throwing functions (sema never produces it).
     Result(TyId, TyId),
     /// `Promise<T, E>`: resolves to `T` or rejects with `E` (`Never`: never rejects).
@@ -132,6 +100,8 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// A SIMD vector or mask: Copy, 16 bytes.
+    Simd(SimdTy),
 }
 
 /// The value of a literal type.
@@ -156,12 +126,10 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // `T | null | null` is `T | null`: an option of an option is the inner option (one
-        // `null`, as in JavaScript), however it was built (substituting `U | null` with a
-        // nullable `U`, for instance). Wrapping a value whose type is already that option is the
-        // identity (`ExprKind::WrapSome`, `UnwrapSome`).
-        if let TyKind::Option(inner) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(_)) {
+        // An option of an option is the inner option, with the inner one's nothing (`T | null |
+        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
+        if let TyKind::Option(inner, _) = kind {
+            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
                 return inner;
             }
         }
@@ -344,26 +312,6 @@ pub enum AdtKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct FieldDef {
-    pub name: String,
-    pub ty: TyId,
-    /// Default initializer (class field `= expr`, or `null` for optional fields).
-    pub default: Option<Expr>,
-    /// Declared optional (`x?: T`): it may be absent. JSON and printing leave an absent
-    /// (`null`) one out, as JavaScript leaves out a missing key, whereas a `T | null` field
-    /// holding `null` is written; a spread copies it only while present.
-    pub optional: bool,
-    /// Declared `private` (in this type or the base class that declares it), or an ES private
-    /// field (`#x`). Interface fields are never private.
-    pub private: bool,
-    /// An optional field whose declared type is nullable (`a?: T | null`) in a struct or object
-    /// type: it keeps "absent" apart from a present `null` with a presence flag, which lowering
-    /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
-    /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
-    pub presence: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct AdtDef {
     pub name: String,
     pub kind: AdtKind,
@@ -386,6 +334,12 @@ pub struct AdtDef {
     pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
+    /// Classes: initializers this class and its base classes give fields they inherit, base
+    /// classes' first, each class's in declaration order (inherited ones with the base's type
+    /// arguments substituted, as `FieldDef::default`). The field's own `default` stays the
+    /// declaring class's; a constructor or `new` runs these where `at` says, as the
+    /// assignment `this.<field> = init` there would.
+    pub inherited_inits: Vec<FieldInit>,
     /// Classes: constructor `Def::Fn` (None: every field has a default).
     pub ctor: Option<DefId>,
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it

@@ -66,7 +66,9 @@ hidden classes and no runtime shape checks.
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass without a constructor of its own inherits its
-  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  base's. Redefining a base method requires `override`, except a method of a standard-library
+  class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
+  `super.m()` calls the base version.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -326,13 +328,48 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### Returning `this`
+
+```ts
+class Registry {
+  names: string[] = [];
+  register(name: string): this {
+    this.names.push(name);
+    return this;
+  }
+}
+
+class Tagged extends Registry {
+  tags: string[] = [];
+  tag(t: string): this {
+    this.tags.push(t);
+    return this;
+  }
+}
+
+const t = new Tagged().register("a").tag("x").register("b");
+console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
+```
+
+- `this` as a method's result type (the polymorphic `this` type) is the class of the object
+  the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
+  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  (`override register(name: string): this`) or left out, when it returns `this` (or
+  `super.register(name)`). An override with another result type (`override register(name:
+  string): Registry`) is TypeScript's error TS2416.
+- Such a method returns `this` (or the result of another `this`-returning method called on
+  `this`); returning another object of the class is TypeScript's error ``type `A` is not
+  assignable to type `this` ``. The `this` type elsewhere in an instance method's signature or
+  body (a parameter `other: this`) is the declaring class. In a static method or outside a class
+  it is TS2526; in an interface it is not supported yet.
+
 ### `instanceof` downcasts
 
 `x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
 for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
 same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
 until `x` is reassigned; a variable that a closure assigns is not narrowed, as
-[for `null`](types.md#null)). The same works on an interface value (a `Shape` holding a `Circle`),
+[for `null`](types.md#null-and-undefined)). The same works on an interface value (a `Shape` holding a `Circle`),
 on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
 `catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
 (`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
@@ -506,6 +543,37 @@ function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
 const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
 console.log(JSON.stringify(u), idOf(u));
 ```
+
+### Declaration merging
+
+As in TypeScript, an interface declared again in the same module is one interface with the
+members of every declaration: the first declaration's members first, then each later one's.
+`declare module "spec" { interface X { … } }` adds members to the interface `X` that module
+declares (also when it re-exports it from another module), wherever the augmentation is: the
+interface has the same members in every module. `declare global { interface X { … } }` merges
+into an interface `X` of its own module, or declares one there.
+
+```ts
+interface Point {
+  x: number;
+}
+interface Point {
+  y: number;
+}
+
+const p: Point = { x: 1, y: 2 };
+console.log(p.x + p.y); // 3
+```
+
+- The declarations' type parameters must have the same names (TypeScript's TS2428), all of
+  them are exported or none (TS2395), and their `extends` lists are joined.
+- A member declared in two declarations is an error. TypeScript allows a repeated field of the
+  same type, and makes a repeated method an overload.
+- An interface merges only with interfaces, not with a class, function or enum of its name.
+- Not supported yet: other declarations in `declare global` and `declare module` blocks
+  (`var`, functions, namespaces), declaring a new interface in another module with
+  `declare module`, a `declare global` interface visible in other modules, and a shorthand
+  `declare module "spec";`.
 
 ## Generics
 

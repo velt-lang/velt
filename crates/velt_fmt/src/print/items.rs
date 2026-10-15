@@ -1,11 +1,12 @@
 //! Items: imports, functions, `declare function`, type aliases and variables, plus the blank-line
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
-use velt_syntax::ast::{Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl};
+use velt_syntax::ast::{Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl};
 
 use super::lists::delimited;
+use super::script::{blank_before, Top};
 use super::Printer;
-use crate::doc::{cat, group, if_break, indent, join, line, text, Doc};
+use crate::doc::{cat, group, hardline, if_break, indent, join, line, text, Doc};
 use crate::source::{slice, string_literal};
 
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
@@ -51,8 +52,35 @@ impl<'a> Printer<'a> {
                 let sig = self.fn_sig(sig, "function ", sig.span.hi);
                 cat!["declare ", asyncness, sig, ";"]
             }
+            ItemKind::Augment(a) => self.augment(a, item.span.hi),
         };
         cat![export, body]
+    }
+
+    /// `declare global { … }` / `declare module "…" { … }` (the item ends at `end`).
+    fn augment(&mut self, a: &Augment, end: u32) -> Doc {
+        let head = match &a.module {
+            None => text("declare global"),
+            Some((_, span)) => cat![
+                "declare module ",
+                text(string_literal(slice(self.src, *span)))
+            ],
+        };
+        if a.items.is_empty() {
+            return cat![head, " {}"];
+        }
+        let entries: Vec<Top> = a.items.iter().map(Top::Item).collect();
+        let body = self.lines(
+            &entries,
+            end.saturating_sub(1),
+            Top::range,
+            blank_before,
+            |p, t| match t {
+                Top::Item(i) => p.item(i),
+                Top::Stmt(s) => p.stmt(s),
+            },
+        );
+        cat![head, " {", indent(cat![hardline(), body]), hardline(), "}"]
     }
 
     /// `import … from "…";`, or after `export`: a re-export or local export list.

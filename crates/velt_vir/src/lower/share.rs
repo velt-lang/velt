@@ -150,7 +150,7 @@ impl FnLower<'_, '_> {
         let d = self.deref_param(dst, ty);
         self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.share_option(&s, &d, ty, e),
+            TyKind::Option(e, _) => self.share_option(&s, &d, ty, e),
             TyKind::Adt(..) if self.is_enum(ty) => self.share_variants(&s, &d, ty),
             TyKind::Result(..) => self.share_variants(&s, &d, ty),
             _ => {
