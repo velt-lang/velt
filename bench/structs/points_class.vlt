@@ -1,0 +1,35 @@
+// Building and summing an array of 1M points with a class, five times over.
+class Point {
+  x: number;
+  y: number;
+
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function build(n: number, round: number): Point[] {
+  const ps: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    ps.push(new Point(i * 0.5 + round, (i % 1000) * 0.25));
+  }
+  return ps;
+}
+
+function sum(ps: Point[]): number {
+  let s: number = 0;
+  for (const p of ps) {
+    s += p.x * 0.001 + p.y;
+  }
+  return s;
+}
+
+function main() {
+  let total: number = 0;
+  for (let r = 0; r < 5; r++) {
+    const ps = build(1000000, r);
+    total += sum(ps);
+  }
+  console.log(total.toFixed(3));
+}
