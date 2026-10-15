@@ -188,7 +188,11 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                 cx.ty.kind(ty),
                 crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
             );
-        if top_level && (errors || function) {
+        // A constant that depends on itself stays an error (its value is never known).
+        let cycle = cx.diags[before..]
+            .iter()
+            .any(|d| d.message.contains("depends on itself"));
+        if top_level && (errors || function) && !cycle && ty != cx.ty.error {
             cx.diags.truncate(before);
             stored = true;
         }
