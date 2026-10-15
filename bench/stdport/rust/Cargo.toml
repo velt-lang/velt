@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 base64 = "0.22"
 dashu-int = "0.6"
+hex = "0.4"
 itoa = "1"
 ryu = "1"
 sha2 = "0.11"

@@ -13,9 +13,33 @@ declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
 declare function velt_rt_bytes_utf8_valid(b: u8[]): bool;
 
+// The SIMD operations hex uses (`velt:simd`, std/simd/*.vlt, is the API; declared again here
+// so that this module does not load it). `load` and `store` do not check their range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_add(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_sub(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_shr(v: u8x16, count: u32): u8x16;
+declare function velt_simd_u8x16_gt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_le(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_zip_low(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_zip_high(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
+declare function velt_simd_u16x8_splat(x: u16): u16x8;
+declare function velt_simd_u16x8_and(a: u16x8, b: u16x8): u16x8;
+declare function velt_simd_u16x8_or(a: u16x8, b: u16x8): u16x8;
+declare function velt_simd_u16x8_shl(v: u16x8, count: u32): u16x8;
+declare function velt_simd_u16x8_shr(v: u16x8, count: u32): u16x8;
+declare function velt_simd_u16x8_narrow(a: u16x8, b: u16x8): u8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+
 const BASE64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const HEX_DIGITS = "0123456789abcdef";
 
 // Marks a byte that is not a digit in the decode tables.
 const INVALID: u8 = 0xff;
@@ -237,14 +261,35 @@ function value64(c: i64, url: bool): i64 {
 
 /** Lowercase hex, two digits per byte. */
 export function hexEncode(data: u8[]): string {
-  const digits = velt_rt_bytes_from_str(HEX_DIGITS);
-  const out: u8[] = __intrinsic_array_with_capacity(data.length * 2);
-  for (let i: usize = 0; i < data.length; i++) {
-    const b = data[i];
-    out.push(digits[(b >> 4) as usize]);
-    out.push(digits[(b & 15) as usize]);
+  const n = data.length;
+  const out = Buffer.alloc(n * 2);
+  let i: usize = 0;
+  // Sixteen bytes per step: each half byte becomes its digit (`0` + n, or `a` - 10 + n past 9),
+  // and the digits of the high and low halves are written in turn.
+  const nine = velt_simd_u8x16_splat(9);
+  const digit = velt_simd_u8x16_splat(48);
+  const letter = velt_simd_u8x16_splat(87);
+  while (i + 16 <= n) {
+    const v = velt_simd_u8x16_load(data, i as u64);
+    const high = hexDigits(velt_simd_u8x16_shr(v, 4), nine, digit, letter);
+    const low = hexDigits(velt_simd_u8x16_and(v, velt_simd_u8x16_splat(15)), nine, digit, letter);
+    velt_simd_u8x16_store(velt_simd_u8x16_zip_low(high, low), out, (i * 2) as u64);
+    velt_simd_u8x16_store(velt_simd_u8x16_zip_high(high, low), out, (i * 2 + 16) as u64);
+    i += 16;
+  }
+  while (i < n) {
+    const high = data[i] >> 4;
+    const low = data[i] & 15;
+    out[i * 2] = high + (high > 9 ? 87 : 48);
+    out[i * 2 + 1] = low + (low > 9 ? 87 : 48);
+    i++;
   }
   return validToString(out);
+}
+
+// The hex digits of sixteen values below 16.
+function hexDigits(v: u8x16, nine: u8x16, digit: u8x16, letter: u8x16): u8x16 {
+  return velt_simd_u8x16_add(v, velt_simd_u8x16_select(velt_simd_u8x16_gt(v, nine), letter, digit));
 }
 
 /**
@@ -255,16 +300,54 @@ export function hexDecode(s: string): u8[] {
   if (text.length % 2 != 0) {
     throw new EncodingError("Invalid hex: odd length");
   }
-  const out: u8[] = __intrinsic_array_with_capacity(text.length / 2);
-  for (let i: usize = 0; i < text.length; i += 2) {
+  const out = Buffer.alloc(text.length / 2);
+  let i: usize = 0;
+  // 32 digits per step. A vector with a character that is not a digit ends the steps: the
+  // loop below finds which one it is.
+  while (i + 32 <= text.length) {
+    const first = hexPairs(velt_simd_u8x16_load(text, i as u64));
+    const second = hexPairs(velt_simd_u8x16_load(text, (i + 16) as u64));
+    if (!(first.ok && second.ok)) {
+      break;
+    }
+    velt_simd_u8x16_store(velt_simd_u16x8_narrow(first.bytes, second.bytes), out, (i / 2) as u64);
+    i += 32;
+  }
+  while (i < text.length) {
     const hi = hexValue(text[i]);
     const lo = hexValue(text[i + 1]);
     if (hi == INVALID || lo == INVALID) {
       throw new EncodingError(`Invalid hex character at offset ${hi == INVALID ? i : i + 1}`);
     }
-    out.push((hi << 4) | lo);
+    out[i / 2] = (hi << 4) | lo;
+    i += 2;
   }
   return out;
+}
+
+// Sixteen hex digits as eight bytes, one per 16-bit lane, and whether all sixteen were digits.
+type HexPairs = { bytes: u16x8; ok: bool };
+
+function hexPairs(c: u8x16): HexPairs {
+  // `0`..`9` are 0..9 after subtracting `0`; a letter of either case is 0..5 after setting
+  // the lower-case bit and subtracting `a`. Anything else is past those ranges (wrapping).
+  const digit = velt_simd_u8x16_sub(c, velt_simd_u8x16_splat(48));
+  const isDigit = velt_simd_u8x16_le(digit, velt_simd_u8x16_splat(9));
+  const letter = velt_simd_u8x16_sub(
+    velt_simd_u8x16_or(c, velt_simd_u8x16_splat(0x20)),
+    velt_simd_u8x16_splat(97),
+  );
+  const isLetter = velt_simd_u8x16_le(letter, velt_simd_u8x16_splat(5));
+  const value = velt_simd_u8x16_select(
+    isDigit,
+    digit,
+    velt_simd_u8x16_add(letter, velt_simd_u8x16_splat(10)),
+  );
+  // A pair of values as one 16-bit lane has the first digit's in its low byte.
+  const pairs = velt_simd_u8x16_as_u16x8(value);
+  const low = velt_simd_u16x8_and(pairs, velt_simd_u16x8_splat(0xff));
+  const bytes = velt_simd_u16x8_or(velt_simd_u16x8_shl(low, 4), velt_simd_u16x8_shr(pairs, 8));
+  return { bytes, ok: velt_simd_mask8x16_all(velt_simd_mask8x16_or(isDigit, isLetter)) };
 }
 
 function hexValue(c: u8): u8 {
