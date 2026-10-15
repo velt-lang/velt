@@ -83,7 +83,9 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
 - Ambient declarations: `declare const|let|var NAME: T;` (also `export declare …`) and
   `declare global { [declare] var NAME: T; … }` are returned by `parse_with` in
   `Parsed::ambient`, not as items (`parse_file` keeps reporting them as errors, so the formatter
-  never drops them); anything else in `declare global` is an error. `Ambient::global` marks
+  never drops them). `declare global { … }` is parsed once, as an `ItemKind::Augment` holding
+  its interfaces; only its variables go to `Parsed::ambient`, and any other declaration in it is
+  an error. `Ambient::global` marks
   those in `declare global`, and `Parsed::is_module` a source with a top-level `import` or
   `export`: the others of such a module are its own, and those of a declaration file that is a
   module are not read. The loader also reads them

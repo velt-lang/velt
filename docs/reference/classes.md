@@ -570,8 +570,10 @@ console.log(p.x + p.y); // 3
 - A member declared in two declarations is an error. TypeScript allows a repeated field of the
   same type, and makes a repeated method an overload.
 - An interface merges only with interfaces, not with a class, function or enum of its name.
+- `var NAME: T;` in `declare global` declares a build-time constant (see
+  [`define`](../tooling/manifest.md#define)).
 - Not supported yet: other declarations in `declare global` and `declare module` blocks
-  (`var`, functions, namespaces), declaring a new interface in another module with
+  (functions, namespaces, `var` in `declare module`), declaring a new interface in another module with
   `declare module`, a `declare global` interface visible in other modules, and a shorthand
   `declare module "spec";`.
 
