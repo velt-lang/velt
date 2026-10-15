@@ -570,6 +570,7 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         let mut rest = false;
+        let mut seen_optional = false;
         // `(this: T, …) => R`: the type of `this`, no parameter (`fn_exprs`).
         self.parse_this_param()?;
         self.this_param = None;
@@ -583,9 +584,24 @@ impl<'a> Parser<'a> {
                 self.reject_mut_modifier();
             }
             rest = self.eat(Tok::DotDotDot);
+            let name_span = self.cur_span();
+            // `x?: T`: an optional parameter, typed `T | null` as in a declaration.
+            let mut optional = false;
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();
                 self.bump();
+            } else if self.at_ident_like()
+                && self.nth(1) == Tok::Question
+                && self.nth(2) == Tok::Colon
+            {
+                self.bump();
+                let question = self.cur_span();
+                self.bump();
+                self.bump();
+                optional = true;
+                if rest {
+                    self.error("a rest parameter cannot be optional", question);
+                }
             } else if matches!(self.peek(), Tok::LBracket | Tok::LBrace) {
                 // A destructured parameter (`([a, b]: [A, B]) => R`), named only for the
                 // reader, like `a:`; without the `:` the `[`/`{` starts the type.
@@ -597,7 +613,15 @@ impl<'a> Parser<'a> {
                     }
                 });
             }
-            params.push(self.parse_type()?);
+            let ty = self.parse_type()?;
+            if seen_optional && !optional && !rest {
+                self.error(
+                    "a required parameter cannot follow an optional parameter",
+                    name_span,
+                );
+            }
+            seen_optional |= optional;
+            params.push(if optional { or_null(ty) } else { ty });
             if !self.eat(Tok::Comma) {
                 break;
             }

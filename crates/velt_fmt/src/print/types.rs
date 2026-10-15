@@ -10,7 +10,7 @@ use velt_syntax::ast::{Ident, IndexKey, Lit, ObjectTypeField, SignedLit, TypeExp
 use super::decls::braced;
 use super::Printer;
 use crate::doc::{cat, group, if_break, indent, join, line, nil, text, Doc};
-use crate::source::{chars_after, fn_type_param_name, literal_tokens, slice};
+use crate::source::{chars_after, fn_type_param_name, literal_tokens, optional_label, slice};
 
 impl<'a> Printer<'a> {
     /// A type in a position that accepts unions.
@@ -330,6 +330,9 @@ impl<'a> Printer<'a> {
     }
 
     fn fn_type_param(&mut self, t: &TypeExpr) -> Doc {
+        if let Some(name) = optional_label(self.src, t.span.lo) {
+            return cat![name.to_string(), "?: ", self.ty_optional_field(t)];
+        }
         let ty = self.ty(t);
         match fn_type_param_name(self.src, t.span.lo) {
             Some(name) => cat![name.to_string(), ": ", ty],
