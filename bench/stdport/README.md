@@ -57,3 +57,23 @@ Reading it:
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.
+
+## Ported
+
+Instructions executed (cachegrind, `VELT_THREADS=1`), the row built on the runtime helper, then
+on Velt code with SIMD (`velt:simd`, docs/std/simd.md), and the Rust program. A helper is
+replaced only where the Velt code is no slower on x86-64 Linux as well as arm64, in
+instructions and wall time (#1055):
+
+| benchmark | was | arm64: helper | Velt | Rust | x86-64: helper | Velt | Rust |
+|---|---|---:|---:|---:|---:|---:|---:|
+| bytes_search | `memchr` | 1,328 M | 1,035 M | 1,135 M | 1,677 M | 1,170 M | 1,412 M |
+| bytes_xor_mask | a loop over 8-byte words | 4,259 M | 3,092 M | 3,861 M | 5,482 M | 3,854 M | 5,001 M |
+| utf8_valid | `str::from_utf8` | 3,463 M | 3,315 M | 3,356 M | 3,849 M | 3,706 M | 3,750 M |
+
+`indexOf` and `includes` (`bytes_search`) are Velt code: the first vector is tested on its own
+(most searches end within a few bytes), long inputs take four vectors per step, and the last
+bytes are covered by one vector that ends at the array's end instead of a byte loop.
+`xorMask` and `utf8Valid` keep their runtime helpers: their Velt versions (branch
+`simd-bytes-all`) execute fewer instructions on both, but their x86-64 wall time is not
+measured on x86-64 hardware yet (only under Rosetta, where it was slower).

@@ -1,0 +1,41 @@
+// Searching bytes: every line end of a 1 MiB text with lines of 20 to 100 bytes, 200 times
+// (`indexOf` from the previous hit: short searches), then a byte that occurs once, at the end,
+// 2000 times (one long search each), and `includes` on 64-byte headers 5M times. The Rust port
+// uses the `memchr` crate, as the runtime did.
+function main() {
+  const text = Buffer.alloc(1048576);
+  let next: usize = 20;
+  let width: usize = 20;
+  for (let i: usize = 0; i < text.length; i++) {
+    text[i] = (97 + i % 26) as u8;
+    if (i == next) {
+      text[i] = 10;
+      width = 20 + (width * 7 + 13) % 81;
+      next += width;
+    }
+  }
+  text[text.length - 1] = 33;
+  let total: i64 = 0;
+  for (let round = 0; round < 200; round++) {
+    let at: i64 = 0;
+    while (true) {
+      const hit = text.indexOf(10, at) as i64;
+      if (hit < 0) {
+        break;
+      }
+      total += hit;
+      at = hit + 1;
+    }
+  }
+  for (let round = 0; round < 2000; round++) {
+    total += text.indexOf(33) as i64;
+  }
+  const header = Buffer.alloc(64);
+  for (let round: usize = 0; round < 5000000; round++) {
+    header[round % 64] = (round % 251) as u8;
+    if (header.includes(250)) {
+      total++;
+    }
+  }
+  console.log(total);
+}
