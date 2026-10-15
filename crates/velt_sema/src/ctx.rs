@@ -546,21 +546,6 @@ impl<'m> Ctx<'m> {
         }
     }
 
-    /// The item a written type path names: `T`, `ns.T` through namespace import `ns`, or `N.T`
-    /// of a namespace declaration (`crate::namespaces::lookup`).
-    pub fn lookup_path_at(
-        &self,
-        module: usize,
-        path: &[velt_syntax::ast::Ident],
-        at: Span,
-    ) -> Option<Item> {
-        match path {
-            [] => None,
-            [name] => self.lookup_item_at(module, &name.name, at),
-            _ => crate::namespaces::lookup(self, module, path, at),
-        }
-    }
-
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves
     /// of it are soft (`crate::ownership::strings`).
     pub fn is_string_value(&self, t: TyId) -> bool {

@@ -130,6 +130,18 @@ pub(crate) fn written(name: &str) -> std::borrow::Cow<'_, str> {
     out.into()
 }
 
+impl Ctx<'_> {
+    /// The item a written type path names: `T`, `ns.T` through namespace import `ns`, or `N.T`
+    /// of a namespace declaration ([`lookup`]).
+    pub fn lookup_path_at(&self, module: usize, path: &[ast::Ident], at: Span) -> Option<Item> {
+        match path {
+            [] => None,
+            [name] => self.lookup_item_at(module, &name.name, at),
+            _ => lookup(self, module, path, at),
+        }
+    }
+}
+
 /// The item `path` (two names or more) names in `module` at `at`: `ns.T` of a namespace import,
 /// or a namespace member flattened into the item `N.T`, `A.B.T` (a member declared without
 /// `export` only inside its namespace).
