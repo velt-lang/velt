@@ -60,7 +60,10 @@ class Gen:
             return f'failing("{chain}")', True
         if r < 0.63:
             self.features.add("new Promise")
-            return f"new Promise<number, Failed>((resolve) => resolve({self.rng.randint(1, 9)}))", True
+            return (
+                f"new Promise<number, Failed>((resolve, reject) => resolve({self.rng.randint(1, 9)}))",
+                True,
+            )
         if r < 0.70:
             self.features.add("allSettled")
             return (
@@ -70,7 +73,9 @@ class Gen:
         if r < 0.77:
             self.features.add("any")
             first = self.rng.choice(["value(5)", f'failing("{chain}a")'])
-            return f"Promise.any([{first}, value(6)])", True
+            # `any` rejects with an `AggregateError`: handled here, so the chain's callbacks
+            # may throw `Failed`.
+            return f"Promise.any([{first}, value(6)]).catch((e) => -1)", False
         if r < 0.82:
             self.features.add("all")
             return "Promise.all([value(1), value(2)]).then((xs) => xs.length)", True
@@ -164,7 +169,7 @@ DOCUMENTED = {"await in main", "source awaits inside", "all", "race"}
 
 def run(cmd, cwd):
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=120)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=60)
     except subprocess.TimeoutExpired:
         return ("timeout", -1)
     return (p.stdout.decode("utf-8", "replace").replace("\r\n", "\n"), p.returncode)
@@ -190,7 +195,12 @@ def main():
             f.write(src)
         with open(ts, "w", newline="\n") as f:
             f.write(src + "\nmain();\n")
-        v = run([velt, "run", vlt], work)
+        exe = os.path.join(work, f"p{i}.exe")
+        b = subprocess.run([velt, "build", vlt, "-o", exe], cwd=work, capture_output=True)
+        if b.returncode != 0:
+            return None
+        # The program itself under the timeout, so a hang is killed.
+        v = run([exe], work)
         n = run(["node", "--experimental-strip-types", "--no-warnings", ts], work)
         # Node exits with 1 on an unhandled rejection, as Velt does.
         return v == n
@@ -200,19 +210,24 @@ def main():
     same = 0
     documented = []
     unexpected = []
+    failed = [i for (i, _, _), ok in zip(programs, results) if ok is None]
     for (i, _, features), ok in zip(programs, results):
+        if ok is None:
+            continue
         if ok:
             same += 1
             continue
         doc = sorted(features & DOCUMENTED)
         (documented if doc else unexpected).append((i, sorted(features)))
     print(f"{count} programs (seed {seed}): {same} identical, {len(documented)} differ in a "
-          f"documented form, {len(unexpected)} differ otherwise")
+          f"documented form, {len(unexpected)} differ otherwise, {len(failed)} do not compile")
+    for i in failed:
+        print(f"  does not compile: p{i}")
     for i, feats in unexpected:
         print(f"  unexpected p{i}: {', '.join(feats)}")
     for i, feats in documented:
         print(f"  documented p{i}: {', '.join(feats)}")
-    return 1 if unexpected else 0
+    return 1 if unexpected or failed else 0
 
 
 if __name__ == "__main__":

@@ -22,7 +22,6 @@ use std::task::{Context, Poll, Waker};
 
 use parking_lot::Mutex;
 
-use super::node;
 use super::set::{self, Driver};
 use crate::task::{leaf, VeltFut};
 
@@ -53,14 +52,7 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let Some(w) = slot.waker.lock().take() else {
             continue;
         };
-        match node::local_awaiter(&w, &(*d.set).shared) {
-            // Driven by its owner now: the entry is stale (an owner that adopted the promise
-            // polled it past this point, and its microtasks wake the owner).
-            Some(g) if node::is_adopted(g) => {}
-            Some(g) => set::run(d, g),
-            None if w.will_wake(d.task) => (d.root)(),
-            None => w.wake(),
-        }
+        set::resume(d, w);
     }
     // Rejections nobody handles, reported now that the queue is empty (unhandled.rs).
     if super::unhandled::pending() {

@@ -235,10 +235,29 @@ pub(super) unsafe fn run(d: &mut Driver<'_>, f: *mut VeltFut) {
     let Some(w) = node::finish(f) else {
         return;
     };
-    match node::local_awaiter(&w, &(*d.set).shared) {
-        Some(g) => run(d, g),
-        None if w.will_wake(d.task) => (d.root)(),
-        None => w.wake(),
+    resume(d, w);
+}
+
+/// Resume whoever `w` wakes, right away: a local promise of the set runs now (one driven by its
+/// owner resumes the owner instead: the owner polls it), the task's root is polled, any other
+/// waker is woken. From inside a poll (`run_now`), a promise being polled up the stack goes on
+/// later.
+pub(super) unsafe fn resume(d: &mut Driver<'_>, mut w: Waker) {
+    loop {
+        match node::local_awaiter(&w, &(*d.set).shared) {
+            Some(g) if node::is_adopted(g) => match node::take_awaiter(g) {
+                Some(owner) => {
+                    w = owner;
+                    continue;
+                }
+                None => node::queue(g),
+            },
+            Some(g) if !(*d.set).running.is_null() && is_running(d.set, g) => node::queue(g),
+            Some(g) => run(d, g),
+            None if w.will_wake(d.task) => (d.root)(),
+            None => w.wake(),
+        }
+        return;
     }
 }
 

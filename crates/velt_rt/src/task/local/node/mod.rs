@@ -391,6 +391,11 @@ pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Acquire) & QUEUED != 0
 }
 
+/// The waker registered to resume started node `f`'s owner, taken.
+pub(super) unsafe fn take_awaiter(f: *mut VeltFut) -> Option<Waker> {
+    head(f).awaiter.take()
+}
+
 /// Is started node `f` driven by its owner right now (see [`started_poll`])?
 pub(super) unsafe fn is_adopted(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Acquire) & ADOPTED != 0

@@ -58,6 +58,9 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
     if fl & ADOPTED == 0 {
         h.flags.fetch_or(ADOPTED, Ordering::Relaxed);
     }
+    // Whoever resumes it from an older registration (a waker taken while it ran on its own)
+    // resumes the owner instead (set.rs `resume`).
+    h.awaiter.register(context(cx).waker());
     (*set).adopting += 1;
     let r = super::super::set::polling(set, f, || (h.poll)(state(f), cx));
     (*set).adopting -= 1;
@@ -68,13 +71,14 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
     true
 }
 
-/// Wait for the set to finish `f`; true when it did. An adopted node goes back to its set (its
-/// leaves would wake an owner that no longer polls it).
+/// Wait for the set to finish `f`; true when it did. An adopted node goes back to its set: it
+/// is polled once now with its own waker (its leaves would wake an owner that no longer polls
+/// it), so a callback it queued keeps its place in the microtask queue.
 unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
     let h = head(f);
     if fl & ADOPTED != 0 {
         h.flags.fetch_and(!ADOPTED, Ordering::Relaxed);
-        waker_wake_by_ref(f as *const ());
+        super::super::run_here(f);
     }
     let ready = |h: &Head| {
         let fl = h.flags.load(Ordering::Acquire);

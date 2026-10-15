@@ -88,10 +88,7 @@ impl Future for Wait {
 /// with [`velt_rt_task_gate_free`]); 0 outside a task.
 #[no_mangle]
 pub extern "C" fn velt_rt_task_gate() -> u64 {
-    match super::with_gate(|g| Arc::into_raw(g.clone()) as u64) {
-        Some(h) => h,
-        None => 0,
-    }
+    super::with_gate(|g| Arc::into_raw(g.clone()) as u64).unwrap_or(0)
 }
 
 /// A future (unit result) that completes once the poll the gate's task is in has ended; at once
