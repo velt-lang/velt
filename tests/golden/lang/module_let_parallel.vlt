@@ -1,0 +1,77 @@
+// check: no leaks
+// One module state per process (#76): tasks pinned to every core update one module counter, one
+// module Map and objects stored in it by other tasks, with an await between updates. Every
+// update is counted, as in Node's single thread (the run with VELT_SCHEDULER=per-core repeats
+// this in crates/veltc/tests/module_state_races.rs).
+import { workerCount } from "velt:task";
+
+class Tally {
+  n = 0;
+  last = "";
+}
+
+let count = 0;
+let calls = 0;
+const byKey = new Map<string, number>();
+const tallies = new Map<string, Tally>();
+let log: string[] = [];
+
+function bump(key: string, who: string) {
+  count++;
+  byKey.set(key, (byKey.get(key) ?? 0) + 1);
+  const found = tallies.get(key);
+  const t = found ?? new Tally();
+  if (found == null) {
+    tallies.set(key, t);
+  }
+  t.n += 1;
+  t.last = who;
+}
+
+const note = (s: string) => {
+  calls += 1;
+  if (log.length < 3) {
+    log.push(s);
+  }
+};
+
+async function work(id: number, rounds: number): Promise<number> {
+  for (let i = 0; i < rounds; i++) {
+    bump(`k${i % 4}`, `w${id}`);
+    const before = count;
+    count += 2;
+    count -= 2;
+    if (count != before) {
+      console.log("lost an update");
+    }
+    note(`w${id}`);
+    if (i % 3 == 0) {
+      await sleep(0);
+    } else {
+      await yieldNow();
+    }
+  }
+  return id;
+}
+
+async function main() {
+  const tasks: Promise<number>[] = [];
+  const n = 16;
+  for (let id = 0; id < n; id++) {
+    tasks.push(spawn(work(id, 250), { worker: (id as i64) % workerCount() }));
+  }
+  let ids = 0;
+  for (const id of await Promise.all(tasks)) {
+    ids += id;
+  }
+  let sum = 0;
+  for (const [, v] of byKey) {
+    sum += v;
+  }
+  let tallied = 0;
+  for (const [, t] of tallies) {
+    tallied += t.n;
+  }
+  console.log(count, calls, ids, sum, tallied, byKey.size, tallies.size, log.length);
+  console.log(byKey.get("k0"), byKey.get("k3"), tallies.get("k1")!.n);
+}

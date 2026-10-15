@@ -1,2 +1,2 @@
-task: current=task hits=1
-main: current=main hits=1
+task: current=task hits=2
+main: current=task hits=2

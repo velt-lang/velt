@@ -1,5 +1,5 @@
 // A closure created while a module constant's initializer runs keeps its state, as in Node:
-// the constant is evaluated once (per task) and kept in the module state.
+// the constant is evaluated once (per process) and kept in the module state.
 
 class Acc {
   n: number = 0;
