@@ -187,10 +187,20 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    /// The `(data, descriptor)` of the `any` expression `o`, read once.
+    /// The `(data, descriptor)` of the `any` expression `o`, read once. The access may run any
+    /// getter or method of the value held, which may replace the field `o` is read from
+    /// (`box.g.kill()` where `kill` sets `this.box.g = null`): a receiver reached through a
+    /// counted object or a shared cell is shared for the statement, as `stable_borrow` does for
+    /// a counted receiver, so the old value lives until the call returns.
     fn any_receiver(&mut self, o: &hir::Expr) -> (Operand, Operand) {
         let t = self.sub(o.ty);
-        let v = self.expr(o);
+        let v = if !self.dead() && (self.through_counted(o, t) || self.in_shared_cell(o)) {
+            let v = self.expr(o);
+            let s = self.share_value(v, t);
+            self.own_value(s, t)
+        } else {
+            self.expr(o)
+        };
         let (data, desc) = self.any_parts(v, t);
         (
             self.rvalue_temp(Ty::Ptr, Rvalue::Use(data)),
@@ -199,8 +209,9 @@ impl FnLower<'_, '_> {
     }
 
     /// `TypeError: Cannot read properties of undefined (reading 'k')` (Node's text) when the
-    /// descriptor `desc` holds `null` / `undefined`; `key` is the key string's address.
-    fn any_nullish_check(&mut self, desc: &Operand, key: Option<&Operand>) {
+    /// descriptor `desc` holds `null` / `undefined`; `key` is the key string's address, or a
+    /// number key (formatted only on that path).
+    fn any_nullish_check(&mut self, desc: &Operand, key: NullKey<'_>) {
         let tag = self.any_tag_of(desc.clone());
         let one = cint(TAG_NULL as i128, Ty::U64);
         let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag.clone(), one));
@@ -214,10 +225,16 @@ impl FnLower<'_, '_> {
         for (b, word) in [(u, "undefined"), (n, "null")] {
             self.switch_to(b);
             let head = format!("TypeError: Cannot read properties of {word}");
-            match key {
-                Some(k) => self.panic_with_key(&format!("{head} (reading '"), k, "')"),
-                None => self.panic_msg(&head),
-            }
+            let k = match key {
+                NullKey::Str(k) => k.clone(),
+                NullKey::Num(i) => {
+                    let ks = self.temp(Ty::Agg(STR_AGG));
+                    let ka = self.addr(Place::local(ks));
+                    self.call_rt(Rt::StrFromF64, vec![i.clone(), ka.clone()], None);
+                    ka
+                }
+            };
+            self.panic_with_key(&format!("{head} (reading '"), &k, "')");
             self.terminate(Terminator::Unreachable);
         }
         self.switch_to(ok);
@@ -341,7 +358,7 @@ impl FnLower<'_, '_> {
     }
 
     fn any_get_str(&mut self, data: &Operand, desc: &Operand, key: Operand, out: Operand) {
-        self.any_nullish_check(desc, Some(&key));
+        self.any_nullish_check(desc, NullKey::Str(&key));
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
         self.any_status_check(
@@ -356,7 +373,7 @@ impl FnLower<'_, '_> {
     }
 
     fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
-        self.any_nullish_check(desc, None);
+        self.any_nullish_check(desc, NullKey::Num(&i));
         let args = vec![data.clone(), i, out];
         let st = self.any_slot(
             desc.clone(),
@@ -409,6 +426,11 @@ impl FnLower<'_, '_> {
             let kp = self.place_of(kv, kt);
             self.addr(kp)
         });
+        // A `null` / `undefined` receiver throws before the arguments are evaluated, as in
+        // JavaScript (`n.f(g())` never calls `g`).
+        if let (Some(ka), false) = (&ka, self.dead()) {
+            self.any_nullish_check(&desc, NullKey::Str(ka));
+        }
         let vals = self.consume_each(args);
         if self.dead() {
             let vt = self.cx.ty(ty);
@@ -435,7 +457,6 @@ impl FnLower<'_, '_> {
         let oa = self.addr(Place::local(out));
         let st = match &ka {
             Some(ka) => {
-                self.any_nullish_check(&desc, Some(ka));
                 let a = vec![data, ka.clone(), argv, argc, oa];
                 let p = vec![Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
                 self.any_slot(desc, SLOT_CALL, a, p)
@@ -462,4 +483,13 @@ impl FnLower<'_, '_> {
         }
         self.own_value(Operand::Copy(Place::local(out)), ty)
     }
+}
+
+/// The key a `TypeError` for a `null` / `undefined` receiver names.
+#[derive(Clone, Copy)]
+enum NullKey<'a> {
+    /// The address of the key string.
+    Str(&'a Operand),
+    /// A number key (an `f64`).
+    Num(&'a Operand),
 }

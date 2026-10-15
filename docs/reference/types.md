@@ -1578,8 +1578,11 @@ function main(): void {
 
 A member the value's fixed shape does not have reads as `undefined`, as in Node. A `null` or
 `undefined` receiver stops with Node's `TypeError: Cannot read properties of undefined (reading
-'f')`, calling something that is not a function with `TypeError: x.f is not a function`, and an
-argument of the wrong type with the conversion's `TypeError`. What this phase cannot reach yet
+'f')` before the call's arguments are evaluated, calling something that is not a function with
+`TypeError: x.f is not a function`, and an argument of the wrong type with the conversion's
+`TypeError`. Optional chaining short-circuits as in Node: `x?.f`, `x?.m()`, `x?.[0]` and
+`x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
+(`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
 call, methods of arrays and strings, string indexing, methods that throw or are generic, and
 members whose type is a union, enum or interface. **Planned** (#924): writing a member

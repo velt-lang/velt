@@ -311,6 +311,16 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let s = self.expr(object, None, Want::Borrow);
+        if self.cx.dynamic(s.ty) == Some(crate::any::Dynamic::Any) {
+            let (l, mode) = self.option_binding(&s, s.ty, "<chain>", false);
+            let use_mode = match mode {
+                UseMode::Move => UseMode::Borrow,
+                m => m,
+            };
+            let v = self.mk(H::Local(l, use_mode), s.ty, span);
+            let r = f(self, v);
+            return self.dynamic_chain_match(s, l, mode, r, span);
+        }
         let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
             return f(self, s);
         };

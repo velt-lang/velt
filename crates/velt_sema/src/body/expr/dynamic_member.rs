@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, Intrinsic, Lit, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, UseMode};
 
 impl FnCx<'_, '_> {
     /// The receiver `obj` of a dynamic member access: `Ok(any type)` for an `any`, `Err(obj)`
@@ -183,6 +183,50 @@ impl FnCx<'_, '_> {
             },
             _ => "the value".to_string(),
         }
+    }
+
+    /// `s?.<rest>` on an `any` `s` bound to `l` (`mode`), the rest `r` checked on it: the whole
+    /// chain is `undefined` when `s` holds `null` or `undefined`, as in JavaScript.
+    pub(crate) fn dynamic_chain_match(
+        &mut self,
+        s: hir::Expr,
+        l: hir::LocalId,
+        mode: UseMode,
+        r: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(any) = self.any_ty() else {
+            return self.error_expr(span);
+        };
+        if self.cx.ty.is_bottom(r.ty) {
+            return r;
+        }
+        let r = self.coerce(r, any);
+        let held = self.mk(H::Local(l, UseMode::Borrow), s.ty, span);
+        let null = self.dynamic_nothing(Nothing::Null, any, span);
+        let b = self.cx.ty.bool_;
+        let nullish = self.intrinsic(Intrinsic::AnyLooseEq, vec![held, null], b, span);
+        let undefined = self.dynamic_nothing(Nothing::Undefined, any, span);
+        let body = self.mk(
+            H::If {
+                cond: Box::new(nullish),
+                then: Box::new(undefined),
+                els: Box::new(r),
+            },
+            any,
+            span,
+        );
+        let pat = self.pat(hir::PatKind::Binding(l, mode), s.ty, span);
+        let arms = vec![hir::Arm {
+            pat,
+            guard: None,
+            body,
+        }];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, any, span)
     }
 
     fn dynamic_write_error(&mut self, span: Span) {
