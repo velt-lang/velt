@@ -5,3 +5,5 @@ DOMException [Error]
 Custom: m
 [ DOMException [DataCloneError]: in an array ]
 { error: DOMException [TimeoutError]: in an object }
+{"message":"m"} {"message":"plain"}
+{"err":{"message":"Invalid character"}}

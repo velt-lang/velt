@@ -23,6 +23,10 @@ const PAD: u8 = 61;
  */
 export function btoa(data: string): string {
   const text = velt_rt_bytes_from_str(data);
+  // ASCII text (as many bytes as code units) is its own Latin-1 bytes.
+  if (text.length == data.length) {
+    return base64Encode(text);
+  }
   const n = text.length;
   // At most one byte per byte of the text; cut to what it holds.
   const bytes = Buffer.alloc(n);

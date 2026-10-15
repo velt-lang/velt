@@ -12,5 +12,15 @@ console.log(new DOMException(""));
 console.log(new DOMException("m", "Custom"));
 console.log([new DOMException("in an array", "DataCloneError")]);
 console.log({ error: new DOMException("in an object", "TimeoutError") });
+// `JSON.stringify` writes its message, as for Velt's other errors (Node writes `{}`).
+console.log(
+  JSON.stringify(new DOMException("m", "AbortError")),
+  JSON.stringify(new Error("plain")),
+);
+try {
+  atob("*");
+} catch (e) {
+  console.log(JSON.stringify({ err: e }));
+}
 // Uncaught, it is reported with that line too (Node shows the stack and the source line).
 throw new DOMException("not caught", "NotFoundError");

@@ -335,7 +335,8 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
   `AbortError`, `25` for `DataCloneError`, …, 0 for a name without one), and the codes are also
   static constants (`DOMException.ABORT_ERR`). It extends `Error`, so `String(e)` is
   `"<name>: <message>"`; `console.log(e)` prints `DOMException [<name>]: <message>`, Node's
-  first line (Node adds the stack). Node's second form, `new DOMException(message, { name,
+  first line (Node adds the stack); `JSON.stringify(e)` writes `{"message":"…"}`, as for the
+  other errors (Node writes `{}`). Node's second form, `new DOMException(message, { name,
   cause })`, is not supported: pass the name as a string.
 
 ```ts

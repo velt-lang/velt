@@ -50,6 +50,14 @@ export class DOMException extends Error {
     return this.#code;
   }
 
+  /**
+   * What `JSON.stringify` writes, as for Velt's other errors: `{"message":"…"}` (Node writes
+   * `{}`, for an `Error` too).
+   */
+  toJSON(): { message: string } {
+    return { message: this.message };
+  }
+
   /** How `console.log` shows it, as the first line of Node's: `DOMException [AbortError]: m`. */
   __inspect(): string {
     return this.__uncaughtHeader("DOMException");
