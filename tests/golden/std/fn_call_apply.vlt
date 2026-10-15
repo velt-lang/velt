@@ -48,3 +48,31 @@ const nums = [1, 2, 3, 4];
 console.log(sum.apply(null, nums), sum.call(null, ...nums), sum.apply(null, []));
 const fns: ((x: number) => number)[] = [twice, (x) => x + 1];
 console.log(fns.map((f) => f.call(null, 10)));
+// A method that doesn't use `this` takes `null`; a class or namespace name as `this` is not
+// evaluated (#1127 review).
+class Pure {
+  twice(x: number): number {
+    return x * 2;
+  }
+  static plus(x: number): number {
+    return x + 1;
+  }
+  static readonly label: string = "Pure";
+  static who(): string {
+    return this.label;
+  }
+}
+const pure = new Pure();
+console.log(pure.twice.call(null, 4), Pure.plus.call(undefined, 1), Pure.who.call(Pure));
+console.log(Math.max.apply(Math, [1, 2]), String.fromCharCode.call(String, 104));
+console.log.call(console, "logged");
+console.log(await Promise.resolve.call(Promise, 5));
+// A static field whose value has its own `call` method is not a function.
+class Cfg {
+  static readonly obj: { call(x: number): number } = {
+    call(x: number): number {
+      return x + 1;
+    },
+  };
+}
+console.log(Cfg.obj.call(1));

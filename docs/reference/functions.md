@@ -710,10 +710,13 @@ parameters one by one, and an array of unknown length only a rest parameter
 `strictBindCallApply` checks it.
 
 `this` matters only to a function that reads it. Function declarations, arrow functions and the
-static functions of built-in namespaces read none, so any `thisArg` works for them. A method read
-as a value (`o.m`) keeps the object it was read from: `o.m.call(o, x)` works, and so does any
-function value with `null` or `undefined` as `thisArg`; calling one with another `this` is not
-supported yet (an error), since Velt would run it on the object it keeps.
+static functions of built-in namespaces read none, so any `thisArg` works for them
+(`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
+(`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or
+`undefined` works when the method doesn't use `this`. A variable holding a method read as a value
+(`const f = o.m`) takes no other `this`; other function values, such as parameters, take `null` or
+`undefined`, as `f(x)` calls them. Any other `this` is not supported yet (an error): Velt would
+run the function on the object it keeps, where Node uses the `this` given or throws.
 
 ```ts
 function add(a: number, b: number): number {

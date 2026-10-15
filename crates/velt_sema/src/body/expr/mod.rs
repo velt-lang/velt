@@ -89,6 +89,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
+pub(crate) use call_apply::is_member_read;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.

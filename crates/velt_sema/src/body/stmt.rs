@@ -407,6 +407,11 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
             self.f.closure_consts.insert(local, d);
         }
+        if let (Some(e), Some(_)) = (&v.init, init.as_ref().and_then(closure_def)) {
+            if super::expr::is_member_read(e) {
+                self.f.method_values.insert(local);
+            }
+        }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
         }

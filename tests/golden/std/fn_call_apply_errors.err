@@ -1,3 +1,4 @@
 mismatched types
 function `add` takes 2 arguments but 1 argument was supplied
 a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)
+`apply` expects 1 or 2 argument(s), but got 3 (TypeScript's TS2554)
