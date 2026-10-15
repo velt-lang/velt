@@ -88,7 +88,8 @@ impl TcpStream {
     /// Reads what is there into `buf`'s spare capacity, without waiting.
     pub fn try_read_buf(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
         self.follow();
-        self.0.try_io(READABLE, |s| {
+        let want = buf.capacity() - buf.len();
+        self.0.try_transfer(READABLE, want, |s| {
             let spare = buf.spare_capacity_mut();
             // SAFETY: `read` only writes into the slice (a socket read never reads it), and
             // the length is advanced by what it reports written.

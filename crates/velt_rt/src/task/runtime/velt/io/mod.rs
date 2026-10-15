@@ -240,6 +240,27 @@ impl<S: mio::event::Source> Io<S> {
         }
     }
 
+    /// Like `try_io` for a read or write of up to `want` bytes; a short one also clears the
+    /// readiness: the socket had no more data (or room) then, so the next operation waits for an
+    /// event instead of making a system call that can only say `WouldBlock` (on a request/reply
+    /// connection that was every other read: one system call in three per message). Data that
+    /// arrives meanwhile brings an event, which bumps the tick and keeps the readiness.
+    pub(super) fn try_transfer(
+        &self,
+        interest: usize,
+        want: usize,
+        op: impl FnOnce(&S) -> io::Result<usize>,
+    ) -> io::Result<usize> {
+        let tick = self.registered.reg.readiness.load(Ordering::Acquire) >> 8;
+        let r = op(&self.sock);
+        match &r {
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.clear(interest, tick),
+            Ok(n) if *n > 0 && *n < want => self.clear(interest, tick),
+            _ => {}
+        }
+        r
+    }
+
     /// `op` now, without waiting (`WouldBlock` clears the readiness).
     pub(super) fn try_io<R>(
         &self,
