@@ -66,8 +66,8 @@ export class ArrayBuffer {
   }
 
   /** The number of bytes. */
-  get byteLength(): usize {
-    return this.bytes.length as usize;
+  get byteLength(): number {
+    return this.bytes.length as number;
   }
 
   /** The length cannot change (JS: false unless made with `maxByteLength`). */
@@ -76,8 +76,8 @@ export class ArrayBuffer {
   }
 
   /** The most bytes it can hold: its `byteLength`, since it is not resizable. */
-  get maxByteLength(): usize {
-    return this.bytes.length as usize;
+  get maxByteLength(): number {
+    return this.bytes.length as number;
   }
 
   /** Whether the buffer was transferred away (never: Velt has no `transfer` yet). */
@@ -89,8 +89,8 @@ export class ArrayBuffer {
    * A new buffer with a copy of the bytes in [begin, end); negative positions count from the
    * end, as for an array's `slice`.
    */
-  slice(begin: i64 = 0, end: i64 = 9223372036854775807): ArrayBuffer {
-    return ArrayBuffer.adopt(this.bytes.slice(begin, end));
+  slice(begin: number = 0, end: number = Infinity): ArrayBuffer {
+    return ArrayBuffer.adopt(this.bytes.slice(toInteger(begin), toInteger(end)));
   }
 
   /**

@@ -460,14 +460,14 @@ export class TextEncoder {
       read += size == 4 ? 2 : 1;
       i += size;
     }
-    return { read: read, written: written };
+    return { read: read as number, written: written as number };
   }
 }
 
 /** What `TextEncoder.encodeInto` did: code units read, bytes written. */
 export struct TextEncoderEncodeIntoResult {
-  read: usize;
-  written: usize;
+  read: number;
+  written: number;
 }
 
 /**

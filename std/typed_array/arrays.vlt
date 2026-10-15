@@ -23,12 +23,11 @@ import {
   storeF32,
   storeF64,
   toIndex,
+  toInteger,
   toUint32,
   toUint8,
   toUint8Clamp,
 } from "velt:typed_array/buffer";
-
-const END: i64 = 9223372036854775807;
 
 /**
  * What every typed array is (std only: JS's `%TypedArray%`): the buffer, the range of it the
@@ -108,7 +107,7 @@ function layout(
     if (start % size != 0) {
       throw new RangeError(`start offset of ${name} should be a multiple of ${size}`);
     }
-    const total = arg.byteLength;
+    const total = arg.bytes.length as usize;
     if (length == null) {
       if (total % size != 0) {
         throw new RangeError(`byte length of ${name} should be a multiple of ${size}`);
@@ -214,7 +213,7 @@ function localeNumber(x: number): string {
  */
 export class Int8Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 1;
+  static readonly BYTES_PER_ELEMENT: number = 1;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -287,16 +286,16 @@ export class Int8Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -307,22 +306,23 @@ export class Int8Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 1;
+  get byteLength(): number {
+    return (this.len * 1) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -331,10 +331,10 @@ export class Int8Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Int8Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Int8Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -351,19 +351,19 @@ export class Int8Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -378,9 +378,9 @@ export class Int8Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -388,9 +388,9 @@ export class Int8Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -398,9 +398,9 @@ export class Int8Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Int8Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Int8Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (1 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -415,11 +415,11 @@ export class Int8Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Int8Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Int8Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -427,10 +427,10 @@ export class Int8Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -438,22 +438,22 @@ export class Int8Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -461,27 +461,27 @@ export class Int8Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -491,17 +491,18 @@ export class Int8Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -511,7 +512,7 @@ export class Int8Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -531,30 +532,30 @@ export class Int8Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Int8Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Int8Array throws E {
     const out = Int8Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -608,9 +609,9 @@ export class Int8Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Int8Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Int8Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 1) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 1) as i64));
@@ -638,9 +639,9 @@ export class Int8Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Int8Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Int8Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Int8Array.view(this.buf, this.off + from * 1, n);
   }
@@ -673,7 +674,8 @@ export class Int8Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Int8Array {
+  with(position: number, value: number): Int8Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -693,10 +695,10 @@ export class Int8Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Int8Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -740,7 +742,7 @@ export class Int8Array extends TypedArray {
  */
 export class Uint8Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 1;
+  static readonly BYTES_PER_ELEMENT: number = 1;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -813,16 +815,16 @@ export class Uint8Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -833,22 +835,23 @@ export class Uint8Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 1;
+  get byteLength(): number {
+    return (this.len * 1) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -857,10 +860,10 @@ export class Uint8Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Uint8Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Uint8Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -877,19 +880,19 @@ export class Uint8Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -904,9 +907,9 @@ export class Uint8Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -914,9 +917,9 @@ export class Uint8Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -924,9 +927,9 @@ export class Uint8Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Uint8Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Uint8Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (1 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -941,11 +944,11 @@ export class Uint8Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Uint8Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Uint8Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -953,10 +956,10 @@ export class Uint8Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -964,22 +967,22 @@ export class Uint8Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -987,27 +990,27 @@ export class Uint8Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -1017,17 +1020,18 @@ export class Uint8Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -1037,7 +1041,7 @@ export class Uint8Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -1057,30 +1061,30 @@ export class Uint8Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Uint8Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Uint8Array throws E {
     const out = Uint8Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -1134,9 +1138,9 @@ export class Uint8Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Uint8Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Uint8Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 1) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 1) as i64));
@@ -1164,9 +1168,9 @@ export class Uint8Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Uint8Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Uint8Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Uint8Array.view(this.buf, this.off + from * 1, n);
   }
@@ -1199,7 +1203,8 @@ export class Uint8Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Uint8Array {
+  with(position: number, value: number): Uint8Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -1219,10 +1224,10 @@ export class Uint8Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Uint8Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -1279,7 +1284,7 @@ export class Uint8Array extends TypedArray {
  */
 export class Uint8ClampedArray extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 1;
+  static readonly BYTES_PER_ELEMENT: number = 1;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -1352,16 +1357,16 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -1372,22 +1377,23 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 1;
+  get byteLength(): number {
+    return (this.len * 1) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -1396,10 +1402,10 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Uint8ClampedArray {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Uint8ClampedArray {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -1416,19 +1422,19 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -1443,9 +1449,9 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -1453,9 +1459,9 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -1463,9 +1469,9 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Uint8ClampedArray {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Uint8ClampedArray {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (1 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -1480,11 +1486,11 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Uint8ClampedArray throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Uint8ClampedArray throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -1492,10 +1498,10 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -1503,22 +1509,22 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -1526,27 +1532,27 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -1556,17 +1562,18 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -1576,7 +1583,7 @@ export class Uint8ClampedArray extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -1596,30 +1603,30 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Uint8ClampedArray throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Uint8ClampedArray throws E {
     const out = Uint8ClampedArray.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -1673,9 +1680,9 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Uint8ClampedArray {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Uint8ClampedArray {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 1) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 1) as i64));
@@ -1703,9 +1710,9 @@ export class Uint8ClampedArray extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Uint8ClampedArray {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Uint8ClampedArray {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Uint8ClampedArray.view(this.buf, this.off + from * 1, n);
   }
@@ -1738,7 +1745,8 @@ export class Uint8ClampedArray extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Uint8ClampedArray {
+  with(position: number, value: number): Uint8ClampedArray {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -1758,10 +1766,10 @@ export class Uint8ClampedArray extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Uint8ClampedArray throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -1805,7 +1813,7 @@ export class Uint8ClampedArray extends TypedArray {
  */
 export class Int16Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 2;
+  static readonly BYTES_PER_ELEMENT: number = 2;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -1878,16 +1886,16 @@ export class Int16Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -1898,22 +1906,23 @@ export class Int16Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 2;
+  get byteLength(): number {
+    return (this.len * 2) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -1922,10 +1931,10 @@ export class Int16Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Int16Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Int16Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -1942,19 +1951,19 @@ export class Int16Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -1969,9 +1978,9 @@ export class Int16Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -1979,9 +1988,9 @@ export class Int16Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -1989,9 +1998,9 @@ export class Int16Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Int16Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Int16Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (2 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -2006,11 +2015,11 @@ export class Int16Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Int16Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Int16Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -2018,10 +2027,10 @@ export class Int16Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -2029,22 +2038,22 @@ export class Int16Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -2052,27 +2061,27 @@ export class Int16Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -2082,17 +2091,18 @@ export class Int16Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -2102,7 +2112,7 @@ export class Int16Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -2122,30 +2132,30 @@ export class Int16Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Int16Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Int16Array throws E {
     const out = Int16Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -2199,9 +2209,9 @@ export class Int16Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Int16Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Int16Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 2) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 2) as i64));
@@ -2229,9 +2239,9 @@ export class Int16Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Int16Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Int16Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Int16Array.view(this.buf, this.off + from * 2, n);
   }
@@ -2264,7 +2274,8 @@ export class Int16Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Int16Array {
+  with(position: number, value: number): Int16Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -2284,10 +2295,10 @@ export class Int16Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Int16Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -2331,7 +2342,7 @@ export class Int16Array extends TypedArray {
  */
 export class Uint16Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 2;
+  static readonly BYTES_PER_ELEMENT: number = 2;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -2404,16 +2415,16 @@ export class Uint16Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -2424,22 +2435,23 @@ export class Uint16Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 2;
+  get byteLength(): number {
+    return (this.len * 2) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -2448,10 +2460,10 @@ export class Uint16Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Uint16Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Uint16Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -2468,19 +2480,19 @@ export class Uint16Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -2495,9 +2507,9 @@ export class Uint16Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -2505,9 +2517,9 @@ export class Uint16Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -2515,9 +2527,9 @@ export class Uint16Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Uint16Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Uint16Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (2 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -2532,11 +2544,11 @@ export class Uint16Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Uint16Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Uint16Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -2544,10 +2556,10 @@ export class Uint16Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -2555,22 +2567,22 @@ export class Uint16Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -2578,27 +2590,27 @@ export class Uint16Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -2608,17 +2620,18 @@ export class Uint16Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -2628,7 +2641,7 @@ export class Uint16Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -2648,30 +2661,30 @@ export class Uint16Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Uint16Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Uint16Array throws E {
     const out = Uint16Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -2725,9 +2738,9 @@ export class Uint16Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Uint16Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Uint16Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 2) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 2) as i64));
@@ -2755,9 +2768,9 @@ export class Uint16Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Uint16Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Uint16Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Uint16Array.view(this.buf, this.off + from * 2, n);
   }
@@ -2790,7 +2803,8 @@ export class Uint16Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Uint16Array {
+  with(position: number, value: number): Uint16Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -2810,10 +2824,10 @@ export class Uint16Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Uint16Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -2857,7 +2871,7 @@ export class Uint16Array extends TypedArray {
  */
 export class Int32Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 4;
+  static readonly BYTES_PER_ELEMENT: number = 4;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -2930,16 +2944,16 @@ export class Int32Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -2950,22 +2964,23 @@ export class Int32Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 4;
+  get byteLength(): number {
+    return (this.len * 4) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -2974,10 +2989,10 @@ export class Int32Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Int32Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Int32Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -2994,19 +3009,19 @@ export class Int32Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -3021,9 +3036,9 @@ export class Int32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -3031,9 +3046,9 @@ export class Int32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -3041,9 +3056,9 @@ export class Int32Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Int32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Int32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (4 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -3058,11 +3073,11 @@ export class Int32Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Int32Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Int32Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -3070,10 +3085,10 @@ export class Int32Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -3081,22 +3096,22 @@ export class Int32Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -3104,27 +3119,27 @@ export class Int32Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -3134,17 +3149,18 @@ export class Int32Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -3154,7 +3170,7 @@ export class Int32Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -3174,30 +3190,30 @@ export class Int32Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Int32Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Int32Array throws E {
     const out = Int32Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -3251,9 +3267,9 @@ export class Int32Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Int32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Int32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 4) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 4) as i64));
@@ -3281,9 +3297,9 @@ export class Int32Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Int32Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Int32Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Int32Array.view(this.buf, this.off + from * 4, n);
   }
@@ -3316,7 +3332,8 @@ export class Int32Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Int32Array {
+  with(position: number, value: number): Int32Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -3336,10 +3353,10 @@ export class Int32Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Int32Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -3383,7 +3400,7 @@ export class Int32Array extends TypedArray {
  */
 export class Uint32Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 4;
+  static readonly BYTES_PER_ELEMENT: number = 4;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -3456,16 +3473,16 @@ export class Uint32Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -3476,22 +3493,23 @@ export class Uint32Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 4;
+  get byteLength(): number {
+    return (this.len * 4) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -3500,10 +3518,10 @@ export class Uint32Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Uint32Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Uint32Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -3520,19 +3538,19 @@ export class Uint32Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -3547,9 +3565,9 @@ export class Uint32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -3557,9 +3575,9 @@ export class Uint32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -3567,9 +3585,9 @@ export class Uint32Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Uint32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Uint32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (4 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -3584,11 +3602,11 @@ export class Uint32Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Uint32Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Uint32Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -3596,10 +3614,10 @@ export class Uint32Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -3607,22 +3625,22 @@ export class Uint32Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -3630,27 +3648,27 @@ export class Uint32Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -3660,17 +3678,18 @@ export class Uint32Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -3680,7 +3699,7 @@ export class Uint32Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -3700,30 +3719,30 @@ export class Uint32Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Uint32Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Uint32Array throws E {
     const out = Uint32Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -3777,9 +3796,9 @@ export class Uint32Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Uint32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Uint32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 4) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 4) as i64));
@@ -3807,9 +3826,9 @@ export class Uint32Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Uint32Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Uint32Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Uint32Array.view(this.buf, this.off + from * 4, n);
   }
@@ -3842,7 +3861,8 @@ export class Uint32Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Uint32Array {
+  with(position: number, value: number): Uint32Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -3862,10 +3882,10 @@ export class Uint32Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Uint32Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -3909,7 +3929,7 @@ export class Uint32Array extends TypedArray {
  */
 export class Float32Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 4;
+  static readonly BYTES_PER_ELEMENT: number = 4;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -3982,16 +4002,16 @@ export class Float32Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -4002,22 +4022,23 @@ export class Float32Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 4;
+  get byteLength(): number {
+    return (this.len * 4) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -4026,10 +4047,10 @@ export class Float32Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Float32Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Float32Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -4046,19 +4067,19 @@ export class Float32Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -4073,9 +4094,9 @@ export class Float32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -4083,9 +4104,9 @@ export class Float32Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -4093,9 +4114,9 @@ export class Float32Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Float32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Float32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (4 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -4110,11 +4131,11 @@ export class Float32Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Float32Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Float32Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -4122,10 +4143,10 @@ export class Float32Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -4133,22 +4154,22 @@ export class Float32Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -4156,27 +4177,27 @@ export class Float32Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -4186,17 +4207,18 @@ export class Float32Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -4206,7 +4228,7 @@ export class Float32Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -4226,30 +4248,30 @@ export class Float32Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Float32Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Float32Array throws E {
     const out = Float32Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -4303,9 +4325,9 @@ export class Float32Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Float32Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Float32Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 4) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 4) as i64));
@@ -4333,9 +4355,9 @@ export class Float32Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Float32Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Float32Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Float32Array.view(this.buf, this.off + from * 4, n);
   }
@@ -4368,7 +4390,8 @@ export class Float32Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Float32Array {
+  with(position: number, value: number): Float32Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -4388,10 +4411,10 @@ export class Float32Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Float32Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
@@ -4435,7 +4458,7 @@ export class Float32Array extends TypedArray {
  */
 export class Float64Array extends TypedArray {
   /** The size of an element in bytes. */
-  static readonly BYTES_PER_ELEMENT: usize = 8;
+  static readonly BYTES_PER_ELEMENT: number = 8;
 
   /**
    * `n` zero elements; a copy of an array's or typed array's elements, converted; or a view of
@@ -4508,16 +4531,16 @@ export class Float64Array extends TypedArray {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  __index(i: i64): number {
-    if (i < 0 || (i as usize) >= this.len) {
+  __index(i: number): number {
+    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
   }
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
-  __setIndex(i: i64, v: number) {
-    if (i >= 0 && (i as usize) < this.len) {
+  __setIndex(i: number, v: number) {
+    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -4528,22 +4551,23 @@ export class Float64Array extends TypedArray {
   }
 
   /** Where the first element is in `buffer`, in bytes. */
-  get byteOffset(): usize {
-    return this.off;
+  get byteOffset(): number {
+    return this.off as number;
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  get byteLength(): usize {
-    return this.len * 8;
+  get byteLength(): number {
+    return (this.len * 8) as number;
   }
 
   /** The number of elements. */
-  get length(): usize {
-    return this.len;
+  get length(): number {
+    return this.len as number;
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
-  at(index: i64): number | null {
+  at(position: number): number | null {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       return null;
@@ -4552,10 +4576,10 @@ export class Float64Array extends TypedArray {
   }
 
   /** Copies the elements in [start, end) to position `target` (overlap is fine); returns this array. */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = END): Float64Array {
-    const to = relative(target, this.len);
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  copyWithin(target: number, start: number = 0, end: number = Infinity): Float64Array {
+    const to = relative(toInteger(target), this.len);
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (stop > from) {
       let count = stop - from;
       if (count > this.len - to) {
@@ -4572,19 +4596,19 @@ export class Float64Array extends TypedArray {
   }
 
   /** `[index, element]` pairs (JS returns an iterator). */
-  entries(): [usize, number][] {
-    const out: [usize, number][] = [];
+  entries(): [number, number][] {
+    const out: [number, number][] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push([i, this.get(i)]);
+      out.push([i as number, this.get(i)]);
     }
     return out;
   }
 
   /** The indexes, 0 to `length - 1` (JS returns an iterator). */
-  keys(): usize[] {
-    const out: usize[] = [];
+  keys(): number[] {
+    const out: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
-      out.push(i);
+      out.push(i as number);
     }
     return out;
   }
@@ -4599,9 +4623,9 @@ export class Float64Array extends TypedArray {
   }
 
   /** Whether `pred` holds for every element. */
-  every<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  every<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (!pred(this.get(i), i as i64)) {
+      if (!pred(this.get(i), i as number)) {
         return false;
       }
     }
@@ -4609,9 +4633,9 @@ export class Float64Array extends TypedArray {
   }
 
   /** Whether `pred` holds for some element. */
-  some<E>(pred: (x: number, i: i64) => bool throws E): bool throws E {
+  some<E>(pred: (x: number, i: number) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
+      if (pred(this.get(i), i as number)) {
         return true;
       }
     }
@@ -4619,9 +4643,9 @@ export class Float64Array extends TypedArray {
   }
 
   /** Sets the elements in [start, end) to `value`, converted; returns this array. */
-  fill(value: number, start: i64 = 0, end: i64 = END): Float64Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  fill(value: number, start: number = 0, end: number = Infinity): Float64Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     if (8 == 1 && stop > from) {
       // One converted byte, set with memset.
       this.put(from, value);
@@ -4636,11 +4660,11 @@ export class Float64Array extends TypedArray {
   }
 
   /** A new array of the elements `keep` holds for. */
-  filter<E>(keep: (x: number, i: i64) => bool throws E): Float64Array throws E {
+  filter<E>(keep: (x: number, i: number) => bool throws E): Float64Array throws E {
     const kept: number[] = [];
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (keep(x, i as i64)) {
+      if (keep(x, i as number)) {
         kept.push(x);
       }
     }
@@ -4648,10 +4672,10 @@ export class Float64Array extends TypedArray {
   }
 
   /** The first element `pred` holds for, or null (JS: `undefined`). */
-  find<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -4659,22 +4683,22 @@ export class Float64Array extends TypedArray {
   }
 
   /** The index of the first element `pred` holds for, or -1. */
-  findIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last element `pred` holds for, or null (JS: `undefined`). */
-  findLast<E>(pred: (x: number, i: i64) => bool throws E): number | null throws E {
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
       const x = this.get(i);
-      if (pred(x, i as i64)) {
+      if (pred(x, i as number)) {
         return x;
       }
     }
@@ -4682,27 +4706,27 @@ export class Float64Array extends TypedArray {
   }
 
   /** The index of the last element `pred` holds for, or -1. */
-  findLastIndex<E>(pred: (x: number, i: i64) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: number, i: number) => bool throws E): number throws E {
     let i = this.len;
     while (i > 0) {
       i--;
-      if (pred(this.get(i), i as i64)) {
-        return i as i64;
+      if (pred(this.get(i), i as number)) {
+        return i as number;
       }
     }
     return -1;
   }
 
   /** Calls `f` with each element and its index. */
-  forEach<E>(f: (x: number, i: i64) => void throws E) throws E {
+  forEach<E>(f: (x: number, i: number) => void throws E) throws E {
     for (let i: usize = 0; i < this.len; i++) {
-      f(this.get(i), i as i64);
+      f(this.get(i), i as number);
     }
   }
 
   /** Whether an element is `x` (NaN finds NaN, as JS's `includes`), from position `from`. */
-  includes(x: number, from: i64 = 0): bool {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  includes(x: number, from: number = 0): bool {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       const y = this.get(i);
       if (y == x || (x != x && y != y)) {
         return true;
@@ -4712,17 +4736,18 @@ export class Float64Array extends TypedArray {
   }
 
   /** The first index at or after `from` holding `x` (`===`: NaN is never found), or -1. */
-  indexOf(x: number, from: i64 = 0): i64 {
-    for (let i = relative(from, this.len); i < this.len; i++) {
+  indexOf(x: number, from: number = 0): number {
+    for (let i = relative(toInteger(from), this.len); i < this.len; i++) {
       if (this.get(i) == x) {
-        return i as i64;
+        return i as number;
       }
     }
     return -1;
   }
 
   /** The last index at or before `from` holding `x` (`===`), or -1. */
-  lastIndexOf(x: number, from: i64 = END): i64 {
+  lastIndexOf(x: number, position: number = Infinity): number {
+    const from = toInteger(position);
     if (this.len == 0) {
       return -1;
     }
@@ -4732,7 +4757,7 @@ export class Float64Array extends TypedArray {
     }
     while (i >= 0) {
       if (this.get(i as usize) == x) {
-        return i;
+        return i as number;
       }
       i--;
     }
@@ -4752,30 +4777,30 @@ export class Float64Array extends TypedArray {
   }
 
   /** A new array of `f`'s results, converted. */
-  map<E>(f: (x: number, i: i64) => number throws E): Float64Array throws E {
+  map<E>(f: (x: number, i: number) => number throws E): Float64Array throws E {
     const out = Float64Array.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
-      out.put(i, f(this.get(i), i as i64));
+      out.put(i, f(this.get(i), i as number));
     }
     return out;
   }
 
   /** Folds the elements from the first, starting with `init`. */
-  reduce<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.len; i++) {
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
 
   /** Folds the elements from the last, starting with `init`. */
-  reduceRight<A, E>(f: (acc: A, x: number, i: i64) => A throws E, init: A): A throws E {
+  reduceRight<A, E>(f: (acc: A, x: number, i: number) => A throws E, init: A): A throws E {
     let acc = init;
     let i = this.len;
     while (i > 0) {
       i--;
-      acc = f(acc, this.get(i), i as i64);
+      acc = f(acc, this.get(i), i as number);
     }
     return acc;
   }
@@ -4829,9 +4854,9 @@ export class Float64Array extends TypedArray {
   }
 
   /** A new array with a copy of the elements in [start, end) (negative counts from the end). */
-  slice(start: i64 = 0, end: i64 = END): Float64Array {
-    const from = relative(start, this.len);
-    const stop = relative(end, this.len);
+  slice(start: number = 0, end: number = Infinity): Float64Array {
+    const from = relative(toInteger(start), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     const o = (this.off + from * 8) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 8) as i64));
@@ -4859,9 +4884,9 @@ export class Float64Array extends TypedArray {
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
-  subarray(begin: i64 = 0, end: i64 = END): Float64Array {
-    const from = relative(begin, this.len);
-    const stop = relative(end, this.len);
+  subarray(begin: number = 0, end: number = Infinity): Float64Array {
+    const from = relative(toInteger(begin), this.len);
+    const stop = relative(toInteger(end), this.len);
     const n = stop > from ? stop - from : 0;
     return Float64Array.view(this.buf, this.off + from * 8, n);
   }
@@ -4894,7 +4919,8 @@ export class Float64Array extends TypedArray {
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
-  with(index: i64, value: number): Float64Array {
+  with(position: number, value: number): Float64Array {
+    const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
       throw new RangeError("Invalid typed array index");
@@ -4914,10 +4940,10 @@ export class Float64Array extends TypedArray {
   /** A new array of the elements of `src` (or `map`'s results for them), converted. */
   static from<E>(
     src: Iterable<number, E>,
-    map: ((x: number, i: i64) => number) | null = null,
+    map: ((x: number, i: number) => number) | null = null,
   ): Float64Array throws E {
     const xs: number[] = [];
-    let i: i64 = 0;
+    let i = 0;
     for (const x of src) {
       xs.push(map == null ? x : map(x, i));
       i++;
