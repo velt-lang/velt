@@ -1,0 +1,35 @@
+// A type parameter used as a `Record` key only in the body of a generic definition is checked at
+// every way the definition is instantiated besides a direct call: `new` (the constructor and the
+// field initializers), a generic function used as a value, and a generic method called through a
+// type parameter.
+class C<K> {
+  n: number;
+  constructor(x: K) {
+    let r: Record<K, number> | null = null;
+    this.n = 1;
+  }
+}
+class Init<K> {
+  r: Record<K, number> | null = null;
+}
+function wrap<K>(x: K): number {
+  let r: Record<K, number> | null = null;
+  return 2;
+}
+interface Sh {
+  area<U>(u: U): number;
+}
+class Sq implements Sh {
+  area<U>(u: U): number {
+    let o: Record<U, number> | null = null;
+    return 1;
+  }
+}
+function go<S extends Sh>(s: S): number {
+  return s.area<string[]>([]);
+}
+
+console.log(new C<boolean>(true).n);
+console.log(new Init<number>().r);
+const f: (x: i64) => number = wrap;
+console.log(f(1), go(new Sq()));

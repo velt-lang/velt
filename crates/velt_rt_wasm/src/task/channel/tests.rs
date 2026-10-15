@@ -15,7 +15,7 @@ unsafe extern "C" fn count_drop(item: *mut u8) {
 fn poll(f: *mut VeltFut) -> u32 {
     let mut cx = Context::from_waker(Waker::noop());
     // SAFETY: a live channel future.
-    unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+    unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
 }
 
 /// The `bool` result of a finished send (freed).

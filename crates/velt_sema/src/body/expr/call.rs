@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.call_apply(callee, type_args, args, exp, span) {
+            return h;
+        }
         if let Some(h) = self.json_stringify_layout(callee, type_args, args, span) {
             return h;
         }

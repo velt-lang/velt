@@ -59,6 +59,18 @@ impl<'h> Cx<'h> {
         let k = match self.kind(t) {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| c(self, a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Op(o, args) => {
+                let op = TyKind::Op(o, args.iter().map(|&a| c(self, a)).collect());
+                let op = self.intern(op);
+                let out = if self.mentions_params(op) {
+                    op
+                } else {
+                    let r = self.reduce_op(op);
+                    self.canon(r)
+                };
+                self.anon.memo.insert(t, out);
+                return out;
+            }
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(k, v) => TyKind::Map(c(self, k), c(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| c(self, a)).collect()),
@@ -249,6 +261,65 @@ impl<'h> Cx<'h> {
         self.hir.anon_shapes.get(key).copied()
     }
 
+    /// Does `t` mention a type parameter?
+    fn mentions_params(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Param(_) => true,
+            TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
+                ts.iter().any(|x| self.mentions_params(*x))
+            }
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => self.mentions_params(*e),
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                self.mentions_params(*a) || self.mentions_params(*b)
+            }
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+            } => {
+                params.iter().any(|x| self.mentions_params(*x))
+                    || self.mentions_params(*ret)
+                    || self.mentions_params(*throws)
+            }
+            _ => false,
+        }
+    }
+
+    /// The type deferred type `op` (concrete arguments) reduces to: sema's entry for it
+    /// (`hir::Program::type_ops`), looked up as written or with canonical arguments. Sema
+    /// reduces every one an instantiation reaches, so a missing one is an internal error, never
+    /// a guessed layout.
+    fn reduce_op(&mut self, op: TyId) -> TyId {
+        if let Some(&r) = self.hir.type_ops.get(&op) {
+            return r;
+        }
+        if self.anon.ops.is_none() {
+            let keys: Vec<(TyId, TyId)> = self.hir.type_ops.iter().map(|(k, v)| (*k, *v)).collect();
+            let mut by_canon = HashMap::new();
+            for (k, v) in keys {
+                let TyKind::Op(o, args) = self.kind(k) else {
+                    continue;
+                };
+                let args = args.iter().map(|a| self.canon(*a)).collect();
+                let ck = self.intern(TyKind::Op(o, args));
+                by_canon.insert(ck, v);
+            }
+            self.anon.ops = Some(by_canon);
+        }
+        let TyKind::Op(o, args) = self.kind(op) else {
+            return op;
+        };
+        let args = args.iter().map(|a| self.canon(*a)).collect();
+        let ck = self.intern(TyKind::Op(o, args));
+        match self.anon.ops.as_ref().and_then(|m| m.get(&ck)) {
+            Some(&r) => r,
+            None => ice(format_args!(
+                "deferred type {op:?} ({:?}) was not reduced by sema",
+                self.kind(op)
+            )),
+        }
+    }
+
     /// [`subst`](Self::subst) without canonicalizing.
     fn subst_raw(&mut self, t: TyId, targs: &[TyId]) -> TyId {
         if targs.is_empty() {
@@ -263,6 +334,14 @@ impl<'h> Cx<'h> {
             }
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| s(self, a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| s(self, a)).collect()),
+            TyKind::Op(o, args) => {
+                let op = TyKind::Op(o, args.iter().map(|&a| s(self, a)).collect());
+                let op = self.intern(op);
+                if self.mentions_params(op) {
+                    return op;
+                }
+                return self.reduce_op(op);
+            }
             TyKind::Array(e) => TyKind::Array(s(self, e)),
             TyKind::Map(k, v) => TyKind::Map(s(self, k), s(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| s(self, a)).collect()),
@@ -576,6 +655,8 @@ pub(super) struct AnonShapes {
     union_reps: HashMap<Vec<TyId>, TyId>,
     /// Anonymous defs that reach themselves through fields (`Cx::reaches_itself`).
     recursive: HashMap<DefId, bool>,
+    /// `hir::Program::type_ops` by canonical arguments (`Cx::reduce_op`), built on first miss.
+    ops: Option<HashMap<TyId, TyId>>,
 }
 
 /// Where a generic union's variant lives in the canonical union (`Cx::union_variant`).

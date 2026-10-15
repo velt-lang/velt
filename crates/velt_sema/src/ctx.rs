@@ -8,7 +8,7 @@ use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
 use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
-use crate::types::{int_name, Types};
+use crate::types::{display_key, int_name, Types};
 use crate::SourceModule;
 
 /// A name visible at module level.
@@ -47,6 +47,7 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
@@ -249,6 +250,7 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
@@ -754,6 +756,7 @@ impl<'m> Ctx<'m> {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),
             },
+            TyKind::Op(o, args) => self.display_op(*o, args, names),
             TyKind::Closure(d) => match self.try_fn(*d) {
                 Some(f) => {
                     let ps: Vec<String> = f
@@ -779,20 +782,5 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
-    }
-}
-
-/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
-/// identifier, otherwise quoted (`{ "content-type": string }`).
-pub(crate) fn display_key(name: &str) -> String {
-    let mut chars = name.chars();
-    let ident = chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
-    if ident {
-        name.to_string()
-    } else {
-        format!("{name:?}")
     }
 }

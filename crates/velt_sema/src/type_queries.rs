@@ -283,7 +283,7 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         match fields.into_iter().find(|f| f.name == seg.name) {
-            Some(f) if f.optional => self.ty.option(f.ty),
+            Some(f) if f.optional && self.dynamic(f.ty).is_none() => self.ty.option(f.ty),
             Some(f) => f.ty,
             None => {
                 self.err(
@@ -308,8 +308,9 @@ impl Ctx<'_> {
         if ty == self.ty.error {
             return ty;
         }
-        if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_)) {
-            if !self.checking_unused_aliases {
+        if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
+        {
+            if !self.defer_param_form() {
                 // The parameter as written (`keyof T`), not its internal name.
                 let shown = match &inner.kind {
                     ast::TypeExprKind::Named { path, args }

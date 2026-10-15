@@ -329,9 +329,10 @@ impl<'a> Walker<'a> {
                 self.ty(ret);
                 throws.iter().for_each(|t| self.ty(t));
             }
-            ast::TypeExprKind::GenericFunction { ty, .. } | ast::TypeExprKind::Construct(ty) => {
-                self.ty(ty)
-            }
+            ast::TypeExprKind::GenericFunction { ty, .. }
+            | ast::TypeExprKind::Construct(ty)
+            | ast::TypeExprKind::TupleRest(ty)
+            | ast::TypeExprKind::TupleOptional(ty) => self.ty(ty),
             ast::TypeExprKind::Object(fields) => fields.iter().for_each(|f| self.ty(&f.ty)),
             ast::TypeExprKind::IndexSig {
                 fields, key, value, ..

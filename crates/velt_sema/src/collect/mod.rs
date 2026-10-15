@@ -38,7 +38,7 @@ mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 pub(crate) mod sigs;
-mod static_this;
+pub(crate) mod static_this;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
@@ -57,6 +57,8 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    // Before any type is resolved: `any | null` is `any` (crate::unions).
+    crate::any::add_impl(cx);
     cx.name_symbol_keys();
     field_only::declare(cx);
     crate::type_defaults::check_all(cx);

@@ -78,6 +78,25 @@ impl Ctx<'_> {
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Op(o, args) => {
+                // A deferred type whose arguments are all known now is evaluated (#934).
+                let args: Vec<TyId> = args.iter().map(|a| c(self, *a)).collect();
+                let op = self.ty.intern(TyKind::Op(o, args));
+                let mut ps = vec![];
+                crate::types::collect_params(&self.ty, op, &mut ps);
+                let out = if ps.is_empty() {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
+                if op != t {
+                    if let Some(&s) = self.type_level.op_sites.get(&t) {
+                        self.type_level.op_sites.entry(op).or_insert(s);
+                    }
+                }
+                self.canon_memo.insert(t, out);
+                return out;
+            }
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(a, b) => TyKind::Map(c(self, a), c(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| c(self, *a)).collect()),
@@ -367,16 +386,22 @@ impl Ctx<'_> {
                 // An optional field reads as `T | null` and may be left out, like a class's
                 // (`body::driver`): its default is `null`, which lowering's JSON and printing
                 // glue reads as "absent".
-                let ty = if f.optional {
+                // `q?: any` holds the dynamic `undefined` itself (`collect::shapes`).
+                let dynamic = f.optional && self.dynamic(f.ty).is_some();
+                let ty = if f.optional && !dynamic {
                     self.ty.option(f.ty)
                 } else {
                     f.ty
                 };
-                let default = f.optional.then_some(crate::hir::Expr {
-                    kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
-                    ty,
-                    span: Span::DUMMY,
-                });
+                let default = if dynamic {
+                    self.dynamic_undefined(ty, Span::DUMMY)
+                } else {
+                    f.optional.then_some(crate::hir::Expr {
+                        kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
+                        ty,
+                        span: Span::DUMMY,
+                    })
+                };
                 FieldInfo {
                     name: f.name.clone(),
                     ty,

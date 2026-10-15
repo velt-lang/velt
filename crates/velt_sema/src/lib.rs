@@ -28,6 +28,7 @@ pub mod hir;
 
 mod absent_fields;
 mod anon;
+mod any;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -46,6 +47,7 @@ mod hooks;
 pub mod ide;
 mod index_signatures;
 mod infer;
+mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
 mod intersections;
@@ -217,6 +219,7 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let ctx::Ctx {
@@ -225,6 +228,7 @@ fn check_on_current_thread(
         diags,
         impls,
         counted_objects,
+        any,
         ..
     } = cx;
     let defs = defs
@@ -239,6 +243,9 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        type_ops,
+        any_impl: any.and_then(|a| a.imp),
+        unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
     };
     (Some(program), diags)
 }
@@ -283,6 +290,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    // Before the passes that read instantiated types: deferred types reduced per instance.
+    type_level::instances::reach(cx);
     hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);
