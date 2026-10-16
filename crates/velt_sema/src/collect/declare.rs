@@ -121,7 +121,8 @@ fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
         ast::ItemKind::Import(_)
         | ast::ItemKind::Extend(_)
         | ast::ItemKind::Var(_)
-        | ast::ItemKind::Augment(_) => return None,
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
     })
 }
 
@@ -137,7 +138,8 @@ pub(super) fn new_def<'m>(
         ast::ItemKind::Import(_)
         | ast::ItemKind::Extend(_)
         | ast::ItemKind::Var(_)
-        | ast::ItemKind::Augment(_) => return None,
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
         ast::ItemKind::Function(f) => {
             let src = Some(FnSource::Decl(f));
             let info = fn_placeholder(q, f.sig.name.span, f.sig.span, m, FnKind::Free, src);

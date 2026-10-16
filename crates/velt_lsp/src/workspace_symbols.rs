@@ -152,7 +152,10 @@ fn item_symbols(item: &ast::Item, out: &mut Found) {
                 ));
             }
         }
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Augment(_) => {}
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => {}
     }
 }
 

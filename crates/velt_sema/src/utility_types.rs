@@ -186,8 +186,8 @@ impl Ctx<'_> {
                         .collect(),
                 )
             }
-            TyKind::Param(_) if self.checking_unused_aliases => None,
-            TyKind::Param(_) => {
+            TyKind::Param(_) | TyKind::Op(..) if self.defer_param_form() => None,
+            TyKind::Param(_) | TyKind::Op(..) => {
                 let shown = written.unwrap_or(shown);
                 self.error(
                     Diagnostic::error(

@@ -137,6 +137,7 @@ fn is_declaration(first_line: &str) -> bool {
         "extend ",
         "extend<",
         "declare ",
+        "namespace ",
     ];
     if KEYWORDS.iter().any(|k| first_line.starts_with(k)) {
         return true;

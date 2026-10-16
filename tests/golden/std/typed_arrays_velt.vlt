@@ -1,0 +1,20 @@
+// The Velt side of typed arrays: integer-typed indexes, and `u8[]` (Velt's byte array) in and
+// out. `Uint8Array.fromBytes` copies, so the array's buffer keeps its length whatever happens
+// to the `u8[]` afterwards.
+function main() {
+  const u = new Uint8Array(4);
+  const k: usize = 2;
+  const j: i32 = 1;
+  u[k] = 5;
+  u[j] += 3;
+  u[k + 1]++;
+  console.log(u[k], u[j], u[k + 1], u);
+  const raw: u8[] = [1, 2, 3];
+  const v = Uint8Array.fromBytes(raw);
+  raw.pop();
+  raw[0] = 9;
+  console.log(v, v.buffer.byteLength, v.at(2), raw);
+  const back = v.toBytes();
+  back[1] = 7;
+  console.log(back, v[1]);
+}

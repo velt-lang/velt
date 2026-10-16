@@ -286,9 +286,45 @@ impl Loader<'_, '_> {
 
     /// Resolve the imports of every queued module, and of the modules that loads.
     fn resolve_all(&mut self, queue: &mut VecDeque<usize>) {
-        while let Some(index) = queue.pop_front() {
-            self.resolve_imports(index, queue);
+        loop {
+            while let Some(index) = queue.pop_front() {
+                self.resolve_imports(index, queue);
+            }
+            // Conditional globals once everything else is loaded: what they add may load more.
+            if !self.load_conditional_globals(queue) {
+                break;
+            }
         }
+    }
+
+    /// Load the conditional globals ([`globals`]) whose std module is loaded and whose words a
+    /// non-std module mentions; whether any was.
+    fn load_conditional_globals(&mut self, queue: &mut VecDeque<usize>) -> bool {
+        let Some(std) = self.opts.std_root.clone() else {
+            return false;
+        };
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let due = |g: &globals::Global| {
+            let Some((module, words)) = &g.when else {
+                return false;
+            };
+            modules.iter().any(|m| m.is_std && m.path == *module)
+                && modules.iter().filter(|m| !m.is_std).any(|m| {
+                    let src = &sm.get(m.file).src;
+                    words.iter().any(|w| globals::mentions(src, w))
+                })
+        };
+        let (wanted, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.globals).into_iter().partition(due);
+        self.globals = rest;
+        let mut loaded = false;
+        for g in wanted {
+            if let Some(new) = self.load_prelude(&g.file, &std) {
+                queue.push_back(new);
+                loaded = true;
+            }
+        }
+        loaded
     }
 
     /// Load `file` as an extra root with `origin` (the root's), unless it is already loaded.
@@ -639,6 +675,8 @@ fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
 
 #[cfg(test)]
 mod case_tests;
+#[cfg(test)]
+mod globals_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

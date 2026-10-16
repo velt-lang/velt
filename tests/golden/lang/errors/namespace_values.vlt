@@ -1,0 +1,10 @@
+// Values in a namespace (a run-time object in TypeScript) are not supported yet.
+namespace V {
+  export const limit = 10;
+  export function twice(x: number): number {
+    return x * 2;
+  }
+  export type T = number;
+}
+const t: V.T = 2;
+console.log(t);

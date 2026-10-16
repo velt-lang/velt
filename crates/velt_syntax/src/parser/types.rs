@@ -363,6 +363,7 @@ impl<'a> Parser<'a> {
         }
         let mut fields = Vec::new();
         let mut index: Option<IndexSignature> = None;
+        let mut sigs = vec![];
         while !self.at(Tok::RBrace) {
             let flo = self.cur_lo();
             // `readonly` is a modifier only when a field name follows (a field may be named
@@ -383,7 +384,8 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
-            if self.skip_call_signature() {
+            if let Some(sig) = self.parse_call_signature()? {
+                sigs.push(sig);
                 if !self.eat_type_member_end() {
                     break;
                 }
@@ -412,13 +414,21 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RBrace)?;
+        let span = self.span_from(lo);
         let kind = match index {
             Some(ix) => ix.into_type(fields),
             None => TypeExprKind::Object(fields),
         };
+        let ty = TypeExpr { kind, span };
+        if sigs.is_empty() {
+            return Ok(ty);
+        }
         Ok(TypeExpr {
-            kind,
-            span: self.span_from(lo),
+            kind: TypeExprKind::Callable {
+                sigs,
+                members: Box::new(ty),
+            },
+            span,
         })
     }
 

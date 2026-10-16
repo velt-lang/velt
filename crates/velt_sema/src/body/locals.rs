@@ -171,11 +171,15 @@ impl FnCx<'_, '_> {
         // A captured closure `const` is still that closure: a call through the capture fills
         // in its parameters' defaults (`FnCx::call_value`).
         let closure = self.outer[j].closure_consts.get(&prev).copied();
+        let method = self.outer[j].method_values.contains(&prev);
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
             if let Some(c) = closure {
                 f.closure_consts.insert(prev, c);
+            }
+            if method {
+                f.method_values.insert(prev);
             }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = frame_narrowing(f, prev);
@@ -183,6 +187,9 @@ impl FnCx<'_, '_> {
         let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
         if let Some(c) = closure {
             self.f.closure_consts.insert(inner, c);
+        }
+        if method {
+            self.f.method_values.insert(inner);
         }
         Some(inner)
     }

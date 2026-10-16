@@ -130,6 +130,19 @@ impl FnCx<'_, '_> {
         };
         let (bd, bargs) = self.cx.class_of(base).expect("ICE: base");
         let found = crate::collect::lookup_method(self.cx, bd, &bargs, &prop.name);
+        if found.as_ref().is_none_or(|f| f.is_static()) {
+            // A method an `extend` block gives the base class (or one of its bases).
+            if let Some(super::method::Resolved::Def {
+                def,
+                slots,
+                recv_ty,
+                is_static: false,
+            }) = self.base_extension_method(base, &prop.name)
+            {
+                let recv = self.this_expr(Want::Borrow, span);
+                return self.def_method_call(recv, def, slots, recv_ty, &[], args, exp, span);
+            }
+        }
         let Some(found) = found.filter(|f| !f.is_static()) else {
             self.cx.err(
                 format!("no method `{}` in the base class", prop.name),

@@ -110,7 +110,7 @@ impl FnCx<'_, '_> {
         if let Resolved::Def { def, .. } = &r {
             self.no_generator_send(recv.ty, *def, span);
         }
-        self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
+        self.check_extension_ambiguity(&r, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {

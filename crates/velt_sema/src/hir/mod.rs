@@ -104,6 +104,19 @@ pub enum TyKind {
     Symbol,
     /// A SIMD vector or mask: Copy, 16 bytes.
     Simd(SimdTy),
+    /// A type operator that can't be evaluated yet because an argument it inspects is still a
+    /// type parameter (docs/internals/design/deferred-types.md, #934 phase 2). Only in generic
+    /// definitions: once its arguments are concrete, sema reduces it, and lowering replaces it by
+    /// its entry in `Program::type_ops`.
+    Op(TyOp, Vec<TyId>),
+}
+
+/// The operator of a [`TyKind::Op`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TyOp {
+    /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
+    /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
+    Alias(u32),
 }
 
 /// The value of a literal type.
@@ -138,6 +151,9 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// Every deferred type (`TyKind::Op`) with concrete arguments that an instantiation of a
+    /// generic definition reaches, and the type it reduces to (no `Op` in it).
+    pub type_ops: HashMap<TyId, TyId>,
     /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
     pub any_impl: Option<u32>,
     /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the

@@ -1,0 +1,8 @@
+000102030405060708090a0b0c0d0e0f10111213 ecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff true
+0,255,16,171 0
+Invalid hex: odd length
+3 Invalid hex character at offset 3
+17 Invalid hex character at offset 17
+40 Invalid hex character at offset 40
+63 Invalid hex character at offset 63
+checks 91102

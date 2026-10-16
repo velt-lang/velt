@@ -1,6 +1,7 @@
 // Conditional, mapped and template literal types: what TypeScript rejects is an error (TS2322,
-// TS2353, TS1338), and a form whose argument is still a type parameter, which TypeScript keeps
-// unevaluated, is "not supported yet" (#934) rather than an approximation.
+// TS2353, TS1338), and a form written directly whose argument is still a type parameter, which
+// TypeScript keeps unevaluated, is "not supported yet" (#934) rather than an approximation (through
+// an alias it is deferred: lang/type_level_deferred).
 type IsString<T> = T extends string ? "yes" : "no";
 type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
 type Unbox<T> = T extends { value: infer V } ? V : never;
@@ -11,12 +12,12 @@ const missing: Getters<{ name: string }> = { getAge: () => 1 };
 const badInfer: Unbox<{ value: string }> = 1;
 const badTemplate: `on${"a" | "b"}` = "onc";
 
-function generic<T>(x: T): IsString<T> {
+function generic<T>(x: T): T extends string ? "yes" : "no" {
   return "no";
 }
 
 interface Holder<T> {
-  view: ReadonlyAll<T>;
+  view: { readonly [K in keyof T]: T[K] };
 }
 
 type Pattern = `id-${string}`;
