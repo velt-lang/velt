@@ -200,9 +200,11 @@ impl FnLower<'_, '_> {
             return unit();
         }
         // A type parameter bound by `object` / `Function` (issue #926) instantiated with a
-        // dynamic type: the same value, never a box in a box.
+        // dynamic type: the same value, never a box in a box. It is returned as an owned
+        // temporary: a moved parameter's place would read as borrowed to `consume`, which
+        // would share it and leave the parameter undropped.
         if self.cx.is_any_impl(impl_index) && self.cx.is_dynamic(cty) {
-            return v;
+            return self.own_value(v, ty);
         }
         if self.cx.is_any_impl(impl_index)
             && matches!(self.cx.kind(cty), TyKind::Dyn(..))

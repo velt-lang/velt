@@ -202,21 +202,27 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
-        if let Some(d) = self.cx.dynamic(obj.ty) {
-            // The keys of the value a dynamic type holds come from its descriptor, which has
-            // no slot for them yet.
-            self.cx.error(
-                velt_common::Diagnostic::error(
-                    format!(
-                        "`Object.keys` of {} `{}` value is not supported yet (#924, #926)",
-                        d.article(),
-                        d.name()
-                    ),
-                    obj.span,
-                )
-                .with_note("convert the value to its class or object type first (`x as T`, checked at run time)"),
-            );
-            return self.error_expr(span);
+        match self.cx.dynamic(obj.ty) {
+            // The class of the value held tells its keys; whether every value the program
+            // converts is a class instance is known once every body is checked (`any_keys`).
+            Some(crate::any::Dynamic::Any) => self.cx.any_keys.push(obj.span),
+            // The keys of the value an `unknown`, `object` or `Function` holds come from its
+            // descriptor, which has no slot for them yet.
+            Some(d) => {
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!(
+                            "`Object.keys` of {} `{}` value is not supported yet (#924, #926)",
+                            d.article(),
+                            d.name()
+                        ),
+                        obj.span,
+                    )
+                    .with_note("convert the value to its class or object type first (`x as T`, checked at run time)"),
+                );
+                return self.error_expr(span);
+            }
+            None => {}
         }
         self.cx
             .object_copies
@@ -296,6 +302,10 @@ impl FnCx<'_, '_> {
                 if self.holds_class(d, iface) {
                     classes.push((self.class_depth(d), d));
                 }
+                continue;
+            }
+            // An `any` holding something else is reported later (`crate::any_keys`).
+            if self.cx.any.is_some_and(|a| a.any == iface) {
                 continue;
             }
             if self.implements(d, iface) {

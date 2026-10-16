@@ -311,7 +311,12 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let s = self.expr(object, None, Want::Borrow);
-        if self.cx.dynamic(s.ty) == Some(crate::any::Dynamic::Any) {
+        // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
+        if self
+            .cx
+            .dynamic(s.ty)
+            .is_some_and(|d| d != crate::any::Dynamic::Unknown)
+        {
             let (l, mode) = self.option_binding(&s, s.ty, "<chain>", false);
             let use_mode = match mode {
                 UseMode::Move => UseMode::Borrow,

@@ -40,7 +40,8 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         let payload = self.cx.ty.opt_payload(s.ty);
-        let dynamic = self.cx.dynamic(s.ty) == Some(crate::any::Dynamic::Any);
+        // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
+        let dynamic = self.cx.dynamic(s.ty).is_some_and(|d| d != crate::any::Dynamic::Unknown);
         let (l, mode) = self.option_binding(&s, payload.unwrap_or(s.ty), &name, false);
         self.push_scope();
         if let Some(scope) = self.f.scopes.last_mut() {
