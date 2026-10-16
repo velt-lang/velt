@@ -49,10 +49,9 @@ requests; a program still running 1.5 s after the request is killed (set
 exiting. Press Ctrl-C twice to exit at once.
 
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
-connection is refused during a reload and a server on port 0 keeps its port. Hot swap needs no
-code changes because Velt has no mutable module-level state
-([Variables](../reference/variables.md#no-mutable-module-state)): state lives in values that
-`main` creates, so there are no globals to migrate.
+connection is refused during a reload and a server on port 0 keeps its port. State in values
+that `main` creates carries over a hot swap. [Module state](../reference/variables.md#module-state)
+(module-level `let`s) does not: the swapped-in code starts it over from its initializers.
 
 ## Modes
 
