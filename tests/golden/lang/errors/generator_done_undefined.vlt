@@ -1,0 +1,11 @@
+// TypeScript's finished `IteratorResult`, `{ done: true, value: undefined }`: Velt's has no
+// `value`, so the error says to write `{ done: true }` (and reports nothing else).
+class Done implements Iterator<i64> {
+  next(): IteratorResult<i64> {
+    return { done: true, value: undefined };
+  }
+}
+
+for (const x of new Done()) {
+  console.log(x);
+}

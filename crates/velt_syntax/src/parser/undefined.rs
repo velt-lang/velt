@@ -34,17 +34,15 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_result_drops_value_undefined() {
-        let src = "function f() { return { done: true, value: undefined }; }";
-        assert!(messages(src).is_empty());
-        let (file, _) = parse_file(FileId(0), src);
-        let shown = format!("{:?}", file.items);
-        assert!(!shown.contains("\"value\""), "{shown}");
+    fn a_finished_result_with_value_undefined_says_to_drop_it() {
+        let found = messages("function f() { return { done: true, value: undefined }; }");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].1[0].ends_with("write `{ done: true }`"),
+            "{found:?}"
+        );
         // Elsewhere, `value: undefined` is a value.
-        let src = "function f() { return { done: false, value: undefined }; }";
-        assert!(messages(src).is_empty());
-        let (file, _) = parse_file(FileId(0), src);
-        assert!(format!("{:?}", file.items).contains("\"value\""));
+        assert!(messages("function f() { return { done: false, value: undefined }; }").is_empty());
     }
 
     #[test]

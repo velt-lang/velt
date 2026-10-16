@@ -202,7 +202,7 @@ impl<'a> Parser<'a> {
             let prop = self.parse_object_prop()?;
             if let ObjectProp::KeyValue(k, v) = &prop {
                 if k.name == "value" && matches!(v.kind, ExprKind::Lit(Lit::Undefined)) {
-                    undefined_value = Some(props.len());
+                    undefined_value = Some((props.len(), v.span));
                 }
             }
             props.push(prop);
@@ -211,22 +211,34 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RBrace)?;
-        if let Some(i) = undefined_value {
-            self.finished_result_value(&mut props, i);
+        if let Some((i, span)) = undefined_value {
+            self.finished_result_value(&mut props, i, span);
         }
         Ok(props)
     }
 
     /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
-    /// `value` (reading it gives `undefined`, as in TypeScript), so the property is dropped.
-    fn finished_result_value(&self, props: &mut Vec<ObjectProp>, i: usize) {
+    /// `value`. Says so, and drops the property.
+    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, span: Span) {
         let done = props.iter().any(|p| {
             matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
                 if k.name == "done")
         });
-        if done {
-            props.remove(i);
+        if !done {
+            return;
         }
+        if self.speculating == 0 {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    "`value: undefined` in a finished iterator result is not supported",
+                    span,
+                )
+                .with_note(
+                    "TypeScript allows this; a finished `IteratorResult` in Velt has no `value`; write `{ done: true }`",
+                ),
+            );
+        }
+        props.remove(i);
     }
 
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {
