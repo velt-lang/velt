@@ -1,0 +1,26 @@
+type Handler = (x: number) => number;
+
+function adder(n: number): Handler {
+  return (x: number): number => x + n;
+}
+
+const ADD_ONE = adder(1);
+const handlers: Handler[] = [];
+
+function on(h: Handler) {
+  handlers.push(h);
+}
+
+function off(h: Handler) {
+  const i = handlers.indexOf(h);
+  if (i >= 0) {
+    handlers.splice(i, 1);
+  }
+}
+
+function main() {
+  on(ADD_ONE);
+  console.log(handlers.length, handlers.indexOf(ADD_ONE), ADD_ONE === ADD_ONE, ADD_ONE(2));
+  off(ADD_ONE);
+  console.log(handlers.length);
+}

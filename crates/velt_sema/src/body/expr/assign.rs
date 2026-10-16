@@ -133,7 +133,10 @@ impl FnCx<'_, '_> {
             return None;
         }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
-            if self.lookup_item(&id.name, id.span).is_some() {
+            let item = self.lookup_item(&id.name, id.span);
+            if let Some(place) = self.module_let_target(item, id) {
+                return place;
+            } else if item.is_some() {
                 self.cx.err(
                     format!("cannot assign to `{}`: it is not a variable", id.name),
                     span,

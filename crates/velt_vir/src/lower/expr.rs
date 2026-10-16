@@ -194,6 +194,10 @@ impl FnLower<'_, '_> {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
         };
+        if let Some(slot) = g.slot {
+            // A module-level `let`: its slot, read in place (sema shares what it moves out).
+            return Operand::Copy(self.module_slot(slot));
+        }
         let saved = std::mem::take(&mut self.targs);
         let v = self.consume(&g.init);
         self.targs = saved;
@@ -231,6 +235,12 @@ impl FnLower<'_, '_> {
                 let hir::Def::Global(g) = self.cx.hir.def(d) else {
                     return None;
                 };
+                // A module-level `let` (its slot holds the array, which code may replace or
+                // modify) is never read from the stored initializer.
+                if g.slot.is_some() {
+                    self.cx.tables.insert(d, None);
+                    return None;
+                }
                 let stored = self.store_table(g);
                 self.cx.tables.insert(d, stored);
                 stored?

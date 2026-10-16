@@ -285,6 +285,14 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
+    if mutable_root(cx, target) {
+        // A module-level `let` may be modified in place: its slot is the place itself.
+        if matches!(target.kind, E::Global(_)) {
+            return false;
+        }
+        set_place_mode(target, UseMode::BorrowMut);
+        return true;
+    }
     if let Some(name) = global_root(cx, target) {
         errors.push(
             Diagnostic::error(
@@ -312,6 +320,19 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
         E::Downcast(ref x) => outer_mode(x),
         E::Global(_) => Some(UseMode::Borrow),
         _ => None,
+    }
+}
+
+/// Is place `e` rooted at a module-level `let`?
+fn mutable_root(cx: &Ctx, e: &Expr) -> bool {
+    match &e.kind {
+        E::Global(d) => cx.global(*d).is_some_and(|g| g.stored),
+        E::Field { base, .. }
+        | E::Index { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) => mutable_root(cx, base),
+        _ => false,
     }
 }
 

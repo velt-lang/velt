@@ -1,0 +1,46 @@
+// One module state per process (#76): every request handler (a task of its own, on any core)
+// counts into the same module counter and Map, as a Node server does.
+import { serve } from "velt:http";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+
+let hits = 0;
+const byPath = new Map<string, number>();
+
+async function get(url: string): Promise<string> {
+  return await (await fetch(url)).text();
+}
+
+async function burst(base: string, from: number): Promise<number> {
+  let ok = 0;
+  for (let i = 0; i < 10; i++) {
+    const body = await get(`${base}/p${(from + i) % 3}`);
+    if (body.startsWith("hit ")) {
+      ok++;
+    }
+  }
+  return ok;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    hits++;
+    const n = hits;
+    byPath.set(path, (byPath.get(path) ?? 0) + 1);
+    await sleep(0);
+    return new Response(`hit ${n}`);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const clients: Promise<number, AbortError | IoError>[] = [];
+  for (let c = 0; c < 8; c++) {
+    clients.push(spawn(burst(base, c)));
+  }
+  let ok = 0;
+  for (const n of await Promise.all(clients)) {
+    ok += n;
+  }
+  await server.shutdown();
+  console.log(ok, hits, (byPath.get("/p0") ?? 0) + (byPath.get("/p1") ?? 0) + (byPath.get("/p2") ?? 0));
+  console.log(byPath.get("/p0"), byPath.get("/p1"), byPath.get("/p2"));
+}

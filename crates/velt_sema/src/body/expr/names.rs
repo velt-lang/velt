@@ -287,7 +287,9 @@ impl FnCx<'_, '_> {
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
             // compares integers, `N / 3` divides numbers.
             DefInfo::Global(g)
-                if g.src.ann.is_none() && g.src.init.is_some_and(super::member::untyped_int) =>
+                if !g.mutable
+                    && g.src.ann.is_none()
+                    && g.src.init.is_some_and(super::member::untyped_int) =>
             {
                 let init = g.src.init.expect("ICE: checked above");
                 let h = self.expr(init, exp, want);
@@ -334,7 +336,15 @@ impl FnCx<'_, '_> {
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name) = (g.ty, g.name.clone());
+        let (ty, name, mutable) = (g.ty, g.name.clone(), g.stored);
+        if mutable {
+            let read = self.mk(H::Global(d), ty, span);
+            if want == Want::Move && !self.cx.is_copy(ty) {
+                // Another reference to the value the module state keeps, as JS aliases it.
+                return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+            }
+            return read;
+        }
         if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
             // A function computed at each use: another reference to it is owned.
             let read = self.mk(H::Global(d), ty, span);

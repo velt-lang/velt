@@ -501,26 +501,19 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    // A pure call may initialize a module constant (#383); one with effects may not.
+    // A pure call may initialize a module constant (#383); one with effects makes it module
+    // state, evaluated once (#802), and so does an array that is not a table.
     ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    let r = err_src(
-        "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
-    );
-    assert!(
-        r.contains("`f` cannot initialize module constant `X`"),
-        "{r}"
-    );
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() { console.log(X); }");
     // An array of number or boolean literals is a table (read-only data).
     ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
-    let r = err_src("const X: string[] = [\"a\"]; function main() {}");
-    assert!(r.contains("only arrays of numbers or booleans"), "{r}");
-    // Only as the whole initializer: an array inside a struct constant is not a table.
-    let r = err_src(
+    ok_src("const X: string[] = [\"a\"]; function main() { X.push(\"b\"); }");
+    ok_src(
         "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
     );
-    assert!(r.contains("constant expressions or pure calls"), "{r}");
-    let r = err_src("const X: i64[] = [1 + 1]; function main() {}");
-    assert!(r.contains("is not a literal"), "{r}");
+    ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
+    // A module-level `let` is module state; an imported one is read-only where imported.
+    ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
     let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
     assert!(r.contains("module-level constant `X`"), "{r}");
     let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");

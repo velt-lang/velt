@@ -1,0 +1,64 @@
+// check: no leaks
+// A task that holds the module lock may block on a `Mutex` (`with`) while other tasks replace
+// the module array it is iterating: the module lock stays held while it waits, so the array
+// it reads is never freed under it (the runs in crates/veltc/tests/module_state_races.rs
+// repeat this). A `with` callback cannot use module state (errors/module_let_mutex_with).
+class Box {
+  n = 1;
+  name = "box";
+}
+let boxes: Box[] = [];
+let swaps = 0;
+async function holder(m: shared<Mutex<number>>, rounds: number): Promise<number> {
+  for (let i = 0; i < rounds; i++) {
+    m.with((v) => {
+      let x = 0;
+      for (let k = 0; k < 2000; k++) {
+        x += k;
+      }
+      v = v + x;
+    });
+    await yieldNow();
+  }
+  return 0;
+}
+async function reader(m: shared<Mutex<number>>, rounds: number): Promise<number> {
+  let t = 0;
+  for (let i = 0; i < rounds; i++) {
+    for (const b of boxes) {
+      t += b.n + b.name.length + m.with((v) => v % 7);
+    }
+    await yieldNow();
+  }
+  return t;
+}
+async function replacer(rounds: number): Promise<number> {
+  for (let i = 0; i < rounds; i++) {
+    if (i % 2 == 0) {
+      boxes = [new Box()];
+    } else {
+      const bs: Box[] = [];
+      for (let k = 0; k < 16; k++) {
+        bs.push(new Box());
+      }
+      boxes = bs;
+    }
+    swaps++;
+    await yieldNow();
+  }
+  return 0;
+}
+async function main() {
+  for (let k = 0; k < 16; k++) {
+    boxes.push(new Box());
+  }
+  const m = shared(new Mutex<number>(0));
+  const ts: Promise<number>[] = [];
+  for (let i = 0; i < 4; i++) {
+    ts.push(spawn(holder(m, 2000)));
+    ts.push(spawn(reader(m, 2000)));
+    ts.push(spawn(replacer(20000)));
+  }
+  await Promise.all(ts);
+  console.log(swaps, boxes.length > 0);
+}

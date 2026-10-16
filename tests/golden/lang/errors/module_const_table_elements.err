@@ -1,4 +1,0 @@
-module_const_table_elements.vlt:8:25: error: module constant `NAMES` is an array of `string`: only arrays of numbers or booleans can be module constants
-module_const_table_elements.vlt:9:24: error: module constant `NESTED` is an array of `u8[]`: only arrays of numbers or booleans can be module constants
-module_const_table_elements.vlt:10:22: error: an element of module constant `CALLS` is not a literal
-module_const_table_elements.vlt:11:21: error: an element of module constant `SUMS` is not a literal
