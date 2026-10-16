@@ -26,6 +26,9 @@ function describe(u: unknown): string {
   if (typeof u === "function") {
     return `function giving ${u(20)}`;
   }
+  if (u instanceof Set || u instanceof Plain) {
+    return `set or plain, size ${u.size}`;
+  }
   if (u instanceof Plain) {
     return `plain ${u.n + 1}`;
   }
@@ -42,6 +45,7 @@ function main(): void {
   console.log(describe((n: number): number => n + 1));
   console.log(describe(new Plain()));
   console.log(describe("str"));
+  console.log(describe(new Set<number>([1, 2])));
   const a: any = new Box([1, 2]);
   if (a instanceof Box) {
     console.log(a.v.length);

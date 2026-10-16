@@ -94,4 +94,12 @@ impl FnCx<'_, '_> {
         }
         self.any_ty()
     }
+
+    /// Two narrowings of the dynamic local `l` to different types joined by `||`: it reads as an
+    /// `any` (an `unknown`) where either holds.
+    pub(crate) fn dynamic_join(&mut self, l: hir::LocalId) -> Option<TyId> {
+        let t = self.local_ty(l);
+        self.cx.dynamic(t)?;
+        self.any_ty()
+    }
 }

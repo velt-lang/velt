@@ -166,7 +166,15 @@ impl FnCx<'_, '_> {
                     });
                     let done = out.iter().any(|f| matches!(f, Fact::Class(m, _) if m == l));
                     if let (Some(tb), false) = (tb, done) {
-                        if let Some(c) = self.common_class(*l, *ta, tb) {
+                        let c = if *ta == tb {
+                            Some(tb)
+                        } else {
+                            self.common_class(*l, *ta, tb)
+                        };
+                        // `u instanceof Map || u instanceof Box` on an `unknown`: read through
+                        // `any` either way (`dynamic_narrow`).
+                        let c = c.or_else(|| self.dynamic_join(*l));
+                        if let Some(c) = c {
                             out.push(Fact::Class(*l, c));
                         }
                     }
