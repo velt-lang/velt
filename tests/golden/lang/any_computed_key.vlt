@@ -1,0 +1,17 @@
+// A computed key on an `any` that is not a plain variable or a literal (#924).
+function side(): number { console.log("side"); return 1; }
+function key(): string { return "b"; }
+function main(): void {
+  const xs: any = [10, 20, 30];
+  console.log(xs[side()]);
+  const o: any = { a: 1, b: 2 };
+  console.log(o[key()]);
+  console.log(o["a" + ""]);
+  const i = 1;
+  console.log(xs[i + 0], xs[i + 1]);
+  const ks: string[] = ["a", "b"];
+  console.log(o[ks[1]]);
+  const k: "a" | "b" = i > 0 ? "a" : "b";
+  console.log(o[k]);
+  console.log(xs[side() + 1]);
+}

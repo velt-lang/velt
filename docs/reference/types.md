@@ -1129,8 +1129,10 @@ console.log(b.v); // hi
 - **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
-  a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data). A generic method (`match<R>(arms: Arms<R>): R { ... }`)
+  a method is not supported yet (an object literal is plain data). Getters and setters
+  (`get x() {}`, `set x(v) {}`) are supported where the literal implements an interface with
+  methods ([Object literals implementing interfaces](#object-literals-implementing-interfaces)),
+  not yet in a literal of an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
   parses as a property holding a generic arrow, which is not supported yet there (a generic
   arrow must be the value of a `const`, [Functions](functions.md#arrow-functions-and-function-types)). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
@@ -1536,6 +1538,60 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
 
+### Object literals implementing interfaces
+
+Where an interface with methods is expected (an annotation, a parameter, a return type or
+`satisfies`), an object literal implements it, as a class that declares `implements` does:
+
+- A method is a function value: `m(x) { … }`, `m: (x) => …` or `async m(x) { … }`. Its
+  parameter types may be left out: they come from the interface's method.
+- A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
+  method of the interface (`get f(): T`) takes a getter or a value (`f: 5`), and a setter method
+  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
+  interface can't be written through the interface value yet (`x.f = v` is an error), so a
+  setter given for a field never runs: declare a setter method in the interface instead.
+- A method with a default body and an optional field may be left out (the field is `null`);
+  every other member must be given, and a member the interface doesn't declare is an error.
+- The value is an interface value: its members are read and called through the interface.
+- Such a literal may be a module constant, exported or not (`export const upper: Handler = {
+  … }`). Like every module constant it is evaluated at each use, so comparing it by identity
+  (`===`) is an error, and each use passed on is a new value, as for a function-valued constant
+  ([Variables](variables.md#module-constants-initialized-by-a-call)).
+
+```ts
+interface Counter {
+  next(step: number): number;
+  readonly count: number;
+}
+
+function counter(): Counter {
+  let n = 0;
+  return {
+    next(step) {
+      n += step;
+      return n;
+    },
+    get count() {
+      return n;
+    },
+  };
+}
+
+const c = counter();
+c.next(2);
+c.next(3);
+console.log(c.count); // 5
+```
+
+- The methods use the variables around them, as arrows do; `this` in them is not supported yet.
+- A generic interface method (`map<R>(f: (x: T) => R): R`) cannot be a function value: declare a
+  class that implements the interface.
+- A method that throws must be allowed to by the interface method's function type, as for any
+  function value: an optional method (`m?(x: T): R`) is a field of function type, which
+  doesn't allow throwing unless it says `throws`.
+- `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
+  interface values).
+
 ## any and unknown
 
 `any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
@@ -1591,7 +1647,53 @@ object and a boolean, number or string stops with a `TypeError` (JavaScript conv
 with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
 optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
-today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
-`x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
-`JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
-error.
+today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
+
+Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
+`string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
+or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member
+is found at run time in the value the `any` holds: a field, getter or method of a class
+instance (a subclass's too when it was converted through its base class), an object type's
+field, `length` and elements of an array, `length` of a string, and the members of the standard
+library's classes (`size`, `get`, `set` and `has` of a `Map`). The result is an `any`; each
+argument is converted to the parameter's type with the same check as above, a left-out one is
+`undefined`, and extra ones are ignored.
+
+```ts
+class Counter {
+  n: number = 0;
+  get double(): number {
+    return this.n * 2;
+  }
+  add(k: number): number {
+    this.n += k;
+    return this.n;
+  }
+}
+
+function main(): void {
+  const c: any = new Counter();
+  console.log(c.add(5), c.double, c.missing); // 5 10 undefined
+  const m: any = new Map<string, number>();
+  m.set("a", 1);
+  console.log(m.get("a"), m.size); // 1 1
+  const xs: any = [10, 20];
+  console.log(xs.length, xs[1], xs[2]); // 2 20 undefined
+  const f: any = (s: string) => s.toUpperCase();
+  console.log(f("hi")); // HI
+}
+```
+
+A member the value's fixed shape does not have reads as `undefined`, as in Node. A `null` or
+`undefined` receiver stops with Node's `TypeError: Cannot read properties of undefined (reading
+'f')` before the call's arguments are evaluated, calling something that is not a function with
+`TypeError: x.f is not a function`, and an argument of the wrong type with the conversion's
+`TypeError`. Optional chaining short-circuits as in Node: `x?.f`, `x?.m()`, `x?.[0]` and
+`x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
+(`x?.a.b`) is not evaluated. What this phase cannot reach yet
+stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
+call, methods of arrays and strings, string indexing, methods that throw or are generic, and
+members whose type is a union, enum or interface. **Planned** (#924): writing a member
+(`x.f = v`, a compile error today), arithmetic and comparison operators, template literals and
+`String(x)`, `JSON.stringify`, iteration and the warning on a written `any`; until then each is
+a compile error.

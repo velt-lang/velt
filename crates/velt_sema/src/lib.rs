@@ -243,6 +243,7 @@ fn check_on_current_thread(
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
+    let dyn_members = any::dyn_members(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -268,6 +269,7 @@ fn check_on_current_thread(
         type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
+        dyn_members,
     };
     (Some(program), diags)
 }

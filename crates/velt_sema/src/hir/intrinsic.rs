@@ -296,4 +296,19 @@ pub enum Intrinsic {
     /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
     /// `null == undefined`, `"1" == 1`, `true == 1`).
     AnyLooseEq,
+    /// `(x: borrow any, key: borrow string | any) -> any`: `x.key` / `x[key]` (a key of type
+    /// `any` holding a number reads like `AnyIndex`): the member of the value held, boxed;
+    /// `undefined` when the value's fixed shape has no such member; a `TypeError` for a
+    /// `null` / `undefined` receiver or a member not supported through `any` yet. Sets
+    /// `Program::dyn_members`.
+    AnyGet,
+    /// `(x: borrow any, i: f64) -> any`: `x[i]` with a number key (array elements).
+    AnyIndex,
+    /// `(x: borrow any, key: borrow string, text: string, args: owned any...) -> any`: the
+    /// method call `x.key(args)`; each argument is converted to the parameter's type as by
+    /// `AnyTo`. `text` names the callee in a `TypeError` (`x.key is not a function`).
+    AnyCall,
+    /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value
+    /// `f` holds (`text` as for `AnyCall`).
+    AnyApply,
 }

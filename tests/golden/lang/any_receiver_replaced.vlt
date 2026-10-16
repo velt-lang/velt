@@ -1,0 +1,50 @@
+// check: no leaks
+// A getter or method called through `any` that replaces the field its receiver was read from
+// (#924): the old value stays alive until the call returns, as in Node.
+class Box {
+  g: any = null;
+}
+class A {
+  v: number[] = [1, 2, 3];
+  box: Box;
+  constructor(b: Box) {
+    this.box = b;
+  }
+  get killer(): number {
+    this.box.g = null;
+    return this.v[2];
+  }
+  kill(): number {
+    this.box.g = null;
+    return this.v[1];
+  }
+}
+class Holder {
+  x: any = null;
+}
+class S {
+  name: string;
+  h: Holder;
+  constructor(name: string, h: Holder) {
+    this.name = name;
+    this.h = h;
+  }
+  swap(): string {
+    this.h.x = new S("second", this.h);
+    return this.name;
+  }
+}
+function main(): void {
+  const box = new Box();
+  box.g = new A(box);
+  console.log(box.g.killer);
+  console.log(box.g);
+  box.g = new A(box);
+  console.log(box.g.kill());
+  console.log(box.g);
+  const holder = new Holder();
+  holder.x = new S("first", holder);
+  console.log(holder.x.swap());
+  console.log(holder.x.name);
+  holder.x = null;
+}

@@ -1,0 +1,31 @@
+// A field holding a function, called through `any`: one of type `any`, and a function field
+// that replaces itself while it runs (the closure stays alive until it returns) (#924).
+// check: no leaks
+class H { f: any = null; }
+class K {
+  f: (n: number) => string = (n: number): string => "x" + n;
+}
+function main(): void {
+  const tag = "cap" + String(1);
+  const h = new H();
+  h.f = (n: number): string => tag + "h" + n;
+  const ha: any = h;
+  console.log(ha.f(4));
+  h.f = (a: string, b: string): string => a + b + tag;
+  console.log(ha.f("p", "q"));
+  const k = new K();
+  const captured = "captured" + String(1);
+  k.f = (n: number): string => {
+    k.f = (m: number): string => "other" + m;
+    return captured + n;
+  };
+  const ka: any = k;
+  console.log(ka.f(5));
+  console.log(ka.f(6));
+  h.f = (n: number): string => {
+    h.f = null;
+    return tag + "-gone-" + n;
+  };
+  console.log(ha.f(7));
+  console.log(h.f);
+}

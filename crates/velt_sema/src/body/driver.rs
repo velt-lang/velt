@@ -15,6 +15,7 @@ use crate::resolve::TyEnv;
 const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
+    super::literal_hosts::find(cx);
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
         field_defaults(cx, d);
@@ -29,6 +30,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
         super::defaults::param_defaults(cx, d);
     }
     super::defaults::iface_defaults(cx);
+    super::literal_hosts::ensure_all(cx);
     for d in fns {
         ensure_body(cx, d);
     }
@@ -156,6 +158,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let (module, qual, owner, mutable) = (g.module, g.qual_name.clone(), g.src.owner, g.mutable);
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
+    cx.literal_hosts.in_constants += 1;
     let saved = std::mem::take(&mut cx.display_params);
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
@@ -209,6 +212,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         promise_in_state(cx, d, ty, decl_span);
     }
     cx.display_params = saved;
+    cx.literal_hosts.in_constants -= 1;
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
         g.ty = ty;
         g.init = init;
