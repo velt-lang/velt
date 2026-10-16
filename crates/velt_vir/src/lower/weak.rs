@@ -72,7 +72,13 @@ impl FnLower<'_, '_> {
             (I::WeakMapSet, [m, key, value]) => self.weakmap_set(m, key, value),
             (I::WeakMapGet | I::WeakMapHas | I::WeakMapDelete, [m, key]) => {
                 let m = self.expr(m);
-                let Some(k) = self.weak_key(key) else {
+                let k = match self.sub(key.ty) {
+                    kt if self.dyn_weak_key(kt) => {
+                        self.dyn_key(key, kt).map(|k| self.dyn_probe_addr(&k))
+                    }
+                    _ => self.weak_key(key),
+                };
+                let Some(k) = k else {
                     return match i {
                         I::WeakMapGet => cint(0, Ty::U64),
                         _ => Operand::Const(crate::vir::Const::Bool(false), Ty::Bool),
@@ -97,6 +103,10 @@ impl FnLower<'_, '_> {
                 self.own_value(v, t)
             }
             (I::WeakRefNew, [target]) => {
+                let kt = self.sub(target.ty);
+                if self.dyn_weak_key(kt) {
+                    return self.weakref_new_dyn(target, kt);
+                }
                 let Some(k) = self.weak_key(target) else {
                     return cint(0, Ty::U32);
                 };
@@ -107,6 +117,19 @@ impl FnLower<'_, '_> {
             (I::WeakRefDeref, [r]) => {
                 let r = self.expr(r);
                 let t = self.sub(ty);
+                let obj = match self.cx.kind(t) {
+                    TyKind::Option(e, _) => e,
+                    _ => t,
+                };
+                if self.dyn_weak_key(obj) {
+                    self.cx.note_weak_object();
+                    if !self.cx.weak_object() {
+                        self.cx.facts.unmet = true;
+                        let vt = self.cx.ty(t);
+                        return self.zero_value(vt);
+                    }
+                    return self.weakref_deref_dyn(r, t, obj);
+                }
                 if let TyKind::Option(e, _) = self.cx.kind(t) {
                     self.cx.note_weak_seed(e);
                 }
@@ -157,7 +180,15 @@ impl FnLower<'_, '_> {
     /// `__intrinsic_weakmap_set(m, key, value)`: the map (created now when `m` is 0).
     fn weakmap_set(&mut self, m: &hir::Expr, key: &hir::Expr, value: &hir::Expr) -> Operand {
         let m = self.expr(m);
-        let k = self.weak_key(key);
+        let kt = self.sub(key.ty);
+        // An `object` key (issue #926, weak_object.rs): checked, with its own trace glue.
+        let (k, dyn_key) = match self.dyn_weak_key(kt) {
+            true => match self.dyn_key(key, kt) {
+                Some(d) => (Some(d.data.clone()), Some(d)),
+                None => (None, None),
+            },
+            false => (self.weak_key(key), None),
+        };
         let vty = self.sub(value.ty);
         self.cx.note_share(vty);
         self.cx.note_weak_seed(vty);
@@ -165,6 +196,15 @@ impl FnLower<'_, '_> {
         let Some(k) = k else {
             return m;
         };
+        if let Some(d) = &dyn_key {
+            // `WeakSet.add` stores `true` for each member.
+            let set = matches!(value.kind, hir::ExprKind::Lit(hir::Lit::Bool(true)));
+            let what = match set {
+                true => super::weak_object::WeakUse::SetAdd,
+                false => super::weak_object::WeakUse::MapSet,
+            };
+            self.dyn_key_check(d, what);
+        }
         let out = self.temp(Ty::U32);
         self.assign(Place::local(out), Rvalue::Use(m.clone()));
         let (new_bb, join) = (self.new_block(), self.new_block());
@@ -174,8 +214,10 @@ impl FnLower<'_, '_> {
         );
         self.branch(none, new_bb, join);
         self.switch_to(new_bb);
-        let kt = self.sub(key.ty);
-        let key_trace = self.trace_fn(kt);
+        let key_trace = match dyn_key {
+            Some(_) => cint(0, Ty::Ptr),
+            None => self.trace_fn(kt),
+        };
         let null = cint(0, Ty::Ptr);
         let (retain, release, trace) = match self.word_kind(vty) {
             WordKind::Plain => (null.clone(), null.clone(), null),
@@ -203,7 +245,13 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
         let w = self.value_word(v, vty);
         let mo = Operand::Copy(Place::local(out));
-        self.call_rt(Rt::WeakmapSet, vec![mo.clone(), k, w], None);
+        match &dyn_key {
+            Some(d) => {
+                let tr = self.dyn_key_trace(d);
+                self.call_rt(Rt::WeakmapSetTraced, vec![mo.clone(), k, w, tr], None);
+            }
+            None => self.call_rt(Rt::WeakmapSet, vec![mo.clone(), k, w], None),
+        }
         mo
     }
 

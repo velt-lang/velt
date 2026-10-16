@@ -117,6 +117,10 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::Adt(..) if self.cx.is_class(ty) => {}
+            // A dynamic value when `object` is weakly held (issue #926): its descriptor says.
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) && self.cx.weak_object() => {
+                self.trace_dyn(place, tv);
+            }
             TyKind::Adt(..) | TyKind::Result(..) if self.is_enum(ty) || self.is_result(ty) => {
                 if matches!(self.cx.ty(ty), Ty::Agg(_)) {
                     self.for_each_variant(&place, ty, |lw, _, parts| {

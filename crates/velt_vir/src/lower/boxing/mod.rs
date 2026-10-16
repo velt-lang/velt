@@ -52,6 +52,12 @@ pub(super) struct Boxing {
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
     weak_roots: HashSet<DefId>,
     weak: HashSet<TyId>,
+    /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types of dynamic
+    /// values (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
+    /// and the trace glue looks into dynamic values (weak_object.rs). False in every other
+    /// program, which compiles as before.
+    pub(super) weak_object: bool,
+    pub(super) dyn_types: HashSet<TyId>,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: HashSet<DefId>,
@@ -144,6 +150,10 @@ pub(super) struct Facts {
     vtable_types: HashSet<TyId>,
     /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
     weak_seeds: HashSet<TyId>,
+    /// `object` is a weak key or a `WeakRef` target.
+    pub(super) weak_object: bool,
+    /// Concrete types an `any` table was built for: the types dynamic values hold.
+    pub(super) dyn_types: HashSet<TyId>,
     /// Interfaces whose values are converted to `any` / `unknown`.
     dyn_to_any: HashSet<DefId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
@@ -265,6 +275,13 @@ impl Cx<'_> {
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
+        // A weak key of type `object` (issue #926) is any dynamic value's object: each type
+        // dynamic values hold is counted, so its data pointer is the object itself.
+        next.weak_object |= self.facts.weak_object;
+        if next.weak_object {
+            next.dyn_types.extend(self.facts.dyn_types.iter().copied());
+            work.extend(next.dyn_types.iter().copied());
+        }
         let mut seen = HashSet::new();
         loop {
             while let Some(t) = work.pop() {

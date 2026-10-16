@@ -203,6 +203,11 @@ impl FnLower<'_, '_> {
         // dynamic type: the same value, never a box in a box. It is returned as an owned
         // temporary: a moved parameter's place would read as borrowed to `consume`, which
         // would share it and leave the parameter undropped.
+        // `x as object` of an unbounded `T` (issue #926): an option or a union is unpacked, a
+        // primitive is a `TypeError`.
+        if self.cx.is_any_impl(impl_index) && self.is_object_ty(ty) && self.object_unpacks(cty) {
+            return self.object_unpack(v, cty, ty);
+        }
         if self.cx.is_any_impl(impl_index) && self.cx.is_dynamic(cty) {
             return self.own_value(v, ty);
         }

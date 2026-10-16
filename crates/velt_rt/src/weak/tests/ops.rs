@@ -157,3 +157,60 @@ fn handles_are_reused() {
         finish(&[b]);
     });
 }
+
+#[test]
+fn a_weak_ref_keeps_its_word() {
+    no_leak(|| {
+        let o = new_obj(&[]);
+        // SAFETY: `o` is live; each ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new_with(o, 0xdead_beef) };
+        let plain = unsafe { velt_rt_weakref_new(o) };
+        assert_eq!(velt_rt_weakref_word(r), 0xdead_beef);
+        assert_eq!(velt_rt_weakref_word(plain), 0);
+        release(o);
+        assert!(velt_rt_weakref_deref(r).is_null());
+        assert_eq!(velt_rt_weakref_word(r), 0xdead_beef, "kept after the target goes");
+        unsafe { velt_rt_weakref_drop(r) };
+        unsafe { velt_rt_weakref_drop(plain) };
+        // A reused slot takes the new word.
+        let o = new_obj(&[]);
+        let r = unsafe { velt_rt_weakref_new(o) };
+        assert_eq!(velt_rt_weakref_word(r), 0);
+        unsafe { velt_rt_weakref_drop(r) };
+        release(o);
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+fn keys_traced_one_by_one_free_their_cycle() {
+    // A map whose key type is dynamic (`WeakMap<object, object>`) has no key trace of its
+    // own: each key brings its trace glue to `set`, and the trial uses it.
+    in_any_order_traced();
+}
+
+fn in_any_order_traced() {
+    for first_raw in [true, false] {
+        no_leak(|| {
+            let m = velt_rt_weakmap_new(
+                None,
+                Some(retain_value),
+                Some(release_value),
+                Some(TraceFn(trace_obj)),
+            );
+            let raw = new_obj(&[]);
+            let p = new_obj(&[retain(raw)]);
+            // SAFETY: live objects; the map takes the reference to `p` given here.
+            unsafe { velt_rt_weakmap_set_traced(m, raw, retain(p) as u64, Some(TraceFn(trace_obj))) };
+            if first_raw {
+                release(raw);
+                release(p);
+            } else {
+                release(p);
+                release(raw);
+            }
+            assert_eq!(weakmap_len(m), 0, "first_raw {first_raw}");
+            finish(&[m]);
+        });
+    }
+}

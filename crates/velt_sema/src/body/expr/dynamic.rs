@@ -73,6 +73,25 @@ impl FnCx<'_, '_> {
         self.cx.dynamic_takes(iface, t).unwrap_or(false)
     }
 
+    /// `h as object` for an `h` whose type is a type parameter without an `object` bound, or
+    /// one or `null` (sigx's `toRaw<T>`, issue #926): lowering unpacks the instantiation (a
+    /// `T | null`, a union) at run time, and a primitive is a `TypeError` there. `Err` when `h`
+    /// is no such value or `exp` is not `object`.
+    pub(crate) fn param_as_object(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return Err(h);
+        }
+        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        if !matches!(self.cx.ty.kind(inner), TyKind::Param(_)) {
+            return Err(h);
+        }
+        self.box_dynamic(h, exp)
+    }
+
     /// A typed value boxed as `exp` (`any` or `unknown`).
     fn box_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;

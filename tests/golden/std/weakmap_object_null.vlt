@@ -1,0 +1,15 @@
+// An `object` holding `null` as a `WeakMap` key (issue #926): lookups find nothing, and `set`
+// stops with JavaScript's `TypeError`.
+const ids = new WeakMap<object, number>();
+
+function remember(o: object | null): void {
+  const k = o as object;
+  console.log(ids.has(k), ids.get(k) ?? -1);
+  ids.set(k, 1);
+  console.log(ids.has(k));
+}
+
+function main(): void {
+  remember({ name: "a" });
+  remember(null);
+}
