@@ -698,5 +698,22 @@ entry is an `ICE:`.
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
   is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
   them the tables and the VIR are unchanged.
-- Not yet (each a compile error, phase 1b and 2 of #924): member writes on `any` (`x.f = v`),
-  other operators, template literals and `String(x)`, `JSON.stringify` of an `any`, iteration.
+- Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
+  `any` key is `AnySet(x, key, v)`, with a number key `AnySetIndex(x, i as f64, v)`, of type
+  `void`; `x` is borrowed and `v` boxed and moved in. Used as a value, the assignment is a block
+  `{ let t = v; AnySet(x, key, Share(t)); t }`. Both run user code (setters): they are in
+  `effects::runs_user_code` and `replaced_holders::implicit::glue_args`. `Program::dyn_members`
+  also lists each type's `readonly` fields (`DynMemberKind::ReadonlyField`, `def` the type's own
+  `Def::Adt`), which a write refuses. The `any` tables get slots 9 `AnySet (data, key, v) -> u8`
+  and 10 `AnySetIndex (data, f64, v) -> u8` (velt_vir `lower/any_set.rs`; the slot owns `*v`),
+  returning 0, 1 (not supported yet) or 3 (the fixed shape has no such member: Node would add
+  it). A program with a write makes `any` an identity interface in lowering, so an object type
+  converted to `any` is one counted object, never a copy. A write through `any` counts as a
+  write of the field it names (or, for a computed key, of every field) for `object_copies`.
+- `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
+  array's or tuple's `any` table is `u64::MAX - 1`. `Array.isArray(x)`, `x instanceof C` of a
+  generic class and `typeof x === "function"` narrow a dynamic local with `Fact::Class(l, any)`
+  (an `unknown` reads as `AnyTo(Share(x))` to `any`; an `any` stays as it is).
+- Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
+  members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
+  an `any`, iteration.

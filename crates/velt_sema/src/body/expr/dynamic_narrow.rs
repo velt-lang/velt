@@ -36,7 +36,11 @@ impl FnCx<'_, '_> {
         if ns.name != "Array" || prop.name != "isArray" || self.is_local_name("Array") {
             return None;
         }
-        if self.cx.lookup_item_at(self.module, "Array", ns.span).is_some() {
+        if self
+            .cx
+            .lookup_item_at(self.module, "Array", ns.span)
+            .is_some()
+        {
             return None;
         }
         let t = self.peek_ty(arg)?;
@@ -90,5 +94,4 @@ impl FnCx<'_, '_> {
         }
         self.any_ty()
     }
-
 }

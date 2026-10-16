@@ -5,7 +5,7 @@ use velt_sema::hir::{self, TyId};
 
 use super::any::{TAG_NUMBER, TAG_STRING};
 use super::any_member::{NullKey, ST_OK};
-use super::any_set::{ST_MISSING, SLOT_SET, SLOT_SET_INDEX};
+use super::any_set::{SLOT_SET, SLOT_SET_INDEX, ST_MISSING};
 use super::operand::proj;
 use super::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};

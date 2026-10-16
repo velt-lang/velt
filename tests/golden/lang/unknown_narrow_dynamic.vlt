@@ -1,0 +1,55 @@
+// Narrowing `unknown` and `any` where the tested type leaves its type arguments open (#924):
+// `Array.isArray(x)` (TypeScript's `any[]`), `x instanceof C` for a generic class (`C<any>`) and
+// `typeof x === "function"`. The value's members are then read through `any`.
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  get twice(): T[] {
+    return [this.v, this.v];
+  }
+}
+class Plain {
+  n: number = 4;
+}
+function describe(u: unknown): string {
+  if (Array.isArray(u)) {
+    return `array of ${u.length}, first ${u[0]}`;
+  }
+  if (u instanceof Box) {
+    return `box of ${u.v}, twice ${u.twice.length}`;
+  }
+  if (u instanceof Map) {
+    return `map of ${u.size}, a = ${u.get("a")}`;
+  }
+  if (typeof u === "function") {
+    return `function giving ${u(20)}`;
+  }
+  if (u instanceof Plain) {
+    return `plain ${u.n + 1}`;
+  }
+  return "other";
+}
+function main(): void {
+  console.log(describe([7, 8, 9]));
+  console.log(describe(["x"]));
+  console.log(describe(new Box(3)));
+  console.log(describe(new Box("s")));
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  console.log(describe(m));
+  console.log(describe((n: number): number => n + 1));
+  console.log(describe(new Plain()));
+  console.log(describe("str"));
+  const a: any = new Box([1, 2]);
+  if (a instanceof Box) {
+    console.log(a.v.length);
+  }
+  const values: any[] = [[1], "s", new Box(1), 1, null, { n: 1 }];
+  const flags: boolean[] = [];
+  for (const v of values) {
+    flags.push(Array.isArray(v));
+  }
+  console.log(flags);
+}

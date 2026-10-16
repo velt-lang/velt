@@ -253,4 +253,3 @@ impl super::Cx<'_> {
         !matches!(self.types.kind(t), TyKind::Unit) && self.any_boxable(t)
     }
 }
-

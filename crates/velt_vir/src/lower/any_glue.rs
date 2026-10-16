@@ -78,7 +78,13 @@ impl FnLower<'_, '_> {
     /// For a class whose objects may be of a subclass: return the result of glue `g` of the
     /// object's own class (a generic subclass: `ST_UNSUPPORTED`). Continues in the block for
     /// an object of `d` itself.
-    pub(super) fn any_subclass_dispatch(&mut self, g: Glue, ty: TyId, d: DefId, params: &[vir::Local]) {
+    pub(super) fn any_subclass_dispatch(
+        &mut self,
+        g: Glue,
+        ty: TyId,
+        d: DefId,
+        params: &[vir::Local],
+    ) {
         if !self.cx.is_class(ty) || !self.cx.has_header(d) {
             return;
         }
@@ -181,7 +187,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Call `r` with `this` and the owned argument values `args`; box the result into `out`.
-    pub(super) fn any_invoke(&mut self, r: &Ready, this: Operand, args: Vec<(Place, TyId)>, out: &Place) {
+    pub(super) fn any_invoke(
+        &mut self,
+        r: &Ready,
+        this: Operand,
+        args: Vec<(Place, TyId)>,
+        out: &Place,
+    ) {
         let f = self.cx.fn_def(r.def);
         let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
@@ -477,7 +489,9 @@ impl FnLower<'_, '_> {
     /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
     /// has no members of its own; `Object.prototype`'s come later.
     fn any_get_record(&mut self, data: vir::Local, key: vir::Local, out: &Place, ty: TyId) {
-        let (k, _) = self.prelude_record(ty).unwrap_or_else(|| super::ice("record"));
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
         let get = self.plain_adt(ty).and_then(|(d, _)| {
             self.dyn_members_of(d)
                 .into_iter()
@@ -543,9 +557,7 @@ impl FnLower<'_, '_> {
                 self.ret_status(ST_OK);
             }
             // A record's key "0" (later).
-            TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
-                self.ret_status(ST_UNSUPPORTED)
-            }
+            TyKind::Adt(..) if self.prelude_record(ty).is_some() => self.ret_status(ST_UNSUPPORTED),
             TyKind::Adt(..) if self.plain_adt(ty).is_some() => {
                 // No field of a fixed shape is named by a number.
                 self.any_nothing_into(Nothing::Undefined, &outp);
@@ -562,7 +574,9 @@ impl FnLower<'_, '_> {
     ) {
         let outp = self.any_out(out);
         // A record's function values (later).
-        let adt = self.plain_adt(ty).filter(|_| self.prelude_record(ty).is_none());
+        let adt = self
+            .plain_adt(ty)
+            .filter(|_| self.prelude_record(ty).is_none());
         let Some((d, _)) = adt else {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
