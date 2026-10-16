@@ -148,11 +148,15 @@ fn value_ok(cx: &mut Ctx, from: TyId, to: TyId, seen: &mut Vec<AdapterKey>) -> b
         );
     }
     if cx.dynamic(from).is_some() {
-        return match cx.ty.kind(to) {
-            TyKind::Promise(..) | TyKind::FnPtr { .. } | TyKind::Unit | TyKind::Never => false,
-            TyKind::Dyn(..) => false,
-            _ => true,
-        };
+        // `any` converted to an interface type is not supported yet (#924).
+        return !matches!(
+            cx.ty.kind(to),
+            TyKind::Promise(..)
+                | TyKind::FnPtr { .. }
+                | TyKind::Unit
+                | TyKind::Never
+                | TyKind::Dyn(..)
+        );
     }
     if let (Some(a), Some(b)) = (cx.ty.opt_payload(from), cx.ty.opt_payload(to)) {
         return cx.ty.nothing_of(from) == cx.ty.nothing_of(to) && value_ok(cx, a, b, seen);

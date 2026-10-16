@@ -1762,6 +1762,53 @@ methods and accessors and what every object has from `Object.prototype` (`toStri
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
 
+### Generic interfaces with `unknown` arguments
+
+A value of a generic interface type with concrete type arguments converts to the same interface
+with `unknown` (or `any`) arguments: a `Handler<Date, number>` is a `Handler<unknown, unknown>`,
+so a table of handlers written for different types can be one `Handler[]`. TypeScript accepts
+this because it compares method parameters bivariantly (an interface's type parameter may be a
+method parameter's type, `serialize(value: T)`), which lets a wrong argument through unnoticed.
+Velt checks it instead: the converted value wraps the original, and every call through it
+converts each argument to the original's own type, checked at run time as a conversion out of
+`any` is (a value of another type stops the program with a `TypeError`; Node would run the
+method with it). Results and fields need no check (an `unknown` takes any value), and a function
+value in a parameter, a result or a field (an optional method `revive?(e: E): T` is a field of
+function type) is wrapped the same way, as is an interface value of a result.
+
+```ts
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  test(value: unknown): boolean;
+  serialize(value: T): E;
+}
+
+const dateHandler: Handler<Date, number> = {
+  name: "date",
+  test: (v) => v instanceof Date,
+  serialize: (d) => d.getTime(),
+};
+
+function encode(value: unknown, handlers: Handler[]): void {
+  for (const h of handlers) {
+    if (h.test(value)) {
+      console.log(h.name, h.serialize(value)); // date 0
+    }
+  }
+}
+
+function main(): void {
+  encode(new Date(0), [dateHandler]);
+}
+```
+
+Calling `serialize("x")` through the `Handler[]` stops with `TypeError: the value is not a Date
+(it is a string)`. The wrapped value is the original object: a write through one is seen
+through the other. The conversion applies where each type argument is the original's or
+`unknown` / `any`, and each parameter and result converts as described (a promise result of
+another type, an array of the type parameter, or a method of its own type parameters keeps the
+conversion an error). A program without such a conversion is unchanged.
+
 ### Proxy and Reflect
 
 `new Proxy(target, handler)` makes a proxy as in JavaScript: reading a member of it runs the

@@ -761,6 +761,15 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
+  an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
+  or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the
+  original interface value (moved in; dropping the adapter drops it), through an `ImplDef` of
+  `I<B>` for that struct. Sema makes one struct and impl per `(I, A, B)` the program converts
+  (`Ctx::iface_adapters`). Each impl method (`<I> adapter.<m>`, `this` borrowed) calls the same
+  slot of the field (`Callee::Dyn`), its arguments converted with `AnyTo` (or, for a function,
+  an arrow adapting each call) and its result boxed with `ToDyn` of `Program::any_impl` (or
+  adapted in turn). Lowering sees only these ordinary forms.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.
