@@ -43,7 +43,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   const join = function (sep: string, ...parts: readonly string[]) {
     return parts.join(sep);
   };
-  console.log(total(1, 2, 3), join("-", "a", "b")); // 6 a-b
+  function main() {
+    console.log(total(1, 2, 3), join("-", "a", "b")); // 6 a-b
+  }
   ```
 
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
