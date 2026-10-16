@@ -1,0 +1,39 @@
+// TypeScript's finished `IteratorResult` written with `value: undefined` (as sigx's reactive
+// collection iterators do): the same as `{ done: true }`.
+class Countdown implements Iterator<number> {
+  constructor(private n: number) {}
+  next(): IteratorResult<number> {
+    if (this.n === 0) {
+      return { value: undefined, done: true };
+    }
+    this.n -= 1;
+    return { value: this.n + 1, done: false };
+  }
+}
+
+class Doubled implements Iterator<number> {
+  constructor(private inner: Iterator<number>) {}
+  next(): IteratorResult<number> {
+    const r = this.inner.next();
+    if (r.done) {
+      return { done: true, value: undefined };
+    }
+    return { value: r.value * 2, done: false };
+  }
+}
+
+class Range implements Iterable<number> {
+  constructor(private n: number) {}
+  [Symbol.iterator](): Iterator<number> {
+    return new Doubled(new Countdown(this.n));
+  }
+}
+
+const it = new Countdown(3);
+for (let r = it.next(); !r.done; r = it.next()) {
+  console.log(r.value);
+}
+for (const x of new Range(3)) {
+  console.log(x);
+}
+console.log(new Countdown(0).next().done);
