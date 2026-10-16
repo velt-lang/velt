@@ -24,11 +24,18 @@ use std::collections::{HashMap, HashSet};
 
 use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S};
 
-/// The closures of `f`'s body that get a frame environment.
-pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
+/// The closures of `f`'s body that get a frame environment, and the
+/// `Intrinsic::ClosureSibling` locals of a group member's body that are only ever called
+/// (with the member they hold): such a call goes straight to that member's code with the
+/// running closure's env (callee.rs `call_indirect`), and the local is never made.
+pub(super) fn scan(
+    hir: &hir::Program,
+    f: &hir::FnDef,
+) -> (HashSet<DefId>, HashMap<LocalId, DefId>) {
     let mut s = Scan {
         hir,
         lets: HashMap::new(),
+        siblings: HashMap::new(),
         uses: HashMap::new(),
         calls: HashMap::new(),
         captured: HashSet::new(),
@@ -47,7 +54,17 @@ pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
             out.insert(def);
         }
     }
-    out
+    let only_called = |l: &LocalId| {
+        s.uses.get(l).copied().unwrap_or(0) == s.calls.get(l).copied().unwrap_or(0)
+            && !s.captured.contains(l)
+    };
+    let siblings = s
+        .siblings
+        .iter()
+        .filter(|(l, _)| only_called(l))
+        .map(|(l, d)| (*l, *d))
+        .collect();
+    (out, siblings)
 }
 
 /// Is closure `f` a member of a recursive closure group (its body starts with the
@@ -74,6 +91,8 @@ struct Scan<'h> {
     hir: &'h hir::Program,
     /// Locals initialized with a closure literal.
     lets: HashMap<LocalId, DefId>,
+    /// Locals initialized with `Intrinsic::ClosureSibling`.
+    siblings: HashMap<LocalId, DefId>,
     /// Per local: every use, and the uses that are the callee of a call.
     uses: HashMap<LocalId, usize>,
     calls: HashMap<LocalId, usize>,
@@ -102,10 +121,17 @@ impl Scan<'_> {
         match &s.kind {
             S::Let { local, init } => {
                 if let Some(e) = init {
-                    if let E::Closure(d) = e.kind {
-                        if self.plain(d) {
+                    match e.kind {
+                        E::Closure(d) if self.plain(d) => {
                             self.lets.insert(*local, d);
                         }
+                        E::Call {
+                            callee: Callee::Intrinsic(Intrinsic::ClosureSibling(d)),
+                            ..
+                        } => {
+                            self.siblings.insert(*local, d);
+                        }
+                        _ => {}
                     }
                     self.expr(e);
                 }
