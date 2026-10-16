@@ -49,6 +49,8 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   layout; inside a member, `Intrinsic::ClosureSibling(def)` is the function value of member
   `def` with the running closure's env (a new reference to it), or, in an async member, a new
   heap env filled from its own captures (shared). Members are escaping (counted heap envs).
+  In a sync member, a local holding a `ClosureSibling` that is only ever called is never made:
+  lowering calls member `def`'s code with the running env directly.
 - Errors: see "Errors" below.
 - `x ?? d`, `a?.b`, `if (x != null)` narrowing are desugared by sema into `Match` with
   `PatKind::Some/None`; narrowed uses read the payload via `ExprKind::UnwrapSome`.
