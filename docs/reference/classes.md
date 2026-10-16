@@ -487,6 +487,14 @@ console.log(p.len(), q.len());  // 4 4
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
+- **Fields** are read and written through an interface value or a `T extends I` as in
+  TypeScript: `hook.owner = null`, `sub.flags |= DIRTY`, `sub.runs++`, `sub.dep ??= d`. The
+  write changes the object behind the value (a struct converted to an interface value is a
+  copy, as structs always are); a `readonly` field cannot be assigned
+  (``cannot assign to `id`: it is a readonly field``). Reads go through a getter in the
+  interface's table and writes through a setter that only interfaces the program writes
+  through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
+  object literal implementing such an interface with `get f()` must give `set f(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
   (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
   null`), and a caller writes `o.m?.(x)`.
@@ -551,6 +559,31 @@ function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
 
 const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
 console.log(JSON.stringify(u), idOf(u));
+```
+
+```ts
+interface Hook {
+  currentOwner: number | null;
+  nextId(): number;
+}
+
+class DevHook implements Hook {
+  currentOwner: number | null = 7;
+  nextId(): number {
+    return 1;
+  }
+}
+
+function withoutOwner(h: Hook, f: () => void): void {
+  const prev = h.currentOwner;
+  h.currentOwner = null;                  // through the interface value
+  f();
+  h.currentOwner = prev;
+}
+
+const hook = new DevHook();
+withoutOwner(hook, () => console.log(hook.currentOwner)); // null
+console.log(hook.currentOwner);                           // 7
 ```
 
 ### Declaration merging

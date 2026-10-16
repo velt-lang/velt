@@ -47,6 +47,8 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    /// Interfaces written through and their setter slots (`crate::iface_writes`).
+    pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -218,6 +220,8 @@ pub(crate) struct Ctx<'m> {
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+    /// Where `Object.keys` of an `any` is called (`crate::any_keys`).
+    pub any_keys: Vec<velt_common::Span>,
     /// Object values converted by copying their fields, and the field assignments that could
     /// tell the copy from the original (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
@@ -269,6 +273,7 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            iface_writes: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
@@ -344,6 +349,7 @@ impl<'m> Ctx<'m> {
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
+            any_keys: vec![],
             object_copies: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

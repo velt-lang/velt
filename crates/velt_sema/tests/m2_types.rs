@@ -633,11 +633,19 @@ fn interface_fields_through_values_and_generics() {
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
          function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4i64 })); }",
     );
+    // A writable field is written through the setter slot after the getters (#1112).
+    let p = ok_src(
+        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; }
+         function main() { const x = { age: 2i64 }; f(x); console.log(x.age); }",
+    );
+    assert!(calls(func(&p, "f"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
     let r = err_src(
-        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
+        "interface Aged { readonly age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
     );
     assert!(
-        r.contains("cannot modify `age` through an interface or generic value"),
+        r.contains("cannot assign to `age`: it is a readonly field"),
         "{r}"
     );
 }

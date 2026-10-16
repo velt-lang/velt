@@ -14,7 +14,8 @@ use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
 enum AssignTarget {
     /// A writable place (`BorrowMut` modes).
     Place(hir::Expr),
-    /// `obj.name` where `name` is a setter: the checked receiver.
+    /// `obj.name` where `name` is a setter, or a field written through an interface
+    /// (`iface_write`): the checked receiver.
     Setter(hir::Expr),
     /// `r[k]` / `r.name` of a `Record`: the checked record.
     Record(hir::Expr),
@@ -52,6 +53,9 @@ impl FnCx<'_, '_> {
                     return Some(AssignTarget::Record(obj));
                 }
                 self.note_field_write(obj.ty, prop);
+                if let Some(ok) = self.iface_write_target(obj.ty, prop) {
+                    return ok.then_some(AssignTarget::Setter(obj));
+                }
                 if self.has_setter(obj.ty, &prop.name) {
                     return Some(AssignTarget::Setter(obj));
                 }
@@ -101,6 +105,9 @@ impl FnCx<'_, '_> {
                     };
                     // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
                     self.note_field_write(obj.ty, &prop);
+                    if let Some(ok) = self.iface_write_target(obj.ty, &prop) {
+                        return ok.then_some(AssignTarget::Setter(obj));
+                    }
                     if self.has_setter(obj.ty, &prop.name) {
                         return Some(AssignTarget::Setter(obj));
                     }

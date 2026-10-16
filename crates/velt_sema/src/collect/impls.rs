@@ -2,7 +2,9 @@
 //! have I's fields (same name and type) and a method for every interface method without a
 //! default (same parameter and return types). Each pair becomes a `hir::ImplDef` whose
 //! `methods` list the implementation per interface slot (own, inherited, or I's default),
-//! followed by one synthesized getter per interface field ([`getters`](super::getters)).
+//! followed by one synthesized getter per interface field ([`getters`](super::getters)) and,
+//! once the program writes through the interface, a setter per writable field
+//! (`crate::iface_writes`).
 
 use std::collections::HashMap;
 
@@ -14,6 +16,7 @@ use super::shapes::self_type;
 use crate::ctx::Ctx;
 use crate::defs::{Bound, IfaceMethod};
 use crate::hir::{DefId, ImplDef, TyId};
+use crate::iface_writes::SetterSrc;
 
 pub(super) fn build_impls(cx: &mut Ctx) {
     let adts: Vec<DefId> = (0..cx.info.len() as u32)
@@ -24,8 +27,9 @@ pub(super) fn build_impls(cx: &mut Ctx) {
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
-            if let Some(imp) = check_impl(cx, d, &b, &mut getters) {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
+                cx.note_setters(cx.impls.len() as u32 - 1, setters);
             }
         }
     }
@@ -45,7 +49,12 @@ struct Pair<'b> {
     span: velt_common::Span,
 }
 
-fn check_impl(cx: &mut Ctx, d: DefId, b: &Bound, cache: &mut Getters) -> Option<ImplDef> {
+fn check_impl(
+    cx: &mut Ctx,
+    d: DefId,
+    b: &Bound,
+    cache: &mut Getters,
+) -> Option<(ImplDef, Vec<SetterSrc>)> {
     let a = cx.adt(d).expect("ICE: adt");
     let (n, span, cname) = (a.generics.len(), a.span, a.name.clone());
     let self_ty = self_type(cx, d, n);
@@ -59,28 +68,30 @@ fn check_impl(cx: &mut Ctx, d: DefId, b: &Bound, cache: &mut Getters) -> Option<
         iname,
         span,
     };
-    let getters = field_getters(cx, &pair, cache);
+    let (getters, setters) = field_getters(cx, &pair, cache);
     let mut methods = vec![];
     for m in &imethods {
         methods.push(impl_method(cx, &pair, m)?);
     }
     methods.extend(getters);
-    Some(ImplDef {
+    let imp = ImplDef {
         ty: self_ty,
         generics: n as u32,
         iface: b.iface,
         iface_args: b.args.clone(),
         methods,
-    })
+    };
+    Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter.
-fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
+/// The class must have every interface field (same type); each gets a getter, and each
+/// writable one a setter source (`crate::iface_writes`).
+fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Vec<SetterSrc>) {
     let ifields = cx
         .iface(p.bound.iface)
         .map(|i| i.fields.clone())
         .unwrap_or_default();
-    let mut getters = vec![];
+    let (mut getters, mut setters) = (vec![], vec![]);
     for f in ifields {
         let want = cx.subst(f.ty, &p.bound.args);
         let have = cx
@@ -94,6 +105,14 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
             };
             cache.insert((p.d, i), g);
             getters.push(g);
+            if !f.readonly {
+                setters.push(SetterSrc::Field {
+                    d: p.d,
+                    self_ty: p.self_ty,
+                    index: i,
+                    ty,
+                });
+            }
         } else {
             let tn = cx.display(want);
             let (cname, iname) = (&p.cname, &p.iname);
@@ -106,7 +125,7 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
             );
         }
     }
-    getters
+    (getters, setters)
 }
 
 /// The implementation of interface method `m`: the class's own / inherited method (virtual
