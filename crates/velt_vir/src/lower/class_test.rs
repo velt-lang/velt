@@ -48,6 +48,16 @@ impl Cx<'_> {
     }
 
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
+    /// Is `d` one of the prelude's proxy classes (`number_classes`)?
+    fn numbered_last(&self, d: DefId) -> bool {
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return false;
+        };
+        ["Proxy", "Reflect"]
+            .iter()
+            .any(|n| a.name == *n || a.name.ends_with(&format!("::{n}")) || a.name.ends_with(&format!(".{n}")))
+    }
+
     fn number_classes(&self) -> HashMap<DefId, (u64, u64)> {
         let mut children: HashMap<Option<DefId>, Vec<DefId>> = HashMap::new();
         for i in 0..self.hir.defs.len() {
@@ -67,7 +77,11 @@ impl Cx<'_> {
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).
         let mut stack: Vec<(DefId, bool)> = vec![];
-        for &root in children.get(&None).into_iter().flatten().rev() {
+        // The prelude's `Proxy` and `Reflect` (std/prelude/zz_proxy.vlt) are numbered last, so
+        // the classes of programs that don't use them keep their ids.
+        let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
+        roots.sort_by_key(|&d| self.numbered_last(d));
+        for &root in roots.iter().rev() {
             stack.push((root, false));
         }
         while let Some((d, done)) = stack.pop() {

@@ -23,6 +23,7 @@ use velt_sema::hir::{DynMemberKind, TyId, TyKind};
 
 use super::any_glue::OBJECT_PROTO;
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
+use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
 use super::FnLower;
@@ -73,6 +74,9 @@ impl FnLower<'_, '_> {
     }
 
     fn any_set_body(&mut self, data: vir::Local, key: vir::Local, v: vir::Local, ty: TyId) {
+        if self.is_proxy(ty) {
+            return self.proxy_set_body(data, ProxyKey::Str(key), v, ty);
+        }
         if let Some((k, val)) = self.prelude_record(ty) {
             return self.any_set_record(data, key, v, ty, (k, val));
         }
@@ -211,6 +215,9 @@ impl FnLower<'_, '_> {
     }
 
     fn any_set_index_body(&mut self, data: vir::Local, i: vir::Local, v: vir::Local, ty: TyId) {
+        if self.is_proxy(ty) {
+            return self.proxy_set_body(data, ProxyKey::Num(i), v, ty);
+        }
         let TyKind::Array(elem) = self.cx.kind(ty) else {
             // A number key names no field of a fixed shape; other values come later.
             let st = if self.plain_adt(ty).is_some() && self.prelude_record(ty).is_none() {

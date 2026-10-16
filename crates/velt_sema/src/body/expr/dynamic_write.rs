@@ -36,7 +36,7 @@ impl FnCx<'_, '_> {
             Some(Dynamic::Any) => {
                 let mut obj = obj;
                 set_place_mode(&mut obj, UseMode::Borrow);
-                self.cx.note_dyn_members();
+                self.note_dyn_members();
                 Ok(Some(obj))
             }
         }

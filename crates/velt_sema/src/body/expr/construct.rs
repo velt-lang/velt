@@ -18,6 +18,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(c) = self.proxy_class_name(class) {
+            return self.new_expr(&c, args, exp, span);
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
@@ -125,7 +128,8 @@ impl FnCx<'_, '_> {
             type_args: ck.type_args,
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        self.proxy_new(d, h, exp, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
