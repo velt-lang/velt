@@ -439,7 +439,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         Some(r) => r,
         None => fcx.inferred_fn_ret(def, &mut block),
     };
-    fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
+    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
     fcx.note_refused_facts(diags_before);
@@ -503,9 +503,7 @@ impl FnCx<'_, '_> {
     /// The result of function `def` inferred from its checked body `block`, recorded as its
     /// signature (`Promise<T>` for an async function).
     fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
-        let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
-        let who = format!("`{short}`");
-        let ret = self.finish_inferred_ret(block, &who);
+        let ret = self.finish_inferred_ret(block);
         let sig = if self.f.is_async {
             self.cx.ty.promise(ret)
         } else {
@@ -517,12 +515,33 @@ impl FnCx<'_, '_> {
         ret
     }
 
-    /// "must return a value on every path" for non-void functions.
-    pub fn check_returns(&mut self, name: &str, ret: hir::TyId, span: Span, block: &hir::Block) {
+    /// "must return a value on every path" for non-void functions. A function whose result may
+    /// be `undefined` returns it at the end, as in TypeScript (issue #930).
+    pub fn check_returns(
+        &mut self,
+        name: &str,
+        ret: hir::TyId,
+        span: Span,
+        block: &mut hir::Block,
+    ) {
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
             && !crate::flow::block_diverges(block, &self.cx.ty)
         {
+            if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined())
+            {
+                let end = Span::new(block.span.file, block.span.hi, block.span.hi);
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, end);
+                block.stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Return(Some(value)),
+                    span: end,
+                });
+                return;
+            }
             let rty = self.cx.display(ret);
             let short = name.rsplit("::").next().unwrap_or(name);
             self.cx.error(

@@ -469,7 +469,12 @@ the value is `undefined` (an `undefined` element or field, an absent optional fi
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
 the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
-those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `T | void` is
+`T | undefined` (a `void` function's value is `undefined`), so a callback typed
+`(e: Error) => boolean | void` may return a `boolean` or nothing. A function whose result type
+allows `undefined` returns it from a bare `return;` and when it reaches its end; one whose result
+type is inferred, that returns values and also `return;` or can reach its end, returns
+`T | undefined`, as in TypeScript. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 

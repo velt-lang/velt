@@ -450,9 +450,9 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => self.finish_inferred_ret(&mut block, "this arrow function"),
+                    None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &block);
+                self.check_returns("closure", ret, span, &mut block);
                 block
             }
         }

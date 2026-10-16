@@ -204,21 +204,44 @@ impl FnCx<'_, '_> {
     }
 
     /// The inferred result type of the body `block` (whose `return`s were recorded); converts
-    /// every returned value to it. `who` names the function in messages.
-    pub(crate) fn finish_inferred_ret(&mut self, block: &mut hir::Block, who: &str) -> TyId {
-        let r = std::mem::take(&mut self.f.returns);
+    /// every returned value to it.
+    pub(crate) fn finish_inferred_ret(&mut self, block: &mut hir::Block) -> TyId {
+        let mut r = std::mem::take(&mut self.f.returns);
+        self.undefined_returns(&mut r, block);
         let ty = self.common_ret(&r, block);
         self.f.ret = Some(ty);
-        let (unit, error) = (self.cx.ty.unit, self.cx.ty.error);
-        if ty != unit && ty != error {
-            for &span in &r.bare {
-                self.bare_return(span, who, ty);
-            }
-        }
         if !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
             visit::block(block, &mut CoerceReturns { fcx: self, to: ty });
         }
         ty
+    }
+
+    /// A body that returns values and also `return;` or falls off its end returns `undefined`
+    /// there, as in TypeScript: its result type allows `undefined` (issue #930). The bare
+    /// returns become `return undefined;`; `check_returns` adds the one at the end.
+    fn undefined_returns(&mut self, r: &mut Returns, block: &mut hir::Block) {
+        let (never, unit) = (self.cx.ty.never, self.cx.ty.unit);
+        let values = !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != never && v.ty != unit);
+        if !values || self.f.yield_ty.is_some() {
+            return;
+        }
+        let falls_off = !crate::flow::block_diverges(block, &self.cx.ty);
+        if r.bare.is_empty() && !falls_off {
+            return;
+        }
+        self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
+        r.nothing = Some(
+            r.nothing
+                .map_or(Nothing::Undefined, |m| m.join(Nothing::Undefined)),
+        );
+        if r.bare.is_empty() {
+            // Only the end: `nulls` gives the result its `undefined` (and a span for it).
+            r.nulls
+                .push(Span::new(block.span.file, block.span.hi, block.span.hi));
+            return;
+        }
+        r.nulls.append(&mut r.bare);
+        visit::block(block, &mut BareReturns { fcx: self });
     }
 
     fn common_ret(&mut self, r: &Returns, block: &hir::Block) -> TyId {
@@ -312,25 +335,6 @@ impl FnCx<'_, '_> {
         }
         false
     }
-
-    /// `return;` where the function returns `ty` elsewhere: TS would return `undefined`.
-    fn bare_return(&mut self, span: Span, who: &str, ty: TyId) {
-        let tn = self.cx.display(ty);
-        let (word, nullable) = match self.cx.ty.nothing_of(ty) {
-            Some(Nothing::Null) => ("null", tn.clone()),
-            Some(_) => ("undefined", tn.clone()),
-            None => ("undefined", format!("{tn} | undefined")),
-        };
-        self.cx.error(
-            Diagnostic::error(
-                format!("`return;` needs a value: {who} returns `{tn}` on other paths"),
-                span,
-            )
-            .with_note(format!(
-                "a bare `return;` beside returned values is not supported yet: write `return {word};` and the return type `{nullable}`"
-            )),
-        );
-    }
 }
 
 /// Converts every `return` value of a body to the inferred result type.
@@ -352,6 +356,21 @@ impl VisitMut for CoerceReturns<'_, '_, '_> {
             let placeholder = self.fcx.mk(H::Lit(hir::Lit::Unit), self.to, e.span);
             let h = std::mem::replace(e, placeholder);
             *e = self.fcx.coerce(h, self.to);
+        }
+    }
+}
+
+/// Turns every `return;` of a body into `return undefined;` (typed by `CoerceReturns`).
+struct BareReturns<'f, 'a, 'm> {
+    fcx: &'f mut FnCx<'a, 'm>,
+}
+
+impl VisitMut for BareReturns<'_, '_, '_> {
+    fn stmt(&mut self, s: &mut hir::Stmt) {
+        if let S::Return(None) = s.kind {
+            let error = self.fcx.cx.ty.error;
+            let value = self.fcx.mk(H::Lit(hir::Lit::Null), error, s.span);
+            s.kind = S::Return(Some(value));
         }
     }
 }
