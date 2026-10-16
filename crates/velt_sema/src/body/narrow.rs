@@ -89,7 +89,10 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => self.predicate_facts(callee, args, cond.span),
+            } => match self.dynamic_is_array_facts(callee, args) {
+                Some(facts) => facts,
+                None => self.predicate_facts(callee, args, cond.span),
+            },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -391,6 +394,8 @@ impl FnCx<'_, '_> {
                     "number" => self.cx.ty.f64,
                     "string" => self.cx.ty.str_,
                     "boolean" => self.cx.ty.bool_,
+                    // TypeScript's `Function`: called through the descriptor.
+                    "function" => return (self.dynamic_to_any_fact(operand), vec![]),
                     _ => return (vec![], vec![]),
                 };
                 return (vec![Fact::Class(l, t)], vec![]);

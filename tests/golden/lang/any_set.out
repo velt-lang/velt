@@ -1,0 +1,11 @@
+set scale 4
+6 pa 40 40 [ 't1', 't2' ] true
+null 3
+renamed 2
+9 10 true
+42 zz { n: 42, s: 'zz' }
+[ 1, 20, 30 ] 3
+[ 'first', 'b' ]
+{ a: 10, b: 2, c: 3 } 10 2 undefined
+99 99
+7

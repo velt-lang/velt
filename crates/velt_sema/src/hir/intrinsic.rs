@@ -311,4 +311,16 @@ pub enum Intrinsic {
     /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value
     /// `f` holds (`text` as for `AnyCall`).
     AnyApply,
+    /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` /
+    /// `x[key] = v` (a key of type `any` holding a number writes like `AnySetIndex`): `v`
+    /// converted to the member's type as by `AnyTo` and stored, or passed to its setter; a
+    /// `TypeError` for a `null` / `undefined` receiver, a member the value's fixed shape does not
+    /// have (a record takes any key), a getter without a setter, or a member not supported
+    /// through `any` yet. Sets `Program::dyn_members`.
+    AnySet,
+    /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an
+    /// element of an array, inside its length).
+    AnySetIndex,
+    /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
+    AnyIsArray,
 }

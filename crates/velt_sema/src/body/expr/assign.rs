@@ -20,6 +20,8 @@ enum AssignTarget {
     Record(hir::Expr),
     /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
     Indexer(hir::Expr),
+    /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver.
+    Dynamic(hir::Expr),
 }
 
 use super::assign_paths::{is_plain_path, is_pure_place};
@@ -42,6 +44,10 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => return d.map(AssignTarget::Dynamic),
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
@@ -63,6 +69,15 @@ impl FnCx<'_, '_> {
                 optional: false,
             } => {
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => {
+                        if d.is_none() {
+                            self.expr(index, None, Want::Borrow);
+                        }
+                        return d.map(AssignTarget::Dynamic);
+                    }
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
@@ -332,6 +347,9 @@ impl FnCx<'_, '_> {
                 let e = self.indexer_assign(obj, Some(op), target, value, as_value, span);
                 return (e, as_value);
             }
+            if let Some(AssignTarget::Dynamic(obj)) = checked {
+                return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
@@ -372,7 +390,12 @@ impl FnCx<'_, '_> {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
-            Some(AssignTarget::Place(_) | AssignTarget::Setter(_) | AssignTarget::Indexer(_)) => {}
+            Some(
+                AssignTarget::Place(_)
+                | AssignTarget::Setter(_)
+                | AssignTarget::Indexer(_)
+                | AssignTarget::Dynamic(_),
+            ) => {}
         }
         let rhs = ast::Expr {
             id: ast::NodeId(u32::MAX),
@@ -408,6 +431,9 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
                 self.record_assign(obj, object, key, op, target, value, span)
+            }
+            Some(AssignTarget::Dynamic(obj)) => {
+                return self.dynamic_assign(obj, op, target, value, as_value, span);
             }
             None => {
                 self.expr(value, None, Want::Borrow);
@@ -562,6 +588,10 @@ impl FnCx<'_, '_> {
             }
             Some(AssignTarget::Indexer(obj)) => {
                 return self.indexer_update(obj, op, prefix, target, as_value, span)
+            }
+            Some(AssignTarget::Dynamic(_)) => {
+                self.dynamic_write_error(span);
+                return self.error_expr(span);
             }
             None => return self.error_expr(span),
         };

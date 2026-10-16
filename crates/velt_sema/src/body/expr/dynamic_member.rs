@@ -229,18 +229,8 @@ impl FnCx<'_, '_> {
         self.mk(kind, any, span)
     }
 
-    fn dynamic_write_error(&mut self, span: Span) {
-        self.cx.error(
-            Diagnostic::error(
-                "assigning to a member of an `any` is not supported yet (#924)",
-                span,
-            )
-            .with_note("convert it to its type first (`const o = x as T;`), then assign"),
-        );
-    }
-
     /// The number value `h` of a numeric type as an `f64` (a key of `AnyIndex`).
-    fn coerce_number(&mut self, h: hir::Expr, f64_: TyId) -> hir::Expr {
+    pub(super) fn coerce_number(&mut self, h: hir::Expr, f64_: TyId) -> hir::Expr {
         if h.ty == f64_ {
             return h;
         }

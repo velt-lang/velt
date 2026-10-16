@@ -26,6 +26,8 @@ mod division;
 pub(crate) mod downcast;
 mod dynamic;
 mod dynamic_member;
+mod dynamic_narrow;
+mod dynamic_write;
 mod error_slots;
 mod error_view;
 mod errors;
