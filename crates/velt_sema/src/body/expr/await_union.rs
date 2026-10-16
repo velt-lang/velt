@@ -12,7 +12,9 @@ use crate::hir::{self, ExprKind as H, PatKind as P, UseMode};
 impl FnCx<'_, '_> {
     /// The awaited value of `h`, or `Err(h)` when `h` is not a union with a promise member.
     pub(super) fn await_union(&mut self, h: hir::Expr, span: Span) -> Result<hir::Expr, hir::Expr> {
-        self.await_union_with(h, span, &mut |s, read, p| s.mk(H::Await(Box::new(read)), p, span))
+        self.await_union_with(h, span, &mut |s, read, p| {
+            s.mk(H::Await(Box::new(read)), p, span)
+        })
     }
 
     /// [`await_union`](Self::await_union) where `on_promise` gives the value of an arm whose

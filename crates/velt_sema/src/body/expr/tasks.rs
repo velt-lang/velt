@@ -148,7 +148,9 @@ impl FnCx<'_, '_> {
             ret,
             span,
         );
-        self.f.adopted.push(crate::body::Adopted { slot, bind, value });
+        self.f
+            .adopted
+            .push(crate::body::Adopted { slot, bind, value });
         let place = self.mk(H::Local(slot, hir::UseMode::BorrowMut), slot_ty, span);
         let some = self.mk(H::WrapSome(Box::new(p)), slot_ty, span);
         let store = self.mk(
