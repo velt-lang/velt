@@ -203,7 +203,12 @@ impl FnCx<'_, '_> {
 
     /// A write through `any` to field `name` (empty: a key known only at run time, which may
     /// be any field) of whatever object it holds, for the copies of `crate::object_copies`.
-    fn note_dynamic_write(&mut self, name: &str, span: Span) {
+    pub(super) fn note_dynamic_write(&mut self, name: &str, span: Span) {
+        // The standard library's own writes (`Reflect.set`, a proxy's forwarding) count where
+        // the program's code reaches them (`proxy.rs`).
+        if self.cx.scopes[self.module].is_std {
+            return;
+        }
         self.cx
             .object_copies
             .writes

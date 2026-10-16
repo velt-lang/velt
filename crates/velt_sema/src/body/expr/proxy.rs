@@ -81,6 +81,8 @@ impl FnCx<'_, '_> {
             return h;
         };
         self.cx.note_dyn_members();
+        // A proxy forwards writes to its target through `any` (`Reflect.set`): any field of it.
+        self.note_dynamic_write("", span);
         let any = self.cx.ty.intern(hir::TyKind::Dyn(defs.any, vec![]));
         let kind = H::ToDyn {
             expr: Box::new(h),
@@ -89,12 +91,16 @@ impl FnCx<'_, '_> {
         self.mk(kind, any, span)
     }
 
-    /// A call of a static method of class `d`: `Reflect.*` in the program's own code makes it
-    /// use `any` members (the prelude's bodies read and write through `any`).
-    pub(crate) fn note_reflect_call(&mut self, d: DefId) {
+    /// A call of the static method `name` of class `d`: `Reflect.*` in the program's own code
+    /// makes it use `any` members (the prelude's bodies read and write through `any`), and
+    /// `Reflect.set` writes a field through `any`.
+    pub(crate) fn note_reflect_call(&mut self, d: DefId, name: &str, span: Span) {
         if Some(d) == self.cx.prelude_adt("Reflect") && !self.cx.scopes[self.module].is_std {
             self.cx.any_impl();
             self.cx.note_dyn_members();
+            if name == "set" {
+                self.note_dynamic_write("", span);
+            }
         }
     }
 
