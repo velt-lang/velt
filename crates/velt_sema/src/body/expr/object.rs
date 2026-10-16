@@ -646,6 +646,11 @@ impl FnCx<'_, '_> {
                 if self.finished_result_value(fields, &pname.name, *value) {
                     continue;
                 }
+                if crate::collect::exports::def_member_maybe_dropped(self.cx, d, &pname.name) {
+                    // The parser may have dropped its declaration (`Ctx::recovered`).
+                    self.prop_value(pname, *value, None);
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!(

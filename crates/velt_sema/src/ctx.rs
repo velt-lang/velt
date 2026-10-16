@@ -240,6 +240,13 @@ pub(crate) struct Ctx<'m> {
     pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
     /// What the last check of a body found about those locals.
     pub literal_found: HashMap<DefId, crate::body::literal_locals::LiteralLocals>,
+    /// Modules whose parse reported errors (`velt check` goes on with the recovered syntax
+    /// trees, [`crate::check_recovered`]), with the words of their source: a name missing from
+    /// one may be a declaration the parser dropped (`collect::exports::maybe_dropped`).
+    pub recovered: HashMap<usize, HashSet<String>>,
+    /// Names bound by such an import that found nothing (file of the importing module, local
+    /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
+    pub poisoned: HashSet<(velt_common::FileId, String)>,
 }
 
 impl<'m> Ctx<'m> {
@@ -320,6 +327,8 @@ impl<'m> Ctx<'m> {
             sync_handlers: vec![],
             thread_adapters: vec![],
             ide: None,
+            recovered: HashMap::new(),
+            poisoned: HashSet::new(),
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),
             symbol_keys: Default::default(),
@@ -358,6 +367,9 @@ impl<'m> Ctx<'m> {
     /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
     /// one of the SIMD types, which are not global (`velt:simd`).
     pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
+        if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
+            return;
+        }
         let mut d = Diagnostic::error(msg, span);
         if crate::hir::SimdTy::named(name).is_some() {
             d = d.with_note(format!(

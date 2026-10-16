@@ -165,6 +165,9 @@ impl FnCx<'_, '_> {
         if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
         }
+        if crate::collect::exports::member_maybe_dropped(self.cx, t, &prop.name) {
+            return; // the parser may have dropped its declaration (`Ctx::recovered`)
+        }
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
                 format!("cannot read `{}`: it has a setter but no getter", prop.name),

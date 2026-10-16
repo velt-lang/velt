@@ -174,6 +174,14 @@ impl FnCx<'_, '_> {
             return self.error_expr(e.span);
         }
         if let Some(p) = params.iter().find(|p| p.rest) {
+            // Its type is checked as a function's is; one of an array type is not supported yet
+            // (a module-level constant is lifted into a function, `generic_arrows`).
+            if let Some(t) = &p.ty {
+                let ty = self.resolve(t);
+                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                    return self.error_expr(e.span);
+                }
+            }
             self.cx.error(
                 velt_common::Diagnostic::error(
                     "rest parameters of arrow functions are not supported yet",

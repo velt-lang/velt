@@ -14,6 +14,8 @@ use crate::backend::Backend;
 use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
+mod recover;
+
 /// Stack for the pipeline thread (reserved, not committed, until used).
 const PIPELINE_STACK_BYTES: usize = 256 << 20;
 
@@ -220,6 +222,17 @@ fn load_stage(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<loader::Loaded, BuildError> {
+    let loaded = load_modules(sess, opts, scope)?;
+    sess.stop_if_errors()?;
+    Ok(loaded)
+}
+
+/// Load and parse the program, recovering from syntax errors (they are in the session).
+fn load_modules(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<loader::Loaded, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -239,7 +252,6 @@ fn load_stage(
     )
     .map_err(BuildError::Failed)?;
     sess.record("parse", t);
-    sess.stop_if_errors()?;
     Ok(loaded)
 }
 
@@ -381,7 +393,7 @@ pub fn check_with(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(), BuildError> {
-    on_pipeline_thread(|| check_program(sess, opts, scope).map(drop))
+    on_pipeline_thread(|| recover::check_recovering(sess, opts, scope))
 }
 
 /// [`check_with`] for a lint of the checked modules (`velt check --ts-compat`): the loaded

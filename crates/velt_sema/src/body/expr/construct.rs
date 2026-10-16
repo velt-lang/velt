@@ -234,8 +234,12 @@ impl FnCx<'_, '_> {
             .join(".");
         let item = self.lookup_type_path(path);
         let Some(Item::Def(d)) = item else {
-            self.cx
-                .err(format!("cannot find class `{name}` in this scope"), t.span);
+            let msg = format!("cannot find class `{name}` in this scope");
+            match item {
+                // Not reported when its import was not (`Ctx::poisoned`).
+                None => self.cx.not_found(msg, &name, t.span),
+                Some(_) => self.cx.err(msg, t.span),
+            }
             return None;
         };
         let Some(a) = self.cx.adt(d) else {

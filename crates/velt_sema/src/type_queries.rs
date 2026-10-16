@@ -286,10 +286,12 @@ impl Ctx<'_> {
             Some(f) if f.optional && self.dynamic(f.ty).is_none() => self.ty.option(f.ty),
             Some(f) => f.ty,
             None => {
-                self.err(
-                    format!("no field `{}` on type `{shown}`", seg.name),
-                    seg.span,
-                );
+                if !crate::collect::exports::member_maybe_dropped(self, ty, &seg.name) {
+                    self.err(
+                        format!("no field `{}` on type `{shown}`", seg.name),
+                        seg.span,
+                    );
+                }
                 self.ty.error
             }
         }
