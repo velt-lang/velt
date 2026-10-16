@@ -106,7 +106,7 @@ impl FnCx<'_, '_> {
         let mode = if self.cx.is_copy(f.ty) {
             PassMode::Copy
         } else {
-            PassMode::Borrow
+            PassMode::Owned
         };
         let c = Callable {
             what: "the field's setter".into(),

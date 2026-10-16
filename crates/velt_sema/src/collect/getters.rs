@@ -72,8 +72,9 @@ pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
 }
 
 /// The setter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`):
-/// `this.<field> = v`, with `v` borrowed (copied for Copy types) and shared into the field, the
-/// interface borrow ABI. The old value is released by the assignment.
+/// `this.<field> = v`, with `v` owned (copied for Copy types) and moved into the field, as a
+/// class setter takes it: the caller shares a value it uses again. The old value is released by
+/// the assignment.
 pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, ty: TyId) -> DefId {
     let a = cx.adt(d).expect("ICE: adt");
     let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
@@ -83,7 +84,7 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
     let mode = if copy {
         PassMode::Copy
     } else {
-        PassMode::Borrow
+        PassMode::Owned
     };
     let mut info = super::fn_placeholder(name.clone(), span, span, module, FnKind::Method, None);
     info.generics = n.clone();
@@ -123,18 +124,7 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
         ty,
         span,
     };
-    let value = if copy {
-        v(UseMode::Copy)
-    } else {
-        hir::Expr {
-            kind: H::Call {
-                callee: Callee::Intrinsic(Intrinsic::Share),
-                args: vec![v(UseMode::Borrow)],
-            },
-            ty,
-            span,
-        }
-    };
+    let value = v(if copy { UseMode::Copy } else { UseMode::Move });
     let unit = cx.ty.unit;
     let assign = hir::Expr {
         kind: H::Assign {

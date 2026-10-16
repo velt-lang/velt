@@ -181,7 +181,7 @@ impl Ctx<'_> {
         let mode = if self.is_copy(param) {
             PassMode::Copy
         } else {
-            PassMode::Borrow
+            PassMode::Owned
         };
         let params = vec![ParamSig {
             name: "v".into(),
