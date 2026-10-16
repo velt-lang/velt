@@ -1,0 +1,179 @@
+// check: no leaks
+// #1142: nested functions using the enclosing function's locals that call themselves or each
+// other (a recursive closure group).
+
+// Direct recursion, and two functions calling each other.
+function walk(root: number): number {
+  const limit = root;
+  function down(n: number): number {
+    return n >= limit ? n : down(n + 1);
+  }
+  function ping(n: number): number {
+    return n > limit ? n : pong(n + 1);
+  }
+  function pong(n: number): number {
+    return ping(n * 2);
+  }
+  return down(0) + ping(1);
+}
+
+// Three functions in a cycle.
+function cycle(n: number): string {
+  const tag = "x";
+  function a(k: number): string {
+    return k <= 0 ? tag : "a" + b(k - 1);
+  }
+  function b(k: number): string {
+    return k <= 0 ? tag : "b" + c(k - 1);
+  }
+  function c(k: number): string {
+    return k <= 0 ? tag : "c" + a(k - 1);
+  }
+  return a(n);
+}
+
+// Captured state the recursion changes, seen by the enclosing function afterwards.
+function countDown(n: number): string {
+  let calls = 0;
+  const seen: number[] = [];
+  function step(k: number): void {
+    calls++;
+    seen.push(k);
+    if (k > 0) step(k - 1);
+  }
+  step(n);
+  calls += 100;
+  step(1);
+  return `${calls} ${seen.join(",")}`;
+}
+
+// Escaping: returned in an object and in an array, called after the function returned.
+function counter(start: number): { next: (n: number) => number; total: () => number } {
+  let count = start;
+  const seen: number[] = [];
+  function step(n: number): number {
+    count++;
+    seen.push(n);
+    return n <= 0 ? count : step(n - 1);
+  }
+  function total(): number {
+    return count + seen.length;
+  }
+  function next(n: number): number {
+    return step(n) + (n > 100 ? total() : 0);
+  }
+  return { next, total };
+}
+
+function parity(base: number): Array<(n: number) => number> {
+  function even(n: number): number {
+    return n === 0 ? base : odd(n - 1);
+  }
+  function odd(n: number): number {
+    return n === 0 ? -base : even(n - 1);
+  }
+  return [even, odd];
+}
+
+// Calls inside callbacks, a parameter default, and a member passed on as a value.
+function tree(depth: number): string {
+  const out: string[] = [];
+  const prefix = "n";
+  function visit(d: number, path: string, mark: string = "!"): void {
+    out.push(prefix + path + mark);
+    if (d <= 0) return;
+    [0, 1].forEach((i: number) => visit(d - 1, path + i));
+    side(d - 1, path);
+  }
+  function side(d: number, path: string): void {
+    if (d < 0) return;
+    const kids = [path + "b"];
+    kids.map((k: string): number => {
+      visit(d - 1, k, "?");
+      return 0;
+    });
+    const later = (): void => visit(-1, path, "#");
+    later();
+  }
+  visit(depth, "");
+  return out.join(",");
+}
+
+// Errors thrown deep in the recursion.
+function thrower(limit: number): number {
+  function f(n: number): number {
+    if (n > limit) throw new Error("too deep " + n);
+    return g(n + 1);
+  }
+  function g(n: number): number {
+    return f(n * 2);
+  }
+  try {
+    return f(1);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+    return -1;
+  }
+}
+
+class Doc {
+  title: string;
+  kids: Doc[];
+  constructor(title: string, kids: Doc[] = []) {
+    this.title = title;
+    this.kids = kids;
+  }
+}
+
+// A stored member, called later through the object holding it.
+function outline(indent: string): { print: (d: Doc) => string } {
+  function line(d: Doc, depth: number): string {
+    return indent.repeat(depth) + d.title + "\n" + d.kids.map((k: Doc): string => line(k, depth + 1)).join("");
+  }
+  function print(d: Doc): string {
+    return line(d, 0);
+  }
+  const holder = { print };
+  return holder;
+}
+
+// A member's parameter or local may be named like a variable another member captures.
+function shadowParam(): string {
+  let v = 1;
+  function a(v: number): number {
+    return v > 0 ? b(v - 1) + v : 0;
+  }
+  function b(k: number): number {
+    v++;
+    return a(k);
+  }
+  return a(3) + ":" + v;
+}
+
+function shadowLocal(): string {
+  let v = 1;
+  function a(k: number): number {
+    const v = 100;
+    return k > 0 ? b(k - 1) + v : 0;
+  }
+  function b(k: number): number {
+    v++;
+    return a(k);
+  }
+  return a(3) + ":" + v;
+}
+
+function main() {
+  console.log(walk(5), walk(10));
+  console.log(cycle(7), cycle(0));
+  console.log(countDown(3));
+  const c = counter(10);
+  console.log(c.next(3), c.total(), c.next(1), c.total());
+  const fs = parity(7);
+  console.log(fs[0](4), fs[1](4), [1, 2, 3].map((x: number): number => fs[1](x)));
+  console.log(tree(2));
+  console.log(thrower(20));
+  const o = outline("  ");
+  console.log(shadowParam(), shadowLocal());
+  console.log(o.print(new Doc("root", [new Doc("a", [new Doc("a1")]), new Doc("b")])));
+}

@@ -226,3 +226,34 @@ pub(super) fn scan_stmt(st: &ast::Stmt) -> Scan {
     s.stmt(st);
     s
 }
+
+/// Does the function body `b` return a value (`return e;` outside nested functions)?
+pub(super) fn returns_value(b: &ast::Block) -> bool {
+    b.stmts.iter().any(stmt_returns_value)
+}
+
+fn stmt_returns_value(s: &ast::Stmt) -> bool {
+    match &s.kind {
+        S::Return(Some(_)) => true,
+        S::If { then, els, .. } => {
+            returns_value(then) || els.as_deref().is_some_and(stmt_returns_value)
+        }
+        S::While { body, .. } | S::DoWhile { body, .. } | S::For { body, .. } => {
+            returns_value(body)
+        }
+        S::ForOf { body, .. } => returns_value(body),
+        S::Block(b) => returns_value(b),
+        S::Labeled { body, .. } => stmt_returns_value(body),
+        S::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(stmt_returns_value)),
+        S::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            returns_value(body)
+                || catch.as_ref().is_some_and(|(_, c)| returns_value(c))
+                || finally.as_ref().is_some_and(returns_value)
+        }
+        _ => false,
+    }
+}

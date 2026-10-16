@@ -223,6 +223,7 @@ fn check_on_current_thread(
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
         }
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
         if let Some(o) = &overloaded {

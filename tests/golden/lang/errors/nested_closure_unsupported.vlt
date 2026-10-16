@@ -1,17 +1,21 @@
-// Not supported yet: a capturing nested function that calls itself, or one used before a
-// local it uses is declared.
+// Not supported yet: a capturing nested generator that calls itself, a capturing nested
+// function calling itself whose result type is not written, and one used before a local it
+// uses is declared.
 function walk(root: number): number {
   const limit = root;
-  function down(n: number): number {
-    return n >= limit ? n : down(n + 1);
+  function* down(n: number): Generator<number> {
+    if (n < limit) {
+      for (const x of down(n + 1)) yield x;
+    }
+    yield n;
   }
-  function ping(n: number): number {
+  function ping(n: number) {
     return n > limit ? n : pong(n + 1);
   }
   function pong(n: number): number {
     return ping(n * 2);
   }
-  return down(0) + ping(1);
+  return [...down(0)].length + ping(1);
 }
 
 function early(): number {

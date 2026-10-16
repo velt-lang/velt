@@ -135,6 +135,7 @@ impl FnLower<'_, '_> {
                 self.zero_value(vt)
             }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
+            (I::ClosureSibling(def), []) => self.closure_sibling(def, ty),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::AnyTo, [a]) => self.any_to(a, ty),
             (I::AnyTypeof, [a]) => self.any_typeof(a),

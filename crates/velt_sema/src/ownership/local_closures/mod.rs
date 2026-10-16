@@ -106,7 +106,13 @@ fn candidates(cx: &Ctx, d: DefId, f: &FnDef) -> Vec<(LocalId, DefId)> {
         .filter(|&(local, c)| {
             let info = cx.fn_info(c);
             let plain = !info.is_async && !info.is_generator && !info.is_async_gen;
-            kinds.get(local.0 as usize) == Some(&LocalKind::Const) && plain && info.escaping
+            // A member of a recursive closure group shares its environment with the members it
+            // makes (`body::closure_group`), so it keeps a counted one.
+            let grouped = cx.group_defs.contains(&c);
+            kinds.get(local.0 as usize) == Some(&LocalKind::Const)
+                && plain
+                && info.escaping
+                && !grouped
         })
         .collect()
 }

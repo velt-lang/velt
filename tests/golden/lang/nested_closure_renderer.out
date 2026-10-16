@@ -1,0 +1,15 @@
+root
+  div
+    p "one"
+    p "two"
+    ul
+      li "x"
+mounts=5 unmounts=0 live=5
+root
+  div
+    p "uno"
+    span "dos"
+mounts=6 unmounts=3 live=3
+root
+  section "bye"
+mounts=7 unmounts=6 live=1

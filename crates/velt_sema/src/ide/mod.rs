@@ -110,6 +110,7 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
         }
         cx.ide = Some(Box::default());
         if !modules.is_empty() {

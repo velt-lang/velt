@@ -108,6 +108,12 @@ pub enum Intrinsic {
     /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
     /// where the function value is known (const_fields after specialization).
     FnCapturesNothing,
+    /// Inside a member of a recursive closure group (sema `nested_closures`): the closure
+    /// value of member `def` of the same group, made from the running closure's own
+    /// environment (`{ code of def, env }`, sharing it). The members capture the same
+    /// variables in the same order, so their environments have one layout. No args; the
+    /// result is owned.
+    ClosureSibling(super::DefId),
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

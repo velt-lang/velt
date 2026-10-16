@@ -75,6 +75,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ctor_self: None,
             init_stack: vec![],
             frame_closures: HashSet::new(),
+            direct_siblings: HashMap::new(),
+            self_env: None,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -167,7 +169,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ctor_self = lw.ctor_class(def, f);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
-        lw.frame_closures = super::frame_envs::scan(hir_prog, f);
+        (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
@@ -244,6 +246,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(self.cx.out_ptr_attrs(out));
         }
         if let Some(env) = env {
+            self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
         }
         self.declare_body_locals(f, info);

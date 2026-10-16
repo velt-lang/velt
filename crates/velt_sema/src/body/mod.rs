@@ -35,6 +35,7 @@
 
 pub(crate) mod assigned;
 mod closure_assigned;
+pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
@@ -262,6 +263,9 @@ pub(crate) struct Frame {
     /// span (`lo`, `hi`), the local and the facts it establishes when the call returns `true`
     /// and `false`. The call checks them at run time (`predicates::predicate_checked`).
     pub checked_predicates: HashMap<(u32, u32), predicates::CheckedPredicate>,
+    /// Recursive closure groups declared in this frame, or the one whose member it checks
+    /// (`closure_group`).
+    pub groups: closure_group::GroupFrame,
 }
 
 impl Frame {
@@ -309,6 +313,7 @@ impl Frame {
             const_lits: HashMap::new(),
             regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
+            groups: Default::default(),
         }
     }
 }
@@ -403,6 +408,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
     /// result is `this` itself, which such a method may return.
     pub this_calls: std::collections::HashSet<Span>,
+    /// The member of a recursive closure group whose arrow is about to be checked: group,
+    /// member and its definition.
+    pub pending_member: Option<(usize, usize, DefId)>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -441,6 +449,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_folded: false,
             jsx_list_trial: false,
             this_calls: Default::default(),
+            pending_member: None,
         }
     }
 
