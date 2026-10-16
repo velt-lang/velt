@@ -1,0 +1,23 @@
+// check: no leaks
+// Creating a proxy does not count as a write of every field: conversions that copy an
+// object's fields elsewhere in the program still compile (#823). A handler kept in its own
+// `const` whose trap forwards with `Reflect.get` compiles too.
+type AB = { a: number; b: number };
+type BA = { b: number; a: number };
+function show(x: BA): number {
+  return x.a + x.b;
+}
+function main(): void {
+  const ab: AB = { a: 1, b: 2 };
+  console.log(show(ab));
+  const p = new Proxy({ z: 1 }, {});
+  console.log(p.z);
+  const handler = {
+    get(t: any, k: string | symbol, r: any): any {
+      console.log("get", typeof k === "string" ? k : "?");
+      return Reflect.get(t, k, r);
+    },
+  };
+  const q = new Proxy({ y: 7 }, handler);
+  console.log(q.y);
+}

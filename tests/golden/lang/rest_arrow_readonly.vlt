@@ -1,0 +1,10 @@
+// A constant arrow function (or function expression) whose rest parameter is `readonly T[]`.
+const join = (sep: string, ...parts: readonly string[]) => parts.join(sep);
+const first = function (...xs: readonly number[]): number {
+  return xs.length > 0 ? xs[0] : -1;
+};
+export const size = async (...xs: readonly string[]) => xs.length;
+
+console.log(join("-", "a", "b", "c"), join(","));
+console.log(first(7, 8), first());
+console.log(await size("x", "y"), await size());

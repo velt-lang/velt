@@ -27,6 +27,27 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   arity error (TS2554).
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
+  Its type may be any array type: `readonly T[]`, or an alias of an array type
+  (`...xs: Nums` with `type Nums = number[]`); another type is an error, as in TypeScript
+  (TS2370). A rest parameter typed by a type parameter (`...args: A` with
+  `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
+  supported yet (#943).
+  A module-level constant arrow function or function expression may have one too, typed the
+  same ways: `const total = (...xs: Nums) => …` is the function `function total(...xs: Nums)`
+  (its parameters must be typed). Rest parameters of other arrows and function expressions are
+  not supported yet (see below).
+
+  ```ts
+  type Nums = number[];
+  const total = (...xs: Nums): number => xs.reduce((a, b) => a + b, 0);
+  const join = function (sep: string, ...parts: readonly string[]) {
+    return parts.join(sep);
+  };
+  function main() {
+    console.log(total(1, 2, 3), join("-", "a", "b")); // 6 a-b
+  }
+  ```
+
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
   `String.fromCharCode`, an array's `push`) accept a spread anywhere.
 - A **spread into fixed parameters** passes the elements of a value whose length is known when
@@ -54,11 +75,17 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   block as in JS (a call before the declaration works). One that uses the enclosing function's
   locals (or another such nested function) is a closure, with the
   [captures](#captures) of an arrow function: it sees every later change of what it uses, may
-  assign it, and may be passed on or returned as a value. Not supported yet: such a closure
-  calling itself, directly or through other nested functions (``…calls itself: not supported
-  yet``; pass the locals it uses as parameters, or declare it at module level), and a use
-  before a local it uses is declared, which JS allows when the call runs later (declare the
-  local first). A generic nested function cannot use the enclosing function's locals.
+  assign it, and may be passed on or returned as a value. Such closures may call themselves
+  and each other (`mount` / `patch` / `unmount` of a renderer), async ones too. Nested
+  functions calling each other this way share one environment holding what they use, so
+  returning or storing them makes no reference cycle: the environment is freed with the last of
+  them. Each one's parameter types and result type must be known before the bodies are
+  checked, so one that returns a value needs its result type written (``…calls itself: not
+  supported yet`` with ``write its result type``); without `return value;` it is `void`
+  (`Promise<void>` when `async`). Not supported yet: a generator calling itself this way (pass
+  the locals it uses as parameters, or declare it at module level), and a use before a local
+  it uses is declared, which JS allows when the call runs later (declare the local first). A
+  generic nested function cannot use the enclosing function's locals.
 
   ```ts
   function tally(words: string[]): string {
@@ -73,6 +100,18 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
     }
   }
   console.log(tally(["a", "b", "a"])); // 3 2
+
+  function parity(base: number): Array<(n: number) => number> {
+    function even(n: number): number {
+      return n === 0 ? base : odd(n - 1);   // calls each other
+    }
+    function odd(n: number): number {
+      return n === 0 ? -base : even(n - 1);
+    }
+    return [even, odd];
+  }
+  const [even, odd] = parity(7);
+  console.log(even(4), odd(4)); // 7 -7
   ```
 
 ## Overloads
@@ -718,7 +757,8 @@ async function main() {
   cannot be a value, and neither can a generic function that keeps a parameter whose type is a
   promise at the value's type arguments or still depends on a type parameter.
 - **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
-  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`), generic
+  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`, other than
+  a module-level constant's), generic
   function types (`<T>(description: string) => Token<T>`, a value each call instantiates)
   and construct signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value).
   They parse, and using one is an error saying it is not supported yet. A function type's

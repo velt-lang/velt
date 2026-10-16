@@ -37,6 +37,12 @@ pub(super) struct Boxing {
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
+    /// have the write slots (any_set.rs).
+    pub(super) any_writes: bool,
+    /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
+    /// slot (any_has.rs).
+    pub(super) any_has: bool,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: HashSet<DefId>,
@@ -127,6 +133,10 @@ pub(super) struct Facts {
     transfers: HashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// A member is written through `any`.
+    any_set: bool,
+    /// `key in x` is tested on an `any`.
+    any_has: bool,
     /// Capture types of the closure environments built (transfers.rs).
     captures: HashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
@@ -166,6 +176,16 @@ impl Cx<'_> {
     /// Record that function values are compared by identity.
     pub(super) fn note_fn_identity(&mut self) {
         self.facts.fn_compared = true;
+    }
+
+    /// Record that a member is written through `any`.
+    pub(super) fn note_any_set(&mut self) {
+        self.facts.any_set = true;
+    }
+
+    /// Record that `key in x` is tested on an `any`.
+    pub(super) fn note_any_has(&mut self) {
+        self.facts.any_has = true;
     }
 
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
@@ -223,6 +243,8 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.any_writes |= self.facts.any_set;
+        next.any_has |= self.facts.any_has;
         next.dyn_to_any
             .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();

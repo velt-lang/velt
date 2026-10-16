@@ -34,6 +34,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }
@@ -58,6 +61,15 @@ impl FnCx<'_, '_> {
                     }
                 }
                 self.named_call(id, type_args, args, exp, span)
+            }
+            // `it.return(undefined)`: TypeScript's `return(value)` takes the generator's return
+            // value; Velt's `return()` has none, and `undefined` is what leaving it out passes.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } if self.iteration_return_undefined(object, prop, args) => {
+                self.member_call(object, prop, *optional, type_args, &[], exp, span)
             }
             ast::ExprKind::Member {
                 object,
@@ -86,8 +98,51 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
+    /// #1144)?
+    fn iteration_return_undefined(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> bool {
+        let [arg] = args else {
+            return false;
+        };
+        if prop.name != "return" || crate::body::narrow::nothing_word(arg) != Some("undefined") {
+            return false;
+        }
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        let d = match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => *d,
+            _ => return false,
+        };
+        const PROTOCOL: [&str; 7] = [
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "IteratorObject",
+        ];
+        PROTOCOL
+            .iter()
+            .any(|n| matches!(self.cx.prelude.get(*n), Some(Item::Def(p)) if *p == d))
+    }
+
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.
@@ -524,6 +579,7 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
             Ok(found) => found,

@@ -1,0 +1,13 @@
+// check: no leaks
+// `holder.m(swap())` where `swap` reassigns the module `let holder`: the method runs on the
+// object `holder` held before the argument was evaluated.
+interface N { val: string; m(s: string): string; }
+class Node1 implements N {
+  val: string;
+  constructor(v: string) { this.val = v; }
+  m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+}
+let holder: N = new Node1("h1");
+function swap(): string { holder = new Node1("h2"); return "swapped"; }
+console.log(holder.m(swap()));
+console.log(holder.val);

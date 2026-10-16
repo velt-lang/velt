@@ -103,6 +103,9 @@ pub(crate) enum Glue {
     AnyIndex,
     AnyCall,
     AnyApply,
+    AnySet,
+    AnySetIndex,
+    AnyHas,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -157,6 +160,9 @@ impl Glue {
             Glue::AnyIndex => "anyindex",
             Glue::AnyCall => "anycall",
             Glue::AnyApply => "anyapply",
+            Glue::AnySet => "anyset",
+            Glue::AnySetIndex => "anysetindex",
+            Glue::AnyHas => "anyhas",
         }
     }
 
@@ -194,6 +200,9 @@ impl Glue {
             Glue::AnyIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyCall => (vec![Ptr, Ptr, Ptr, U64, Ptr], U8),
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyHas => (vec![Ptr, Ptr], U8),
         }
     }
 }
@@ -244,6 +253,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {
                 lw.any_member_glue(g, &args, ty)
             }
+            Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
+            Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

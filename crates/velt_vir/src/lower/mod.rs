@@ -24,7 +24,11 @@ mod adt;
 mod any;
 mod any_eq;
 mod any_glue;
+mod any_has;
 mod any_member;
+mod any_proxy;
+mod any_set;
+mod any_set_site;
 mod append;
 mod array;
 mod assign_target;
@@ -488,4 +492,12 @@ struct FnLower<'c, 'h> {
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
     frame_closures: HashSet<DefId>,
+    /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
+    /// (frame_envs.rs).
+    direct_siblings: HashMap<LocalId, DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
+    /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
+    /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
+    in_reflect: bool,
 }

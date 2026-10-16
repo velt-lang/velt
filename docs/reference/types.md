@@ -469,7 +469,12 @@ the value is `undefined` (an `undefined` element or field, an absent optional fi
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
 the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
-those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `T | void` is
+`T | undefined` (a `void` function's value is `undefined`), so a callback typed
+`(e: Error) => boolean | void` may return a `boolean` or nothing. A function whose result type
+allows `undefined` returns it from a bare `return;` and when it reaches its end; one whose result
+type is inferred, that returns values and also `return;` or can reach its end, returns
+`T | undefined`, as in TypeScript. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
@@ -1693,7 +1698,122 @@ A member the value's fixed shape does not have reads as `undefined`, as in Node.
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
 call, methods of arrays and strings, string indexing, methods that throw or are generic, and
-members whose type is a union, enum or interface. **Planned** (#924): writing a member
-(`x.f = v`, a compile error today), arithmetic and comparison operators, template literals and
-`String(x)`, `JSON.stringify`, iteration and the warning on a written `any`; until then each is
-a compile error.
+members whose type is a union, enum or interface.
+
+Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
+with a `string`, `number` or `any` key. The value is converted to the member's type with the
+same check as above (a value of another type stops with its `TypeError`, and the member keeps
+its old value) and stored in the object itself, so every other reference to it sees the write;
+a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
+in Node; an array takes its elements inside its length. The other values have a fixed shape:
+adding a property stops with `TypeError: Cannot add property k: an object of a fixed shape gets
+no new properties through `any` (#924)` (Node adds it), writing a getter that has no setter with
+Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
+gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
+`TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
+Writing a `readonly` field, a method, an element past the end of an array or a member of a
+string, number or function stops with a `TypeError` naming #924. Compound assignments
+(`x.n += 1`, `x.n ??= v`) and `x.n++` are compile errors until the operators of `any` come.
+
+`Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
+`Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
+`any` one): the value stays as it is, and its members are read, called and written as above.
+`typeof` tests for `number`, `string` and `boolean` and `instanceof` of a class without type
+parameters narrow to that type itself, so member access after them is typed and direct.
+
+```ts
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function describe(u: unknown): string {
+  if (Array.isArray(u)) {
+    return `${u.length} items, first ${u[0]}`;
+  }
+  if (u instanceof Box) {
+    return `a box of ${u.v}`;
+  }
+  return "something else";
+}
+
+function main(): void {
+  console.log(describe([3, 4])); // 2 items, first 3
+  console.log(describe(new Box("s"))); // a box of s
+  const p: any = { x: 1, y: 2 };
+  p.x = 10;
+  p["y"] = 20;
+  console.log(p.x, p.y); // 10 20
+  const r: any = { a: 1 } as Record<string, number>;
+  r.b = 2;
+  console.log(r.b); // 2
+}
+```
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
+operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
+warning on a written `any`; until then each is a compile error.
+
+`key in x` on an `any` asks the value held: a class instance or object type has its fields,
+methods and accessors and what every object has from `Object.prototype` (`toString`), a
+`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
+(which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+
+### Proxy and Reflect
+
+`new Proxy(target, handler)` makes a proxy as in JavaScript: reading a member of it runs the
+handler's `get` trap, writing one its `set` trap and `key in p` its `has` trap, each with the
+target, the key (a string; an index arrives as its string, `"1"`) and, for `get` and `set`, the
+proxy itself as the receiver. A trap the handler leaves out forwards the operation to the
+target, and `p.m(a)` reads `m` through `get` and calls what it returns. A `set` trap that
+returns `false` makes the assignment throw Node's `TypeError: 'set' on proxy: trap returned
+falsish for property 'k'` (what strict code gets). `Reflect.get(t, k)`, `Reflect.set(t, k, v)`
+and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a receiver, `Reflect.get`
+and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
+target, without running traps, as Node does.
+
+The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
+TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). In Velt a proxy is an `any`
+for now: TypeScript gives `new Proxy(target, handler)` the target's type, and converting a proxy
+straight to a typed value is a compile error (``a proxy cannot be used as a `State` yet``). Its
+members are read and written through `any` as above, so a program without proxies pays nothing
+for them.
+
+```ts
+let reads = 0;
+
+function counted(target: any): any {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      reads++;
+      return Reflect.get(obj, prop);
+    },
+    set(obj, prop, value, receiver) {
+      console.log("set", prop, value);
+      return Reflect.set(obj, prop, value);
+    },
+  });
+}
+
+function main(): void {
+  const raw = { count: 0 };
+  const state = counted(raw);
+  state.count = 5; // set count 5
+  console.log(state.count, raw.count, reads); // 5 5 1
+  console.log("count" in state, "other" in state); // true false
+}
+```
+
+**Planned** (#823): typed proxies (`new Proxy<T>` used as a `T`, the tagged pointer of #823's
+design); the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and `defineProperty` traps
+and their `Reflect` functions; symbol keys through a proxy; `Array.isArray` of an array proxy;
+proxies of functions (`apply`, `construct`); a method call through a proxy over a class
+instance whose handler has traps (`p.m()`, where JavaScript runs `m` with `this` the proxy);
+`Reflect.get` / `Reflect.set` with a receiver that is neither the target nor a proxy. Until
+then each is a compile error or a `TypeError` naming #823. A method call through a proxy whose
+handler has no traps is the call on the target. When the receiver is a proxy, a getter of a
+plain target read by `Reflect.get(t, k, receiver)` runs with `this` the target, and so does a
+setter written by `Reflect.set(t, k, v, receiver)` (Node: the receiver).

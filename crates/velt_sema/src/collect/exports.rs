@@ -6,9 +6,12 @@
 //! other modules' imports), so they do not depend on the order modules are processed in. Chains
 //! and cycles of re-exports are followed up to [`MAX_DEPTH`] steps.
 
+use std::collections::HashSet;
+
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
+use crate::hir::{DefId, TyId, TyKind};
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
 const MAX_DEPTH: u32 = 32;
@@ -34,6 +37,90 @@ pub(crate) fn all_exports(cx: &Ctx, t: usize) -> Vec<(String, Item)> {
 pub(crate) fn import_target(cx: &Ctx, m: usize, spec: &str) -> Option<usize> {
     let (_, path) = cx.modules[m].imports.iter().find(|(s, _)| s == spec)?;
     cx.modules.iter().position(|mm| mm.path == *path)
+}
+
+/// The identifier-like words of source text `src`.
+pub(crate) fn words(src: &str) -> HashSet<String> {
+    src.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `name`, which module `t` doesn't export, may be a declaration the parser dropped
+/// from a module it recovered (`Ctx::recovered`): one whose source has the word, reached from
+/// `t` through re-exports (`export * from`, `export { name } from`).
+pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
+    fn go(cx: &Ctx, t: usize, name: &str, seen: &mut HashSet<usize>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        if cx.recovered.get(&t).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+        for (imp, exported) in imports_of(cx, t) {
+            if !exported || imp.from.is_empty() {
+                continue;
+            }
+            let Some(s) = import_target(cx, t, &imp.from) else {
+                continue;
+            };
+            let named = imp.names.iter().find(|n| bound_name(n).name == name);
+            let found = match named {
+                Some(n) => go(cx, s, &n.name.name, seen),
+                None => imp.all && go(cx, s, name, seen),
+            };
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+    !cx.recovered.is_empty() && go(cx, t, name, &mut HashSet::new())
+}
+
+/// Whether member `name`, which values of type `t` don't have, may be one the parser dropped
+/// from a module it recovered (`Ctx::recovered`): `t` is a class, struct or interface declared
+/// in such a module (or extends one declared there, through base classes and `extends`) whose
+/// source has the word. A class or interface whose body lost a member keeps its name, so its
+/// import finds it; a use of the lost member reports nothing more.
+pub(crate) fn member_maybe_dropped(cx: &Ctx, t: TyId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    def(t).is_some_and(|d| def_member_maybe_dropped(cx, d, name))
+}
+
+/// [`member_maybe_dropped`] for the class, struct or interface `d`.
+pub(crate) fn def_member_maybe_dropped(cx: &Ctx, d: DefId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    if cx.recovered.is_empty() {
+        return false;
+    }
+    let mut todo = vec![d];
+    let mut seen = HashSet::new();
+    while let Some(d) = todo.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let module = if let Some(a) = cx.adt(d) {
+            todo.extend(a.base.and_then(def));
+            a.module
+        } else if let Some(i) = cx.iface(d) {
+            todo.extend(i.parents.iter().map(|b| b.iface));
+            i.module
+        } else {
+            continue;
+        };
+        if cx.recovered.get(&module).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The name an import or export list entry binds (`b` in `a as b`).

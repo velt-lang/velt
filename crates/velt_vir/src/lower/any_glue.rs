@@ -7,6 +7,7 @@
 use velt_sema::hir::{self, DefId, DynMember, DynMemberKind, Nothing, PassMode, TyId, TyKind};
 
 use super::any_member::{SLOT_APPLY, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
+use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
 use super::rt::Rt;
@@ -15,7 +16,7 @@ use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, 
 
 /// Members every JavaScript object has through `Object.prototype`: reading one through `any`
 /// must not answer `undefined`.
-const OBJECT_PROTO: [&str; 12] = [
+pub(super) const OBJECT_PROTO: [&str; 12] = [
     "constructor",
     "toString",
     "toLocaleString",
@@ -31,19 +32,19 @@ const OBJECT_PROTO: [&str; 12] = [
 ];
 
 /// A method or getter ready to call: its def, type arguments and result type.
-struct Ready {
-    def: DefId,
-    targs: Vec<TyId>,
-    ret: TyId,
+pub(super) struct Ready {
+    pub(super) def: DefId,
+    pub(super) targs: Vec<TyId>,
+    pub(super) ret: TyId,
 }
 
 impl FnLower<'_, '_> {
-    fn ret_status(&mut self, s: i128) {
+    pub(super) fn ret_status(&mut self, s: i128) {
         self.terminate(Terminator::Return(cint(s, Ty::U8)));
     }
 
     /// Does the string at address `key` equal `name`?
-    fn key_is(&mut self, key: vir::Local, name: &str) -> Operand {
+    pub(super) fn key_is(&mut self, key: vir::Local, name: &str) -> Operand {
         let lit = self.str_lit(name);
         let la = self.operand_addr(lit, Ty::Agg(STR_AGG));
         let out = Place::local(self.temp(Ty::U8));
@@ -57,7 +58,7 @@ impl FnLower<'_, '_> {
 
     /// Branch on `key == name`: the current block becomes the matching one; returns the block
     /// to continue in when it does not match.
-    fn on_key(&mut self, key: vir::Local, name: &str) -> vir::BlockId {
+    pub(super) fn on_key(&mut self, key: vir::Local, name: &str) -> vir::BlockId {
         let m = self.key_is(key, name);
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(m, yes, no);
@@ -66,7 +67,7 @@ impl FnLower<'_, '_> {
     }
 
     /// A struct / class / object type (not an enum or union).
-    fn plain_adt(&self, ty: TyId) -> Option<(DefId, Vec<TyId>)> {
+    pub(super) fn plain_adt(&self, ty: TyId) -> Option<(DefId, Vec<TyId>)> {
         match self.cx.kind(ty) {
             TyKind::Adt(d, args) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 Some((d, args))
@@ -78,7 +79,13 @@ impl FnLower<'_, '_> {
     /// For a class whose objects may be of a subclass: return the result of glue `g` of the
     /// object's own class (a generic subclass: `ST_UNSUPPORTED`). Continues in the block for
     /// an object of `d` itself.
-    fn any_subclass_dispatch(&mut self, g: Glue, ty: TyId, d: DefId, params: &[vir::Local]) {
+    pub(super) fn any_subclass_dispatch(
+        &mut self,
+        g: Glue,
+        ty: TyId,
+        d: DefId,
+        params: &[vir::Local],
+    ) {
         if !self.cx.is_class(ty) || !self.cx.has_header(d) {
             return;
         }
@@ -133,7 +140,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The members of `d` by name (`Program::dyn_members`).
-    fn dyn_members_of(&self, d: DefId) -> Vec<DynMember> {
+    pub(super) fn dyn_members_of(&self, d: DefId) -> Vec<DynMember> {
         self.cx
             .hir
             .dyn_members
@@ -143,7 +150,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Member `m` of a value of type `ty`, when it can be called from glue.
-    fn ready(&mut self, ty: TyId, m: &DynMember) -> Option<Ready> {
+    pub(super) fn ready(&mut self, ty: TyId, m: &DynMember) -> Option<Ready> {
         let (_, args) = self.plain_adt(ty)?;
         let owner = self.cx.subst(m.owner, &args);
         let TyKind::Adt(_, targs) = self.cx.kind(owner) else {
@@ -172,7 +179,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `this` for a method called on the value of type `ty` an `any`'s `data` holds.
-    fn any_this(&mut self, data: vir::Local, ty: TyId) -> Operand {
+    pub(super) fn any_this(&mut self, data: vir::Local, ty: TyId) -> Operand {
         let vp = self.any_value_place(data, ty);
         match self.cx.ty(ty) {
             Ty::Agg(_) => self.addr(vp),
@@ -181,7 +188,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Call `r` with `this` and the owned argument values `args`; box the result into `out`.
-    fn any_invoke(&mut self, r: &Ready, this: Operand, args: Vec<(Place, TyId)>, out: &Place) {
+    pub(super) fn any_invoke(
+        &mut self,
+        r: &Ready,
+        this: Operand,
+        args: Vec<(Place, TyId)>,
+        out: &Place,
+    ) {
         let f = self.cx.fn_def(r.def);
         let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
@@ -229,7 +242,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the arguments `from..argc` of `argv`.
-    fn any_drop_args(&mut self, argv: vir::Local, from: u64, argc: vir::Local) {
+    pub(super) fn any_drop_args(&mut self, argv: vir::Local, from: u64, argc: vir::Local) {
         let any = self.cx.any_ty();
         let i = Place::local(self.temp(Ty::U64));
         self.assign(i.clone(), Rvalue::Use(cint(from as i128, Ty::U64)));
@@ -401,6 +414,12 @@ impl FnLower<'_, '_> {
 
     fn any_get_body(&mut self, data: vir::Local, key: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
+        if self.is_proxy(ty) {
+            return self.proxy_get_body(data, ProxyKey::Str(key), &outp, ty);
+        }
+        if self.prelude_record(ty).is_some() {
+            return self.any_get_record(data, key, &outp, ty);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);
@@ -471,6 +490,35 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record
+    /// has no members of its own; `Object.prototype`'s come later.
+    fn any_get_record(&mut self, data: vir::Local, key: vir::Local, out: &Place, ty: TyId) {
+        let (k, _) = self
+            .prelude_record(ty)
+            .unwrap_or_else(|| super::ice("record"));
+        let get = self.plain_adt(ty).and_then(|(d, _)| {
+            self.dyn_members_of(d)
+                .into_iter()
+                .find(|m| m.name == "__get" && m.kind == DynMemberKind::Method)
+        });
+        let ready = get.and_then(|m| self.ready(ty, &m));
+        let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {
+            return self.ret_status(ST_UNSUPPORTED);
+        };
+        for name in OBJECT_PROTO {
+            let next = self.on_key(key, name);
+            self.ret_status(ST_UNSUPPORTED);
+            self.switch_to(next);
+        }
+        let kvt = self.cx.ty(k);
+        let kp = self.deref_param(key, k);
+        let ks = self.share_value(Operand::Copy(kp), k);
+        let kslot = Place::local(self.copy_to_temp(ks, kvt));
+        let this = self.any_this(data, ty);
+        self.any_invoke(&r, this, vec![(kslot, k)], out);
+        self.ret_status(ST_OK);
+    }
+
     /// A key the fixed shape does not have: `undefined`, unless every object has it.
     fn any_get_fallback(&mut self, key: vir::Local, out: &Place) {
         for name in OBJECT_PROTO {
@@ -484,6 +532,9 @@ impl FnLower<'_, '_> {
 
     fn any_index_body(&mut self, data: vir::Local, i: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
+        if self.is_proxy(ty) {
+            return self.proxy_get_body(data, ProxyKey::Num(i), &outp, ty);
+        }
         match self.cx.kind(ty) {
             TyKind::Array(elem) => {
                 let vp = self.any_value_place(data, ty);
@@ -512,6 +563,8 @@ impl FnLower<'_, '_> {
                 self.any_nothing_into(Nothing::Undefined, &outp);
                 self.ret_status(ST_OK);
             }
+            // A record's key "0" (later).
+            TyKind::Adt(..) if self.prelude_record(ty).is_some() => self.ret_status(ST_UNSUPPORTED),
             TyKind::Adt(..) if self.plain_adt(ty).is_some() => {
                 // No field of a fixed shape is named by a number.
                 self.any_nothing_into(Nothing::Undefined, &outp);
@@ -526,8 +579,15 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
+        if self.is_proxy(ty) {
+            return self.proxy_call_body((data, key, argv, argc, out), ty);
+        }
         let outp = self.any_out(out);
-        let Some((d, _)) = self.plain_adt(ty) else {
+        // A record's function values (later).
+        let adt = self
+            .plain_adt(ty)
+            .filter(|_| self.prelude_record(ty).is_none());
+        let Some((d, _)) = adt else {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         };

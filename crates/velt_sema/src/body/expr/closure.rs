@@ -29,7 +29,7 @@ use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
 
 /// What [`FnCx::trial_frames`] saves.
-pub(super) struct TrialFrames {
+pub(crate) struct TrialFrames {
     f: Frame,
     outer: Vec<Frame>,
     refused_reads: Vec<(Span, crate::body::closure_assigned::Refused)>,
@@ -71,7 +71,7 @@ impl FnCx<'_, '_> {
     /// The function's state a trial check changes, to restore after rolling it back (`Mark`
     /// restores the context): locals, captures, throws, moves, literal-local uses and the
     /// pending callback notes of the call being checked.
-    pub(super) fn trial_frames(&self) -> TrialFrames {
+    pub(crate) fn trial_frames(&self) -> TrialFrames {
         TrialFrames {
             f: self.f.clone(),
             outer: self.outer.clone(),
@@ -84,7 +84,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(super) fn restore_trial_frames(&mut self, t: TrialFrames) {
+    pub(crate) fn restore_trial_frames(&mut self, t: TrialFrames) {
         self.f = t.f;
         self.outer = t.outer;
         self.refused_reads = t.refused_reads;
@@ -161,6 +161,8 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        // A member of a recursive closure group (`closure_group`).
+        let member = self.pending_member.take();
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
@@ -172,6 +174,14 @@ impl FnCx<'_, '_> {
             return self.error_expr(e.span);
         }
         if let Some(p) = params.iter().find(|p| p.rest) {
+            // Its type is checked as a function's is; one of an array type is not supported yet
+            // (a module-level constant is lifted into a function, `generic_arrows`).
+            if let Some(t) = &p.ty {
+                let ty = self.resolve(t);
+                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                    return self.error_expr(e.span);
+                }
+            }
             self.cx.error(
                 velt_common::Diagnostic::error(
                     "rest parameters of arrow functions are not supported yet",
@@ -246,7 +256,10 @@ impl FnCx<'_, '_> {
                 })
                 .filter(|r| !self.cx.ty.has_error(*r)),
         };
-        let def = self.alloc_closure(span);
+        let def = match member {
+            Some((_, _, d)) => d,
+            None => self.alloc_closure(span),
+        };
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
         frame.closure_assigned = closure_assigned_in(params, body);
@@ -261,6 +274,9 @@ impl FnCx<'_, '_> {
             std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
+        if let Some((g, m, _)) = member {
+            self.enter_group_member(g, m, span);
+        }
         let mut declared = vec![];
         let mut locals = vec![];
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
@@ -312,6 +328,8 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        let peers = self.group_peer_lets(&frame, span);
+        block.stmts.splice(0..0, peers);
         if is_async {
             // A captured generator is checked once it is known whether the closure stays on
             // its task (`ownership::local_async`).
@@ -385,7 +403,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(super) fn alloc_closure(&mut self, span: Span) -> DefId {
+    pub(crate) fn alloc_closure(&mut self, span: Span) -> DefId {
         let n = self
             .cx
             .closure_counts
@@ -425,20 +443,31 @@ impl FnCx<'_, '_> {
                     Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };
+                let h = match (self.f.ret, self.promise_value(h.ty)) {
+                    // An async arrow giving a promise: its result is the promise's value.
+                    (None, Some(t)) => {
+                        self.f.ret = Some(t);
+                        self.inferred_promise_return(h, t)
+                    }
+                    _ => h,
+                };
                 if self.f.ret.is_none() {
                     self.f.ret = Some(h.ty);
                 }
                 let hs = h.span;
-                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value {
+                let adopt = std::mem::take(&mut self.f.adopt_stmt);
+                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value || adopt {
                     S::Expr(h)
                 } else {
                     S::Return(Some(h))
                 };
-                hir::Block {
+                let mut block = hir::Block {
                     stmts: vec![hir::Stmt { kind, span: hs }],
                     value: None,
                     span: e.span,
-                }
+                };
+                self.wrap_adopted(&mut block);
+                block
             }
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
@@ -450,9 +479,10 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => self.finish_inferred_ret(&mut block, "this arrow function"),
+                    None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &block);
+                self.check_returns("closure", ret, span, &mut block);
+                self.wrap_adopted(&mut block);
                 block
             }
         }

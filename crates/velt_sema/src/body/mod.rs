@@ -35,6 +35,7 @@
 
 pub(crate) mod assigned;
 mod closure_assigned;
+pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
@@ -164,6 +165,19 @@ pub(crate) struct CaptureCx {
     pub narrowed: bool,
 }
 
+/// A promise an async function returns (`expr::tasks`, `async_returned`): the `return` stores
+/// it in `slot` (`T | null`) and leaves the body's scopes with `break` [`ADOPT_LABEL`]; then
+/// `value` (reading `bind`, the promise moved out of `slot`) is returned.
+#[derive(Clone)]
+pub(crate) struct Adopted {
+    pub slot: LocalId,
+    pub bind: LocalId,
+    pub value: hir::Expr,
+}
+
+/// The label of the loop around the body of an async function that returns a promise.
+pub(crate) const ADOPT_LABEL: &str = "<adopt>";
+
 /// Per-function checking state; closures push a new frame (the enclosing one is saved).
 #[derive(Clone)]
 pub(crate) struct Frame {
@@ -192,6 +206,15 @@ pub(crate) struct Frame {
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
+    /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
+    /// once the body's scopes are left (`wrap_adopted`; issue #1148).
+    pub adopted: Vec<Adopted>,
+    /// Which of `adopted` was stored last (`i + 1`; `0` for none): every store writes it, so a
+    /// `return p` cancelled by a `finally` (`continue`, `break`, another `return`) is not
+    /// adopted, as in JS.
+    pub adopt_which: Option<LocalId>,
+    /// The `return` being checked stores a promise to adopt: it becomes that statement.
+    pub adopt_stmt: bool,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
     /// `break`/`continue` there cannot target a loop outside it).
     pub finally_loops: Option<usize>,
@@ -258,10 +281,17 @@ pub(crate) struct Frame {
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
+    /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
+    /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
+    /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
+    pub destructured_discriminants: HashMap<LocalId, Vec<(bool, LocalId)>>,
     /// Calls of type predicates (`isFoo(x)`) whose conditions narrow a local: by the call's
     /// span (`lo`, `hi`), the local and the facts it establishes when the call returns `true`
     /// and `false`. The call checks them at run time (`predicates::predicate_checked`).
     pub checked_predicates: HashMap<(u32, u32), predicates::CheckedPredicate>,
+    /// Recursive closure groups declared in this frame, or the one whose member it checks
+    /// (`closure_group`).
+    pub groups: closure_group::GroupFrame,
 }
 
 impl Frame {
@@ -282,6 +312,9 @@ impl Frame {
             yield_ty: None,
             fn_expr_name: None,
             finally_depth: 0,
+            adopted: vec![],
+            adopt_which: None,
+            adopt_stmt: false,
             finally_loops: None,
             stmt_yields: Default::default(),
             soft_moves: vec![],
@@ -309,6 +342,8 @@ impl Frame {
             const_lits: HashMap::new(),
             regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
+            destructured_discriminants: HashMap::new(),
+            groups: Default::default(),
         }
     }
 }
@@ -382,6 +417,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
+    /// The arrow (by span) that an adapter outside any body calls in place, and the function
+    /// type it is checked as (`callback::immediate_wrapper`).
+    pub immediate_hint: Option<(Span, TyId)>,
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
@@ -403,6 +441,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
     /// result is `this` itself, which such a method may return.
     pub this_calls: std::collections::HashSet<Span>,
+    /// The member of a recursive closure group whose arrow is about to be checked: group,
+    /// member and its definition.
+    pub pending_member: Option<(usize, usize, DefId)>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -433,6 +474,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             thread_adapter: None,
             member_choices: HashMap::new(),
             detached: false,
+            immediate_hint: None,
             collect_iterable_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
@@ -441,6 +483,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_folded: false,
             jsx_list_trial: false,
             this_calls: Default::default(),
+            pending_member: None,
         }
     }
 

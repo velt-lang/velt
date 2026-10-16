@@ -281,11 +281,16 @@ impl<'a> Printer<'a> {
         let TypeExprKind::Union(members) = &t.kind else {
             return self.ty(t);
         };
-        let docs: Vec<Doc> = members
+        let kept: Vec<&TypeExpr> = members
             .iter()
             .filter(|m| !(matches!(m.kind, TypeExprKind::Null) && drop(m)))
-            .map(|m| self.ty_operand(m))
             .collect();
+        // One member left (`f?: (x: T) => R`): the type as written, without the parentheses
+        // it would need as an operand of `|`.
+        if let [only] = kept.as_slice() {
+            return self.ty(only);
+        }
+        let docs: Vec<Doc> = kept.iter().map(|m| self.ty_operand(m)).collect();
         join(&text(" | "), docs)
     }
 

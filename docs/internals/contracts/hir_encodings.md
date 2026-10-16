@@ -44,6 +44,13 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   leaves the enclosing local initialized (a shared value still used after the closure is created;
   see "Sharing"). A capture whose local is `LocalDef::boxed` stores the cell pointer instead.
   Closure bodies take the env pointer as a hidden first param; `code` has that signature.
+  Members of a recursive closure group (nested functions calling each other, sema
+  `nested_closures`) capture the same variables in the same order, so their envs have one
+  layout; inside a member, `Intrinsic::ClosureSibling(def)` is the function value of member
+  `def` with the running closure's env (a new reference to it), or, in an async member, a new
+  heap env filled from its own captures (shared). Members are escaping (counted heap envs).
+  In a sync member, a local holding a `ClosureSibling` that is only ever called is never made:
+  lowering calls member `def`'s code with the running env directly.
 - Errors: see "Errors" below.
 - `x ?? d`, `a?.b`, `if (x != null)` narrowing are desugared by sema into `Match` with
   `PatKind::Some/None`; narrowed uses read the payload via `ExprKind::UnwrapSome`.
@@ -51,7 +58,15 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - Interface fields are read through synthesized getter methods: sema adds one `Def::Fn` per
   (impl, field) returning the field (Copy → copy, else borrow-as-clone) and appends it to the
   interface's method slots, so `x.field` on a `T extends I` / `Dyn` receiver is a
-  `ParamMethod`/`Dyn` call.
+  `ParamMethod`/`Dyn` call. An interface the program writes a field through also has one
+  setter slot per writable (non-`readonly`) field after the getters (slot `methods + fields +
+  k`, `k` counting the writable fields before it; `InterfaceDef::methods` lists them as
+  `<set f>`): a `Def::Fn` per (impl, field) taking `this` mutably borrowed and the value
+  owned (Copy → copied), which moves it into the field; the caller shares a value it uses
+  again, as for a class setter. `x.f = v` is a `ParamMethod`/`Dyn` call of that slot with
+  arguments `[x, v]`; lowering holds the receiver of a `Dyn` setter call against `v` (a
+  reference of its own when `v` may replace or free what `x` holds). Interfaces nobody writes
+  through have no setter slots.
 
 ## M2 encodings sema emits
 - Closure `FnDef::params`: one param per capture first (local = `Capture::inner`, mode = capture
@@ -719,5 +734,41 @@ entry is an `ICE:`.
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
   is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
   them the tables and the VIR are unchanged.
-- Not yet (each a compile error, phase 1b and 2 of #924): member writes on `any` (`x.f = v`),
-  other operators, template literals and `String(x)`, `JSON.stringify` of an `any`, iteration.
+- Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
+  `any` key is `AnySet(x, key, v)`, with a number key `AnySetIndex(x, i as f64, v)`, of type
+  `void`; `x` is borrowed and `v` boxed and moved in. Used as a value, the assignment is a block
+  `{ let t = v; AnySet(x, key, Share(t)); t }`. Both run user code (setters): they are in
+  `effects::runs_user_code` and `replaced_holders::implicit::glue_args`. `Program::dyn_members`
+  also lists each type's `readonly` fields (`DynMemberKind::ReadonlyField`, `def` the type's own
+  `Def::Adt`), which a write refuses. The `any` tables get slots 9 `AnySet (data, key, v) -> u8`
+  and 10 `AnySetIndex (data, f64, v) -> u8` (velt_vir `lower/any_set.rs`; the slot owns `*v`),
+  returning 0, 1 (not supported yet) or 3 (the fixed shape has no such member: Node would add
+  it). A program with a write makes `any` an identity interface in lowering, so an object type
+  converted to `any` is one counted object, never a copy. A write through `any` counts as a
+  write of the field it names (or, for a computed key, of every field) for `object_copies`.
+- `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
+  array's or tuple's `any` table is `u64::MAX - 1`. `Array.isArray(x)`, `x instanceof C` of a
+  generic class and `typeof x === "function"` narrow a dynamic local with `Fact::Class(l, any)`
+  (an `unknown` reads as `AnyTo(Share(x))` to `any`; an `any` stays as it is).
+- `Intrinsic::AnyHas(x, key)` is `key in x` on an `any` `x` (key `string`, or `any`: a number
+  names an element by its string), of type `bool`; `x` is borrowed. Lowering evaluates `key`
+  before `x`, as JavaScript does, although `x` is the first argument. It runs user code (a
+  proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
+  The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
+  1 yes, 2 not supported yet) only when the program has such a test.
+- Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
+  any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
+  Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
+  (`ToDyn`), and reports one converted straight to a typed value. The member slots of the
+  `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
+  and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
+  to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
+  Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
+  as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
+  a target through a proxy starts at a noted write). Lowering recognizes the two classes by
+  their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
+  named `Proxy` is its own) and numbers them last among class ids, so programs without them
+  keep theirs.
+- Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
+  members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
+  an `any`, iteration.

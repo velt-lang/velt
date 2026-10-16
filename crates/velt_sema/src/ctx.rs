@@ -47,6 +47,8 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    /// Interfaces written through and their setter slots (`crate::iface_writes`).
+    pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -155,6 +157,12 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_all: HashSet<Span>,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: HashSet<Span>,
+    /// Recursive closure groups made by `crate::nested_closures`.
+    pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
+    /// Group and member of each group member, by the name span of its `const`.
+    pub group_names: HashMap<Span, (usize, usize)>,
+    /// Definitions of the closures that are members of a recursive closure group.
+    pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
@@ -234,6 +242,13 @@ pub(crate) struct Ctx<'m> {
     pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
     /// What the last check of a body found about those locals.
     pub literal_found: HashMap<DefId, crate::body::literal_locals::LiteralLocals>,
+    /// Modules whose parse reported errors (`velt check` goes on with the recovered syntax
+    /// trees, [`crate::check_recovered`]), with the words of their source: a name missing from
+    /// one may be a declaration the parser dropped (`collect::exports::maybe_dropped`).
+    pub recovered: HashMap<usize, HashSet<String>>,
+    /// Names bound by such an import that found nothing (file of the importing module, local
+    /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
+    pub poisoned: HashSet<(velt_common::FileId, String)>,
 }
 
 impl<'m> Ctx<'m> {
@@ -256,6 +271,7 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            iface_writes: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
@@ -301,6 +317,9 @@ impl<'m> Ctx<'m> {
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             kept_nested: HashSet::new(),
+            closure_groups: vec![],
+            group_names: HashMap::new(),
+            group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
             overloaded_methods: HashSet::new(),
@@ -311,6 +330,8 @@ impl<'m> Ctx<'m> {
             sync_handlers: vec![],
             thread_adapters: vec![],
             ide: None,
+            recovered: HashMap::new(),
+            poisoned: HashSet::new(),
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),
             symbol_keys: Default::default(),
@@ -349,6 +370,9 @@ impl<'m> Ctx<'m> {
     /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
     /// one of the SIMD types, which are not global (`velt:simd`).
     pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
+        if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
+            return;
+        }
         let mut d = Diagnostic::error(msg, span);
         if crate::hir::SimdTy::named(name).is_some() {
             d = d.with_note(format!(

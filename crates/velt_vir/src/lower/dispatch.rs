@@ -8,6 +8,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
+use super::sequence::later_each;
 use super::{ice, FnLower};
 use crate::vir::{Operand, Proj, Rvalue, Ty};
 
@@ -88,6 +89,20 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The receiver `rv` of a dispatched call (`args[0]`), held against the arguments after it.
+    /// An argument may replace or free what the receiver was read from (`xs[0].m(clear())`
+    /// where `clear` pops `xs`, `x.f = v()` where `v` reassigns `x`), and JavaScript calls the
+    /// method on the object read before, so the receiver gets a reference of its own for the
+    /// call, as a class method's receiver does (`lower_args`). Arguments that run no code that
+    /// can change memory or write a local leave the receiver as it was read.
+    fn hold_receiver(&mut self, rv: Operand, args: &[hir::Expr], transfer: bool) -> Operand {
+        if transfer {
+            return rv;
+        }
+        let later = later_each(args).first().copied().unwrap_or_default();
+        self.hold(rv, args[0].ty, later)
+    }
+
     pub(super) fn call_virtual(
         &mut self,
         slot: u32,
@@ -110,11 +125,13 @@ impl FnLower<'_, '_> {
         // The method or an argument may replace or free the receiver where it was read from
         // (`XS[0].m(clear())` where `clear` empties a module array, `this.items[0].m(reset())`),
         // so it is stabilized as a class method's receiver is (`lower_args`): a receiver read
-        // through a counted object, a cell or module state is shared for the call.
+        // through a counted object, a cell or module state is shared for the call, then held
+        // against the arguments.
         let rv = match !transfer && !super::call::is_moved(recv) {
             true => self.stable_borrow(recv, &args[1..]),
             false => self.receiver(recv, transfer),
         };
+        let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
@@ -147,6 +164,7 @@ impl FnLower<'_, '_> {
             _ => ice("interface call on a non-interface receiver"),
         };
         let rv = self.receiver(recv, transfer);
+        let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,

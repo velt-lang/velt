@@ -387,6 +387,14 @@ impl FnLower<'_, '_> {
             return;
         }
         let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
+        if self.is_proxy(ty) {
+            // Node prints a proxy as its target, without running traps (`showProxy: false`).
+            let any = self.cx.member_ty(ty, 0);
+            let target = self.field_place(&place, ty, 0);
+            self.format_expand(&buf, &target, any, &depth);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         if let Some(m) = self.hook(ty, Hook::Inspect) {
             self.format_inspect(&buf, p, ty, m, &depth);
         } else if !self.format_collection(&buf, &place, ty, &depth) {

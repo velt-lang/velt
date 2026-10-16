@@ -9,6 +9,8 @@
 //! | 6 | `AnyIndex`: `(data, i: f64, out: *any) -> u8` |
 //! | 7 | `AnyCall`: `(data, key: *string, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 8 | `AnyApply`: `(data, argv: *any, argc: u64, out: *any) -> u8` |
+//! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs; only in a program that writes through `any`) |
+//! | 11 | `AnyHas` (any_has.rs; only in a program that tests `key in x` on an `any`) |
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
@@ -51,15 +53,24 @@ impl Cx<'_> {
         if self.hir.dyn_members.is_none() {
             return vec![];
         }
-        [
+        let mut slots = vec![
             (SLOT_GET, Glue::AnyGet),
             (SLOT_INDEX, Glue::AnyIndex),
             (SLOT_CALL, Glue::AnyCall),
             (SLOT_APPLY, Glue::AnyApply),
-        ]
-        .into_iter()
-        .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
-        .collect()
+        ];
+        // The write slots only when the program writes through `any` (from the pass before).
+        if self.boxing.any_writes {
+            slots.push((super::any_set::SLOT_SET, Glue::AnySet));
+            slots.push((super::any_set::SLOT_SET_INDEX, Glue::AnySetIndex));
+        }
+        if self.boxing.any_has {
+            slots.push((super::any_has::SLOT_HAS, Glue::AnyHas));
+        }
+        slots
+            .into_iter()
+            .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
+            .collect()
     }
 
     /// Can glue box a value of `t` (`any_box_into`)? Types sema unpacks before boxing (unions,
@@ -153,6 +164,10 @@ impl FnLower<'_, '_> {
     }
 
     fn any_box_raw(&mut self, v: Operand, t: TyId, out: &Place) {
+        // An object type is one counted object when the program writes through `any`
+        // (`any_set`), so the box holds the object itself, not a copy.
+        let any = self.cx.any_ty();
+        self.cx.note_dyn_identity(any, t);
         let data = if self.cx.is_class(t) || self.cx.boxed(t) {
             v
         } else {
@@ -192,7 +207,7 @@ impl FnLower<'_, '_> {
     /// (`box.g.kill()` where `kill` sets `this.box.g = null`): a receiver reached through a
     /// counted object or a shared cell is shared for the statement, as `stable_borrow` does for
     /// a counted receiver, so the old value lives until the call returns.
-    fn any_receiver(&mut self, o: &hir::Expr) -> (Operand, Operand) {
+    pub(super) fn any_receiver(&mut self, o: &hir::Expr) -> (Operand, Operand) {
         let t = self.sub(o.ty);
         let v = if !self.dead() && (self.through_counted(o, t) || self.in_shared_cell(o)) {
             let v = self.expr(o);
@@ -211,7 +226,13 @@ impl FnLower<'_, '_> {
     /// `TypeError: Cannot read properties of undefined (reading 'k')` (Node's text) when the
     /// descriptor `desc` holds `null` / `undefined`; `key` is the key string's address, or a
     /// number key (formatted only on that path).
-    fn any_nullish_check(&mut self, desc: &Operand, key: NullKey<'_>) {
+    pub(super) fn any_nullish_check(&mut self, desc: &Operand, key: NullKey<'_>) {
+        self.any_nullish_check_as(desc, key, false);
+    }
+
+    /// `any_nullish_check`; `setting`: for a write (`Cannot set properties of undefined
+    /// (setting 'k')`).
+    pub(super) fn any_nullish_check_as(&mut self, desc: &Operand, key: NullKey<'_>, setting: bool) {
         let tag = self.any_tag_of(desc.clone());
         let one = cint(TAG_NULL as i128, Ty::U64);
         let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag.clone(), one));
@@ -224,7 +245,12 @@ impl FnLower<'_, '_> {
         self.branch(is_undef, u, n);
         for (b, word) in [(u, "undefined"), (n, "null")] {
             self.switch_to(b);
-            let head = format!("TypeError: Cannot read properties of {word}");
+            let (verb, ing) = if setting {
+                ("set", "setting")
+            } else {
+                ("read", "reading")
+            };
+            let head = format!("TypeError: Cannot {verb} properties of {word}");
             let k = match key {
                 NullKey::Str(k) => k.clone(),
                 NullKey::Num(i) => {
@@ -234,14 +260,14 @@ impl FnLower<'_, '_> {
                     ka
                 }
             };
-            self.panic_with_key(&format!("{head} (reading '"), &k, "')");
+            self.panic_with_key(&format!("{head} ({ing} '"), &k, "')");
             self.terminate(Terminator::Unreachable);
         }
         self.switch_to(ok);
     }
 
     /// Stop with `before` + the string at address `key` + `after`.
-    fn panic_with_key(&mut self, before: &str, key: &Operand, after: &str) {
+    pub(super) fn panic_with_key(&mut self, before: &str, key: &Operand, after: &str) {
         let s = Ty::Agg(STR_AGG);
         let a = self.str_lit(before);
         let a = self.operand_addr(a, s);
@@ -257,7 +283,7 @@ impl FnLower<'_, '_> {
     }
 
     /// After a slot call: a `TypeError` for a status other than `ST_OK`.
-    fn any_status_check(
+    pub(super) fn any_status_check(
         &mut self,
         st: Operand,
         unsupported: (&str, Option<&Operand>, &str),
@@ -343,7 +369,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The number an `any` key at `kp` holds (`ToNumber`; its tag is `number`).
-    fn any_key_number(&mut self, kp: &Place) -> Operand {
+    pub(super) fn any_key_number(&mut self, kp: &Place) -> Operand {
         let kdata = Operand::Copy(proj(kp, Proj::Field(0)));
         let kdesc = Operand::Copy(proj(kp, Proj::Field(1)));
         let f = self.dispatch(kdesc, SLOT_NUMBER);
@@ -361,15 +387,14 @@ impl FnLower<'_, '_> {
         self.any_nullish_check(desc, NullKey::Str(&key));
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
-        self.any_status_check(
-            st,
-            (
-                "TypeError: reading '",
-                Some(&key),
-                "' through `any` is not supported for this value yet (#924)",
-            ),
-            None,
-        );
+        // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
+        // instance, which a method call through a proxy with traps reads, is the common case.
+        let tail = if self.in_reflect {
+            "' through a proxy or `Reflect.get` is not supported for this value yet, such as a method of a class instance (#823)"
+        } else {
+            "' through `any` is not supported for this value yet (#924)"
+        };
+        self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None);
     }
 
     fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {
@@ -487,7 +512,7 @@ impl FnLower<'_, '_> {
 
 /// The key a `TypeError` for a `null` / `undefined` receiver names.
 #[derive(Clone, Copy)]
-enum NullKey<'a> {
+pub(super) enum NullKey<'a> {
     /// The address of the key string.
     Str(&'a Operand),
     /// A number key (an `f64`).

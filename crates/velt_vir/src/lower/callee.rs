@@ -12,8 +12,8 @@ use std::rc::Rc;
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
-use super::{cint, ice, FnLower, ThunkKind, Work};
-use crate::vir::{self, Operand, Proj, Rvalue, Ty};
+use super::{cfunc, cint, ice, FnLower, ThunkKind, Work};
+use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 impl super::Cx<'_> {
     /// Unify a (possibly generic) pattern type with a concrete type, binding `Param(i)`.
@@ -228,6 +228,20 @@ impl FnLower<'_, '_> {
         transfer: bool,
     ) -> Operand {
         let fty = self.sub(f.ty);
+        let throws = match self.cx.kind(fty) {
+            TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),
+            _ => None,
+        };
+        // Another member of this closure's recursive closure group, only ever called: its
+        // code with this closure's env (frame_envs.rs).
+        if let (hir::ExprKind::Local(l, _), Some(env), false) = (&f.kind, self.self_env, transfer) {
+            if let Some(&def) = self.direct_siblings.get(l) {
+                let code = self.cx.func(Work::Fn(def, self.targs.clone()));
+                let env = Operand::Copy(Place::local(env));
+                let ret = self.sub(ty);
+                return self.call_ptr(cfunc(code), env, args, None, (ret, throws, false));
+            }
+        }
         let fv = match transfer {
             // A spawned call: the callee's state takes its captures from the environment (an
             // async closure copies them, or shares a resource that cannot be copied,
@@ -260,10 +274,6 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
-        let throws = match self.cx.kind(fty) {
-            TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),
-            _ => None,
-        };
         // The callee is unknown: every non-Copy argument is a plain borrow.
         self.call_ptr(code, env, args, None, (ret, throws, transfer))
     }

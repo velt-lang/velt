@@ -8,7 +8,6 @@ pub(crate) use super::member_keys::{literal_key, member_view};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::defs::Bound;
 use crate::hir::{self, AdtKind, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 use crate::ide::record::Target;
 
@@ -37,67 +36,47 @@ impl FnCx<'_, '_> {
     }
 
     /// `x.field` on an interface value or bounded generic: a call of the field's getter slot
-    /// (see `collect::getters`); the result is an owned copy / clone.
-    fn iface_field(
+    /// (see `collect::getters`); the result is an owned copy / clone. Writes go through the
+    /// setter slot (`iface_write`), never through this place.
+    pub(super) fn iface_field(
         &mut self,
         mut obj: hir::Expr,
         prop: &ast::Ident,
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (bounds, on_param) = match self.cx.ty.kind(obj.ty) {
-            TyKind::Dyn(d, args) => (
-                vec![Bound {
-                    iface: *d,
-                    args: args.clone(),
-                }],
-                false,
-            ),
-            TyKind::Param(n) => (
-                self.bounds.get(*n as usize).cloned().unwrap_or_default(),
-                true,
-            ),
-            _ => return Err(obj),
+        let Some(f) = self.iface_field_of(obj.ty, &prop.name) else {
+            return Err(obj);
         };
-        for b in bounds {
-            let Some(i) = self.cx.iface(b.iface) else {
-                continue;
-            };
-            let Some(idx) = i.fields.iter().position(|f| f.name == prop.name) else {
-                continue;
-            };
-            let (fty, slot) = (i.fields[idx].ty, (i.methods.len() + idx) as u32);
-            self.cx
-                .rec_ref(prop.span, Target::Field(b.iface, idx as u32));
-            let fty = self.cx.subst(fty, &b.args);
-            if want == Want::BorrowMut {
-                self.cx.err(
-                    format!(
-                        "cannot modify `{}` through an interface or generic value",
-                        prop.name
-                    ),
-                    prop.span,
-                );
-                return Ok(self.error_expr(span));
-            }
-            set_place_mode(&mut obj, UseMode::Borrow);
-            let callee = if on_param {
-                Callee::ParamMethod {
-                    iface: b.iface,
-                    iface_args: b.args.clone(),
-                    slot,
-                    method_type_args: vec![],
-                }
-            } else {
-                Callee::Dyn { slot }
-            };
-            let kind = H::Call {
-                callee,
-                args: vec![obj],
-            };
-            return Ok(self.mk(kind, fty, span));
+        let slot = self.cx.iface(f.iface).map_or(0, |i| i.methods.len()) + f.index;
+        self.cx
+            .rec_ref(prop.span, Target::Field(f.iface, f.index as u32));
+        if want == Want::BorrowMut {
+            self.cx.err(
+                format!(
+                    "cannot modify `{}` through an interface or generic value",
+                    prop.name
+                ),
+                prop.span,
+            );
+            return Ok(self.error_expr(span));
         }
-        Err(obj)
+        set_place_mode(&mut obj, UseMode::Borrow);
+        let callee = if f.on_param {
+            Callee::ParamMethod {
+                iface: f.iface,
+                iface_args: f.args,
+                slot: slot as u32,
+                method_type_args: vec![],
+            }
+        } else {
+            Callee::Dyn { slot: slot as u32 }
+        };
+        let kind = H::Call {
+            callee,
+            args: vec![obj],
+        };
+        Ok(self.mk(kind, f.ty, span))
     }
 
     /// `obj.prop` as a field place used per `want`.
@@ -164,6 +143,9 @@ impl FnCx<'_, '_> {
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
         if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
+        }
+        if crate::collect::exports::member_maybe_dropped(self.cx, t, &prop.name) {
+            return; // the parser may have dropped its declaration (`Ctx::recovered`)
         }
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
