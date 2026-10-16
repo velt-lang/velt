@@ -157,6 +157,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let (module, qual, owner) = (g.module, g.qual_name.clone(), g.src.owner);
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
+    cx.literal_hosts.in_constants += 1;
     let saved = std::mem::take(&mut cx.display_params);
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
@@ -183,6 +184,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         super::pure_init::check_init(cx, &name, i, ty);
     }
     cx.display_params = saved;
+    cx.literal_hosts.in_constants -= 1;
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
         g.ty = ty;
         g.init = init;

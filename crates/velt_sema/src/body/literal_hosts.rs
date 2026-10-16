@@ -24,6 +24,10 @@ use crate::hir::DefId;
 pub(crate) struct LiteralHosts {
     /// The bodies not yet made sure of, in checking order.
     pending: std::collections::VecDeque<DefId>,
+    /// Module constants being checked: their initializers may lead to function bodies that
+    /// read the constant, so no queued body is checked meanwhile (it would find the constant
+    /// in progress, a false cycle); the queue is drained after them.
+    pub(crate) in_constants: u32,
 }
 
 /// Records the function bodies that may hold such literals (before bodies are checked).
@@ -49,6 +53,9 @@ pub(crate) fn find(cx: &mut Ctx) {
 /// left to finish (what their literals' methods throw is known meanwhile from
 /// `Ctx::provisional_slots`).
 pub(crate) fn ensure_all(cx: &mut Ctx) {
+    if cx.literal_hosts.in_constants > 0 {
+        return;
+    }
     while let Some(d) = cx.literal_hosts.pending.pop_front() {
         super::ensure_body(cx, d);
     }

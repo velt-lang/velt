@@ -126,6 +126,7 @@ impl FnCx<'_, '_> {
         (iface, iargs, dyn_ty): (DefId, Vec<TyId>, TyId),
         span: Span,
     ) -> hir::Expr {
+        let diags = self.cx.diags.len();
         let Some(info) = self.cx.iface(iface) else {
             return self.error_expr(span);
         };
@@ -267,7 +268,14 @@ impl FnCx<'_, '_> {
                         ok = false;
                         continue;
                     }
-                    let exp = self.method_fn_type(m);
+                    let mut exp = self.method_fn_type(m);
+                    if let Some(t) = v
+                        .filter(|_| m.throws.is_none())
+                        .and_then(|v| self.branches_throw(v, exp))
+                    {
+                        let params = m.params.iter().map(|p| p.ty).collect();
+                        exp = self.fn_type(params, m.ret, Some(t));
+                    }
                     let h = match v {
                         Some(v) => self.slot_value(v, exp, (iface, slot)),
                         None => self.prop_value(&key, v, Some(exp)),
@@ -343,7 +351,18 @@ impl FnCx<'_, '_> {
                 ok = false;
             }
         }
-        if !ok || values.iter().any(|(_, h)| self.cx.ty.has_error(h.ty)) {
+        if !ok {
+            return self.error_expr(span);
+        }
+        if let Some((name, h)) = values.iter().find(|(_, h)| self.cx.ty.has_error(h.ty)) {
+            if self.cx.diags.len() == diags {
+                // A member whose type is not known, though nothing reported why.
+                let at = h.span;
+                self.cx.err(
+                    format!("the type of member `{name}` of this object literal implementing `{iname}` is not known; write it as a function, or give it a type"),
+                    at,
+                );
+            }
             return self.error_expr(span);
         }
         self.build_iface_object(
@@ -482,6 +501,43 @@ impl FnCx<'_, '_> {
             dyn_ty,
             span,
         )
+    }
+
+    /// What a conditional function value (`c ? f : g`) throws: the errors of either branch,
+    /// each checked against `exp` in a trial. Its branches are then checked against the
+    /// function type throwing them all, which each converts to where it is made. `None` for
+    /// any other value, or a branch that is no function.
+    fn branches_throw(&mut self, e: &ast::Expr, exp: TyId) -> Option<TyId> {
+        let mut e = e;
+        while let ast::ExprKind::Paren(inner) = &e.kind {
+            e = inner;
+        }
+        let ast::ExprKind::Cond { then, els, .. } = &e.kind else {
+            return None;
+        };
+        let never = self.cx.ty.never;
+        let mut acc = None;
+        for b in [then, els] {
+            let t = match self.branches_throw(b, exp) {
+                Some(t) => t,
+                None => self.trial_throws(b, exp)?,
+            };
+            acc = self.cx.join_errors(acc, (t != never).then_some(t));
+        }
+        Some(acc.unwrap_or(never))
+    }
+
+    /// What function value `e` throws, checked against `exp` and rolled back.
+    fn trial_throws(&mut self, e: &ast::Expr, exp: TyId) -> Option<TyId> {
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let h = self.expr(e, Some(exp), Want::Move);
+        let ok = self.cx.diags.len() == diags;
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        let t = self.fn_throws(h.ty).filter(|_| ok)?;
+        (!self.cx.ty.has_error(t)).then_some(t)
     }
 
     /// The value `e` written for slot `slot` of `iface` (expected type `exp`).
