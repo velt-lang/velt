@@ -9,7 +9,7 @@
 //! | 6 | `AnyIndex`: `(data, i: f64, out: *any) -> u8` |
 //! | 7 | `AnyCall`: `(data, key: *string, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 8 | `AnyApply`: `(data, argv: *any, argc: u64, out: *any) -> u8` |
-//! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs) |
+//! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs; only in a program that writes through `any`) |
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
@@ -52,15 +52,19 @@ impl Cx<'_> {
         if self.hir.dyn_members.is_none() {
             return vec![];
         }
-        [
+        let mut slots = vec![
             (SLOT_GET, Glue::AnyGet),
             (SLOT_INDEX, Glue::AnyIndex),
             (SLOT_CALL, Glue::AnyCall),
             (SLOT_APPLY, Glue::AnyApply),
-            (super::any_set::SLOT_SET, Glue::AnySet),
-            (super::any_set::SLOT_SET_INDEX, Glue::AnySetIndex),
-        ]
-        .into_iter()
+        ];
+        // The write slots only when the program writes through `any` (from the pass before).
+        if self.boxing.any_writes {
+            slots.push((super::any_set::SLOT_SET, Glue::AnySet));
+            slots.push((super::any_set::SLOT_SET_INDEX, Glue::AnySetIndex));
+        }
+        slots
+            .into_iter()
         .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
         .collect()
     }

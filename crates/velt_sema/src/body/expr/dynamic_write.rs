@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::any::Dynamic;
-use crate::body::places::set_place_mode;
+use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, UseMode};
 
@@ -85,6 +85,19 @@ impl FnCx<'_, '_> {
             },
             _ => return (self.error_expr(span), false),
         };
+        // Used as a value, the receiver and key are bound first: JavaScript evaluates them
+        // before the right-hand side, which may replace the object the receiver names.
+        let mut stmts = vec![];
+        let (obj, key) = if as_value {
+            let obj = self.hoist_dynamic(obj, &mut stmts);
+            let key = match key {
+                WriteKey::Str(k) => WriteKey::Str(self.hoist_dynamic(k, &mut stmts)),
+                WriteKey::Num(k) => WriteKey::Num(self.hoist_dynamic(k, &mut stmts)),
+            };
+            (obj, key)
+        } else {
+            (obj, key)
+        };
         let v = self.expr(value, Some(any), Want::Move);
         if self.cx.ty.is_bottom(v.ty) {
             return (self.error_expr(span), false);
@@ -98,30 +111,59 @@ impl FnCx<'_, '_> {
         if !as_value {
             return (self.intrinsic(i, vec![obj, key, v], unit, span), false);
         }
-        // `{ const t = v; x.f = share(t); t }`.
+        // `{ const r = x; const k = key; const t = v; r[k] = share(t); t }`.
         let tmp = self.new_local("<assigned>", any, false, span, LocalKind::Temp);
         let read = self.mk(H::Local(tmp, UseMode::Borrow), any, span);
         let share = self.intrinsic(Intrinsic::Share, vec![read], any, span);
         let set = self.intrinsic(i, vec![obj, key, share], unit, span);
         let result = self.mk(H::Local(tmp, UseMode::Move), any, span);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: tmp,
+                init: Some(v),
+            },
+            span,
+        });
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Expr(set),
+            span,
+        });
         let block = hir::Block {
-            stmts: vec![
-                hir::Stmt {
-                    kind: hir::StmtKind::Let {
-                        local: tmp,
-                        init: Some(v),
-                    },
-                    span,
-                },
-                hir::Stmt {
-                    kind: hir::StmtKind::Expr(set),
-                    span,
-                },
-            ],
+            stmts,
             value: Some(Box::new(result)),
             span,
         };
         (self.mk(H::Block(block), any, span), true)
+    }
+
+    /// `e` (a receiver or key) bound to a temporary appended to `stmts`, read back by borrow: a
+    /// share of it when it is a place, else the value itself. A literal stays as it is.
+    fn hoist_dynamic(&mut self, mut e: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+        if matches!(e.kind, H::Lit(_)) {
+            return e;
+        }
+        let (ty, span) = (e.ty, e.span);
+        let copy = self.cx.is_copy(ty);
+        let init = if copy {
+            set_place_mode(&mut e, UseMode::Copy);
+            e
+        } else if is_place(&e) {
+            set_place_mode(&mut e, UseMode::Borrow);
+            self.intrinsic(Intrinsic::Share, vec![e], ty, span)
+        } else {
+            set_place_mode(&mut e, UseMode::Move);
+            e
+        };
+        let tmp = self.new_local("<receiver>", ty, false, span, LocalKind::Temp);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: tmp,
+                init: Some(init),
+            },
+            span,
+        });
+        let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
+        self.mk(H::Local(tmp, mode), ty, span)
     }
 
     /// The key of `x[index] = v` on an `any`: a string or `any` key names a member, a number

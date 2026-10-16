@@ -39,6 +39,7 @@ impl FnLower<'_, '_> {
         // counted object, never a copy (`Cx::note_dyn_identity`).
         let any = self.cx.any_ty();
         self.cx.note_identity(any);
+        self.cx.note_any_set();
         let (data, desc) = self.any_receiver(o);
         let kt = self.sub(k.ty);
         let kv = self.expr(k);

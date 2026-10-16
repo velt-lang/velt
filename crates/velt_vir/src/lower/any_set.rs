@@ -1,6 +1,7 @@
 //! Member writes on `any` (phase 1b of #924; hir_encodings.md "any and unknown"):
 //! `Intrinsic::AnySet` / `AnySetIndex`, one indirect call through a descriptor slot of the
-//! value held, like the reads of any_member.rs:
+//! value held, like the reads of any_member.rs. The tables have these slots only when the
+//! program has such a write (`Boxing::any_writes`):
 //!
 //! | slot | entry |
 //! |---|---|
