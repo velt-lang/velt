@@ -130,6 +130,12 @@ pub(crate) struct Ctx<'m> {
     /// What the methods of the object literals being checked throw, by interface slot, before
     /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
     pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
+    /// The adapters converting generic interface values to `unknown` type arguments
+    /// (`body/expr/iface_adapt.rs`), made on first use.
+    pub iface_adapters: HashMap<
+        crate::body::expr::iface_adapt::AdapterKey,
+        crate::body::expr::iface_adapt::Adapter,
+    >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
@@ -304,6 +310,7 @@ impl<'m> Ctx<'m> {
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],
+            iface_adapters: HashMap::new(),
             throw_checks: vec![],
             iface_generators: vec![],
             nested: vec![],

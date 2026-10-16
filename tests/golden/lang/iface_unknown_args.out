@@ -1,0 +1,8 @@
+date $date 86400000
+money $money EUR 250
+legacy (no tag) 10
+plain 42
+date revived true
+money revived true
+legacy is serialize-only
+date null
