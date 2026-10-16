@@ -53,9 +53,11 @@ impl Cx<'_> {
         let hir::Def::Adt(a) = self.hir.def(d) else {
             return false;
         };
-        ["Proxy", "Reflect"]
-            .iter()
-            .any(|n| a.name == *n || a.name.ends_with(&format!("::{n}")) || a.name.ends_with(&format!(".{n}")))
+        ["Proxy", "Reflect"].iter().any(|n| {
+            a.name == *n
+                || a.name.ends_with(&format!("::{n}"))
+                || a.name.ends_with(&format!(".{n}"))
+        })
     }
 
     fn number_classes(&self) -> HashMap<DefId, (u64, u64)> {

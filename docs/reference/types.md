@@ -1750,3 +1750,61 @@ function main(): void {
 **Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
 operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
+
+`key in x` on an `any` asks the value held: a class instance or object type has its fields,
+methods and accessors and what every object has from `Object.prototype` (`toString`), a
+`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
+(which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+
+### Proxy and Reflect
+
+`new Proxy(target, handler)` makes a proxy as in JavaScript: reading a member of it runs the
+handler's `get` trap, writing one its `set` trap and `key in p` its `has` trap, each with the
+target, the key (a string; an index arrives as its string, `"1"`) and, for `get` and `set`, the
+proxy itself as the receiver. A trap the handler leaves out forwards the operation to the
+target, and `p.m(a)` reads `m` through `get` and calls what it returns. A `set` trap that
+returns `false` makes the assignment throw Node's `TypeError: 'set' on proxy: trap returned
+falsish for property 'k'` (what strict code gets). `Reflect.get(t, k)`, `Reflect.set(t, k, v)`
+and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a receiver, `Reflect.get`
+and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
+target, without running traps, as Node does.
+
+The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
+TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). In Velt a proxy is an `any`
+for now: TypeScript gives `new Proxy(target, handler)` the target's type, and converting a proxy
+straight to a typed value is a compile error (``a proxy cannot be used as a `State` yet``). Its
+members are read and written through `any` as above, so a program without proxies pays nothing
+for them.
+
+```ts
+let reads = 0;
+
+function counted(target: any): any {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      reads++;
+      return Reflect.get(obj, prop);
+    },
+    set(obj, prop, value, receiver) {
+      console.log("set", prop, value);
+      return Reflect.set(obj, prop, value);
+    },
+  });
+}
+
+function main(): void {
+  const raw = { count: 0 };
+  const state = counted(raw);
+  state.count = 5; // set count 5
+  console.log(state.count, raw.count, reads); // 5 5 1
+  console.log("count" in state, "other" in state); // true false
+}
+```
+
+**Planned** (#823): typed proxies (`new Proxy<T>` used as a `T`, the tagged pointer of #823's
+design); the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and `defineProperty` traps
+and their `Reflect` functions; symbol keys through a proxy; `Array.isArray` of an array proxy;
+proxies of functions (`apply`, `construct`). Until then each is a compile error or a
+`TypeError` naming #823. A getter of a plain target read by `Reflect.get(t, k, receiver)` runs
+with `this` the target (Node: the receiver).

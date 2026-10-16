@@ -24,6 +24,7 @@ mod adt;
 mod any;
 mod any_eq;
 mod any_glue;
+mod any_has;
 mod any_member;
 mod any_proxy;
 mod any_set;

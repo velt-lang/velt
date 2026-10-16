@@ -95,6 +95,18 @@ export class Proxy {
     }
     panic("TypeError: this property key is not supported through a proxy yet (#823)");
   }
+
+  /** `key in` this proxy: the `has` trap. */
+  __has(key: any): boolean {
+    const trap = this.#handler.has;
+    if (trap == null) {
+      return Reflect.has(this.#target, key);
+    }
+    if (typeof key === "string") {
+      return trap(this.#target, key);
+    }
+    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+  }
 }
 
 /** JavaScript's `Reflect`: the operations on objects as functions. */
@@ -128,5 +140,10 @@ export class Reflect {
     }
     target[key] = value;
     return true;
+  }
+
+  /** `key in target`. */
+  static has(target: any, key: any): boolean {
+    return key in target;
   }
 }

@@ -97,4 +97,46 @@ impl FnCx<'_, '_> {
             self.cx.note_dyn_members();
         }
     }
+
+    /// `key in obj` where `obj` is an `any`: `Intrinsic::AnyHas` (a proxy runs its `has`
+    /// trap). `None` when `obj` is not dynamic. The key is evaluated first, as in JavaScript.
+    pub(crate) fn dynamic_in(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let t = self.trial_expr(rhs).ty;
+        let dynamic = self.cx.dynamic(t)?;
+        let k = self.expr(lhs, None, crate::body::Want::Borrow);
+        let mut obj = self.expr(rhs, None, crate::body::Want::Borrow);
+        if dynamic == crate::any::Dynamic::Unknown {
+            self.unknown_use_error(rhs.span);
+            return Some(self.error_expr(span));
+        }
+        if self.cx.ty.is_bottom(k.ty) || self.cx.ty.is_bottom(obj.ty) {
+            return Some(self.error_expr(span));
+        }
+        crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        self.note_dyn_members();
+        let str_ = self.cx.ty.str_;
+        let kt = self.cx.widened(k.ty);
+        let k = if kt == str_ {
+            self.coerce(k, str_)
+        } else if self.cx.dynamic(k.ty).is_some() || self.cx.ty.is_numeric(kt) {
+            self.coerce(k, obj.ty)
+        } else {
+            let tn = self.cx.display(k.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`in` with a `{tn}` key on an `any` is not supported yet (#823)"),
+                    lhs.span,
+                )
+                .with_note("use a `string` or `number` key"),
+            );
+            return Some(self.error_expr(span));
+        };
+        let b = self.cx.ty.bool_;
+        Some(self.intrinsic(hir::Intrinsic::AnyHas, vec![obj, k], b, span))
+    }
 }

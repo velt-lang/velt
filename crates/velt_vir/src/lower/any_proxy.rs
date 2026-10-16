@@ -45,7 +45,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The key as an owned `any` temporary.
-    fn proxy_key(&mut self, key: ProxyKey) -> Place {
+    pub(super) fn proxy_key(&mut self, key: ProxyKey) -> Place {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let out = Place::local(self.temp(avt));
@@ -80,7 +80,7 @@ impl FnLower<'_, '_> {
 
     /// Call the `Proxy` method `name` with `this` = `data` and the owned `args`; its result
     /// boxed into `out`. `false` when the method cannot be called from glue.
-    fn proxy_invoke(
+    pub(super) fn proxy_invoke(
         &mut self,
         name: &str,
         data: vir::Local,
@@ -107,7 +107,13 @@ impl FnLower<'_, '_> {
     }
 
     /// `AnyGet` / `AnyIndex` of a proxy: `__get(key, receiver)` into `*out`.
-    pub(super) fn proxy_get_body(&mut self, data: vir::Local, key: ProxyKey, out: &Place, ty: TyId) {
+    pub(super) fn proxy_get_body(
+        &mut self,
+        data: vir::Local,
+        key: ProxyKey,
+        out: &Place,
+        ty: TyId,
+    ) {
         let any = self.cx.any_ty();
         let k = self.proxy_key(key);
         let r = self.proxy_receiver(data, ty);
@@ -170,7 +176,13 @@ impl FnLower<'_, '_> {
 
     /// `AnySet` / `AnySetIndex` of a proxy: `__set(key, *v, receiver)`; a trap returning
     /// `false` throws Node's `TypeError` (module code is strict).
-    pub(super) fn proxy_set_body(&mut self, data: vir::Local, key: ProxyKey, v: vir::Local, ty: TyId) {
+    pub(super) fn proxy_set_body(
+        &mut self,
+        data: vir::Local,
+        key: ProxyKey,
+        v: vir::Local,
+        ty: TyId,
+    ) {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let k = self.proxy_key(key);
@@ -207,5 +219,4 @@ impl FnLower<'_, '_> {
     fn any_drop_args_all(&mut self, argv: vir::Local, argc: vir::Local) {
         self.any_drop_args(argv, 0, argc);
     }
-
 }

@@ -44,7 +44,7 @@ fn runs_user_code(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
     matches!(
         i,
-        I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply | I::AnySet | I::AnySetIndex
+        I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply | I::AnySet | I::AnySetIndex | I::AnyHas
     )
 }
 
@@ -140,6 +140,8 @@ mod tests {
             Intrinsic::AnyApply,
             Intrinsic::AnySet,
             Intrinsic::AnySetIndex,
+            // `key in p` runs a proxy's `has` trap.
+            Intrinsic::AnyHas,
         ] {
             assert!(may_change_memory(&intrinsic(
                 i,
