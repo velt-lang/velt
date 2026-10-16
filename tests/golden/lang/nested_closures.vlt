@@ -1,0 +1,129 @@
+// check: no leaks
+// #1081: nested function declarations using the enclosing function's locals.
+function outer(n: number): number {
+  const cache = new Map<string, number>();
+  function get(k: string): number {
+    const hit = cache.get(k);
+    if (hit != null) return hit;
+    cache.set(k, n);
+    return n;
+  }
+  return get("a") + get("a");
+}
+
+// Called before its declaration (hoisted), assigning a captured `let`.
+function counter(): number {
+  let count = 0;
+  bump();
+  bump();
+  return count;
+  function bump(): void {
+    count += 1;
+  }
+}
+
+// Mutation after capture is seen by the nested function, as in JS.
+function late(): string {
+  let label = "a";
+  function show(): string {
+    return label;
+  }
+  const first = show();
+  label = "b";
+  return first + show();
+}
+
+// Nested functions calling each other, and used as values.
+function pipeline(xs: number[]): number[] {
+  const factor = 3;
+  function scale(x: number): number {
+    return x * factor;
+  }
+  function both(x: number): number {
+    return scale(x) + 1;
+  }
+  return xs.map(both).filter(isBig);
+  function isBig(x: number): boolean {
+    return x > factor * 2;
+  }
+}
+
+// A nested function returned as a closure keeps the variables it uses.
+function makeAcc(): () => number {
+  let total = 0;
+  function add(): number {
+    total += 10;
+    return total;
+  }
+  return add;
+}
+
+// Async nested function using a local.
+async function fetchAll(names: string[]): Promise<string[]> {
+  const prefix = "item:";
+  async function one(n: string): Promise<string> {
+    await Promise.resolve();
+    return prefix + n;
+  }
+  const out: string[] = [];
+  for (const n of names) out.push(await one(n));
+  return out;
+}
+
+// Inside a block.
+function blocky(flag: boolean): string {
+  const tag = "T";
+  if (flag) {
+    const inner = "i";
+    function mark(s: string): string {
+      return tag + inner + s;
+    }
+    return mark("x");
+  }
+  return tag;
+}
+
+// A capturing nested function inside another nested function.
+function deep(base: number): number {
+  function mid(k: number): number {
+    function leaf(): number {
+      return base + k;
+    }
+    return leaf() * 2;
+  }
+  return mid(1) + mid(2);
+}
+
+// A non-capturing recursive nested function still works.
+function fact(n: number): number {
+  function go(k: number): number {
+    return k <= 1 ? 1 : k * go(k - 1);
+  }
+  return go(n);
+}
+
+// A type query naming a nested closure (`typeof collect`).
+function merge(base: number): string {
+  function collect(): { n: number; s: string } {
+    return { n: base, s: "x" };
+  }
+  function show(state: ReturnType<typeof collect>): string {
+    return `${state.s}${state.n}`;
+  }
+  return show(collect());
+}
+
+async function main() {
+  console.log(outer(2));
+  console.log(counter());
+  console.log(late());
+  console.log(pipeline([1, 2, 3]));
+  const acc = makeAcc();
+  acc();
+  console.log(acc());
+  console.log(await fetchAll(["a", "b"]));
+  console.log(blocky(true), blocky(false));
+  console.log(deep(10));
+  console.log(fact(5));
+  console.log(merge(4));
+}

@@ -84,15 +84,24 @@ fn nested_declarations_are_hoisted_and_scoped() {
 }
 
 #[test]
-fn nested_functions_do_not_capture() {
+fn nested_functions_capture_as_closures() {
+    // A nested function using a local is a closure (`nested_closures`); one calling itself
+    // is not supported yet, and reported once.
     let r = err_src(
-        "function main() { const k = 1; function f(): i64 { return k; } console.log(f()); }",
+        "function main() { const k = 1; function f(n: i64): i64 { return n > k ? f(n - 1) : k; } console.log(f(3)); }",
+    );
+    assert!(
+        r.contains("`f` uses local variables of the enclosing function and calls itself"),
+        "{r}"
+    );
+    assert!(!r.contains("cannot be captured"), "{r}");
+    let r = err_src(
+        "function main() { const k = 1; function f<T>(x: T): i64 { return k; } console.log(f(1)); }",
     );
     assert!(
         r.contains("`k` cannot be captured by a nested function"),
         "{r}"
     );
-    assert!(r.contains("use an arrow function"), "{r}");
     let r = err_src("function main() { const k = 1; class C { f(): i64 { return k; } } }");
     assert!(r.contains("`k` cannot be captured"), "{r}");
 }

@@ -120,8 +120,7 @@ pub(crate) struct Ctx<'m> {
     pub closure_counts: HashMap<String, u32>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
-    /// Named functions used as values (`FnRef`) with their type arguments, checked after
-    /// ownership inference.
+    /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
@@ -146,15 +145,15 @@ pub(crate) struct Ctx<'m> {
     pub static_copy_of: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
-    /// Name spans of every function made from a generic arrow, module-level ones included
-    /// (diagnostics show them as arrows).
+    /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: HashSet<Span>,
+    /// Name spans of capturing nested functions reported by `crate::nested_closures`.
+    pub kept_nested: HashSet<Span>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
-    /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
-    /// errors were reported).
+    /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
     /// JSX component adapters, checked after ownership inference.
     pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
@@ -292,6 +291,7 @@ impl<'m> Ctx<'m> {
             static_copies: HashMap::new(),
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
+            kept_nested: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
             overloaded_methods: HashSet::new(),
