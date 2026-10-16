@@ -59,6 +59,14 @@ impl Dynamic {
             Dynamic::Function => "Function",
         }
     }
+
+    /// The article before the name (`an any`, `a Function`).
+    pub(crate) fn article(self) -> &'static str {
+        match self {
+            Dynamic::Function => "a",
+            _ => "an",
+        }
+    }
 }
 
 /// After the declarations: find the prelude's dynamic interfaces.

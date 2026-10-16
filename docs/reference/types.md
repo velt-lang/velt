@@ -1755,3 +1755,57 @@ function main(): void {
 **Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
 operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
+
+## object and Function
+
+`object` holds any value that is not a primitive: a class instance, an object, an array, a map,
+a set or a function, but not a `number`, `string`, `boolean`, `symbol`, `null` or `undefined`.
+`Function` holds any function. Both are the dynamic value of `any` restricted to those values,
+with TypeScript's rules:
+
+- Only objects convert to `object`, and only functions to `Function` (a `Point | null` does not
+  convert to `object`: test it for `null` first). Both convert to `any` and `unknown`, a
+  `Function` to `object`, and an `any` to either.
+- `T extends object` takes only types whose values are objects, so overloads can tell objects
+  from primitives; inside, a `T` converts to `object`.
+- An `object` converts back with `as T`, checked like an `any` (a `TypeError` when it holds
+  something else). Its members are TypeScript errors until it is narrowed or converted.
+- Calling a `Function` is a call through `any`: the arguments are converted to the parameters'
+  types when the function runs, and the result is an `any`. A field of type `Function` is
+  called the same way (`plugin.setup(app)`).
+- `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
+  in JavaScript.
+- `typeof u === "object"` narrows an `unknown` to `object`; a union with `object` or
+  `Function` is that type when its other members are objects (or functions), `null` and
+  `undefined` included, and `unknown` otherwise (`string | Function`).
+
+```ts
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function brand<T extends object>(v: T, seen: Set<object>): T {
+  seen.add(v);
+  return v;
+}
+
+function main(): void {
+  const seen = new Set<object>();
+  const p = brand(new Point(1), seen);
+  const o = brand({ name: "a" }, seen);
+  console.log(seen.has(p), seen.has(o), seen.has(new Point(1))); // true true false
+  const handlers: Record<string, Function> = {};
+  handlers["double"] = (n: number): number => n * 2;
+  console.log(handlers["double"](21)); // 42
+  const back = [...seen][0] as Point;
+  console.log(back.x); // 1
+}
+```
+
+**Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
+members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
+(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
+without the `object` bound converted with `as object`. Each is a compile error.

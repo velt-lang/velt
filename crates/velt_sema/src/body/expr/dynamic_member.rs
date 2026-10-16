@@ -71,7 +71,7 @@ impl FnCx<'_, '_> {
         let n = d.name();
         let Some(m) = m else {
             self.cx.error(
-                Diagnostic::error(format!("the members of a `{n}` value are unknown"), span)
+                Diagnostic::error(format!("the members of {} `{n}` value are unknown", d.article()), span)
                     .with_note("narrow it with `typeof` or `instanceof` first, or convert it with `as T` (checked at run time)"),
             );
             return;
@@ -79,7 +79,10 @@ impl FnCx<'_, '_> {
         let known = OBJECT.contains(&m) || (d == Dynamic::Function && FUNCTION.contains(&m));
         let diag = if known {
             Diagnostic::error(
-                format!("`{m}` of a `{n}` value is not supported yet (#926)"),
+                format!(
+                    "`{m}` of {} `{n}` value is not supported yet (#926)",
+                    d.article()
+                ),
                 span,
             )
             .with_note("convert the value to a typed one first (`x as T`, checked at run time)")

@@ -202,6 +202,22 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        if let Some(d) = self.cx.dynamic(obj.ty) {
+            // The keys of the value a dynamic type holds come from its descriptor, which has
+            // no slot for them yet.
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "`Object.keys` of {} `{}` value is not supported yet (#924, #926)",
+                        d.article(),
+                        d.name()
+                    ),
+                    obj.span,
+                )
+                .with_note("convert the value to its class or object type first (`x as T`, checked at run time)"),
+            );
+            return self.error_expr(span);
+        }
         self.cx
             .object_copies
             .observe(obj.ty, span, crate::object_copies::Seen::Keys);
