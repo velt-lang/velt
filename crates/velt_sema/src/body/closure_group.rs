@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
             self.start_group(g);
         }
         let mem = self.f.groups.members[&g][m];
-        self.pending_member = Some((g, m, Some(mem.def)));
+        self.pending_member = Some((g, m, mem.def));
         let h = self.closure(e, Some(mem.ty), true);
         self.pending_member = None;
         out.push(hir::Stmt {
@@ -120,7 +120,7 @@ impl FnCx<'_, '_> {
                 // The member's own definition: a trial leaves its parameters and their
                 // defaults, which calls of it in the other members fill in.
                 let def = self.f.groups.members[&g][m].def;
-                self.pending_member = Some((g, m, Some(def)));
+                self.pending_member = Some((g, m, def));
                 let h = self.closure(arrow, None, true);
                 self.pending_member = None;
                 mark.rollback(self.cx);
@@ -153,7 +153,13 @@ impl FnCx<'_, '_> {
     /// right inside `j` checks a member of that group, the hidden local of that member's
     /// frame holding it (made on first use) and that frame's index (`self.outer.len()` for the
     /// current frame).
-    pub(super) fn group_peer(&mut self, j: usize, prev: LocalId, name: &str, span: Span) -> Option<(usize, LocalId)> {
+    pub(super) fn group_peer(
+        &mut self,
+        j: usize,
+        prev: LocalId,
+        name: &str,
+        span: Span,
+    ) -> Option<(usize, LocalId)> {
         let &(g, q) = self.outer[j].groups.locals.get(&prev)?;
         let mem = self.outer[j].groups.members.get(&g)?[q];
         let k = j + 1;

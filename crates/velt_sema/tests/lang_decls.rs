@@ -4,7 +4,7 @@ mod common;
 
 use common::hir_walk::{def_id, func};
 use common::programs::{err_src, ok_src};
-use velt_sema::hir::{Def, TyKind};
+use velt_sema::hir::{Callee, Def, ExprKind, Intrinsic, StmtKind, TyKind};
 
 #[test]
 fn interface_extends_flattens_slots_and_impls() {
@@ -85,10 +85,46 @@ fn nested_declarations_are_hoisted_and_scoped() {
 
 #[test]
 fn nested_functions_capture_as_closures() {
-    // A nested function using a local is a closure (`nested_closures`); one calling itself
-    // is not supported yet, and reported once.
+    // A nested function using a local is a closure (`nested_closures`); ones calling each
+    // other form a recursive closure group: each captures the group's variables in one order
+    // and makes the members it calls from its own environment (`ClosureSibling`).
+    let p = ok_src(
+        "function main() { const k = 1; const j = 2;
+           function f(n: i64): i64 { return n > k ? g(n - 1) : k; }
+           function g(n: i64): i64 { return n > j ? f(n - 1) : f(n); }
+           console.log(f(3)); }",
+    );
+    for name in ["main::{closure#0}", "main::{closure#1}"] {
+        let c = func(&p, name);
+        let caps: Vec<&str> = c
+            .captures
+            .iter()
+            .map(|c| c.inner)
+            .map(|l| c.body.locals[l.0 as usize].name.as_str())
+            .collect();
+        assert_eq!(
+            caps,
+            ["j", "k"],
+            "{name}: the group's captures, in one order"
+        );
+        let siblings = c
+            .body
+            .block
+            .stmts
+            .iter()
+            .filter(|s| {
+                matches!(&s.kind, StmtKind::Let { init: Some(e), .. }
+                if matches!(&e.kind, ExprKind::Call {
+                    callee: Callee::Intrinsic(Intrinsic::ClosureSibling(_)),
+                    ..
+                }))
+            })
+            .count();
+        assert_eq!(siblings, 1, "{name}: the member it calls, made once");
+    }
+    // A generator calling itself is not supported yet, and reported once.
     let r = err_src(
-        "function main() { const k = 1; function f(n: i64): i64 { return n > k ? f(n - 1) : k; } console.log(f(3)); }",
+        "function main() { const k = 1; function* f(n: i64): Generator<i64> { if (n > 0) { for (const x of f(n - 1)) yield x + k; } } for (const x of f(2)) console.log(x); }",
     );
     assert!(
         r.contains("`f` uses local variables of the enclosing function and calls itself"),

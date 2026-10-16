@@ -249,8 +249,8 @@ impl FnCx<'_, '_> {
                 .filter(|r| !self.cx.ty.has_error(*r)),
         };
         let def = match member {
-            Some((_, _, Some(d))) => d,
-            _ => self.alloc_closure(span),
+            Some((_, _, d)) => d,
+            None => self.alloc_closure(span),
         };
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;

@@ -10,10 +10,13 @@
 //!
 //! Hoisting: the constant goes where the declaration is, or, when the block uses the name
 //! earlier (a call, or a closure referring to it), right before the first statement using it,
-//! after the declarations of the block's locals it captures. A use before one of those locals
-//! is declared (which JS allows when the call runs later), and recursion through closures (a
-//! closure cannot refer to itself yet), are reported as not supported yet; those declarations
-//! stay nested functions, and `kept` keeps sema from reporting each capture again.
+//! after the declarations of the block's locals it captures. Nested functions calling each
+//! other (or one calling itself) form a recursive closure group (`ClosureGroup`), placed
+//! together, which sema checks as one (`body::closure_group`). A use before one of those
+//! locals is declared (which JS allows when the call runs later), and a group with a generator
+//! or with a member returning a value without a written result type, are reported as not
+//! supported yet; those declarations stay nested functions, and `kept` keeps sema from
+//! reporting each capture again.
 //!
 //! Declarations that capture nothing, generic ones, overloaded ones and ones using `this` stay
 //! nested functions (`collect::nested`).
@@ -370,7 +373,11 @@ impl Rw {
                 .filter_map(|v| declared.get(v).map(|&j| (j + 1, v)))
                 .max();
             let lo = after.map_or(0, |(j, _)| j);
-            let at = ms.iter().map(|&m| cands[m].at).min().expect("ICE: empty group");
+            let at = ms
+                .iter()
+                .map(|&m| cands[m].at)
+                .min()
+                .expect("ICE: empty group");
             let p = lo.max(at.min(hi));
             if p > hi {
                 let (_, var) = after.expect("ICE: a lower bound comes from a local");
@@ -390,7 +397,10 @@ impl Rw {
         // The recursive groups left: what each captures (the locals and closure constants its
         // members use), in one order for all members.
         let converted: HashSet<&str> = idx.iter().map(|&a| cands[a].name.name.as_str()).collect();
-        for ms in recursive.iter().filter(|ms| !ms.iter().any(|a| bad.contains(a))) {
+        for ms in recursive
+            .iter()
+            .filter(|ms| !ms.iter().any(|a| bad.contains(a)))
+        {
             let own: HashSet<&str> = ms.iter().map(|&m| cands[m].name.name.as_str()).collect();
             let captures: std::collections::BTreeSet<String> = ms
                 .iter()
@@ -404,7 +414,10 @@ impl Rw {
             self.groups.push(ClosureGroup {
                 names: sorted.iter().map(|&m| cands[m].name.name.clone()).collect(),
                 name_spans: sorted.iter().map(|&m| cands[m].name.span).collect(),
-                arrow_spans: sorted.iter().map(|&m| item_span(&stmts[cands[m].at])).collect(),
+                arrow_spans: sorted
+                    .iter()
+                    .map(|&m| item_span(&stmts[cands[m].at]))
+                    .collect(),
                 captures: captures.into_iter().collect(),
                 arrows: vec![],
             });
@@ -437,7 +450,13 @@ impl Rw {
         idx.iter().map(|&a| cands[a].name.name.clone()).collect()
     }
 
-    fn report_recursion(&mut self, cands: &[Cand], a: usize, path: &[usize], why: &str) {
+    fn report_recursion(
+        &mut self,
+        cands: &[Cand],
+        a: usize,
+        path: &[usize],
+        (why, fix): &(String, String),
+    ) {
         let c = &cands[a];
         let through = match path {
             [] => String::new(),
@@ -457,8 +476,8 @@ impl Rw {
                 ),
                 c.name.span,
             )
-            .with_note(why.to_string())
-            .with_note("pass the locals it uses as parameters, or declare it at module level"),
+            .with_note(why.clone())
+            .with_note(fix.clone()),
         );
     }
 
@@ -675,22 +694,26 @@ fn sccs(nodes: &[usize], edges: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> 
 }
 
 /// Why the member `c` of a set of nested functions calling each other cannot join a recursive
-/// closure group, if it cannot: a generator, or a result type that is neither written nor
-/// `void`.
-fn group_misfit(stmts: &[ast::Stmt], c: &Cand) -> Option<String> {
+/// closure group, if it cannot (a generator, or a result type that is neither written nor
+/// `void`), and what to do instead.
+fn group_misfit(stmts: &[ast::Stmt], c: &Cand) -> Option<(String, String)> {
     let S::Item(item) = &stmts[c.at].kind else {
         return None;
     };
     let I::Function(f) = &item.kind else {
         return None;
     };
+    let name = &c.name.name;
     if f.sig.is_generator {
-        return Some("a generator function value cannot refer to itself yet".into());
+        return Some((
+            format!("`{name}` is a generator, and a generator function value cannot refer to itself yet"),
+            "pass the locals it uses as parameters, or declare it at module level".into(),
+        ));
     }
     if f.sig.ret.is_none() && scan::returns_value(&f.body) {
-        return Some(format!(
-            "a nested function using the enclosing function's locals and calling itself needs its result type written (`function {}(...): T`)",
-            c.name.name
+        return Some((
+            format!("`{name}` returns a value but its result type is not written: functions calling each other through closures are typed before their bodies are checked"),
+            format!("write its result type: `function {name}(...): T`"),
         ));
     }
     None

@@ -405,7 +405,7 @@ pub(crate) struct FnCx<'a, 'm> {
     pub this_calls: std::collections::HashSet<Span>,
     /// The member of a recursive closure group whose arrow is about to be checked: group,
     /// member and its definition.
-    pub pending_member: Option<(usize, usize, Option<DefId>)>,
+    pub pending_member: Option<(usize, usize, DefId)>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {

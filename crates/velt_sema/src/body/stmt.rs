@@ -330,7 +330,10 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
-        if ann.is_none() && v.kind == ast::VarKind::Const && self.group_member_decl(v, name, span, out) {
+        if ann.is_none()
+            && v.kind == ast::VarKind::Const
+            && self.group_member_decl(v, name, span, out)
+        {
             return;
         }
         // Declared from a literal and used as one integer type: that type (`literal_locals`).
