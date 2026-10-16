@@ -65,8 +65,8 @@ impl Cx<'_> {
         }
         slots
             .into_iter()
-        .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
-        .collect()
+            .map(|(s, g)| (s, Const::Func(self.func(Work::Glue(g, ty)))))
+            .collect()
     }
 
     /// Can glue box a value of `t` (`any_box_into`)? Types sema unpacks before boxing (unions,
