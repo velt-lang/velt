@@ -38,6 +38,7 @@ impl Scan {
                 .for_each(|b| self.block(b)),
             I::Var(v) => v.init.iter().for_each(|e| self.expr(e)),
             I::Augment(a) => a.items.iter().for_each(|i| self.item_bodies(i)),
+            I::Namespace(n) => n.items.iter().for_each(|i| self.item_bodies(i)),
             I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => {}
         }
     }

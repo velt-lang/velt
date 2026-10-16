@@ -1,0 +1,168 @@
+// check: no leaks
+// ReadableStream as in Node: the order of start and pull, reads, closing, errors, cancelling,
+// async iteration and ReadableStream.from.
+async function* letters(): AsyncGenerator<string> {
+  yield "p";
+  yield "q";
+}
+
+// Lets the microtasks queued so far run (a timer runs after them, in Node and in Velt).
+async function tick(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 0));
+}
+
+async function main() {
+  let n = 0;
+  const s = new ReadableStream<number>({
+    start(c) {
+      console.log("start", c.desiredSize);
+    },
+    pull(c) {
+      n++;
+      console.log("pull", n, c.desiredSize);
+      if (n <= 3) {
+        c.enqueue(n);
+      } else {
+        c.close();
+      }
+    },
+  });
+  console.log("constructed", s.locked);
+  queueMicrotask(() => console.log("micro 1"));
+  await tick();
+  console.log("after await");
+  console.log(s);
+  const reader = s.getReader();
+  console.log("locked", s.locked);
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) {
+      console.log("read done");
+      break;
+    }
+    console.log("read", r.value);
+    // (Velt's `await` resumes before the microtasks queued earlier, Node's after them: a tick
+    // keeps both in step. docs/reference/async.md "Callbacks")
+    await tick();
+  }
+  console.log(s);
+  reader.releaseLock();
+  console.log("released", s.locked);
+
+  // Errors reach the reads.
+  const s3 = new ReadableStream<number>({
+    start(c) {
+      c.enqueue(1);
+      c.error(new TypeError("boom"));
+    },
+  });
+  const r3 = s3.getReader();
+  try {
+    await r3.read();
+  } catch (e) {
+    console.log("err", e.name, e.message);
+  }
+  console.log(s3);
+
+  // Cancel through the reader; a locked stream can't be cancelled or read by another reader.
+  const s4 = new ReadableStream<string>({
+    pull(c) {
+      c.enqueue("x");
+    },
+    cancel(reason) {
+      console.log("cancelled", reason);
+    },
+  });
+  const r4 = s4.getReader();
+  const first = await r4.read();
+  console.log(first.done, first.done ? null : first.value);
+  try {
+    await s4.cancel();
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+  await r4.cancel("bye");
+  const after = await r4.read();
+  console.log("after cancel", after.done);
+  try {
+    s4.getReader();
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+
+  // Leaving a `for await` early cancels the stream and releases it.
+  const s5 = new ReadableStream<number>({
+    pull(c) {
+      c.enqueue(1);
+    },
+    cancel() {
+      console.log("s5 cancel");
+    },
+  });
+  for await (const x of s5) {
+    console.log("s5", x);
+    break;
+  }
+  console.log("s5 locked", s5.locked);
+
+  // A pull that throws errors the stream.
+  const s6 = new ReadableStream<number>({
+    pull(c) {
+      throw new RangeError("pull failed");
+    },
+  });
+  try {
+    await s6.getReader().read();
+  } catch (e) {
+    console.log("s6", e.name, e.message);
+  }
+
+  // ReadableStream.from an async generator.
+  for await (const x of ReadableStream.from(letters())) {
+    console.log("s7", x);
+  }
+
+  // A closed controller rejects enqueue and close.
+  const s9 = new ReadableStream<number>({
+    start(c) {
+      c.close();
+      try {
+        c.enqueue(1);
+      } catch (e) {
+        console.log(e.name, e.message);
+      }
+      try {
+        c.close();
+      } catch (e) {
+        console.log(e.name, e.message);
+      }
+    },
+  });
+  console.log((await s9.getReader().read()).done);
+
+  // With highWaterMark 0 nothing is pulled until a read waits.
+  const s10 = new ReadableStream<string>(
+    {
+      pull(c) {
+        console.log("s10 pull");
+        c.enqueue("v");
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  await tick();
+  console.log("s10 before read");
+  const v = await s10.getReader().read();
+  console.log(v.done ? "done" : v.value);
+
+  // Releasing a reader rejects its waiting read.
+  const s11 = new ReadableStream<number>({});
+  const r11 = s11.getReader();
+  const pending = r11.read();
+  r11.releaseLock();
+  try {
+    await pending;
+  } catch (e) {
+    console.log("s11", e.name, e.message);
+  }
+}

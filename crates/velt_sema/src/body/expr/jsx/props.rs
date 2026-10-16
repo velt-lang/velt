@@ -562,7 +562,7 @@ impl FnCx<'_, '_> {
         let given: Vec<String> = filled
             .given
             .iter()
-            .map(|(n, t)| format!("{}: {}", crate::ctx::display_key(n), self.cx.display(*t)))
+            .map(|(n, t)| format!("{}: {}", crate::types::display_key(n), self.cx.display(*t)))
             .collect();
         let given = if given.is_empty() {
             "{}".to_string()
@@ -587,7 +587,7 @@ impl FnCx<'_, '_> {
         let given: Vec<String> = filled
             .given
             .iter()
-            .map(|(n, t)| format!("{}: {}", crate::ctx::display_key(n), self.cx.display(*t)))
+            .map(|(n, t)| format!("{}: {}", crate::types::display_key(n), self.cx.display(*t)))
             .collect();
         let given = if given.is_empty() {
             "{}".to_string()

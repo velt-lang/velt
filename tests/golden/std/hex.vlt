@@ -1,0 +1,85 @@
+// `hexEncode` and `hexDecode` against digit-at-a-time code, around the 16- and 32-byte steps
+// they take: every length up to 100, every byte value, both letter cases, and a character
+// that is not a digit at every position (the error names its offset).
+import { hexDecode, hexEncode } from "velt:encoding";
+
+const DIGITS = "0123456789abcdef";
+
+function naive(data: u8[]): string {
+  let s = "";
+  for (let i = 0; i < data.length; i++) {
+    s += DIGITS[(data[i] >> 4) as i64] + DIGITS[(data[i] & 15) as i64];
+  }
+  return s;
+}
+
+function main() {
+  let checks = 0;
+  for (let n = 0; n <= 100; n++) {
+    const d: u8[] = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) {
+      d[i] = (i * 53 + n * 7) as u8;
+    }
+    const text = hexEncode(d);
+    if (text != naive(d)) {
+      console.log("FAIL encode", n, text);
+    }
+    for (const spelled of [text, text.toUpperCase()]) {
+      const back = hexDecode(spelled);
+      let same = back.length == n;
+      for (let i = 0; i < n && same; i++) {
+        same = back[i] == d[i];
+      }
+      if (!same) {
+        console.log("FAIL decode", n, spelled);
+      }
+      checks++;
+    }
+    for (let at = 0; at < 2 * n; at++) {
+      for (const wrong of ["g", "/", ":", "@", "G", "`", " ", "~", "\u007f"]) {
+        const broken = text.slice(0, at) + wrong + text.slice(at + 1);
+        let message = "";
+        try {
+          hexDecode(broken);
+        } catch (e) {
+          message = e.message;
+        }
+        if (message != `Invalid hex character at offset ${at}`) {
+          console.log("FAIL offset", n, at, wrong, message);
+        }
+        checks++;
+      }
+    }
+  }
+  const all: u8[] = Buffer.alloc(256);
+  for (let i = 0; i < 256; i++) {
+    all[i] = i as u8;
+  }
+  const every = hexEncode(all);
+  console.log(every.slice(0, 40), every.slice(472), every == naive(all));
+  console.log(hexDecode("00ff10aB").join(","), hexDecode("").length);
+  try {
+    hexDecode("abc");
+  } catch (e) {
+    console.log(e.message);
+  }
+  // The first character that is not a digit is the one reported, also with a second one in
+  // the same step, and with bytes that are not ASCII or not printable.
+  const zeros = "00".repeat(40);
+  for (const [at, wrong] of [
+    [3, "\u0001"],
+    [17, "\n"],
+    [40, "z"],
+    [63, "\u00e9"],
+  ] as [number, string][]) {
+    // "é" is two bytes, the others one; the text stays 80 bytes.
+    const bytes = wrong == "\u00e9" ? 2 : 1;
+    const broken = zeros.slice(0, at) + wrong + "x" + zeros.slice(at + bytes + 1);
+    try {
+      hexDecode(broken);
+    } catch (e) {
+      console.log(at, e.message);
+    }
+  }
+  console.log("checks", checks);
+}

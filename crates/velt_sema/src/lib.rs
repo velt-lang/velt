@@ -33,6 +33,7 @@ mod assigned_fields;
 mod ast_walk;
 mod body;
 mod brands;
+mod call_sigs;
 mod collect;
 mod ctx;
 mod defs;
@@ -47,6 +48,7 @@ mod hooks;
 pub mod ide;
 mod index_signatures;
 mod infer;
+mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
 mod intersections;
@@ -55,6 +57,7 @@ mod json;
 mod known;
 mod literals;
 mod moves;
+mod namespaces;
 mod nested_closures;
 mod object_copies;
 mod overloads;
@@ -179,8 +182,16 @@ fn check_on_current_thread(
     opts: CheckOptions,
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
-    let (merged, merge_diags) = interface_merge::rewrite(modules);
+    let mut merge_diags = call_sigs::check(modules);
+    let (flat, ns_private, diags) = namespaces::flatten(modules);
+    merge_diags.extend(diags);
+    let modules = flat.as_deref().unwrap_or(modules);
+    let (merged, diags) = interface_merge::rewrite(modules);
+    merge_diags.extend(diags);
     let modules = merged.as_deref().unwrap_or(modules);
+    let (callable, diags) = call_sigs::rewrite(modules);
+    merge_diags.extend(diags);
+    let modules = callable.as_deref().unwrap_or(modules);
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = overloads::rewrite(modules);
@@ -197,6 +208,7 @@ fn check_on_current_thread(
         let mut cx = ctx::Ctx::new(modules, root);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
+        cx.ns_private = ns_private.clone();
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -225,6 +237,7 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let ctx::Ctx {
@@ -248,6 +261,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
     };
@@ -294,6 +308,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    // Before the passes that read instantiated types: deferred types reduced per instance.
+    type_level::instances::reach(cx);
     hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);

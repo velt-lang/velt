@@ -13,7 +13,9 @@ use std::collections::HashSet;
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
-use super::exports::{all_exports, bound_name, export_of, import_target, imports_of, local_of};
+use super::exports::{
+    all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
+};
 use crate::ctx::Ctx;
 
 /// Resolve every import and export list of module `m`.
@@ -64,6 +66,9 @@ fn exported_item(
     if let Some(it) = export_of(cx, t, &n.name.name) {
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
+    }
+    if !namespace_exports(cx, t, &n.name.name).is_empty() {
+        return None; // a namespace: its members are bound by `import_name`
     }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
         let mut d = Diagnostic::error(
@@ -119,6 +124,29 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
+    // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
+    // a type or interface of the same name is imported with it.
+    let members = namespace_exports(cx, t, &n.name.name);
+    if !members.is_empty() {
+        let local = bound_name(n).clone();
+        // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
+        // local namespace instead).
+        let prefix = format!("{}.", local.name);
+        if cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix)) {
+            cx.error(crate::namespaces::conflict(&local, None));
+            return;
+        }
+        for (x, it) in members {
+            let key = format!("{}.{x}", local.name);
+            cx.scopes[m].items.insert(key.clone(), it);
+            if n.type_only {
+                cx.scopes[m].type_only.insert(key);
+            }
+        }
+        if export_of(cx, t, &n.name.name).is_none() {
+            return;
+        }
+    }
     let Some(it) = exported_item(cx, t, imp, n) else {
         return;
     };
@@ -217,7 +245,10 @@ fn define(cx: &mut Ctx, m: usize, local: &ast::Ident) -> bool {
 fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
     for n in &imp.names {
         let item = local_of(cx, m, &n.name.name);
-        if item.is_some() {
+        let prefix = format!("{}.", n.name.name);
+        let namespace = cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix))
+            && !cx.scopes[m].namespaces.contains_key(&n.name.name);
+        if item.is_some() || namespace {
             cx.rec_item(n.name.span, item);
             continue;
         }

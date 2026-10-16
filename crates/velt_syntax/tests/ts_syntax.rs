@@ -374,18 +374,52 @@ fn numeric_property_names_and_call_signatures() {
     };
     assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
-    let msg = "call signatures in an interface or object type are not supported yet";
-    assert_eq!(
-        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { <T>(x: T): T; z: string };"),
-        vec![msg, msg]
+    // Call and construct signatures are kept as written (sema gives them their type): in an
+    // interface's `call_sigs`, in an object type's `Callable`.
+    let m = parse_ok(
+        "interface F {
+  (x: number): string
+}
+type G = { <T>(x?: T): T; z: string };
+interface H<T> extends B {
+  (x: T): void
+  y: number
+  stop(): void
+}
+type P = { new (x: number): P; (y: string): P };",
     );
-    // `new(…)` in an interface or object type is a construct signature, as in TypeScript; in a
-    // class it is a method.
-    let ctor = "construct signatures in an interface or object type are not supported yet";
+    let ItemKind::Interface(f) = &m.items[0].kind else {
+        panic!("not an interface: {:?}", m.items[0]);
+    };
+    assert_eq!(f.call_sigs.len(), 1);
+    assert!(!f.call_sigs[0].construct && f.call_sigs[0].sig.name.name.is_empty());
+    assert_eq!(f.call_sigs[0].sig.params[0].name.name, "x");
+    let ItemKind::TypeAlias(g) = &m.items[1].kind else {
+        panic!("not a type alias: {:?}", m.items[1]);
+    };
+    let TypeExprKind::Callable { sigs, members } = &g.ty.kind else {
+        panic!("not a callable object type: {:?}", g.ty);
+    };
+    assert_eq!(sigs[0].sig.generics.len(), 1);
+    assert!(sigs[0].sig.params[0].optional);
+    assert!(matches!(&members.kind, TypeExprKind::Object(fields) if fields.len() == 1));
+    let ItemKind::Interface(h) = &m.items[2].kind else {
+        panic!("not an interface: {:?}", m.items[2]);
+    };
     assert_eq!(
-        errors("interface P {\n  new (x: number): P\n  y: number\n}\ntype Q = { new <T>(): T; z: string };"),
-        vec![ctor, ctor]
+        (h.call_sigs.len(), h.fields.len(), h.methods.len()),
+        (1, 1, 1)
     );
+    assert_eq!(h.extends.len(), 1);
+    let ItemKind::TypeAlias(p) = &m.items[3].kind else {
+        panic!("not a type alias: {:?}", m.items[3]);
+    };
+    assert!(matches!(
+        &p.ty.kind,
+        TypeExprKind::Callable { sigs, members }
+            if sigs.len() == 2 && sigs[0].construct && !sigs[1].construct
+                && matches!(&members.kind, TypeExprKind::Object(f) if f.is_empty())
+    ));
     let none: Vec<String> = vec![];
     assert_eq!(
         errors("interface N { new: number }\nclass C { new(): C { return this; } }"),
@@ -493,6 +527,60 @@ fn this_parameters_and_the_this_type() {
         panic!()
     };
     assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
+}
+
+#[test]
+fn namespaces_of_types() {
+    let m = parse_ok(
+        "export namespace Define {
+  export type Prop<T> = { value: T };
+  interface I { a: number }
+}
+declare namespace A.B {
+  type X = number;
+}
+const namespace = 1;",
+    );
+    let ItemKind::Namespace(d) = &m.items[0].kind else {
+        panic!("not a namespace: {:?}", m.items[0]);
+    };
+    assert!(m.items[0].exported && !d.declare);
+    assert_eq!(d.name.name, "Define");
+    assert!(m.items[0].exported);
+    assert!(d.items[0].exported && !d.items[1].exported);
+    assert!(matches!(&d.items[0].kind, ItemKind::TypeAlias(a) if a.name.name == "Prop"));
+    assert!(matches!(&d.items[1].kind, ItemKind::Interface(i) if i.name.name == "I"));
+    // `namespace A.B { … }` is `A` holding the exported `B`.
+    let ItemKind::Namespace(a) = &m.items[1].kind else {
+        panic!("not a namespace: {:?}", m.items[1]);
+    };
+    assert!(a.declare && a.name.name == "A" && a.items[0].exported);
+    assert!(
+        matches!(&a.items[0].kind, ItemKind::Namespace(b) if b.name.name == "B" && b.items.len() == 1)
+    );
+    // `namespace` stays an identifier elsewhere.
+    assert!(matches!(&m.items[2].kind, ItemKind::Var(_)));
+    assert_eq!(
+        errors("namespace V {
+  export const x = 1;
+  export type T = number;
+}"),
+        vec!["variables in a namespace are not supported yet: a namespace may hold types, interfaces and namespaces"]
+    );
+}
+
+#[test]
+fn a_type_alias_may_end_at_a_closing_brace() {
+    let m = parse_ok(
+        "declare namespace D { type T = number; namespace E { type U = string } }
+declare global { namespace G { type V = boolean } }
+function f() { type W = number }",
+    );
+    let ItemKind::Namespace(d) = &m.items[0].kind else {
+        panic!("not a namespace: {:?}", m.items[0]);
+    };
+    assert!(matches!(&d.items[1].kind, ItemKind::Namespace(e) if e.items.len() == 1));
+    assert_eq!(m.items.len(), 3);
 }
 
 #[test]

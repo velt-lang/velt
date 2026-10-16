@@ -6,7 +6,7 @@ use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
     /// Skips a `{ ... }` group (current token is `{`), including nested braces.
-    fn skip_balanced_braces(&mut self) {
+    pub(super) fn skip_balanced_braces(&mut self) {
         let mut depth = 0usize;
         loop {
             match self.peek() {

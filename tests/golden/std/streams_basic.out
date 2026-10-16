@@ -1,0 +1,36 @@
+start 1
+constructed false
+pull 1 1
+micro 1
+after await
+ReadableStream { locked: false, state: 'readable', supportsBYOB: false }
+locked true
+pull 2 1
+read 1
+pull 3 1
+read 2
+pull 4 1
+read 3
+read done
+ReadableStream { locked: true, state: 'closed', supportsBYOB: false }
+released false
+err TypeError boom
+ReadableStream { locked: true, state: 'errored', supportsBYOB: false }
+false x
+TypeError Invalid state: ReadableStream is locked
+cancelled bye
+after cancel true
+TypeError Invalid state: ReadableStream is locked
+s5 1
+s5 cancel
+s5 locked false
+s6 RangeError pull failed
+s7 p
+s7 q
+TypeError Invalid state: Controller is already closed
+TypeError Invalid state: Controller is already closed
+true
+s10 before read
+s10 pull
+v
+s11 TypeError Invalid state: Releasing reader

@@ -1,7 +1,6 @@
 // A scripted session against the real server (golden: demo.out): the post list, tag filters, a
 // post with its comments (streamed: the comments load last), escaped user content, and a 404.
 import { channel } from "velt:channel";
-import { utf8DecodeLossy } from "velt:encoding";
 import { startServer } from "./src/server";
 
 async function get(port: number, path: string) {
@@ -24,10 +23,11 @@ async function streamOrder(path: string) {
   if (body == null) {
     return;
   }
+  const decoder = new TextDecoder();
   let text = "";
   let postFirst = false;
   for await (const chunk of body) {
-    text += utf8DecodeLossy(chunk);
+    text += decoder.decode(chunk);
     if (!postFirst && text.includes("</article>")) {
       postFirst = !text.includes(`class="comments"`);
       await gate.send(1);

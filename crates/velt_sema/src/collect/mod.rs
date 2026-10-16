@@ -24,6 +24,7 @@ mod comparable;
 mod constants;
 mod declare;
 mod exports;
+mod extend_shadow;
 mod field_only;
 mod forwarders;
 mod generator_sig;
@@ -68,6 +69,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     iface_extends::flatten_all(cx);
     field_only::fill(cx);
     classes::check_classes(cx);
+    extend_shadow::check(cx);
     static_this::copy_statics(cx);
     impls::build_impls(cx);
     comparable::extension_impls(cx);

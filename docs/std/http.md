@@ -146,7 +146,7 @@ statusText, headers })` or `Response.json(value, init)`, `Response.redirect(url,
 response `fetch` returned (a proxy: its body is passed on as it arrives).
 
 - A string body is sent without a copy, with `content-type: text/plain;charset=UTF-8` unless
-  the headers set one; `Response.json` sends `application/json`, bytes (`u8[]`) send no
+  the headers set one; `Response.json` sends `application/json`, bytes (a typed array, an `ArrayBuffer` or a `u8[]`) send no
   `content-type`. Set any other header with `res.headers.set(name, value)` or in `init`.
 - A body made while it is sent (server-side rendering, large exports) is a `BodyStream`:
   `new Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`

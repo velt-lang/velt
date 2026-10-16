@@ -1,0 +1,5 @@
+call_signature_params.vlt:4:4: error: optional parameters in call signatures are not supported yet
+call_signature_params.vlt:6:13: error: a parameter initializer is only allowed in a function or constructor implementation
+call_signature_params.vlt:12:5: error: an interface with call signatures in `declare global` is not supported yet
+call_signature_params.vlt:15:5: error: an interface with call signatures in `declare global` is not supported yet
+call_signature_params.vlt:21:3: error: interfaces with call signatures must be at the module level

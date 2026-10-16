@@ -125,6 +125,7 @@ impl Rw {
                 }
             }
             I::Augment(a) => a.items.iter_mut().for_each(|i| self.item(i, outer)),
+            I::Namespace(n) => n.items.iter_mut().for_each(|i| self.item(i, outer)),
             I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => {}
         }
     }
