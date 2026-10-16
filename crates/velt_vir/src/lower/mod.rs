@@ -72,6 +72,7 @@ mod pattern;
 mod place;
 mod program;
 mod rc;
+mod receiver;
 mod rt;
 mod same;
 mod sequence;
@@ -285,6 +286,10 @@ struct Cx<'h> {
     statics: Vec<StaticData>,
     /// The module state's descriptor, once a slot is used (module_state.rs).
     module_desc: Option<StaticId>,
+    /// Functions whose calls may reach module state (receiver.rs), and whether the program has
+    /// glue hooks, computed when first asked.
+    reaches_slots: receiver::ReachesSlots,
+    has_hooks: Option<bool>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.

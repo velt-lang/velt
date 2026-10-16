@@ -70,7 +70,20 @@ impl FnLower<'_, '_> {
             _ => self.cx.func_for(def, targs.clone()),
         };
         let mut argv = pre;
-        argv.extend(self.lower_args(args, &modes, true));
+        // A method's receiver the method may replace in module state is held for the call
+        // (receiver.rs).
+        let held = argv.is_empty()
+            && f.self_ty.is_some()
+            && matches!(modes.first(), Some(PassMode::Borrow | PassMode::BorrowMut))
+            && self.holds_direct_receiver(def, args);
+        match held {
+            true => {
+                let recv = self.held_receiver(&args[0]);
+                argv.push(recv);
+                argv.extend(self.lower_args(&args[1..], &modes[1..], true));
+            }
+            false => argv.extend(self.lower_args(args, &modes, true)),
+        }
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);

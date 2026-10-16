@@ -89,6 +89,15 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The receiver of a vtable call, with a reference of its own for the call when it is read
+    /// from a place the method may replace (receiver.rs): the method is only known at run time.
+    fn dispatch_receiver(&mut self, recv: &hir::Expr, transfer: bool) -> Operand {
+        match !transfer && self.replaceable_receiver(recv) {
+            true => self.held_receiver(recv),
+            false => self.receiver(recv, transfer),
+        }
+    }
+
     /// The receiver `rv` of a dispatched call (`args[0]`), held against the arguments after it.
     /// An argument may replace or free what the receiver was read from (`xs[0].m(clear())`
     /// where `clear` pops `xs`, `x.f = v()` where `v` reassigns `x`), and JavaScript calls the
@@ -122,7 +131,7 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.receiver(recv, transfer);
+        let rv = self.dispatch_receiver(recv, transfer);
         let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
@@ -155,7 +164,7 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv, transfer);
+        let rv = self.dispatch_receiver(recv, transfer);
         let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(

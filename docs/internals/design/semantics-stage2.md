@@ -123,6 +123,19 @@ parts that can be changed in place are counted first, so writes through the bind
 becomes counted makes the values borrowed through it counted too, so uncounted values stay
 reachable only through unique owners.
 
+A method's receiver (`this`) is kept alive for the call the same way when the method may
+replace the place it is read from (receiver.rs, #1188): `cur.bump()` where `bump` calls a
+function that assigns `cur = new State()`, `holder.shape.area()` where an override replaces
+`holder.shape`. A virtual or interface call holds a class or interface receiver read from a
+field or element reached through a counted object, a variable in a shared cell or a module
+state slot (the rule of the function value above): the method is only known at run time. A
+direct method call already stabilizes a receiver reached through a counted object or a cell; a
+receiver rooted in a module state slot is held when the method, or a function it calls
+directly, may reach module state: it names a slot, calls through a function value, a vtable or
+an interface, awaits, or hands a function or `any` value to an intrinsic (`Cx::may_reach_slots`,
+one walk per function). The held receiver is a share (its class counted), dropped after the
+statement. A receiver in a variable, a parameter or `this` is passed as before.
+
 ### 3.4 `noalias`, `readonly` and exclusivity
 `noalias` (and, for borrowed params, `readonly`) is set only when `Cx::unique_refs` holds: the
 type is not counted and never borrowed inside a counted object. A counted object may be written
