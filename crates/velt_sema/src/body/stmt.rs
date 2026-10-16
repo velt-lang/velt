@@ -452,6 +452,16 @@ impl FnCx<'_, '_> {
             return;
         };
         match e {
+            // `return;` in a function whose result may be `undefined` returns it (issue #930).
+            None if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined()) =>
+            {
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
+                Self::push(out, S::Return(Some(value)), span);
+            }
             None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
@@ -489,6 +499,11 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                if std::mem::take(&mut self.f.adopt_stmt) {
+                    // A promise to adopt: stored, then the scopes are left (`async_returned`).
+                    Self::push(out, S::Expr(h), span);
+                    return;
+                }
                 self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }
