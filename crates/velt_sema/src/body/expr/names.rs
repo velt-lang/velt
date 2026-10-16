@@ -96,6 +96,10 @@ impl FnCx<'_, '_> {
             return e;
         }
         let span = e.span;
+        if e.ty == target {
+            // `instanceof` of a generic class on an `any`: it stays an `any`.
+            return e;
+        }
         if self.cx.dynamic(e.ty).is_some() && self.cx.class_of(target).is_none() {
             // `typeof x === "number"` on an `any`: the value it holds, checked (crate::any).
             let share = self.share_if_place(e);

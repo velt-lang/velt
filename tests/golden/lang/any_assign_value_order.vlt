@@ -1,0 +1,64 @@
+// check: no leaks
+// An assignment through `any` used as a value evaluates the receiver, then the key, then the
+// right-hand side, as in JavaScript (#924): a right-hand side that replaces the object the
+// receiver names does not move the write to the replacement.
+class P {
+  f: number = 0;
+}
+class Ctx {
+  p: P = new P();
+  getAny(): any {
+    console.log("receiver");
+    return this.p;
+  }
+}
+function side(): number {
+  console.log("value");
+  return 5;
+}
+function key(): string {
+  console.log("key");
+  return "f";
+}
+function index(): number {
+  console.log("index");
+  return 0;
+}
+class A {
+  f: number = 0;
+}
+class H {
+  a: any = new A();
+}
+function swap(h: any): number {
+  h.a = new A();
+  return 7;
+}
+function main(): void {
+  const c = new Ctx();
+  const r = (c.getAny().f = side());
+  console.log(r);
+  const r2 = (c.getAny()[key()] = side());
+  console.log(r2, c.p.f);
+
+  const h2: any = new H();
+  const old: any = h2.a;
+  const v = (h2.a.f = swap(h2));
+  console.log(v, old.f, h2.a.f);
+
+  const h3 = new H();
+  const old3: any = h3.a;
+  const v3 = (h3.a.f = swap(h3));
+  console.log(v3, old3.f, h3.a.f);
+
+  const xs: any = [1, 2, 3];
+  const r4 = (xs[index()] = side());
+  console.log(r4, xs[0]);
+  let k = "f";
+  const o: any = new A();
+  const r5 = (o[k] = (() => {
+    k = "g";
+    return 9;
+  })());
+  console.log(r5, o.f, k);
+}
