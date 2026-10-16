@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
-        if mode == UseMode::Move && self.counted_part(base) {
+        if mode == UseMode::Move && (self.counted_part(base) || self.in_module_state(base)) {
             // Other owners still see the field (semantics stage 2): share it instead.
             let v = self.field_expr(base, index, UseMode::Borrow);
             let fty = self.cx.member_ty(bty, index);
@@ -296,6 +296,7 @@ impl FnLower<'_, '_> {
                 out.push_back(self.freeze(i, index.ty));
             }
             K::Local(..) => {}
+            K::Global(d) if self.slot_of(*d).is_some() => {}
             // A root that is not a place (`get().v = r()`, `m.get(k)!.v = r()`) is evaluated
             // once, before the right-hand side; every later forming of the place reuses it.
             _ => {
@@ -313,6 +314,10 @@ impl FnLower<'_, '_> {
             K::Local(id, _) => self
                 .local_target(*id)
                 .unwrap_or_else(|| ice("place of a Unit local")),
+            K::Global(d) if self.slot_of(*d).is_some() => {
+                let slot = self.slot_of(*d).unwrap_or_default();
+                self.module_slot(slot)
+            }
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);
@@ -470,7 +475,7 @@ impl FnLower<'_, '_> {
 
     /// Before the old value of a droppable place is dropped, copy a new value that is still a
     /// reference into memory (e.g. a field moved out of the old value) into its own temporary.
-    fn detach(&mut self, v: Operand, ty: TyId) -> Operand {
+    pub(super) fn detach(&mut self, v: Operand, ty: TyId) -> Operand {
         if !self.needs_drop(ty) {
             return v;
         }
@@ -606,6 +611,22 @@ fn moved_field_pat(index: u32, ty: TyId) -> Pat {
 
 /// The local a union member read (an `UnwrapSome` / `UnwrapVariant` chain containing an
 /// `UnwrapVariant`) is rooted at.
+impl FnLower<'_, '_> {
+    /// Is place `e` a part of a module-level `let` (which the module state keeps owning)?
+    fn in_module_state(&self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. }
+            | K::Index { base, .. }
+            | K::UnwrapSome(base, _)
+            | K::UnwrapVariant { expr: base, .. }
+            | K::Downcast(base) => self.in_module_state(base),
+            _ => false,
+        }
+    }
+}
+
 pub(super) fn member_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         hir::ExprKind::UnwrapVariant { expr, .. } => unwrap_root(expr),

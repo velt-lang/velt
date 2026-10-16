@@ -1,5 +1,5 @@
-// A table holds numbers or booleans, each a literal (also negated or with `as`) or a module
-// constant that is one.
+// An array constant that is not a table (strings, nested arrays, computed elements) is module
+// state: evaluated once, as in Node.
 
 function one(): u8 {
   return 1;

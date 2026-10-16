@@ -534,6 +534,27 @@ passes one that may modify its arguments; a move out of it, however it is named)
 array is never written either. The two lists must stay equal: an element sema accepts and lowering
 does not fold would make the table an array built at every read.
 
+## Module state
+
+A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an
+initializer that is not a constant, a function from a call; #76, #802), is a `GlobalDef` with
+`slot: Some(i)`. `Program::module_state` lists the slots' globals in initialization order
+(Node's module evaluation order) and gives the state tuple `ty` (element `i` = slot `i`'s
+type); it is `None` when no global has a slot, and then nothing below is emitted.
+
+- `ExprKind::Global(d)` of a slot is a place, like a field: read (a copy for Copy types),
+  borrowed (`m.set(k, v)`), assigned (`Assign { place: Global(d) }` drops the old value) and
+  modified in place. A use that takes the value (`Want::Move`) is wrapped in
+  `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
+  `Move`) is a share too (lowering).
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
+  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
+  `{ size, align, init, drop, names }`, `init` the function evaluating every slot's `init` in
+  order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
+  drop glue, `names` the slots' names. A slot is never read from its initializer's stored
+  data (a module constant table's `table_read`). `velt_main` touches the state before calling `main` (sync or async), so
+  every initializer runs first, as in Node.
+
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is

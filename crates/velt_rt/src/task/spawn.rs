@@ -78,8 +78,9 @@ impl TaskBody for FutBody {
 
 impl Drop for FutBody {
     fn drop(&mut self) {
+        let f = self.fut.0;
         // SAFETY: owned; after READY its result was already moved into the task output.
-        unsafe { ((*self.fut.0).drop)(self.fut.0) }
+        self.locals.drop_with(|| unsafe { ((*f).drop)(f) });
     }
 }
 

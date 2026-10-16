@@ -1,5 +1,5 @@
-// What else a call-initialized module constant rejects: a call through a function value, an
-// argument that is not constant, a result that is an object, and a cycle through a function.
+// A module constant whose initializer depends on itself through a function is an error. (A
+// call through a function value or an object result makes the constant module state.)
 
 class Cache {
   size: number = 0;

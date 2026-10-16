@@ -53,7 +53,7 @@ use crate::visit::{self, VisitMut};
 
 mod effects;
 mod fix;
-mod implicit;
+pub(crate) mod implicit;
 mod program;
 
 use implicit::Implicit;
