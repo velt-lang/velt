@@ -75,11 +75,17 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   block as in JS (a call before the declaration works). One that uses the enclosing function's
   locals (or another such nested function) is a closure, with the
   [captures](#captures) of an arrow function: it sees every later change of what it uses, may
-  assign it, and may be passed on or returned as a value. Not supported yet: such a closure
-  calling itself, directly or through other nested functions (``…calls itself: not supported
-  yet``; pass the locals it uses as parameters, or declare it at module level), and a use
-  before a local it uses is declared, which JS allows when the call runs later (declare the
-  local first). A generic nested function cannot use the enclosing function's locals.
+  assign it, and may be passed on or returned as a value. Such closures may call themselves
+  and each other (`mount` / `patch` / `unmount` of a renderer), async ones too. Nested
+  functions calling each other this way share one environment holding what they use, so
+  returning or storing them makes no reference cycle: the environment is freed with the last of
+  them. Each one's parameter types and result type must be known before the bodies are
+  checked, so one that returns a value needs its result type written (``…calls itself: not
+  supported yet`` with ``write its result type``); without `return value;` it is `void`
+  (`Promise<void>` when `async`). Not supported yet: a generator calling itself this way (pass
+  the locals it uses as parameters, or declare it at module level), and a use before a local
+  it uses is declared, which JS allows when the call runs later (declare the local first). A
+  generic nested function cannot use the enclosing function's locals.
 
   ```ts
   function tally(words: string[]): string {
@@ -94,6 +100,18 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
     }
   }
   console.log(tally(["a", "b", "a"])); // 3 2
+
+  function parity(base: number): Array<(n: number) => number> {
+    function even(n: number): number {
+      return n === 0 ? base : odd(n - 1);   // calls each other
+    }
+    function odd(n: number): number {
+      return n === 0 ? -base : even(n - 1);
+    }
+    return [even, odd];
+  }
+  const [even, odd] = parity(7);
+  console.log(even(4), odd(4)); // 7 -7
   ```
 
 ## Overloads

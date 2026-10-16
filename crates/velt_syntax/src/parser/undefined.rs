@@ -34,14 +34,9 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_result_with_value_undefined_says_to_drop_it() {
-        let found = messages("function f() { return { done: true, value: undefined }; }");
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(
-            found[0].1[0].ends_with("write `{ done: true }`"),
-            "{found:?}"
-        );
-        // Elsewhere, `value: undefined` is a value.
+    fn value_undefined_in_an_object_literal_is_left_to_sema() {
+        // A finished iterator result (`{ done: true }` in Velt) leaves it out there.
+        assert!(messages("function f() { return { done: true, value: undefined }; }").is_empty());
         assert!(messages("function f() { return { done: false, value: undefined }; }").is_empty());
     }
 

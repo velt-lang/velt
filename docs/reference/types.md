@@ -469,7 +469,12 @@ the value is `undefined` (an `undefined` element or field, an absent optional fi
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
 the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
-those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `T | void` is
+`T | undefined` (a `void` function's value is `undefined`), so a callback typed
+`(e: Error) => boolean | void` may return a `boolean` or nothing. A function whose result type
+allows `undefined` returns it from a bare `return;` and when it reaches its end; one whose result
+type is inferred, that returns values and also `return;` or can reach its end, returns
+`T | undefined`, as in TypeScript. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
@@ -1693,7 +1698,60 @@ A member the value's fixed shape does not have reads as `undefined`, as in Node.
 (`x?.a.b`) is not evaluated. What this phase cannot reach yet
 stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
 call, methods of arrays and strings, string indexing, methods that throw or are generic, and
-members whose type is a union, enum or interface. **Planned** (#924): writing a member
-(`x.f = v`, a compile error today), arithmetic and comparison operators, template literals and
-`String(x)`, `JSON.stringify`, iteration and the warning on a written `any`; until then each is
-a compile error.
+members whose type is a union, enum or interface.
+
+Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
+with a `string`, `number` or `any` key. The value is converted to the member's type with the
+same check as above (a value of another type stops with its `TypeError`, and the member keeps
+its old value) and stored in the object itself, so every other reference to it sees the write;
+a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
+in Node; an array takes its elements inside its length. The other values have a fixed shape:
+adding a property stops with `TypeError: Cannot add property k: an object of a fixed shape gets
+no new properties through `any` (#924)` (Node adds it), writing a getter that has no setter with
+Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
+gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
+`TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
+Writing a `readonly` field, a method, an element past the end of an array or a member of a
+string, number or function stops with a `TypeError` naming #924. Compound assignments
+(`x.n += 1`, `x.n ??= v`) and `x.n++` are compile errors until the operators of `any` come.
+
+`Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
+`Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
+`any` one): the value stays as it is, and its members are read, called and written as above.
+`typeof` tests for `number`, `string` and `boolean` and `instanceof` of a class without type
+parameters narrow to that type itself, so member access after them is typed and direct.
+
+```ts
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function describe(u: unknown): string {
+  if (Array.isArray(u)) {
+    return `${u.length} items, first ${u[0]}`;
+  }
+  if (u instanceof Box) {
+    return `a box of ${u.v}`;
+  }
+  return "something else";
+}
+
+function main(): void {
+  console.log(describe([3, 4])); // 2 items, first 3
+  console.log(describe(new Box("s"))); // a box of s
+  const p: any = { x: 1, y: 2 };
+  p.x = 10;
+  p["y"] = 20;
+  console.log(p.x, p.y); // 10 20
+  const r: any = { a: 1 } as Record<string, number>;
+  r.b = 2;
+  console.log(r.b); // 2
+}
+```
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
+operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
+warning on a written `any`; until then each is a compile error.

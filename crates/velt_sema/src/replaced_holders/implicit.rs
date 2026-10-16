@@ -500,17 +500,20 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PromiseAll
         | I::PromiseRace
         | I::PromiseAny
-        // A member access or call through `any` may run any getter or method of the value
-        // held, and formats nothing itself; counted like a hook call on its arguments.
+        // A member access, call or write through `any` may run any getter, method or setter of
+        // the value held, and formats nothing itself; counted like a hook call on its arguments.
         | I::AnyGet
         | I::AnyIndex
         | I::AnyCall
-        | I::AnyApply => true,
+        | I::AnyApply
+        | I::AnySet
+        | I::AnySetIndex => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
         | I::AnyTo
         | I::AnyTypeof
+        | I::AnyIsArray
         | I::AnyTruthy
         | I::AnyStrictEq
         | I::AnyLooseEq
@@ -539,6 +542,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::NullAs
         | I::Truthy
         | I::FnCapturesNothing
+        | I::ClosureSibling(_)
         | I::Sqrt
         | I::Floor
         | I::Ceil

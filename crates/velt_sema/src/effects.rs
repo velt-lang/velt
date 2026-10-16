@@ -37,11 +37,15 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
 
 /// Does intrinsic `i` run user code itself (a method, getter or function it finds at run
 /// time), which may change any memory whatever its arguments are? Every `any` member access
-/// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`. A new
+/// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`, `o.s = v`
+/// with a setter. A new
 /// intrinsic that can run user code belongs here.
 fn runs_user_code(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
-    matches!(i, I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply)
+    matches!(
+        i,
+        I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply | I::AnySet | I::AnySetIndex
+    )
 }
 
 /// Is `a` a place passed to modify or move it (an intrinsic argument like `pop`'s receiver)?
@@ -134,6 +138,8 @@ mod tests {
             Intrinsic::AnyIndex,
             Intrinsic::AnyCall,
             Intrinsic::AnyApply,
+            Intrinsic::AnySet,
+            Intrinsic::AnySetIndex,
         ] {
             assert!(may_change_memory(&intrinsic(
                 i,
@@ -141,10 +147,12 @@ mod tests {
             )));
         }
         // Reading what an `any` is runs nothing.
-        assert!(!may_change_memory(&intrinsic(
-            Intrinsic::AnyTypeof,
-            vec![local(UseMode::Borrow)]
-        )));
+        for i in [Intrinsic::AnyTypeof, Intrinsic::AnyIsArray] {
+            assert!(!may_change_memory(&intrinsic(
+                i,
+                vec![local(UseMode::Borrow)]
+            )));
+        }
     }
 
     #[test]

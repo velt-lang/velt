@@ -1,0 +1,48 @@
+// check: no leaks
+// A setter called through `any` that replaces the field its receiver was read from, and writes
+// to a field of an object read from a holder (#924): the old values stay alive until the write
+// returns, and each is freed once, as in Node.
+class Holder {
+  x: any = null;
+}
+class S {
+  name: string;
+  h: Holder;
+  constructor(name: string, h: Holder) {
+    this.name = name;
+    this.h = h;
+  }
+  set v(n: number) {
+    this.h.x = new S("second", this.h);
+    console.log("set on", this.name, n);
+  }
+}
+class Child {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+class Parent {
+  child: Child = new Child(1);
+  kids: Child[] = [new Child(2), new Child(3)];
+}
+class Box {
+  p: any = new Parent();
+}
+function main(): void {
+  const holder = new Holder();
+  holder.x = new S("first", holder);
+  holder.x.v = 5;
+  console.log(holder.x.name);
+  holder.x = null;
+  const box = new Box();
+  box.p.child = new Child(10);
+  box.p.kids[0] = new Child(20);
+  console.log(box.p.child.id, box.p.kids[0].id, box.p.kids[1].id);
+  const old: any = box.p.child;
+  box.p.child = new Child(11);
+  console.log(old.id, box.p.child.id);
+  box.p = null;
+  console.log(box.p);
+}

@@ -34,7 +34,9 @@ impl FnCx<'_, '_> {
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         self.stmts_in_scope(stmts, out);
         // A function body's own scope is never popped: its `let x;` never assigned end here.
-        if self.f.scopes.len() == 1 {
+        // (A member of a recursive closure group has its captures' scope outside it.)
+        let body_scopes = 1 + usize::from(self.f.groups.member_of.is_some());
+        if self.f.scopes.len() == body_scopes {
             let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
             self.report_untyped_lets(left.into_iter());
         }
@@ -330,6 +332,12 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if ann.is_none()
+            && v.kind == ast::VarKind::Const
+            && self.group_member_decl(v, name, span, out)
+        {
+            return;
+        }
         // Declared from a literal and used as one integer type: that type (`literal_locals`).
         let decided = ann
             .is_none()
@@ -444,6 +452,16 @@ impl FnCx<'_, '_> {
             return;
         };
         match e {
+            // `return;` in a function whose result may be `undefined` returns it (issue #930).
+            None if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined()) =>
+            {
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
+                Self::push(out, S::Return(Some(value)), span);
+            }
             None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
@@ -481,6 +499,11 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                if std::mem::take(&mut self.f.adopt_stmt) {
+                    // A promise to adopt: stored, then the scopes are left (`async_returned`).
+                    Self::push(out, S::Expr(h), span);
+                    return;
+                }
                 self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }

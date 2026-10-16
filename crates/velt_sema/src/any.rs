@@ -128,8 +128,8 @@ impl Ctx<'_> {
 }
 
 /// `Program::dyn_members`: every struct / class / object type's methods and accessors by name
-/// (own ones first, then each base class's that are not overridden), when a member of an
-/// `any` is read or called; `None` otherwise.
+/// (own ones first, then each base class's that are not overridden), then its `readonly`
+/// fields, when a member of an `any` is read, called or written; `None` otherwise.
 pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<HashMap<DefId, Vec<DynMember>>> {
     if !cx.any.is_some_and(|a| a.members) {
         return None;
@@ -183,11 +183,37 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<HashMap<DefId, Vec<DynMember>>
             let Some(next) = cx.class_of(base) else { break };
             (cur, cur_args) = next;
         }
+        let readonly: Vec<String> = cx
+            .adt(d)
+            .map(|a| {
+                a.fields
+                    .iter()
+                    .filter(|f| f.readonly)
+                    .map(|f| f.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let own_args = args_of(cx, d);
+        let own = cx.ty.intern(TyKind::Adt(d, own_args));
+        for name in readonly {
+            members.push(DynMember {
+                name,
+                kind: DynMemberKind::ReadonlyField,
+                def: d,
+                owner: own,
+            });
+        }
         if !members.is_empty() {
             out.insert(d, members);
         }
     }
     Some(out)
+}
+
+/// The type parameters of `d` as types (`Param(0)`, ...).
+fn args_of(cx: &mut Ctx, d: DefId) -> Vec<TyId> {
+    let n = cx.adt(d).map_or(0, |a| a.generics.names.len()) as u32;
+    (0..n).map(|k| cx.ty.intern(TyKind::Param(k))).collect()
 }
 
 impl Ctx<'_> {

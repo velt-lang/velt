@@ -1,0 +1,75 @@
+// check: no leaks
+// #1142: async nested functions using the enclosing function's locals that call each other.
+async function crawl(root: number): Promise<number> {
+  const seen: number[] = [];
+  let visits = 0;
+  async function visit(n: number): Promise<void> {
+    visits++;
+    seen.push(n);
+    await sleep(1);
+    if (n < root) {
+      await visit(n * 2);
+      await other(n * 2 + 1);
+    }
+  }
+  async function other(n: number): Promise<number> {
+    if (n < root) await visit(n + 10);
+    return n;
+  }
+  await visit(1);
+  console.log(seen.join(","));
+  return visits;
+}
+
+// Escaping async members, and an error rejected deep in the recursion.
+function fetcher(limit: number) {
+  const log: string[] = [];
+  async function get(n: number): Promise<string> {
+    log.push("get" + n);
+    await sleep(1);
+    if (n > limit) throw new Error("over " + n);
+    return n <= 1 ? log.join(" ") : await retry(n - 1);
+  }
+  async function retry(n: number): Promise<string> {
+    log.push("retry" + n);
+    return await get(n);
+  }
+  return { get };
+}
+
+// An async member's parameter or local named like a variable another member captures.
+async function shadowAsync(): Promise<string> {
+  let v = 1;
+  async function a(v: number): Promise<number> {
+    const w = v;
+    return w > 0 ? (await b(w - 1)) + w : 0;
+  }
+  async function b(k: number): Promise<number> {
+    v++;
+    const v2 = await a(k);
+    return v2;
+  }
+  async function c(k: number): Promise<number> {
+    const v = 10;
+    return k > 0 ? (await d(k - 1)) + v : 0;
+  }
+  async function d(k: number): Promise<number> {
+    v++;
+    return await c(k);
+  }
+  const x = await a(3);
+  const y = await c(2);
+  return x + ":" + y + ":" + v;
+}
+
+async function main() {
+  console.log(await crawl(8));
+  const { get } = fetcher(5);
+  console.log(await get(3));
+  console.log(await shadowAsync());
+  try {
+    await get(9);
+  } catch (e) {
+    console.log("rejected", (e as Error).message);
+  }
+}

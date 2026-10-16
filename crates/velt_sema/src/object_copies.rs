@@ -40,7 +40,8 @@ pub(crate) struct Copy {
 }
 
 /// An assignment to field `name` of a value of type `ty` (`None`: a type parameter's, which may
-/// be any object type).
+/// be any object type, or one written through `any`; an empty `name`: a key known only at run
+/// time, which may name any field).
 pub(crate) struct Write {
     pub ty: Option<TyId>,
     pub name: String,
@@ -143,7 +144,7 @@ fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write
         return None;
     }
     writes.iter().find(|w| {
-        (c.fields.contains(&w.name) || c.absent.contains(&w.name))
+        (w.name.is_empty() || c.fields.contains(&w.name) || c.absent.contains(&w.name))
             && w.ty
                 .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to))
     })
@@ -219,14 +220,24 @@ fn holds(cx: &mut Ctx, t: TyId, target: TyId, seen: &mut HashSet<TyId>) -> bool 
 
 fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
     let (from, to) = (cx.display(c.from), cx.display(c.to));
+    let (field, label) = if w.name.is_empty() {
+        (
+            "a field through `any`".to_string(),
+            "a field is assigned here".to_string(),
+        )
+    } else {
+        (
+            format!("field `{}`", w.name),
+            format!("`{}` is assigned here", w.name),
+        )
+    };
     let d = Diagnostic::error(
         format!(
-            "a value of type `{from}` converts to `{to}` by copying its fields, and this program assigns field `{}`, which the other object would not see",
-            w.name
+            "a value of type `{from}` converts to `{to}` by copying its fields, and this program assigns {field}, which the other object would not see"
         ),
         c.span,
     )
-    .with_label(w.span, format!("`{}` is assigned here", w.name));
+    .with_label(w.span, label);
     let d = with_notes(cx, d, c);
     cx.error(d);
 }
