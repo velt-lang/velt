@@ -27,6 +27,7 @@ use crate::body::{FnCx, Want};
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::defs::ParamSig;
 use crate::hir::{self, DefId, ExprKind as H, ImplDef, PassMode, TyId, TyKind};
+use crate::iface_writes::SetterSrc;
 
 /// How a literal property is written.
 enum Written<'e> {
@@ -417,6 +418,14 @@ impl FnCx<'_, '_> {
         let mut sargs = niargs.clone();
         sargs.push(self_ty);
         let host = Host::adt(self.cx, d);
+        let setters = literal_setters(
+            self.cx,
+            (iface, methods.len()),
+            &slots,
+            &field_tys,
+            (d, self_ty),
+            span,
+        );
         let mut impl_methods = vec![];
         for (slot, s) in slots.into_iter().enumerate() {
             let s = s.expect("ICE: every slot of an interface literal is filled");
@@ -479,6 +488,7 @@ impl FnCx<'_, '_> {
             methods: impl_methods,
         });
         let impl_index = self.cx.impls.len() as u32 - 1;
+        self.cx.note_setters(impl_index, setters);
         // The dispatch groups gain the new methods (`throws/groups.rs`): built again on next use.
         self.cx.groups = None;
         let type_args: Vec<TyId> = ps.iter().map(|p| self.cx.ty.param(*p)).collect();
@@ -591,4 +601,54 @@ impl FnCx<'_, '_> {
         let t = self.fn_type(params, m.ret, Some(throws));
         self.coerce(h, t)
     }
+}
+
+/// How the literal stores each writable field of `iface` (`n_methods` methods), for the setter
+/// slots of `crate::iface_writes`: a plain value in its field of struct `d`, a `get f()` through
+/// the `set f(v)` stored next to it, or missing.
+fn literal_setters(
+    cx: &crate::ctx::Ctx,
+    (iface, n_methods): (DefId, usize),
+    slots: &[Option<Slot>],
+    field_tys: &[(String, TyId)],
+    (d, self_ty): (DefId, TyId),
+    span: Span,
+) -> Vec<SetterSrc> {
+    let names: Vec<String> = cx.iface(iface).map_or(vec![], |i| {
+        i.fields.iter().map(|f| f.name.clone()).collect()
+    });
+    let mut out = vec![];
+    for k in cx.writable_fields(iface) {
+        let name = &names[k];
+        out.push(match slots.get(n_methods + k) {
+            Some(Some(Slot::Value(j))) => SetterSrc::Field {
+                d,
+                self_ty,
+                index: *j as usize,
+                ty: field_tys[*j as usize].1,
+            },
+            _ => {
+                let set = format!("set {name}");
+                let found = field_tys.iter().position(|(n, _)| *n == set);
+                let param = found.and_then(|j| match cx.ty.kind(field_tys[j].1) {
+                    TyKind::FnPtr { params, .. } => params.first().copied(),
+                    _ => None,
+                });
+                match (found, param) {
+                    (Some(j), Some(param)) => SetterSrc::Call {
+                        d,
+                        self_ty,
+                        index: j as u32,
+                        fn_ty: field_tys[j].1,
+                        param,
+                    },
+                    _ => SetterSrc::Missing {
+                        span,
+                        name: name.clone(),
+                    },
+                }
+            }
+        });
+    }
+    out
 }

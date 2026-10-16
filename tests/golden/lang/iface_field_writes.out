@@ -1,0 +1,10 @@
+effect:5:first dependency with a long label
+renamed!:6:first dependency with a long label 6
+renamed!:6:second dependency with a long label true own second dependency with a long label
+renamed!:6:third dependency own second dependency with a long label
+effect:16:first dependency with a long label 16 1
+effect:18:first dependency with a long label 18 1
+1410 1410 lit literal replaced own literal replaced
+cell(replaced string value that lives on the heap and more)
+cell(42)
+42

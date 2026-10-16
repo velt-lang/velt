@@ -190,7 +190,7 @@ fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
 }
 
 /// The modes of a call's callee (`this` first for methods), when known statically.
-fn call_modes(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Vec<PassMode>> {
+fn call_modes(cx: &mut Ctx, callee: &Callee, args: &[Expr]) -> Option<Vec<PassMode>> {
     match call_target(cx, callee, args)? {
         Target::Fn(d) => Some(modes_of(cx, d)),
         Target::Iface(iface, slot) => iface_modes(cx, iface, slot),
@@ -244,8 +244,20 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
     })
 }
 
-fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
-    let m = cx.iface(iface)?.methods.get(slot as usize)?;
+fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
+    let i = cx.iface(iface)?;
+    if let Some(k) = (slot as usize).checked_sub(i.methods.len() + i.fields.len()) {
+        // A field setter (`crate::iface_writes`): it modifies the receiver and owns the value
+        // (copies it for Copy types), as `collect::getters::field_setter` declares it.
+        let f = *cx.writable_fields(iface).get(k)?;
+        let ty = i.fields[f].ty;
+        let v = match cx.is_copy(ty) {
+            true => PassMode::Copy,
+            false => PassMode::Owned,
+        };
+        return Some(vec![PassMode::BorrowMut, v]);
+    }
+    let m = i.methods.get(slot as usize)?;
     let this = match m.mut_this {
         true => PassMode::BorrowMut,
         false => PassMode::Borrow,
