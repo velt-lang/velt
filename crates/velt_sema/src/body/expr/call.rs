@@ -59,6 +59,15 @@ impl FnCx<'_, '_> {
                 }
                 self.named_call(id, type_args, args, exp, span)
             }
+            // `it.return(undefined)`: TypeScript's `return(value)` takes the generator's return
+            // value; Velt's `return()` has none, and `undefined` is what leaving it out passes.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } if self.iteration_return_undefined(object, prop, args) => {
+                self.member_call(object, prop, *optional, type_args, &[], exp, span)
+            }
             ast::ExprKind::Member {
                 object,
                 prop,
@@ -84,6 +93,41 @@ impl FnCx<'_, '_> {
                 self.call_value(f, args, span)
             }
         }
+    }
+
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
+    /// #1144)?
+    fn iteration_return_undefined(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> bool {
+        let [arg] = args else {
+            return false;
+        };
+        if prop.name != "return" || crate::body::narrow::nothing_word(arg) != Some("undefined") {
+            return false;
+        }
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        let d = match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => *d,
+            _ => return false,
+        };
+        const PROTOCOL: [&str; 7] = [
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "IteratorObject",
+        ];
+        PROTOCOL
+            .iter()
+            .any(|n| matches!(self.cx.prelude.get(*n), Some(Item::Def(p)) if *p == d))
     }
 
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {

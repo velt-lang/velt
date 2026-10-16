@@ -85,7 +85,9 @@ interface Iterable<T, E = never> {
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
   An iterator class that releases something there writes `return(): IteratorResult<T>` and
   returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
-  makes `break` throw a `TypeError`).
+  makes `break` throw a `TypeError`). TypeScript's `it.return(undefined)` (its `return(value)`
+  takes the generator's return value) calls `return()`; another argument is an error, since a
+  finished result carries no value.
 - **Typed errors**: `E` is what `next()` throws (`never`, the default, means nothing). The loop
   throws it, so a function iterating an `Iterable<T, IoError>` throws `IoError`; a generic
   `function sum<E>(xs: Iterable<i64, E>): i64 throws E` throws what its argument does.
