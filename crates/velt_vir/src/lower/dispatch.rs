@@ -55,16 +55,6 @@ impl super::Cx<'_> {
         join
     }
 
-    /// Is `slot` of `iface` a field setter (`<set f>`, hir_encodings.md "Interface values")?
-    fn is_setter_slot(&self, iface: DefId, slot: u32) -> bool {
-        let hir::Def::Interface(idef) = self.hir.def(iface) else {
-            ice("interface call on a non-interface")
-        };
-        idef.methods
-            .get(slot as usize)
-            .is_some_and(|m| m.name.starts_with("<set "))
-    }
-
     /// Error type of a call through interface method `slot` of `iface<args>`: sema's
     /// `InterfaceMethodDef::throws` (in the interface's type params) with the `Dyn`'s args. A
     /// promise slot never throws: its implementations reject the promise instead.
@@ -99,6 +89,20 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The receiver `rv` of a dispatched call (`args[0]`), held against the arguments after it.
+    /// An argument may replace or free what the receiver was read from (`xs[0].m(clear())`
+    /// where `clear` pops `xs`, `x.f = v()` where `v` reassigns `x`), and JavaScript calls the
+    /// method on the object read before, so the receiver gets a reference of its own for the
+    /// call, as a class method's receiver does (`lower_args`). Arguments that run no code that
+    /// can change memory or write a local leave the receiver as it was read.
+    fn hold_receiver(&mut self, rv: Operand, args: &[hir::Expr], transfer: bool) -> Operand {
+        if transfer {
+            return rv;
+        }
+        let later = later_each(args).first().copied().unwrap_or_default();
+        self.hold(rv, args[0].ty, later)
+    }
+
     pub(super) fn call_virtual(
         &mut self,
         slot: u32,
@@ -119,6 +123,7 @@ impl FnLower<'_, '_> {
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
         let rv = self.receiver(recv, transfer);
+        let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
@@ -143,25 +148,15 @@ impl FnLower<'_, '_> {
             .first()
             .unwrap_or_else(|| ice("interface call without receiver"));
         let dty = self.sub(recv.ty);
-        let (modes, throws, setter) = match self.cx.kind(dty) {
+        let (modes, throws) = match self.cx.kind(dty) {
             TyKind::Dyn(iface, args) => (
                 self.cx.dyn_modes(iface, slot),
                 self.cx.slot_throws(iface, slot, &args),
-                self.cx.is_setter_slot(iface, slot),
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
         let rv = self.receiver(recv, transfer);
-        // `x.f = v()` through an interface: `v()` may replace or free what `x` holds (`x = y`,
-        // `xs.pop()`), and JavaScript writes the object `x` held before, so the receiver gets a
-        // reference of its own for the call, as a class method's receiver does (`lower_args`).
-        let rv = match setter && !transfer {
-            true => {
-                let later = later_each(args).first().copied().unwrap_or_default();
-                self.hold(rv, recv.ty, later)
-            }
-            false => rv,
-        };
+        let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,
