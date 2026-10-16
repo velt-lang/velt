@@ -1,0 +1,27 @@
+none none number string object object
+undefined undefined fallback true false true
+undefined undefined fallback true false true
+null object fallback true true false
+0 number 0 false false false
+undefined undefined fallback true false true
+false boolean false false false false
+1 undefined undefined undefined undefined true true
+2 undefined x undefined string true false
+3 o undefined string undefined false true
+undefined undefined true
+undefined undefined true
+4 number false
+arrow default s
+5 number
+5 number
+null object
+given string
+5 number
+[ 1, 2 ] object
+5 number
+0 number
+arrow none arrow object
+method none method number undefined 2
+impl none impl 7
+[ undefined, 'undefined' ]
+{"v":"none"} undefined

@@ -18,7 +18,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   an interface use the interface's defaults. A default is evaluated where the function is
   called, so it cannot use an earlier parameter yet (`q: number = p + 1` is an error saying so;
   take `q?: number` and write `const r = q ?? p + 1;` in the body).
-- An optional parameter `q?: T` is `q: T | null = null`.
+- An optional parameter `q?: T` is `q: T | null = null`. Left out, it is `undefined`: for
+  `q?: any` or `q?: unknown`, `q === undefined` is true and `typeof q` is `"undefined"`, as in
+  JavaScript.
 - A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
   not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
   parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
