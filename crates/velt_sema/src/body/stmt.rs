@@ -34,7 +34,9 @@ impl FnCx<'_, '_> {
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         self.stmts_in_scope(stmts, out);
         // A function body's own scope is never popped: its `let x;` never assigned end here.
-        if self.f.scopes.len() == 1 {
+        // (A member of a recursive closure group has its captures' scope outside it.)
+        let body_scopes = 1 + usize::from(self.f.groups.member_of.is_some());
+        if self.f.scopes.len() == body_scopes {
             let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
             self.report_untyped_lets(left.into_iter());
         }

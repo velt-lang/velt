@@ -140,13 +140,16 @@ impl FnCx<'_, '_> {
     }
 
     /// At the start of member (g, m)'s closure frame: mark it, and capture the group's
-    /// variables in their order.
+    /// variables in their order. The captures stay in the frame's outermost scope; the
+    /// parameters and the body get a scope of their own inside it, so they may declare names
+    /// the group captures (only the member's own uses of such a name reach the capture).
     pub(super) fn enter_group_member(&mut self, g: usize, m: usize, span: Span) {
         self.f.groups.member_of = Some((g, m));
         let names = self.cx.closure_groups[g].captures.clone();
         for n in &names {
             self.lookup_local(n, span);
         }
+        self.push_scope();
     }
 
     /// `prev`, a local of frame `j` found for `name`: when it is a group member and the frame

@@ -122,6 +122,16 @@ fn nested_functions_capture_as_closures() {
             .count();
         assert_eq!(siblings, 1, "{name}: the member it calls, made once");
     }
+    // A member's parameter or top-level local may be named like a variable another member
+    // captures: the group's captures are in a scope outside the member's own.
+    ok_src(
+        "function main() { let v = 1;
+           function a(v: i64): i64 { const k = v; return k > 0 ? b(k - 1) : 0; }
+           function b(k: i64): i64 { v++; const w = 2; return a(k) + w; }
+           function c(k: i64): i64 { const v = 100; return k > 0 ? d(k - 1) + v : 0; }
+           function d(k: i64): i64 { v++; return c(k); }
+           console.log(a(3), c(2), v); }",
+    );
     // A generator calling itself is not supported yet, and reported once.
     let r = err_src(
         "function main() { const k = 1; function* f(n: i64): Generator<i64> { if (n > 0) { for (const x of f(n - 1)) yield x + k; } } for (const x of f(2)) console.log(x); }",

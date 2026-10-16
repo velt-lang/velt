@@ -137,6 +137,32 @@ function outline(indent: string): { print: (d: Doc) => string } {
   return holder;
 }
 
+// A member's parameter or local may be named like a variable another member captures.
+function shadowParam(): string {
+  let v = 1;
+  function a(v: number): number {
+    return v > 0 ? b(v - 1) + v : 0;
+  }
+  function b(k: number): number {
+    v++;
+    return a(k);
+  }
+  return a(3) + ":" + v;
+}
+
+function shadowLocal(): string {
+  let v = 1;
+  function a(k: number): number {
+    const v = 100;
+    return k > 0 ? b(k - 1) + v : 0;
+  }
+  function b(k: number): number {
+    v++;
+    return a(k);
+  }
+  return a(3) + ":" + v;
+}
+
 function main() {
   console.log(walk(5), walk(10));
   console.log(cycle(7), cycle(0));
@@ -148,5 +174,6 @@ function main() {
   console.log(tree(2));
   console.log(thrower(20));
   const o = outline("  ");
+  console.log(shadowParam(), shadowLocal());
   console.log(o.print(new Doc("root", [new Doc("a", [new Doc("a1")]), new Doc("b")])));
 }
