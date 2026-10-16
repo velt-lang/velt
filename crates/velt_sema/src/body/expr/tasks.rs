@@ -11,7 +11,7 @@ use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
 use crate::defs::{FnKind, ThrowSrc};
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 impl FnCx<'_, '_> {
@@ -151,6 +151,22 @@ impl FnCx<'_, '_> {
         self.f
             .adopted
             .push(crate::body::Adopted { slot, bind, value });
+        let which = self.adopt_which(span);
+        let i32_ = self.cx.ty.i32;
+        let site = self.mk(
+            H::Lit(hir::Lit::Int(self.f.adopted.len() as u128)),
+            i32_,
+            span,
+        );
+        let which = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+        let mark = self.mk(
+            H::Assign {
+                place: Box::new(which),
+                value: Box::new(site),
+            },
+            unit,
+            span,
+        );
         let place = self.mk(H::Local(slot, hir::UseMode::BorrowMut), slot_ty, span);
         let some = self.mk(H::WrapSome(Box::new(p)), slot_ty, span);
         let store = self.mk(
@@ -167,6 +183,10 @@ impl FnCx<'_, '_> {
                 span,
             },
             hir::Stmt {
+                kind: hir::StmtKind::Expr(mark),
+                span,
+            },
+            hir::Stmt {
                 kind: hir::StmtKind::Break(Some(crate::body::ADOPT_LABEL.to_string())),
                 span,
             },
@@ -180,6 +200,17 @@ impl FnCx<'_, '_> {
             never,
             span,
         )
+    }
+
+    /// The function's `<adopt_which>` local: which stored promise is adopted (`Frame::adopt_which`).
+    pub(crate) fn adopt_which(&mut self, span: Span) -> LocalId {
+        if let Some(w) = self.f.adopt_which {
+            return w;
+        }
+        let i32_ = self.cx.ty.i32;
+        let w = self.new_local("<adopt_which>", i32_, true, span, LocalKind::Temp);
+        self.f.adopt_which = Some(w);
+        w
     }
 
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the

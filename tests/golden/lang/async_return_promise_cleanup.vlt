@@ -1,6 +1,7 @@
 // An async function adopts a returned promise only after every scope it returns from is left,
 // as in JS (issue #1148): `finally` blocks run, `using` values are disposed and the iterator of
-// a `for…of` is closed first, and a `catch` does not see the promise's rejection.
+// a `for…of` is closed first, and a `catch` does not see the promise's rejection. A `return`
+// that a `finally` cancels (with `continue`, `break` or another `return`) adopts nothing.
 class Res {
   name: string;
   constructor(name: string) {
@@ -90,6 +91,48 @@ async function nested(): Promise<number> {
   }
   return 0;
 }
+async function v(n: number): Promise<number> {
+  await Promise.resolve(0);
+  console.log("v", n);
+  return n;
+}
+async function overridden(): Promise<number> {
+  try {
+    return v(1);
+  } finally {
+    return v(2);
+  }
+}
+async function continued(x: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      if (i == x) {
+        return v(10 + i);
+      }
+    } finally {
+      if (i == 0) {
+        continue;
+      }
+    }
+  }
+  return v(99);
+}
+async function slower(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve(0);
+  }
+  console.log("slower done");
+}
+async function fallsOff(): Promise<void> {
+  for (let i = 0; i < 1; i++) {
+    try {
+      return slower();
+    } finally {
+      continue;
+    }
+  }
+  console.log("fallsOff falls off");
+}
 
 async function main(): Promise<void> {
   console.log(await inTry());
@@ -103,4 +146,12 @@ async function main(): Promise<void> {
   console.log(await withUsing());
   console.log(await withAwaitUsing());
   console.log(await nested());
+  console.log(await overridden());
+  console.log(await continued(0));
+  console.log(await continued(1));
+  await fallsOff();
+  console.log("fallsOff resolved");
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve(0);
+  }
 }

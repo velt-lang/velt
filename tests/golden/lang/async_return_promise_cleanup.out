@@ -21,3 +21,14 @@ finally nested
 dispose outer
 slow done 5
 5
+v 1
+v 2
+2
+v 10
+v 99
+99
+v 11
+11
+fallsOff falls off
+fallsOff resolved
+slower done

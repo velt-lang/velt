@@ -209,6 +209,10 @@ pub(crate) struct Frame {
     /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
     /// once the body's scopes are left (`wrap_adopted`; issue #1148).
     pub adopted: Vec<Adopted>,
+    /// Which of `adopted` was stored last (`i + 1`; `0` for none): every store writes it, so a
+    /// `return p` cancelled by a `finally` (`continue`, `break`, another `return`) is not
+    /// adopted, as in JS.
+    pub adopt_which: Option<LocalId>,
     /// The `return` being checked stores a promise to adopt: it becomes that statement.
     pub adopt_stmt: bool,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
@@ -309,6 +313,7 @@ impl Frame {
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],
+            adopt_which: None,
             adopt_stmt: false,
             finally_loops: None,
             stmt_yields: Default::default(),

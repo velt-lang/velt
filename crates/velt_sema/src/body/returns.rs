@@ -170,17 +170,25 @@ impl FnCx<'_, '_> {
     }
 
     /// The body `block` of an async function that returns promises (`async_returned`): as in
-    /// JS, each is awaited once every scope of the body is left. The body becomes
-    /// `let <adopted> = null; …; <adopt>: while (true) { body; break; }` (the `break` only when
-    /// the body may fall off its end), then per stored promise `if (<adopted> != null) return
-    /// value;` (the last one unconditional when the body cannot fall off its end).
+    /// JS, the promise of the `return` that completes the body is awaited once every scope of
+    /// the body is left. The body becomes `let <adopted_i> = null; let <adopt_which> = 0;
+    /// <adopt>: while (true) { body; <adopt_which> = 0; break; }` (the last two only when the
+    /// body may fall off its end), then `match (<adopt_which>) { i => return value_i, … }`.
+    /// Each store sets `<adopt_which>`, so a `return p` that a `finally` cancels (`continue`,
+    /// `break`, another `return`) is not adopted, and falling off the end adopts none.
     pub(crate) fn wrap_adopted(&mut self, block: &mut hir::Block) {
         let adopted = std::mem::take(&mut self.f.adopted);
-        if adopted.is_empty() {
+        let which = self.f.adopt_which.take();
+        let (Some(which), false) = (which, adopted.is_empty()) else {
             return;
-        }
+        };
         let span = block.span;
-        let (unit, never, bool_) = (self.cx.ty.unit, self.cx.ty.never, self.cx.ty.bool_);
+        let (unit, never, bool_, i32_) = (
+            self.cx.ty.unit,
+            self.cx.ty.never,
+            self.cx.ty.bool_,
+            self.cx.ty.i32,
+        );
         let label = super::ADOPT_LABEL.to_string();
         let stmt = |kind| hir::Stmt { kind, span };
         let falls_off = !crate::flow::block_diverges(block, &self.cx.ty);
@@ -189,6 +197,17 @@ impl FnCx<'_, '_> {
             body.push(stmt(S::Expr(*v)));
         }
         if falls_off {
+            let place = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+            let zero = self.mk(H::Lit(hir::Lit::Int(0)), i32_, span);
+            let reset = self.mk(
+                H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(zero),
+                },
+                unit,
+                span,
+            );
+            body.push(stmt(S::Expr(reset)));
             body.push(stmt(S::Break(Some(label.clone()))));
         }
         let mut stmts = vec![];
@@ -200,6 +219,11 @@ impl FnCx<'_, '_> {
                 init: Some(null),
             }));
         }
+        let zero = self.mk(H::Lit(hir::Lit::Int(0)), i32_, span);
+        stmts.push(stmt(S::Let {
+            local: which,
+            init: Some(zero),
+        }));
         let cond = self.mk(H::Lit(hir::Lit::Bool(true)), bool_, span);
         stmts.push(stmt(S::While {
             label: Some(label),
@@ -212,55 +236,59 @@ impl FnCx<'_, '_> {
             step: None,
         }));
         let last = adopted.len() - 1;
+        let mut arms = vec![];
         for (i, a) in adopted.into_iter().enumerate() {
             let slot_ty = self.f.locals[a.slot.0 as usize].ty;
             let pty = self.f.locals[a.bind.0 as usize].ty;
-            let ret = stmt(S::Return(Some(a.value)));
+            // Only a stored promise leads to its arm.
             let read = self.mk(H::Local(a.slot, hir::UseMode::Move), slot_ty, span);
-            if i == last && !falls_off {
-                // Only a stored promise leads here.
-                let p = self.mk(H::UnwrapSome(Box::new(read), hir::UseMode::Move), pty, span);
-                stmts.push(stmt(S::Let {
-                    local: a.bind,
-                    init: Some(p),
-                }));
-                stmts.push(ret);
-                continue;
-            }
-            let bind = self.pat(hir::PatKind::Binding(a.bind, hir::UseMode::Move), pty, span);
-            let some = self.pat(hir::PatKind::Some(Box::new(bind)), slot_ty, span);
+            let p = self.mk(H::UnwrapSome(Box::new(read), hir::UseMode::Move), pty, span);
             let returns = hir::Block {
-                stmts: vec![ret],
+                stmts: vec![
+                    stmt(S::Let {
+                        local: a.bind,
+                        init: Some(p),
+                    }),
+                    stmt(S::Return(Some(a.value))),
+                ],
                 value: None,
                 span,
             };
+            // When the body cannot fall off its end, the loop is only left through a store.
+            let pat = if i == last && !falls_off {
+                hir::PatKind::Wildcard
+            } else {
+                hir::PatKind::Lit(hir::Lit::Int(i as u128 + 1))
+            };
+            arms.push(hir::Arm {
+                pat: self.pat(pat, i32_, span),
+                guard: None,
+                body: self.mk(H::Block(returns), never, span),
+            });
+        }
+        if falls_off {
             let none = hir::Block {
                 stmts: vec![],
                 value: None,
                 span,
             };
-            let arms = vec![
-                hir::Arm {
-                    pat: some,
-                    guard: None,
-                    body: self.mk(H::Block(returns), never, span),
-                },
-                hir::Arm {
-                    pat: self.pat(hir::PatKind::None, slot_ty, span),
-                    guard: None,
-                    body: self.mk(H::Block(none), unit, span),
-                },
-            ];
-            let m = self.mk(
-                H::Match {
-                    scrutinee: Box::new(read),
-                    arms,
-                },
-                unit,
-                span,
-            );
-            stmts.push(stmt(S::Expr(m)));
+            arms.push(hir::Arm {
+                pat: self.pat(hir::PatKind::Wildcard, i32_, span),
+                guard: None,
+                body: self.mk(H::Block(none), unit, span),
+            });
         }
+        let read = self.mk(H::Local(which, hir::UseMode::Copy), i32_, span);
+        let ty = if falls_off { unit } else { never };
+        let m = self.mk(
+            H::Match {
+                scrutinee: Box::new(read),
+                arms,
+            },
+            ty,
+            span,
+        );
+        stmts.push(stmt(S::Expr(m)));
         block.stmts = stmts;
     }
 

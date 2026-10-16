@@ -20,6 +20,32 @@ function nextOf(it: Iterator<number>): IteratorResult<number> {
   }
   return r;
 }
+class Countdown implements Iterator<number> {
+  constructor(private n: number) {}
+  next(): IteratorResult<number> {
+    if (this.n === 0) {
+      return { value: undefined, done: true };
+    }
+    this.n -= 1;
+    return { value: this.n + 1, done: false };
+  }
+}
+class Doubled implements Iterator<number> {
+  constructor(private inner: Iterator<number>) {}
+  next(): IteratorResult<number> {
+    const r = this.inner.next();
+    if (r.done) {
+      return { done: true, value: undefined };
+    }
+    return { value: r.value * 2, done: false };
+  }
+}
+class Range implements Iterable<number> {
+  constructor(private n: number) {}
+  [Symbol.iterator](): Iterator<number> {
+    return new Doubled(new Countdown(this.n));
+  }
+}
 type Pair = { value: number | undefined; done: boolean };
 function main() {
   const d = new Doubler([1, 2, 3]);
@@ -28,4 +54,8 @@ function main() {
   }
   const p: Pair = { value: undefined, done: true };
   console.log(p);
+  for (const x of new Range(3)) {
+    console.log(x);
+  }
+  console.log(new Countdown(0).next().done);
 }
