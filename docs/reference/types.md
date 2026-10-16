@@ -1377,7 +1377,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   listed only when it is not `null`. On a class with subclasses it lists the fields of the
   object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
   interface value those of the class it holds (an interface also implemented by a struct is an
-  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
+  error: struct values carry no class). On an `any` it lists the fields of the class instance
+  held, when every value the program converts to a dynamic type is a class instance; in a
+  program that also converts other values (an array, a string, an object type, a function) it
+  is a compile error for now (#924, #926). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - **Index signatures**: an object type or interface with an index signature and no other
@@ -1817,3 +1820,63 @@ then each is a compile error or a `TypeError` naming #823. A method call through
 handler has no traps is the call on the target. When the receiver is a proxy, a getter of a
 plain target read by `Reflect.get(t, k, receiver)` runs with `this` the target, and so does a
 setter written by `Reflect.set(t, k, v, receiver)` (Node: the receiver).
+
+## object and Function
+
+`object` holds any value that is not a primitive: a class instance, an object, an array, a map,
+a set or a function, but not a `number`, `string`, `boolean`, `symbol`, `null` or `undefined`.
+`Function` holds any function. Both are the dynamic value of `any` restricted to those values,
+with TypeScript's rules:
+
+- Only objects convert to `object`, and only functions to `Function` (a `Point | null` does not
+  convert to `object`: test it for `null` first). Both convert to `any` and `unknown`, a
+  `Function` to `object`, and an `any` to either.
+- `T extends object` takes only types whose values are objects, so overloads can tell objects
+  from primitives; inside, a `T` converts to `object`.
+- An `object` converts back with `as T`, checked like an `any` (a `TypeError` when it holds
+  something else). Its members are TypeScript errors until it is narrowed or converted.
+- Calling a `Function` is a call through `any`: the arguments are converted to the parameters'
+  types when the function runs, and the result is an `any`. A field of type `Function` is
+  called the same way (`plugin.setup(app)`).
+- `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
+  in JavaScript.
+- An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
+  checked at run time: a `boolean`, `number`, `string` or `symbol` is a `TypeError` (Node would
+  keep the primitive); `null` and `undefined` pass.
+- `typeof u === "object"` narrows an `unknown` to `object` and `typeof u === "function"` to
+  `Function`; a union with `object` or
+  `Function` is that type when its other members are objects (or functions), `null` and
+  `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
+  `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
+  `null` or `undefined`, as in JavaScript.
+
+```ts
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function brand<T extends object>(v: T, seen: Set<object>): T {
+  seen.add(v);
+  return v;
+}
+
+function main(): void {
+  const seen = new Set<object>();
+  const p = brand(new Point(1), seen);
+  const o = brand({ name: "a" }, seen);
+  console.log(seen.has(p), seen.has(o), seen.has(new Point(1))); // true true false
+  const handlers: Record<string, Function> = {};
+  handlers["double"] = (n: number): number => n * 2;
+  console.log(handlers["double"](21)); // 42
+  const back = [...seen][0] as Point;
+  console.log(back.x); // 1
+}
+```
+
+**Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
+members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
+(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
+without the `object` bound converted with `as object`. Each is a compile error.
