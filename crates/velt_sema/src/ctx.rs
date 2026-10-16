@@ -47,6 +47,8 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    /// Interfaces written through and their setter slots (`crate::iface_writes`).
+    pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -275,6 +277,7 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            iface_writes: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
