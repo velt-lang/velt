@@ -239,6 +239,15 @@ impl FnLower<'_, '_> {
                 let v = self.transfer_value(v, fty);
                 self.own_value(v, fty)
             }
+            // A function value read from a holder another reference reaches (a field of a
+            // counted object, an element, a shared cell): the call may replace it there
+            // (`this.f = …` in the function itself), which would drop its environment while it
+            // runs. It runs on a share instead, dropped after the statement.
+            false if self.callee_replaceable(f) => {
+                let v = self.expr(f);
+                let s = self.share_value(v, fty);
+                self.own_value(s, fty)
+            }
             false => self.expr(f),
         };
         let fp = self.place_of(fv, fty);
@@ -257,6 +266,27 @@ impl FnLower<'_, '_> {
         };
         // The callee is unknown: every non-Copy argument is a plain borrow.
         self.call_ptr(code, env, args, None, (ret, throws, transfer))
+    }
+
+    /// Is the function value `e` read from a place the call may replace: one reached through a
+    /// counted object (a field, an element), or rooted in a variable held in a shared cell or a
+    /// module `let`'s slot? A variable of this function or a parameter, and anything inside them
+    /// stored inline, is reached by no other reference, so the callee cannot replace it.
+    fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => self.info[l.0 as usize].in_cell,
+            // A module `let`: every function reaches its slot, the callee too.
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. } | K::Index { base, .. } => {
+                let bty = self.sub(base.ty);
+                self.cx.counted(bty) || self.callee_replaceable(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.callee_replaceable(base)
+            }
+            _ => false,
+        }
     }
 
     /// Load the vtable pointer of the class object `obj` (of static class type `cls`).
