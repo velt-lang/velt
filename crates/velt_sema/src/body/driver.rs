@@ -237,7 +237,7 @@ fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_com
 
 /// Does a value of `t` hold a promise itself (not behind a class or an array, which are shared)?
 fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
-    use crate::hir::TyKind;
+    use crate::hir::{AdtKind, TyKind};
     if depth > 8 {
         return false;
     }
@@ -245,6 +245,19 @@ fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
         TyKind::Promise(..) => true,
         TyKind::Option(x, _) => holds_promise_by_value(cx, *x, depth + 1),
         TyKind::Tuple(xs) => xs.iter().any(|x| holds_promise_by_value(cx, *x, depth + 1)),
+        // An object literal type or a struct holds its fields inline.
+        TyKind::Adt(d, args) => match cx.adt(*d) {
+            Some(a) if matches!(a.kind, AdtKind::Anon | AdtKind::Struct) => {
+                a.fields.iter().any(|f| {
+                    let t = match cx.ty.kind(f.ty) {
+                        TyKind::Param(i) => args.get(*i as usize).copied().unwrap_or(f.ty),
+                        _ => f.ty,
+                    };
+                    holds_promise_by_value(cx, t, depth + 1)
+                })
+            }
+            _ => false,
+        },
         _ => false,
     }
 }

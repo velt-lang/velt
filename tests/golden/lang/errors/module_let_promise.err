@@ -4,3 +4,7 @@ module_let_promise.vlt:7:1
 module-level `t` holds a promise
 module_let_promise.vlt:8:1
 module-level `maybe` holds a promise
+module_let_promise.vlt:9:1
+module-level `o` holds a promise
+module_let_promise.vlt:10:1
+module-level `pair` holds a promise
