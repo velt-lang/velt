@@ -196,49 +196,14 @@ impl<'a> Parser<'a> {
     fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
-        // `value: undefined` (its position).
-        let mut undefined_value = None;
         while !self.at(Tok::RBrace) {
-            let prop = self.parse_object_prop()?;
-            if let ObjectProp::KeyValue(k, v) = &prop {
-                if k.name == "value" && matches!(v.kind, ExprKind::Lit(Lit::Undefined)) {
-                    undefined_value = Some((props.len(), v.span));
-                }
-            }
-            props.push(prop);
+            props.push(self.parse_object_prop()?);
             if !self.eat(Tok::Comma) {
                 break;
             }
         }
         self.expect(Tok::RBrace)?;
-        if let Some((i, span)) = undefined_value {
-            self.finished_result_value(&mut props, i, span);
-        }
         Ok(props)
-    }
-
-    /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
-    /// `value`. Says so, and drops the property.
-    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, span: Span) {
-        let done = props.iter().any(|p| {
-            matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
-                if k.name == "done")
-        });
-        if !done {
-            return;
-        }
-        if self.speculating == 0 {
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    "`value: undefined` in a finished iterator result is not supported",
-                    span,
-                )
-                .with_note(
-                    "TypeScript allows this; a finished `IteratorResult` in Velt has no `value`; write `{ done: true }`",
-                ),
-            );
-        }
-        props.remove(i);
     }
 
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {

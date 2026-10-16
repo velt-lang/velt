@@ -1,0 +1,24 @@
+// `it.return(undefined)` on generators and iterators (issue #1144): TypeScript's `return(value)`
+// takes the generator's return value; `undefined` is what Velt's `return()` passes.
+function* g(): Generator<string> {
+  try {
+    yield "a";
+    yield "b";
+  } finally {
+    console.log("closed");
+  }
+}
+async function* ag(): AsyncGenerator<string> {
+  yield "x";
+  yield "y";
+}
+async function main() {
+  const it = g();
+  console.log(it.next().value);
+  console.log(it.return(undefined).done);
+  console.log(it.next().done);
+  const ait = ag();
+  console.log((await ait.next()).value);
+  void ait.return(undefined);
+  console.log((await ait.next()).done);
+}

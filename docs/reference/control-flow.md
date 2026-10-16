@@ -79,10 +79,18 @@ interface Iterable<T, E = never> {
 - A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+  Destructured into `const { value, done } = r`, a test of `done` (`if (done) break;`,
+  `if (!done)`, `done === false`) narrows `value` to `T` as well, as in TypeScript (when `T`
+  itself cannot be `null`).
+  TypeScript's `{ value: undefined, done: true }` is accepted for a finished result, without
+  the `value`. `console.log` of a finished result prints `{ done: true }` where Node prints
+  `{ value: undefined, done: true }` (issue #930, phase 3).
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
   An iterator class that releases something there writes `return(): IteratorResult<T>` and
   returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
-  makes `break` throw a `TypeError`).
+  makes `break` throw a `TypeError`). TypeScript's `it.return(undefined)` (its `return(value)`
+  takes the generator's return value) calls `return()`; another argument is an error, since a
+  finished result carries no value.
 - **Typed errors**: `E` is what `next()` throws (`never`, the default, means nothing). The loop
   throws it, so a function iterating an `Iterable<T, IoError>` throws `IoError`; a generic
   `function sum<E>(xs: Iterable<i64, E>): i64 throws E` throws what its argument does.

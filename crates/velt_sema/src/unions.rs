@@ -53,9 +53,12 @@ impl Ctx<'_> {
                 return t;
             }
         }
-        if flat.contains(&self.ty.unit) {
-            self.err("`void` cannot be a member of a union type", span);
-            return self.ty.error;
+        // `T | void` is `T | undefined`: a `void` function's value is `undefined` (issue #930).
+        let unit = self.ty.unit;
+        if flat.contains(&unit) {
+            self.writes_undefined = true;
+            flat.retain(|t| *t != unit);
+            nothing = Some(nothing.map_or(Nothing::Undefined, |n| n.join(Nothing::Undefined)));
         }
         let never = self.ty.never;
         flat.retain(|t| *t != never);
