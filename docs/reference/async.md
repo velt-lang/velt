@@ -22,7 +22,9 @@ callback, or `Promise<T> | null`) awaits a promise and gives any other value as 
 
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
-TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+TypeScript: its body returns `View`. The same holds for such an arrow as the value of a
+module-level constant or a field initializer (`const load: () => number | Promise<number> = async
+() => 1;`). Such a result is told apart with `r instanceof Promise`
 ([unions](types.md#union-types)):
 
 ```ts
