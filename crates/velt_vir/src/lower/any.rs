@@ -393,12 +393,41 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if self.cx.is_dynamic(ty) {
+            if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
+                // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
+                // `null` and `undefined` are what `object | null` holds.
+                let fvt = self.cx.ty(from);
+                let p = Place::local(self.copy_to_temp(v, fvt));
+                self.check_not_primitive(&p, ty);
+                return self.own_value(Operand::Copy(p), ty);
+            }
             return self.own_value(v, ty);
         }
         let fvt = self.cx.ty(from);
         let p = Place::local(self.copy_to_temp(v, fvt));
         let r = self.any_unbox(&p, from, ty);
         self.own_value(r, ty)
+    }
+
+    /// Is `t` TypeScript's `object` (issue #926)?
+    fn is_object_ty(&self, t: TyId) -> bool {
+        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
+    }
+
+    /// Stop with a `TypeError` when the dynamic value at `p` holds a boolean, number, string
+    /// or symbol (converted to `object`, `ty`).
+    fn check_not_primitive(&mut self, p: &Place, ty: TyId) {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc.clone());
+        let lo = cint(TAG_BOOLEAN as i128, Ty::U64);
+        let k = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, tag, lo));
+        let n = cint((TAG_SYMBOL - TAG_BOOLEAN) as i128, Ty::U64);
+        let bad = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, k, n));
+        let (bad_bb, ok_bb) = (self.new_block(), self.new_block());
+        self.branch(bad, bad_bb, ok_bb);
+        self.switch_to(bad_bb);
+        self.any_type_error(desc, ty);
+        self.switch_to(ok_bb);
     }
 
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.

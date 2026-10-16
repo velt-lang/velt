@@ -1,0 +1,24 @@
+// check: no leaks
+// `x as object` from an `unknown` or an `any` (issue #926): the same value, checked to hold
+// no primitive (`null` and `undefined` pass, as `object | null`).
+class Point {
+  x = 1;
+}
+
+function asObject(u: unknown): object {
+  return u as object;
+}
+
+function main(): void {
+  const p = new Point();
+  const seen = new Set<object>();
+  seen.add(asObject(p));
+  seen.add(asObject(p));
+  const list: any = [1, 2];
+  const o: object = list as object;
+  seen.add(o);
+  console.log(seen.size, seen.has(p), seen.has(o), Array.isArray(o));
+  console.log(asObject(null) === null, asObject(undefined) === undefined);
+  const fn: unknown = (): number => 1;
+  console.log(typeof asObject(fn));
+}

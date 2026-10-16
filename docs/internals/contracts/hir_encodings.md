@@ -740,8 +740,9 @@ entry is an `ICE:`.
   write of the field it names (or, for a computed key, of every field) for `object_copies`.
 - `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
   array's or tuple's `any` table is `u64::MAX - 1`. `Array.isArray(x)`, `x instanceof C` of a
-  generic class and `typeof x === "function"` narrow a dynamic local with `Fact::Class(l, any)`
-  (an `unknown` reads as `AnyTo(Share(x))` to `any`; an `any` stays as it is).
+  generic class and `typeof x === "function"` (on an `object`; an `unknown` narrows to
+  `Function`, below) narrow a dynamic local with `Fact::Class(l, any)` (an `unknown` reads as
+  `AnyTo(Share(x))` to `any`; an `any` stays as it is).
 - `Intrinsic::AnyHas(x, key)` is `key in x` on an `any` `x` (key `string`, or `any`: a number
   names an element by its string), of type `bool`; `x` is borrowed. Lowering evaluates `key`
   before `x`, as JavaScript does, although `x` is the first argument. It runs user code (a
@@ -769,7 +770,10 @@ entry is an `ICE:`.
   values) into `object` and functions into `Function`; `find_impl` of either interface answers
   for the type, so `T extends object` is a bound that primitives fail. A `ToDyn` operand may then
   be a type parameter bound by `object` / `Function`; when its instantiation is itself dynamic,
-  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`). Once
+  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`).
+  `AnyTo` from `any` / `unknown` to `object` checks the tag: a boolean, number, string or
+  symbol is a `TypeError`. `typeof x === "function"` narrows an `unknown` local with
+  `Fact::Class(l, Function)`. Once
   any value converts to `object` / `Function`, lowering converts objects to every dynamic type by
   identity (one counted object, as with a write through `any`), so `Set<object>` keys compare by
   identity whichever dynamic type a value went through.

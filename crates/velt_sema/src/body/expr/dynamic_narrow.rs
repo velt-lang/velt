@@ -102,6 +102,22 @@ impl FnCx<'_, '_> {
         vec![Fact::Class(l, object)]
     }
 
+    /// `x` reads as a `Function` where `typeof x === "function"` holds, as in TypeScript, when
+    /// it is an `unknown` (issue #926); an `object` reads as an `any` there, and an `any` stays.
+    pub(crate) fn dynamic_to_function_fact(&mut self, e: &ast::Expr) -> Vec<Fact> {
+        let Some(l) = self.own_dynamic_local(e) else {
+            return vec![];
+        };
+        let t = self.local_ty(l);
+        match (self.cx.dynamic(t), self.cx.any) {
+            (Some(Dynamic::Unknown), Some(defs)) => {
+                let function = self.cx.ty.intern(hir::TyKind::Dyn(defs.function, vec![]));
+                vec![Fact::Class(l, function)]
+            }
+            _ => self.dynamic_to_any_fact(e),
+        }
+    }
+
     /// The type an `any` / `unknown` value `t` narrows to by `instanceof` of the generic class
     /// `class`: `any` (TypeScript's `C<any>`), since the type arguments of the instance held are
     /// known only at run time.

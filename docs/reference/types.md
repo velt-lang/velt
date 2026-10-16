@@ -1377,7 +1377,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   listed only when it is not `null`. On a class with subclasses it lists the fields of the
   object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
   interface value those of the class it holds (an interface also implemented by a struct is an
-  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
+  error: struct values carry no class). On an `any` it lists the fields of the class instance
+  held, when every value the program converts to a dynamic type is a class instance; in a
+  program that also converts other values (an array, a string, an object type, a function) it
+  is a compile error for now (#924, #926). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - **Index signatures**: an object type or interface with an index signature and no other
@@ -1837,9 +1840,15 @@ with TypeScript's rules:
   called the same way (`plugin.setup(app)`).
 - `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
   in JavaScript.
-- `typeof u === "object"` narrows an `unknown` to `object`; a union with `object` or
+- An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
+  checked at run time: a `boolean`, `number`, `string` or `symbol` is a `TypeError` (Node would
+  keep the primitive); `null` and `undefined` pass.
+- `typeof u === "object"` narrows an `unknown` to `object` and `typeof u === "function"` to
+  `Function`; a union with `object` or
   `Function` is that type when its other members are objects (or functions), `null` and
-  `undefined` included, and `unknown` otherwise (`string | Function`).
+  `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
+  `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
+  `null` or `undefined`, as in JavaScript.
 
 ```ts
 class Point {
