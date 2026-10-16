@@ -104,7 +104,10 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
         if let Some(f) = cx.sigq.filling_sigs.last_mut() {
             f.1.clone_from(&p.name.name);
         }
-        let ty = cx.resolve_type(&p.ty, env);
+        let mut ty = cx.resolve_type(&p.ty, env);
+        if p.rest && !rest_param_type(cx, p, ty) {
+            ty = cx.ty.error;
+        }
         if out.iter().any(|q| q.name == p.name.name) {
             cx.err(
                 format!(
@@ -130,6 +133,27 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
         });
     }
     out
+}
+
+/// A rest parameter's type must be an array type: `T[]`, `readonly T[]` or an alias of one
+/// (TypeScript's TS2370 otherwise). One typed by a type parameter (`...args: A` with
+/// `A extends unknown[]`) is not supported yet. False after reporting an error.
+fn rest_param_type(cx: &mut Ctx, p: &ast::Param, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Array(_) | TyKind::Error => return true,
+        TyKind::Param(_) => cx.error(
+            Diagnostic::error(
+                "a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)",
+                p.ty.span,
+            )
+            .with_note("Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)"),
+        ),
+        _ => cx.err(
+            "a rest parameter must have an array type (`...xs: T[]`)",
+            p.ty.span,
+        ),
+    }
+    false
 }
 
 /// Resolve `sig` into the placeholder `d`; generics = `owner` generics followed by the fn's own.

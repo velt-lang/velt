@@ -27,6 +27,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   arity error (TS2554).
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
+  Its type may be any array type: `readonly T[]`, or an alias of an array type
+  (`...xs: Nums` with `type Nums = number[]`); another type is an error, as in TypeScript
+  (TS2370). A rest parameter typed by a type parameter (`...args: A` with
+  `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
+  supported yet (#943).
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
   `String.fromCharCode`, an array's `push`) accept a spread anywhere.
 - A **spread into fixed parameters** passes the elements of a value whose length is known when
