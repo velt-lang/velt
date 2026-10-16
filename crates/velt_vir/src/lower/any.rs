@@ -10,6 +10,7 @@
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
+//! | 5..8 | member reads and calls (any_member.rs), when the program has them |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -135,6 +136,7 @@ impl Cx<'_> {
                 Const::Func(self.func(Work::Glue(Glue::AnyNumber, ty))),
             ));
         }
+        e.extend(self.any_member_entries(ty));
         e
     }
 }
@@ -386,7 +388,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
-    fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
+    pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
             return Operand::Copy(p.clone());
@@ -484,7 +486,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The name of `ty` in a `TypeError`, with its type arguments (`Box<number>`).
-    fn any_target_name(&self, ty: TyId) -> String {
+    pub(super) fn any_target_name(&self, ty: TyId) -> String {
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
             TyKind::Adt(_, args) if !args.is_empty() => {

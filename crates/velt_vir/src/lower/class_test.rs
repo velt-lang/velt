@@ -109,7 +109,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The class id word of the vtable at `vt`.
-    fn vtable_class_id(&mut self, vt: Operand) -> Operand {
+    pub(super) fn vtable_class_id(&mut self, vt: Operand) -> Operand {
         let vp = self.operand_place(vt, Ty::Ptr);
         let word = proj(&vp, Proj::Deref(Ty::U64));
         self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(word)))

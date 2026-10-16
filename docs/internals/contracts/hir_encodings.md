@@ -686,6 +686,17 @@ entry is an `ICE:`.
   behind a test (`AnyTypeof` for primitives, `PatKind::InstanceOf` for classes, `AnyStrictEq`
   for literals), with `Intrinsic::Panic` (`TypeError`) when none passes. `console.log` and the format glue print the
   value the table formats; a string at the top level prints without quotes.
-- Not yet (each a compile error, phase 1b and 2 of #924): member reads, writes and calls on
-  `any` (`x.f`, `x[k]`, `x(...)`), other operators, template literals and `String(x)`,
-  `JSON.stringify` of an `any`, iteration.
+- Member reads and calls (phase 1b of #924): `x.f` / `x["f"]` / `x[k]` with a `string` or
+  `any` key is `AnyGet(x, key)`, `x[i]` with a number key `AnyIndex(x, i as f64)`, `x.m(a...)`
+  `AnyCall(x, "m", text, a...)` and `x(a...)` `AnyApply(x, text, a...)`, where `x` is borrowed,
+  each argument is boxed and moved in, `text` is a string literal naming the callee for a
+  `TypeError` (`x.m is not a function`), and the result is an `any`. An `unknown` receiver is
+  an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
+  methods and accessors (`DynMember`: name, kind, def, declaring type) of every struct, class and
+  object type by name, and every `any` table gets four more slots (velt_vir `lower/any_member.rs`):
+  5 `AnyGet (data, key, out) -> u8`, 6 `AnyIndex (data, f64, out) -> u8`, 7 `AnyCall (data, key,
+  argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
+  is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
+  them the tables and the VIR are unchanged.
+- Not yet (each a compile error, phase 1b and 2 of #924): member writes on `any` (`x.f = v`),
+  other operators, template literals and `String(x)`, `JSON.stringify` of an `any`, iteration.

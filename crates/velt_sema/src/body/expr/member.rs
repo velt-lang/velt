@@ -125,6 +125,11 @@ impl FnCx<'_, '_> {
             );
             return None;
         }
+        // `x.f = v` on an `any` (reads were handled by `member_value`).
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return Some(h),
+            Err(obj) => obj,
+        };
         let mut obj = match self.iface_field(obj, prop, want, span) {
             Ok(call) => return Some(call),
             Err(obj) => obj,
@@ -260,7 +265,7 @@ impl FnCx<'_, '_> {
                     let mut d = Diagnostic::error(msg, span);
                     if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
                     {
-                        d = d.with_note(process_note(&prop.name));
+                        d = d.with_note(super::process::process_note(&prop.name));
                     }
                     self.cx.error(d);
                     return self.error_expr(span);
@@ -328,6 +333,10 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         if self.record_args(obj.ty).is_some() {
             return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
@@ -412,6 +421,10 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let obj = match self.dynamic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         let t = obj.ty;
         // `o[KEY]` with a symbol constant: the member the symbol names.
         if let Some(key) = self.symbol_key_of(index) {
@@ -730,28 +743,6 @@ impl FnCx<'_, '_> {
     /// Is `t` a class type (for "use `new`" hints)?
     pub(crate) fn is_class_def(&self, d: DefId) -> bool {
         self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class)
-    }
-}
-
-/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
-/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
-/// `env` (`super::process`); the rest is in `velt:process`.
-fn process_note(name: &str) -> String {
-    match name {
-        "stdout" | "stderr" => format!(
-            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
-        ),
-        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
-                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
-                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
-            .to_string(),
-        "cwd" | "chdir" => {
-            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
-        }
-        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
-              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
-              `velt:process`"
-            .to_string(),
     }
 }
 

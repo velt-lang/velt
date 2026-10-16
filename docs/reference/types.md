@@ -1647,7 +1647,53 @@ object and a boolean, number or string stops with a `TypeError` (JavaScript conv
 with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
 convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
 optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
-today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
-`x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
-`JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
-error.
+today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
+
+Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
+`string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
+or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member
+is found at run time in the value the `any` holds: a field, getter or method of a class
+instance (a subclass's too when it was converted through its base class), an object type's
+field, `length` and elements of an array, `length` of a string, and the members of the standard
+library's classes (`size`, `get`, `set` and `has` of a `Map`). The result is an `any`; each
+argument is converted to the parameter's type with the same check as above, a left-out one is
+`undefined`, and extra ones are ignored.
+
+```ts
+class Counter {
+  n: number = 0;
+  get double(): number {
+    return this.n * 2;
+  }
+  add(k: number): number {
+    this.n += k;
+    return this.n;
+  }
+}
+
+function main(): void {
+  const c: any = new Counter();
+  console.log(c.add(5), c.double, c.missing); // 5 10 undefined
+  const m: any = new Map<string, number>();
+  m.set("a", 1);
+  console.log(m.get("a"), m.size); // 1 1
+  const xs: any = [10, 20];
+  console.log(xs.length, xs[1], xs[2]); // 2 20 undefined
+  const f: any = (s: string) => s.toUpperCase();
+  console.log(f("hi")); // HI
+}
+```
+
+A member the value's fixed shape does not have reads as `undefined`, as in Node. A `null` or
+`undefined` receiver stops with Node's `TypeError: Cannot read properties of undefined (reading
+'f')` before the call's arguments are evaluated, calling something that is not a function with
+`TypeError: x.f is not a function`, and an argument of the wrong type with the conversion's
+`TypeError`. Optional chaining short-circuits as in Node: `x?.f`, `x?.m()`, `x?.[0]` and
+`x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
+(`x?.a.b`) is not evaluated. What this phase cannot reach yet
+stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
+call, methods of arrays and strings, string indexing, methods that throw or are generic, and
+members whose type is a union, enum or interface. **Planned** (#924): writing a member
+(`x.f = v`, a compile error today), arithmetic and comparison operators, template literals and
+`String(x)`, `JSON.stringify`, iteration and the warning on a written `any`; until then each is
+a compile error.

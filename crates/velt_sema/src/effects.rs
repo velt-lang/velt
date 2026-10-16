@@ -28,11 +28,20 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
             may_change_memory(cond) || may_change_memory(then) || may_change_memory(els)
         }
         H::Call {
-            callee: hir::Callee::Intrinsic(_),
+            callee: hir::Callee::Intrinsic(i),
             args,
-        } => args.iter().any(|a| may_change_memory(a) || writes_place(a)),
+        } => runs_user_code(*i) || args.iter().any(|a| may_change_memory(a) || writes_place(a)),
         _ => true,
     }
+}
+
+/// Does intrinsic `i` run user code itself (a method, getter or function it finds at run
+/// time), which may change any memory whatever its arguments are? Every `any` member access
+/// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`. A new
+/// intrinsic that can run user code belongs here.
+fn runs_user_code(i: hir::Intrinsic) -> bool {
+    use hir::Intrinsic as I;
+    matches!(i, I::AnyGet | I::AnyIndex | I::AnyCall | I::AnyApply)
 }
 
 /// Is `a` a place passed to modify or move it (an intrinsic argument like `pop`'s receiver)?
@@ -115,6 +124,27 @@ mod tests {
         // An argument that runs code counts inside an intrinsic as well.
         let len = intrinsic(Intrinsic::ArrayLen, vec![getter]);
         assert!(may_change_memory(&len));
+    }
+
+    #[test]
+    fn a_member_access_through_any_changes_memory() {
+        // `o.grow()` / `o.g` / `o[0]` / `f()` on an `any` run whatever the value holds.
+        for i in [
+            Intrinsic::AnyGet,
+            Intrinsic::AnyIndex,
+            Intrinsic::AnyCall,
+            Intrinsic::AnyApply,
+        ] {
+            assert!(may_change_memory(&intrinsic(
+                i,
+                vec![local(UseMode::Borrow)]
+            )));
+        }
+        // Reading what an `any` is runs nothing.
+        assert!(!may_change_memory(&intrinsic(
+            Intrinsic::AnyTypeof,
+            vec![local(UseMode::Borrow)]
+        )));
     }
 
     #[test]

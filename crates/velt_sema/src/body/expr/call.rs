@@ -243,6 +243,10 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let f = match self.dynamic_apply(f, args, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
         let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,
