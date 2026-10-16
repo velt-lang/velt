@@ -127,6 +127,17 @@ fn def_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     if let Some(decl) = f.declared_throws {
         return decl.ty;
     }
+    if cx.throw_groups().group_of(d).is_some() {
+        // Object literals may add members to its group (`body::literal_hosts`).
+        let f = cx.fn_info(d);
+        let name = f
+            .name
+            .rsplit(['.', ':'])
+            .next()
+            .unwrap_or(&f.name)
+            .to_string();
+        crate::body::literal_hosts::ensure_named(cx, &name);
+    }
     let Some(g) = cx.throw_groups().group_of(d) else {
         return own_now(cx, d, visited);
     };
@@ -182,6 +193,10 @@ fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Opt
     if let Some(t) = foreign_bound_slot(cx, iface, slot) {
         return t.ok().flatten();
     }
+    // Object literals may add implementations of the slot (`body::literal_hosts`).
+    if let Some(name) = slot_name(cx, iface, slot) {
+        crate::body::literal_hosts::ensure_named(cx, &name);
+    }
     let g = cx.throw_groups().slot_group(iface, slot)?;
     group_now(cx, g, visited)
 }
@@ -222,6 +237,18 @@ pub(crate) fn foreign_bound_slot(
     Some(if agree { Ok(first) } else { Err(errors) })
 }
 
+/// The member name of slot `slot` of `iface`: a method's (a setter's without `set `), or a
+/// field's (the slots after the methods).
+fn slot_name(cx: &Ctx, iface: DefId, slot: u32) -> Option<String> {
+    let i = cx.iface(iface)?;
+    let slot = slot as usize;
+    let name = match i.methods.get(slot) {
+        Some(m) => m.name.strip_prefix("set ").unwrap_or(&m.name),
+        None => &i.fields.get(slot - i.methods.len())?.name,
+    };
+    Some(name.to_string())
+}
+
 /// The `throws` clause of interface method `slot` of `iface` (in the interface's terms, also
 /// for an inherited method), when written: what a call through the slot throws.
 pub(crate) fn slot_clause(cx: &Ctx, iface: DefId, slot: u32) -> Option<Option<TyId>> {
@@ -233,8 +260,6 @@ impl Ctx<'_> {
     /// The dispatch groups (built on first use; interfaces, impls and vtables are known once
     /// declarations are collected).
     pub(crate) fn throw_groups(&mut self) -> &Groups {
-        // Object literals add implementations while bodies are checked (`body::literal_hosts`).
-        crate::body::literal_hosts::ensure_all(self);
         if self.groups.is_none() {
             let g = groups::build(self);
             self.groups = Some(g);
