@@ -26,7 +26,7 @@ mod declare;
 mod exports;
 mod extend_shadow;
 mod field_only;
-mod forwarders;
+pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
 mod iface_extends;

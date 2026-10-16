@@ -1,15 +1,8 @@
-// Object-literal methods that use `this`, and getters and setters in object literals, are not
-// supported yet (Velt's object literals are plain data).
+// Object-literal methods that use `this` are not supported yet (the method is a function
+// stored in a field, which sees the variables around it but not the object).
 const counter = {
   n: 1,
   next() {
     return this.n + 1;
   },
-};
-
-const state = {
-  get value() {
-    return 2;
-  },
-  set value(v: number) {},
 };

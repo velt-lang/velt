@@ -50,7 +50,6 @@ pub(crate) struct Ctx<'m> {
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
-    /// Anonymous object types by shape.
     /// Anonymous object defs by shape: field names, declared types and flags, in order.
     pub anon: HashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
@@ -87,9 +86,8 @@ pub(crate) struct Ctx<'m> {
     /// skipped otherwise; the type table alone cannot tell, since the prelude declares
     /// `Array<T | undefined>.sort`.
     pub writes_undefined: bool,
-    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
-    /// now: a utility type in a field type shapes the type it reads first, whatever the
-    /// declaration order.
+    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
+    /// a utility type in a field type shapes the type it reads first, whatever the order.
     pub shaped: HashSet<DefId>,
     pub shaping: Vec<DefId>,
     /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
@@ -124,6 +122,11 @@ pub(crate) struct Ctx<'m> {
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
+    /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
+    pub literal_hosts: crate::body::literal_hosts::LiteralHosts,
+    /// What the methods of the object literals being checked throw, by interface slot, before
+    /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
+    pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
@@ -211,8 +214,7 @@ pub(crate) struct Ctx<'m> {
     pub object_copies: crate::object_copies::Copies,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
-    /// Second arguments of protocol types written before base classes were known
-    /// (`crate::ts_protocol`).
+    /// Second arguments of protocol types written before base classes were known (`ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
@@ -282,6 +284,8 @@ impl<'m> Ctx<'m> {
             fn_defs: vec![],
             fn_values: vec![],
             groups: None,
+            literal_hosts: Default::default(),
+            provisional_slots: vec![],
             throw_checks: vec![],
             iface_generators: vec![],
             nested: vec![],

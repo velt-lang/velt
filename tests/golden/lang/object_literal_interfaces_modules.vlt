@@ -1,0 +1,15 @@
+// Object literals implementing an interface as exported module constants of a library module,
+// used from this one; a plain value for an interface getter. Expected output from node.
+import type { Handler } from "./_object_literal_handlers";
+import { upper, reverse, all } from "./_object_literal_handlers";
+
+function run(h: Handler, s: string): string {
+  return `${h.name}(${h.priority}): ${h.handle(s)}`;
+}
+
+console.log(run(upper, "abc"));
+console.log(run(reverse, "abc"));
+for (const h of all()) {
+  console.log(run(h, "xy"));
+}
+console.log(upper.priority + reverse.priority);
