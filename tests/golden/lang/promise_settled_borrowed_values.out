@@ -1,0 +1,27 @@
+narrowed 1 narrowed
+narrowed 2 narrowed
+direct 1 plain
+direct 2 plain
+member 1 member
+member 2 member
+in object 1 in object
+in object 2 in object
+map 1 in map
+map 2 in map
+array 1 in array
+array 2 in array
+async throw 1 narrowed
+async throw 2 narrowed
+async return 1 narrowed
+async return 2 narrowed
+new Promise reject 1 narrowed
+new Promise reject 2 narrowed
+capture 1 captured
+capture 2 captured
+resolve 1 narrowed
+new Promise resolve 1 narrowed
+throw 1 narrowed
+resolve 2 narrowed
+new Promise resolve 2 narrowed
+throw 2 narrowed
+narrowed plain captured

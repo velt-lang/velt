@@ -1,0 +1,16 @@
+ctor threw sx
+RangeError The property 'strategy.highWaterMark' is invalid. Received -1
+RangeError The property 'strategy.highWaterMark' is invalid. Received NaN
+closed rejected TypeError Invalid state: Reader released
+later closed Invalid state: Reader released
+read Invalid state: The reader is not attached to a stream
+cancel Invalid state: The reader is not attached to a stream
+closed, then released Invalid state: Reader released
+r3 closed boom
+r3 cancel boom
+r3 read boom
+r3 closed again boom
+r3 read again boom
+for await bad false
+from: pulls before a read 0
+1 1

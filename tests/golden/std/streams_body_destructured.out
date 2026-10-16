@@ -1,0 +1,5 @@
+200 ReadableStream { locked: false, state: 'readable', supportsBYOB: true }
+hi
+ReadableStream { locked: false, state: 'readable', supportsBYOB: true }
+data
+ReadableStream { locked: true, state: 'closed', supportsBYOB: true }

@@ -38,6 +38,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `ArrayBuffer`, `DataView`, `Uint8Array`, `Int8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` | bytes and the typed arrays that view them, as in Node ([typed arrays](../std/typed_array.md)) |
 | `btoa(s)`, `atob(s)` | Base64 of binary strings, as in Node ([velt:encoding](../std/encoding.md)) |
 | `DOMException` | the error web APIs throw, with `name` and `code` ([prelude](../std/prelude.md#errors)) |
+| `ReadableStream`, `ReadableStreamDefaultReader`, `ReadableStreamDefaultController` | WHATWG streams, as in Node ([streams](../std/streams.md)) |
 | `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |

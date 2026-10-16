@@ -183,7 +183,7 @@ export class Request {
       );
     }
     if (input.#raw != 0) {
-      const body = input.body;
+      const body = BodyStream.adopt(input.chunks());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();
@@ -248,16 +248,8 @@ export class Request {
     return s == null ? null : s.signal;
   }
 
-  /**
-   * The body as a stream of `u8[]` chunks (JS: a `ReadableStream`); null without a body.
-   * Reading it uses the body up, as `text()` does.
-   */
-  get body(): BodyStream | null {
-    if (!this.hasBody()) {
-      return null;
-    }
-    return BodyStream.adopt(this.chunks());
-  }
+  // `body` is in velt:fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
 
   get bodyUsed(): bool {
     const e = this.#extra;
