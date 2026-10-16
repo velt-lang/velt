@@ -134,7 +134,15 @@ impl FnCx<'_, '_> {
     }
 
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.

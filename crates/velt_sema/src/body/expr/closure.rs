@@ -435,6 +435,14 @@ impl FnCx<'_, '_> {
                     Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };
+                let h = match (self.f.ret, self.promise_value(h.ty)) {
+                    // An async arrow giving a promise: its result is the promise's value.
+                    (None, Some(t)) => {
+                        self.f.ret = Some(t);
+                        self.inferred_promise_return(h, t)
+                    }
+                    _ => h,
+                };
                 if self.f.ret.is_none() {
                     self.f.ret = Some(h.ty);
                 }

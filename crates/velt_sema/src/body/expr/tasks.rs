@@ -112,7 +112,7 @@ impl FnCx<'_, '_> {
 
     /// `{ <adopted> = p; break <adopt>; }`: stores the returned promise `p` for the function to
     /// await once its scopes are left (`async_returned`); records how it is returned then.
-    fn adopt(&mut self, p: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
+    pub(crate) fn adopt(&mut self, p: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
         let (pty, unit, never) = (p.ty, self.cx.ty.unit, self.cx.ty.never);
         let payload = self.cx.ty.promise_payload(pty).unwrap_or(self.cx.ty.error);
         let slot_ty = self.cx.ty.option(pty);
@@ -215,7 +215,7 @@ impl FnCx<'_, '_> {
 
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
-    pub(super) fn await_throws(&mut self, h: &hir::Expr) {
+    pub(crate) fn await_throws(&mut self, h: &hir::Expr) {
         if let H::Call {
             callee: Callee::Def(d, targs),
             ..

@@ -28,6 +28,9 @@ pub(crate) struct Returns {
     nothing: Option<Nothing>,
     /// `return;`
     bare: Vec<Span>,
+    /// An async body returns a promise: its value type counts (`promise_value`), and the
+    /// promise converts to the result.
+    promises: bool,
 }
 
 #[derive(Clone)]
@@ -321,9 +324,35 @@ impl FnCx<'_, '_> {
         let outer = std::mem::replace(&mut self.cx.rec.in_return, true);
         let h = self.expr(e, hint, Want::Move);
         self.cx.rec.in_return = outer;
-        let ty = self.cx.widened(h.ty);
+        let ty = match self.promise_value(h.ty) {
+            Some(t) => {
+                self.f.returns.promises = true;
+                t
+            }
+            None => h.ty,
+        };
+        let ty = self.cx.widened(ty);
         self.f.returns.values.push(Value { ty, span: h.span });
         Some(h)
+    }
+
+    /// `T` when an async body (not a generator) returns a `Promise<T>`: like TypeScript, its
+    /// result is `T` (the function's `Promise<T>`), not a promise of a promise (issue #1166).
+    pub(crate) fn promise_value(&self, t: TyId) -> Option<TyId> {
+        if !self.f.is_async || self.f.yield_ty.is_some() {
+            return None;
+        }
+        self.cx.ty.promise_payload(t)
+    }
+
+    /// The promise `h` returned where an async body's inferred result is its value type `t`
+    /// (`promise_value`): adopted like one returned with a written result type
+    /// (`async_returned`), so the `return` becomes the statement that stores it.
+    pub(crate) fn inferred_promise_return(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
+        let span = h.span;
+        self.await_throws(&h);
+        self.f.adopt_stmt = true;
+        self.adopt(h, t, span)
     }
 
     /// The inferred result type of the body `block` (whose `return`s were recorded); converts
@@ -333,7 +362,7 @@ impl FnCx<'_, '_> {
         self.undefined_returns(&mut r, block);
         let ty = self.common_ret(&r, block);
         self.f.ret = Some(ty);
-        if !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
+        if r.promises || !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
             visit::block(block, &mut CoerceReturns { fcx: self, to: ty });
         }
         ty
@@ -473,6 +502,14 @@ impl VisitMut for CoerceReturns<'_, '_, '_> {
         };
         if matches!(e.kind, H::Lit(hir::Lit::Null)) && e.ty == self.fcx.cx.ty.error {
             e.ty = self.to;
+            return;
+        }
+        if self.fcx.promise_value(e.ty).is_some() && self.fcx.promise_value(self.to).is_none() {
+            let placeholder = self.fcx.mk(H::Lit(hir::Lit::Unit), self.to, e.span);
+            let h = std::mem::replace(e, placeholder);
+            let stored = self.fcx.inferred_promise_return(h, self.to);
+            self.fcx.f.adopt_stmt = false;
+            s.kind = S::Expr(stored);
             return;
         }
         if e.ty != self.to {
