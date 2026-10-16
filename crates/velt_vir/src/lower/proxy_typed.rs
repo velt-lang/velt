@@ -327,18 +327,21 @@ impl FnLower<'_, '_> {
         Operand::Copy(place)
     }
 
-    /// The place of field `index` of the `bty` value at `ptr` (borrowed; a proxy's answer is
-    /// held in a temporary dropped with the statement's).
+    /// The value of field `index` of the `bty` value at `ptr`, in a temporary (borrowed; a
+    /// proxy's answer is owned by a slot dropped with the statement's temporaries).
     fn proxy_read_at(&mut self, ptr: &Operand, bty: TyId, index: u32) -> Place {
         let (name, fty) = self.proxy_field(bty, index);
         let fvt = self.cx.ty(fty);
-        let slot = self.temp(fvt);
-        let zero = self.zero_value(fvt);
-        self.assign(Place::local(slot), Rvalue::Use(zero));
-        if self.cx.needs_drop(fty) {
+        let val = self.temp(fvt);
+        // A value that owns something lands in a slot of its own, dropped later; the slot is
+        // zero (nothing to drop) when the field was read directly.
+        let slot = self.cx.needs_drop(fty).then(|| {
+            let slot = self.temp(fvt);
+            let zero = self.zero_value(fvt);
+            self.assign(Place::local(slot), Rvalue::Use(zero));
             self.own_temp(slot, fty);
-        }
-        let at = self.temp(Ty::Ptr);
+            slot
+        });
         self.proxy_split(
             ptr,
             |lw, u| {
@@ -346,24 +349,28 @@ impl FnLower<'_, '_> {
                     return lw.proxy_private(&name);
                 }
                 let key = lw.proxy_key_addr(&name);
-                let out = lw.addr(Place::local(slot));
+                let out = lw.addr(Place::local(slot.unwrap_or(val)));
                 let f = lw.cx.func(Work::Glue(Glue::ProxyGet, fty));
-                lw.call(Callee::Func(f), vec![u, key, out.clone()], None, false);
-                lw.assign(Place::local(at), Rvalue::Use(out));
+                lw.call(Callee::Func(f), vec![u, key, out], None, false);
+                if let Some(slot) = slot {
+                    lw.assign(Place::local(val), Rvalue::Use(Operand::Copy(Place::local(slot))));
+                }
             },
             |lw| {
                 let fp = lw.proxy_hot_place(ptr, bty, index);
-                let a = lw.addr(fp);
-                lw.assign(Place::local(at), Rvalue::Use(a));
+                lw.assign(Place::local(val), Rvalue::Use(Operand::Copy(fp)));
             },
         );
-        let ap = Place::local(at);
-        proj(&ap, Proj::Deref(fvt))
+        Place::local(val)
     }
 
-    /// The base of a write to a field of the proxiable `bty`, held (shared) for the statement.
-    fn proxy_hold(&mut self, base: &hir::Expr, bty: TyId) -> Operand {
+    /// The base of a write to a field of the proxiable `bty`, held (shared) for the statement
+    /// when the right-hand side `value` may write memory (and so drop the object).
+    fn proxy_hold(&mut self, base: &hir::Expr, bty: TyId, value: &hir::Expr) -> Operand {
         let v = self.expr(base);
+        if !super::sequence::may_write(value) {
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Use(v));
+        }
         let s = self.share_value(v, bty);
         let o = self.own_value(s, bty);
         self.rvalue_temp(Ty::Ptr, Rvalue::Use(o))
@@ -411,7 +418,7 @@ impl FnLower<'_, '_> {
         value: &hir::Expr,
     ) -> Operand {
         let bty = self.sub(base.ty);
-        let ptr = self.proxy_hold(base, bty);
+        let ptr = self.proxy_hold(base, bty, value);
         let v = self.consume(value);
         if self.dead() {
             return super::unit();
@@ -430,7 +437,7 @@ impl FnLower<'_, '_> {
         value: &hir::Expr,
     ) -> Operand {
         let bty = self.sub(base.ty);
-        let ptr = self.proxy_hold(base, bty);
+        let ptr = self.proxy_hold(base, bty, value);
         let (_, fty) = self.proxy_field(bty, index);
         let old = self.proxy_read_at(&ptr, bty, index);
         let fvt = self.cx.ty(fty);
