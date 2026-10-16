@@ -313,7 +313,9 @@ impl FnCx<'_, '_> {
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
         if is_async {
-            self.no_captured_generators(&frame);
+            // A captured generator is checked once it is known whether the closure stays on
+            // its task (`ownership::local_async`).
+            self.no_captured_weak(&frame);
         }
         // Allowed while the closure stays on its task (`ownership::local_async`).
         let mutated = mutated_captures(&frame);
@@ -359,7 +361,19 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An async closure copies its captures when it runs: none may hold a generator.
+    /// An async closure that may run on another thread copies its captures when it runs: none
+    /// may hold a weak collection.
+    fn no_captured_weak(&mut self, frame: &Frame) {
+        for c in &frame.captures {
+            let l = &frame.locals[c.inner.0 as usize];
+            if self.cx.holds_weak(l.ty) {
+                let (ty, name, at) = (l.ty, l.name.clone(), l.span);
+                self.no_weak_copy(ty, crate::body::GenCopy::Capture(name), at);
+            }
+        }
+    }
+
+    /// A generator function expression captures no generator (nor weak collection).
     pub(super) fn no_captured_generators(&mut self, frame: &Frame) {
         for c in &frame.captures {
             let l = &frame.locals[c.inner.0 as usize];
