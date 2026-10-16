@@ -1,0 +1,2 @@
+record_key_param_cycle.vlt:13:25: error: instantiating `go2<Sq, U[]>` from `Sq.area<U>` grows without end
+`Sq.area` calls `go2` with `U[]`, which calls `Sq.area` again: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`

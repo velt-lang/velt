@@ -6,7 +6,8 @@
 
 use velt_common::Span;
 use velt_syntax::ast::{
-    Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind,
+    CallSig, Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr,
+    TypeExprKind,
 };
 
 use super::decls::braced;
@@ -94,6 +95,10 @@ impl<'a> Printer<'a> {
                 readonly,
             } => {
                 let members = index_sig_members(fields, key, value, *readonly);
+                self.index_sig_type(&members, t.span)
+            }
+            TypeExprKind::Callable { sigs, members } => {
+                let members = callable_members(sigs, members);
                 self.index_sig_type(&members, t.span)
             }
             TypeExprKind::Query(path) => {
@@ -214,6 +219,7 @@ impl<'a> Printer<'a> {
     fn index_sig_member(&mut self, m: &IndexSigMember) -> Doc {
         match m {
             IndexSigMember::Field(f) => self.object_type_field(f),
+            IndexSigMember::Sig(s) => self.call_sig(s),
             IndexSigMember::Index {
                 key,
                 value,
@@ -231,6 +237,12 @@ impl<'a> Printer<'a> {
                 ]
             }
         }
+    }
+
+    /// A call signature `<T>(x: T): R` or a construct signature `new (x: T): C`.
+    pub(super) fn call_sig(&mut self, s: &CallSig) -> Doc {
+        let new = if s.construct { "new " } else { "" };
+        cat![new, self.fn_sig(&s.sig, "", s.span.hi)]
     }
 
     /// `name: T` / `name?: T` / `readonly name: T`
@@ -281,9 +293,10 @@ impl<'a> Printer<'a> {
     /// needs parentheses.
     fn ty_cond_operand(&mut self, t: &TypeExpr) -> Doc {
         match t.kind {
-            TypeExprKind::Conditional(_) | TypeExprKind::Function { .. } => {
-                cat!["(", self.ty(t), ")"]
-            }
+            TypeExprKind::Conditional(_)
+            | TypeExprKind::Function { .. }
+            | TypeExprKind::GenericFunction { .. }
+            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
             _ => self.ty(t),
         }
     }
@@ -321,7 +334,9 @@ impl<'a> Printer<'a> {
             | TypeExprKind::KeyOf(_)
             | TypeExprKind::Conditional(_)
             | TypeExprKind::Infer(_)
-            | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
+            | TypeExprKind::Function { .. }
+            | TypeExprKind::GenericFunction { .. }
+            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)
                 if is_readonly_op(slice(self.src, t.span)) =>
@@ -454,9 +469,10 @@ fn is_readonly_op(src: &str) -> bool {
         .is_some_and(|r| r.starts_with(char::is_whitespace))
 }
 
-/// A member of an object type with an index signature, in source order.
+/// A member of an object type with an index signature or call signatures, in source order.
 pub(super) enum IndexSigMember<'a> {
     Field(&'a ObjectTypeField),
+    Sig(&'a CallSig),
     Index {
         key: &'a IndexKey,
         value: &'a TypeExpr,
@@ -468,6 +484,7 @@ impl IndexSigMember<'_> {
     fn range(&self) -> (u32, u32) {
         match self {
             IndexSigMember::Field(f) => (f.span.lo, f.span.hi),
+            IndexSigMember::Sig(s) => (s.span.lo, s.span.hi),
             IndexSigMember::Index { key, value, .. } => (key.name.span.lo, value.span.hi),
         }
     }
@@ -497,5 +514,26 @@ pub(super) fn index_sig_members<'a>(
             .filter(|f| f.span.lo > at)
             .map(IndexSigMember::Field),
     );
+    out
+}
+
+/// The members of an object type with call signatures `sigs` and other members `members` (an
+/// object type or one with an index signature), in source order.
+pub(super) fn callable_members<'a>(
+    sigs: &'a [CallSig],
+    members: &'a TypeExpr,
+) -> Vec<IndexSigMember<'a>> {
+    let mut out = match &members.kind {
+        TypeExprKind::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+        } => index_sig_members(fields, key, value, *readonly),
+        TypeExprKind::Object(fields) => fields.iter().map(IndexSigMember::Field).collect(),
+        _ => vec![],
+    };
+    out.extend(sigs.iter().map(IndexSigMember::Sig));
+    out.sort_by_key(|m| m.range().0);
     out
 }

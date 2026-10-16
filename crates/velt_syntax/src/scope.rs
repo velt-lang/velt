@@ -85,7 +85,8 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Extend(_)
-            | ItemKind::Augment(_) => {}
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => {}
         }
     }
 
@@ -139,6 +140,7 @@ impl<'a> Walker<'a, '_> {
             }
             ItemKind::Interface(i) => {
                 i.fields.iter().for_each(|f| self.ty(&f.ty));
+                i.call_sigs.iter().for_each(|s| self.signature(&s.sig));
                 for m in &i.methods {
                     match &m.body {
                         Some(body) => self.body(&m.sig, body, None),
@@ -160,6 +162,7 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Var(v) => self.var(v),
             ItemKind::TypeAlias(a) => self.ty(&a.ty),
             ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
+            ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ItemKind::ExternFn(sig) => self.signature(sig),
             ItemKind::Import(_) => {}
         }
@@ -225,6 +228,10 @@ impl<'a> Walker<'a, '_> {
                 self.ty(value);
             }
             T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
+            T::Callable { sigs, members } => {
+                sigs.iter().for_each(|s| self.signature(&s.sig));
+                self.ty(members);
+            }
             // `infer X` and a mapped type's key bind type names, not values: the sub-types are
             // walked for type queries as everywhere else.
             T::Conditional(c) => {

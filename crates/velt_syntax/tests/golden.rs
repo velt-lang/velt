@@ -48,9 +48,9 @@ fn golden_m1_files_parse() {
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"
                 | "dynamic_import.vlt"
+                | "namespace_values.vlt"
                 | "overload_signature_asi_no_body.vlt"
                 | "cast_union_number_literal.vlt"
-                | "call_signatures.vlt"
                 | "function_expression_errors.vlt"
                 | "function_expression_this_errors.vlt"
         ) {

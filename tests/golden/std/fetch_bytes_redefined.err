@@ -1,0 +1,2 @@
+fetch_bytes_redefined.vlt:4:9
+error: `bytes` is an `extend` method of `Response` and cannot be redefined in a subclass yet

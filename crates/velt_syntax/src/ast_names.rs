@@ -24,3 +24,17 @@ pub const OBJECT_GET_FN: &str = "__object_get";
 /// [`OBJECT_GET_FN`] for a setter: `{ set v(x) { body } }` is `{ v: __object_set((x) => { body
 /// }) }`, the callee's span being the `set` keyword.
 pub const OBJECT_SET_FN: &str = "__object_set";
+
+/// Member name of the computed key `[Symbol.dispose]` (a method declaration
+/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an `Ident` with this exact
+/// name. No plain identifier can collide with it.
+pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
+
+/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
+
+/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
+
+/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";

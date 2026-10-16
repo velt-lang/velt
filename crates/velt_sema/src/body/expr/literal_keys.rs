@@ -346,7 +346,8 @@ impl FnCx<'_, '_> {
         // Any other index on an object type is an error in the ordinary rules, so the index
         // can be checked here, once, whatever its type turns out to be.
         let fields = match self.cx.ty.kind(t) {
-            TyKind::Adt(..) => !self.is_std_class(t, "std/regex::RegExpMatch"),
+            // A std class indexed by `__index` (a typed array, a regex match) has its own rules.
+            TyKind::Adt(..) => !self.has_indexer(t),
             TyKind::Dyn(..) | TyKind::Param(_) => true,
             _ => false,
         };

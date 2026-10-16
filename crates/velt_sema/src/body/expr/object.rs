@@ -533,12 +533,15 @@ impl FnCx<'_, '_> {
     /// declared as (`AB` for `type AB = A & B`), else `d`'s own name.
     fn literal_name(&mut self, d: DefId) -> String {
         let a = self.cx.adt(d).expect("ICE: struct");
-        let name = a.name.clone();
+        let name = crate::namespaces::written(&a.name).into_owned();
         if a.kind != AdtKind::Anon || !a.generics.names.is_empty() {
             return name;
         }
         let t = self.cx.ty.intern(TyKind::Adt(d, vec![]));
-        self.cx.alias_names.get(&t).cloned().unwrap_or(name)
+        match self.cx.alias_names.get(&t) {
+            Some(n) => crate::namespaces::written(n).into_owned(),
+            None => name,
+        }
     }
 
     /// A struct literal from its values by field index (omitted ones take their default).

@@ -80,6 +80,7 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
             Some((spec, _)) => format!("declare module \"{spec}\""),
             None => "declare global".to_string(),
         },
+        ast::ItemKind::Namespace(n) => format!("namespace {}", n.name.name),
     }
 }
 

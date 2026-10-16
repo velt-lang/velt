@@ -461,3 +461,27 @@ fn custom_inspect_text_stays_on_one_line() {
         c.release();
     }
 }
+
+/// A custom inspect's text that breaks across lines (a big `ArrayBuffer`, a `DataView`) nested
+/// in a container: its lines after the first are indented by the value's indentation, as node
+/// indents the string a custom inspect returns.
+#[test]
+fn a_multi_line_custom_inspect_text_is_indented_where_it_is_nested() {
+    let atom = "ArrayBuffer {\n  [Uint8Contents]: <00 00>,\n  [byteLength]: 2\n}";
+    let head = "{ big: ";
+    let tail = " }";
+    unsafe {
+        crate::inspect_cycles::velt_rt_strbuf_inspect_begin();
+        let mut b = VeltStr::from_bytes(head.as_bytes());
+        let at = b.len() as u64;
+        b.push_wtf8(atom.as_bytes(), None);
+        crate::inspect_cycles::velt_rt_strbuf_inspect_atom(&b, at);
+        b.push_wtf8(tail.as_bytes(), None);
+        velt_rt_strbuf_inspect_layout(&mut b, 0);
+        assert_eq!(
+            String::from_utf8(b.as_bytes().to_vec()).unwrap(),
+            "{\n  big: ArrayBuffer {\n    [Uint8Contents]: <00 00>,\n    [byteLength]: 2\n  }\n}"
+        );
+        b.release();
+    }
+}

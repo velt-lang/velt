@@ -7,10 +7,12 @@
 
 use velt_common::Span;
 
+mod blocks;
 mod jsx;
 mod type_level;
 mod type_parts;
 
+pub use blocks::*;
 pub use jsx::*;
 pub use type_level::*;
 pub use type_parts::*;
@@ -18,22 +20,9 @@ pub use type_parts::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
-/// Member name of the computed key `[Symbol.dispose]` (a method declaration
-/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an [`Ident`] with this exact
-/// name. No plain identifier can collide with it.
-pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
-
-/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
-
-/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
-
-/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
-
 pub use crate::ast_names::{
     COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, OBJECT_GET_FN, OBJECT_SET_FN,
+    SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR, SYMBOL_DISPOSE, SYMBOL_ITERATOR,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -97,14 +86,10 @@ pub enum ItemKind {
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
     /// declaration of the same name).
     Augment(Augment),
-}
-
-#[derive(Clone, Debug)]
-pub struct Augment {
-    /// `declare module "spec"`: the module specifier (resolved like an import's) and its span;
-    /// `None` for `declare global`.
-    pub module: Option<(String, Span)>,
-    pub items: Vec<Item>,
+    /// `namespace N { … }` / `declare namespace N { … }`: a scope of types (TypeScript's
+    /// namespace without values). Its members are named `N.T` outside it; `namespace A.B { … }`
+    /// is parsed as `A` holding the exported namespace `B`.
+    Namespace(Namespace),
 }
 
 #[derive(Clone, Debug)]
@@ -251,6 +236,8 @@ pub struct InterfaceDecl {
     /// Fields every implementor must have (same name and type).
     pub fields: Vec<Field>,
     pub methods: Vec<InterfaceMethod>,
+    /// Call and construct signatures, as for [`TypeExprKind::Callable`].
+    pub call_sigs: Vec<CallSig>,
 }
 
 /// Interface method: required (`body: None`) or with a default implementation.
@@ -362,6 +349,13 @@ pub enum TypeExprKind {
         value: Box<TypeExpr>,
         /// `readonly [key: string]: T`
         readonly: bool,
+    },
+    /// An object type with call or construct signatures (`{ (x: T): R; n: number }`), as
+    /// written; sema gives it TypeScript's type (`velt_sema::call_sigs`).
+    Callable {
+        sigs: Vec<CallSig>,
+        /// The other members: an `Object` (empty when there are none) or an `IndexSig`.
+        members: Box<TypeExpr>,
     },
     /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
     /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof

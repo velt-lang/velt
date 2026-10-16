@@ -1,0 +1,25 @@
+// Hex: a 1 MiB buffer encoded and decoded 60 times, then a 32-byte value (a SHA-256 digest)
+// encoded and decoded 2M times. The Rust port uses the `hex` crate.
+import { hexDecode, hexEncode } from "velt:encoding";
+
+function main() {
+  const data = Buffer.alloc(1048576);
+  for (let i: usize = 0; i < data.length; i++) {
+    data[i] = (i * 131 + 7) as u8;
+  }
+  let total: i64 = 0;
+  for (let round: usize = 0; round < 60; round++) {
+    data[round] = round as u8;
+    const text = hexEncode(data);
+    const back = hexDecode(text);
+    total += (text.length + back.length) as i64 + (back[round] as i64);
+  }
+  const small = Buffer.alloc(32);
+  for (let round: usize = 0; round < 2000000; round++) {
+    small[round % 32] = round as u8;
+    const text = hexEncode(small);
+    const back = hexDecode(text);
+    total += (text.length + back.length) as i64 + (back[round % 32] as i64);
+  }
+  console.log(total);
+}

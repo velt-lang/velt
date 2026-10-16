@@ -158,13 +158,24 @@ mod tests {
 
     #[test]
     fn other_declarations_in_declare_global_are_reported() {
-        let src = "declare global {\n  namespace JSX { interface X {} }\n}\nexport function f(): void {}\n";
+        // A namespace of types is declared in the module; a function is reported.
+        let src = "declare global {
+  namespace JSX { interface X {} }
+}
+export function f(): void {}
+";
+        let parsed = parse_with(FileId(0), src, &ParseOptions::default());
+        assert!(parsed.diags.is_empty(), "{:?}", parsed.diags);
+        assert_eq!(parsed.module.items.len(), 2);
+        let src = "declare global {
+  function g(): void;
+}
+";
         let parsed = parse_with(FileId(0), src, &ParseOptions::default());
         let messages: Vec<&str> = parsed.diags.iter().map(|d| d.message.as_str()).collect();
         assert_eq!(
             messages,
-            ["a namespace cannot be declared in `declare global` or `declare module` yet: only interfaces, which merge into the declaration they augment"]
+            ["a function cannot be declared in `declare global` or `declare module` yet: only interfaces, which merge into the declaration they augment"]
         );
-        assert_eq!(parsed.module.items.len(), 1);
     }
 }
