@@ -9,7 +9,8 @@ import { ArrayBuffer, BufferView } from "velt:typed_array/core";
 
 /**
  * A body: text, bytes (a typed array, an `ArrayBuffer`, a `DataView`, or Velt's `u8[]`), form
- * fields (sent as `application/x-www-form-urlencoded`), or a stream.
+ * fields (sent as `application/x-www-form-urlencoded`), or a stream (a `BodyStream`; a
+ * `ReadableStream` body waits for #1129).
  */
 export type BodyInit = string | u8[] | BufferView | ArrayBuffer | URLSearchParams | BodyStream;
 
