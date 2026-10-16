@@ -1,0 +1,54 @@
+// What an object literal's methods throw reaches a `catch` around a call through the interface,
+// whatever the order of the functions: here the catching functions come first and the literals
+// after them, one call removed, and at the top level. Expected output from node.
+interface Src {
+  read(): number;
+}
+
+function drive(x: Src): string {
+  try {
+    return String(x.read());
+  } catch (e) {
+    return "caught " + (e as Error).message;
+  }
+}
+
+function viaHelper(x: Src): string {
+  try {
+    return String(readIt(x));
+  } catch (e) {
+    return "helper caught " + (e as Error).message + " " + (e instanceof TypeError);
+  }
+}
+
+function readIt(x: Src): number {
+  return x.read();
+}
+
+function mk(): Src {
+  return {
+    read() {
+      throw new RangeError("bad");
+    },
+  };
+}
+
+function mk2(): Src {
+  return { read: () => { throw new TypeError("worse"); } };
+}
+
+function fine(): Src {
+  return { read: () => 7 };
+}
+
+console.log(drive(mk()));
+console.log(viaHelper(mk2()));
+console.log(drive(fine()), viaHelper(fine()));
+
+const top: Src = {
+  read() {
+    throw new Error("top");
+  },
+};
+console.log(drive(top));
+console.log(viaHelper(top));

@@ -477,7 +477,13 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MutexWith
         | I::PromiseAll
         | I::PromiseRace
-        | I::PromiseAny => true,
+        | I::PromiseAny
+        // A member access or call through `any` may run any getter or method of the value
+        // held, and formats nothing itself; counted like a hook call on its arguments.
+        | I::AnyGet
+        | I::AnyIndex
+        | I::AnyCall
+        | I::AnyApply => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat

@@ -15,6 +15,16 @@ pub const IMPORT_META_FIELDS: [&str; 3] = ["url", "filename", "dirname"];
 /// call.
 pub const COMPUTED_KEY_FN: &str = "__computed_key";
 
+/// The prelude function a getter in an object literal is written as a call of: `{ get v() {
+/// body } }` is `{ v: __object_get(() => { body }) }`, the getter as an arrow (its span starts
+/// at the name, as a method's does). The callee's span is the `get` keyword, which tells it
+/// from a written call. Sema reads it where the literal implements an interface.
+pub const OBJECT_GET_FN: &str = "__object_get";
+
+/// [`OBJECT_GET_FN`] for a setter: `{ set v(x) { body } }` is `{ v: __object_set((x) => { body
+/// }) }`, the callee's span being the `set` keyword.
+pub const OBJECT_SET_FN: &str = "__object_set";
+
 /// Member name of the computed key `[Symbol.dispose]` (a method declaration
 /// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an `Ident` with this exact
 /// name. No plain identifier can collide with it.

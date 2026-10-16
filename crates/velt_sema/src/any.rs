@@ -11,7 +11,10 @@
 //! nothing of `boolean | null` / `boolean | undefined`.
 
 use crate::ctx::Ctx;
-use crate::hir::{DefId, ImplDef, Nothing, TyId, TyKind};
+use std::collections::HashMap;
+
+use crate::defs::{is_private_key, is_setter_key, key_member_name};
+use crate::hir::{DefId, DynMember, DynMemberKind, ImplDef, Nothing, TyId, TyKind};
 
 /// The prelude's dynamic interfaces and their implementation (`Ctx::any`): `any` / `unknown`
 /// and the implementation every type has.
@@ -22,6 +25,8 @@ pub(crate) struct AnyDefs {
     /// Index of `impl<T> any for T` in `Ctx::impls`, added when a value is first converted
     /// to `any` or `unknown` ([`Ctx::any_impl`]): a program without them is unchanged.
     pub imp: Option<u32>,
+    /// A member of an `any` is read or called somewhere (`Program::dyn_members`).
+    pub members: bool,
 }
 
 /// Which dynamic type.
@@ -40,6 +45,7 @@ pub(crate) fn add_impl(cx: &mut Ctx) {
         any,
         unknown,
         imp: None,
+        members: false,
     });
 }
 
@@ -118,5 +124,78 @@ impl Ctx<'_> {
             Nothing::Undefined
         };
         self.ty.intern(TyKind::Option(b, n))
+    }
+}
+
+/// `Program::dyn_members`: every struct / class / object type's methods and accessors by name
+/// (own ones first, then each base class's that are not overridden), when a member of an
+/// `any` is read or called; `None` otherwise.
+pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<HashMap<DefId, Vec<DynMember>>> {
+    if !cx.any.is_some_and(|a| a.members) {
+        return None;
+    }
+    let mut out = HashMap::new();
+    for i in 0..cx.info.len() {
+        let d = DefId(i as u32);
+        let Some(a) = cx.adt(d) else { continue };
+        let generics = a.generics.names.len() as u32;
+        let args: Vec<TyId> = (0..generics)
+            .map(|k| cx.ty.intern(TyKind::Param(k)))
+            .collect();
+        let mut members: Vec<DynMember> = vec![];
+        let (mut cur, mut cur_args) = (d, args);
+        for _ in 0..64 {
+            let Some(a) = cx.adt(cur) else { break };
+            let mut own: Vec<(String, DefId)> = a
+                .methods
+                .iter()
+                .filter(|(k, m)| !m.is_static && !is_private_key(k))
+                .map(|(k, m)| (k.clone(), m.def))
+                .collect();
+            own.sort();
+            let base = a.base;
+            let owner = cx.ty.intern(TyKind::Adt(cur, cur_args.clone()));
+            for (key, def) in own {
+                let kind = if is_setter_key(&key) {
+                    DynMemberKind::Setter
+                } else if cx.fn_info(def).is_getter {
+                    DynMemberKind::Getter
+                } else {
+                    DynMemberKind::Method
+                };
+                let name = key_member_name(&key).to_string();
+                let setter = kind == DynMemberKind::Setter;
+                if members
+                    .iter()
+                    .any(|m| m.name == name && (m.kind == DynMemberKind::Setter) == setter)
+                {
+                    continue;
+                }
+                members.push(DynMember {
+                    name,
+                    kind,
+                    def,
+                    owner,
+                });
+            }
+            let Some(base) = base else { break };
+            let base = cx.subst(base, &cur_args);
+            let Some(next) = cx.class_of(base) else { break };
+            (cur, cur_args) = next;
+        }
+        if !members.is_empty() {
+            out.insert(d, members);
+        }
+    }
+    Some(out)
+}
+
+impl Ctx<'_> {
+    /// A member of an `any` is read or called: lowering adds the member slots
+    /// (`Program::dyn_members`).
+    pub(crate) fn note_dyn_members(&mut self) {
+        if let Some(a) = &mut self.any {
+            a.members = true;
+        }
     }
 }

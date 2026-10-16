@@ -47,6 +47,7 @@ mod for_await;
 mod for_iter;
 mod for_map;
 mod generators;
+pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
 mod locals;
@@ -354,6 +355,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The value being checked fills slot `.1` of interface `.0` in an object literal implementing
+    /// it, and is written at `.2` (`expr/iface_object.rs`): a closure written there records
+    /// what it throws for the slot before its error type is computed.
+    pub literal_slot: Option<(DefId, u32, Span)>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -425,6 +430,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: None,
+            literal_slot: None,
             call_temps: vec![],
             callee_effects: None,
             void_task: None,

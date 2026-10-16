@@ -1,0 +1,11 @@
+// Writing a member of an `any` comes with a later part of #924; a member of an `unknown` needs
+// narrowing first (TS18046 in `tsc --strict`).
+class P {
+  x: number = 1;
+}
+function main(): void {
+  const a: any = new P();
+  a.x = 2;
+  const u: unknown = new P();
+  console.log(u.x);
+}

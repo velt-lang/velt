@@ -262,6 +262,19 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
+        if let Some(target) = self.literal_iface(exp) {
+            return self.iface_object(props, target, span);
+        }
+        if let Some(at) = props.iter().find_map(super::iface_object::is_accessor) {
+            self.cx.error(
+                Diagnostic::error(
+                    "getters and setters in object literals are not supported yet where no interface with methods is expected",
+                    at,
+                )
+                .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
+            );
+            return self.error_expr(span);
+        }
         if let Some(props) = self.local_computed_keys(props) {
             return self.object_lit(&props, exp, span);
         }

@@ -40,13 +40,19 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         let payload = self.cx.ty.opt_payload(s.ty);
+        let dynamic = self.cx.dynamic(s.ty) == Some(crate::any::Dynamic::Any);
         let (l, mode) = self.option_binding(&s, payload.unwrap_or(s.ty), &name, false);
         self.push_scope();
         if let Some(scope) = self.f.scopes.last_mut() {
             scope.names.insert(name, l);
         }
-        let r = self.expr(&rest, if payload.is_some() { None } else { exp }, want);
+        let known = payload.is_some() || dynamic;
+        let r = self.expr(&rest, if known { None } else { exp }, want);
         self.pop_scope();
+        if dynamic {
+            // `a?.b.c` on an `any` `a`: `undefined` when `a` is `null` or `undefined`.
+            return Some(self.dynamic_chain_match(s, l, mode, r, span));
+        }
         Some(match payload {
             Some(p) => self.chain_match(s, l, mode, p, r, span),
             None => {

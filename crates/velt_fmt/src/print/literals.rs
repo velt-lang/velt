@@ -81,6 +81,34 @@ impl<'a> Printer<'a> {
                         };
                         self.fn_decl(&f, "")
                     }
+                    // `get name() { body }` / `set name(v) { body }`, which the parser gives as
+                    // a call of `__object_get` / `__object_set` (callee span: the keyword) of
+                    // the accessor as an arrow.
+                    ExprKind::Call { callee, args, .. } if self.accessor_kw(callee).is_some() => {
+                        let kw = self.accessor_kw(callee).expect("ICE: checked above");
+                        match args.as_slice() {
+                            [Expr {
+                                kind:
+                                    ExprKind::Arrow {
+                                        type_params,
+                                        params,
+                                        ret,
+                                        throws,
+                                        body,
+                                        is_async,
+                                    },
+                                ..
+                            }] => self.arrow(
+                                type_params,
+                                params,
+                                (ret.as_ref(), throws.as_ref()),
+                                body,
+                                *is_async,
+                                Some(cat![kw, " ", doc]),
+                            ),
+                            _ => self.property(doc, value),
+                        }
+                    }
                     _ => self.property(doc, value),
                 }
             }
@@ -95,6 +123,20 @@ impl<'a> Printer<'a> {
                 None => cat!["...", self.expr(value)],
             },
             ObjectProp::Method(f) => self.fn_decl(f, ""),
+        }
+    }
+
+    /// `"get"` / `"set"` if `callee` is the `__object_get` / `__object_set` of an accessor
+    /// (its span is the keyword, not a written name).
+    fn accessor_kw(&self, callee: &Expr) -> Option<&'static str> {
+        let ExprKind::Ident(f) = &callee.kind else {
+            return None;
+        };
+        let raw = slice(self.src, callee.span);
+        match f.name.as_str() {
+            velt_syntax::ast::OBJECT_GET_FN if raw == "get" => Some("get"),
+            velt_syntax::ast::OBJECT_SET_FN if raw == "set" => Some("set"),
+            _ => None,
         }
     }
 

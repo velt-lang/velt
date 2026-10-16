@@ -1,0 +1,6 @@
+// Indexing a `null` held in an `any` stops with Node's `TypeError`, naming the number key (#924).
+function main(): void {
+  const nul: any = null;
+  console.log("before");
+  console.log(nul[0]);
+}

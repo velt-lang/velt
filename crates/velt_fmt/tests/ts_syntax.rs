@@ -68,6 +68,13 @@ fn object_literal_methods() {
 }
 
 #[test]
+fn object_literal_accessors() {
+    round_trips(
+        "const o = {\n  get size(): number {\n    return 1;\n  },\n  set size(v: number) {\n    log(v);\n  },\n  get(key) {\n    return key;\n  },\n};\n",
+    );
+}
+
+#[test]
 fn symbol_keys() {
     round_trips("const KEY: unique symbol = Symbol(\"k\");\n");
     round_trips(

@@ -333,7 +333,8 @@ impl FnCx<'_, '_> {
             return None;
         }
         let t = self.peek_ty(object)?;
-        if self.record_args(t).is_some() {
+        // `any` has no fixed fields: the dynamic indexing rules read any key (`xs[f()]`).
+        if self.record_args(t).is_some() || self.cx.dynamic(t).is_some() {
             return None;
         }
         if repeatable(index) {

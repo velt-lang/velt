@@ -39,7 +39,7 @@ pub(crate) fn check_init(cx: &mut Ctx, name: &str, init: &Expr, ty: TyId) {
     if !init_ok(cx, name, init) || !has_call(init) {
         return;
     }
-    if let Some(what) = reference_part(cx, ty, 0) {
+    if let Some(what) = reference_part(cx, value_ty(init, ty), 0) {
         cx.error(
             Diagnostic::error(
                 format!(
@@ -54,14 +54,31 @@ pub(crate) fn check_init(cx: &mut Ctx, name: &str, init: &Expr, ty: TyId) {
     }
 }
 
+/// The type whose values `init` (of type `ty`) makes: an interface value made from an object
+/// literal (`body/expr/iface_object.rs`) is its struct of functions and values, which a new one
+/// at each use doesn't tell from the last (its fields can't be written through the interface,
+/// and `===` on the constant is rejected: `check_identity`).
+fn value_ty(init: &Expr, ty: TyId) -> TyId {
+    let mut x = init;
+    while let H::WrapSome(i) | H::Upcast(i) | H::Cast(i) = &x.kind {
+        x = i;
+    }
+    match &x.kind {
+        H::ToDyn { expr, .. } if x.ty == ty => expr.ty,
+        _ => ty,
+    }
+}
+
 /// Does `init` compute a new value at each use (a call, a closure or a function reference), so
 /// that a use by value is another reference to it and identity shows?
 pub(crate) fn has_call(e: &Expr) -> bool {
     match &e.kind {
         H::Call { .. } | H::Closure(_) | H::FnRef(..) => true,
-        H::Unary { expr, .. } | H::Cast(expr) | H::WrapSome(expr) | H::Upcast(expr) => {
-            has_call(expr)
-        }
+        H::Unary { expr, .. }
+        | H::Cast(expr)
+        | H::WrapSome(expr)
+        | H::Upcast(expr)
+        | H::ToDyn { expr, .. } => has_call(expr),
         H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => has_call(lhs) || has_call(rhs),
         H::If { cond, then, els } => has_call(cond) || has_call(then) || has_call(els),
         H::AdtLit { fields: xs, .. } | H::Variant { args: xs, .. } | H::Tuple(xs) => {
@@ -87,13 +104,19 @@ pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) ->
 }
 
 /// Is a use by value of module constant `d` another reference to a function it computes? Only
-/// functions: a struct or object constant moved into a variable would be a copy that the
-/// constant doesn't see changes to (TypeScript aliases it), so those keep the move error.
+/// functions, and interface values made from object literals (whose fields can't be written
+/// through the interface: [`value_ty`]): a struct or object constant moved into a variable
+/// would be a copy that the constant doesn't see changes to (TypeScript aliases it), so those
+/// keep the move error.
 pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     let ty = g.ty;
-    let fresh = g.init.as_ref().is_some_and(has_call);
-    fresh && matches!(cx.ty.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_)) && !cx.is_copy(ty)
+    let Some(init) = g.init.as_ref().filter(|i| has_call(i)) else {
+        return false;
+    };
+    let literal = value_ty(init, ty) != ty;
+    let shared = literal || matches!(cx.ty.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_));
+    shared && !cx.is_copy(ty)
 }
 
 /// Report what in `e` is not allowed; false when something was reported.
@@ -104,6 +127,7 @@ fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
         | H::Cast(expr)
         | H::WrapSome(expr)
         | H::Upcast(expr)
+        | H::ToDyn { expr, .. }
         | H::Field { base: expr, .. } => init_ok(cx, name, expr),
         H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
             init_ok(cx, name, lhs) && init_ok(cx, name, rhs)

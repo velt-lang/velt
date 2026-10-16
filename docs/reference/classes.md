@@ -466,8 +466,9 @@ console.log(p.len(), q.len());  // 4 4
   and may give methods **default bodies** (mixins). `class C implements I, J` takes any number;
   `interface B extends A, C` inherits everything.
 - An interface with **methods** (or getters or setters, own or inherited) is nominal: a type
-  implements it only by declaring `implements` (or through an [`extend`](#extend) block); an
-  object literal does not satisfy one.
+  implements it only by declaring `implements` (or through an [`extend`](#extend) block), or
+  by being an object literal where it is expected
+  ([Object literals implementing interfaces](types.md#object-literals-implementing-interfaces)).
 - An interface with **only fields** (at least one, no methods, extending only such interfaces)
   describes data: it is an object type, like `type User = { … }`, so object literals satisfy
   it, field reads are loads and it has a JSON form. It converts to and from object types with
