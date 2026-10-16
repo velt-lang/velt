@@ -77,6 +77,55 @@ impl FnCx<'_, '_> {
         self.coerce(h, t)
     }
 
+    /// The value `e` returned from an async function whose result type is `ret` (not itself a
+    /// promise): a promise (`return Promise.resolve(x)`, `return fetchIt()`) or a union holding
+    /// one (`return fn()` with `fn: () => T | Promise<T>`) is adopted, as in JS: the function's
+    /// promise settles as that one does, which is `return await e` (issue #1148).
+    pub(crate) fn async_returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        self.direct_await = super::promise_new::awaited_new_promise(e);
+        let h = self.expr(e, Some(ret), Want::Move);
+        self.direct_await = None;
+        if self.in_place_misuse(e, &h, ret) {
+            return self.error_expr(e.span);
+        }
+        let span = h.span;
+        if self.f.guarded_depth > 0 && self.holds_promise(h.ty) {
+            self.cx.error(
+                Diagnostic::error(
+                    "returning a promise from a `try` block of an async function is not supported yet",
+                    span,
+                )
+                .with_note("TypeScript allows this; JavaScript settles the function's promise as the returned one only after the `try` statement is left, so its `catch` does not see the rejection and its `finally` runs first")
+                .with_note("write `return await …` to handle the rejection in this `try` statement, or return the promise after it"),
+            );
+            return self.error_expr(span);
+        }
+        let h = match self.cx.ty.kind(h.ty) {
+            TyKind::Promise(v, _) => {
+                let v = *v;
+                self.awaited_using_shares(&h);
+                self.await_throws(&h);
+                self.mk(H::Await(Box::new(h)), v, span)
+            }
+            _ => match self.await_union(h, span) {
+                Ok(done) => done,
+                Err(h) => h,
+            },
+        };
+        self.coerce(h, ret)
+    }
+
+    /// Is `t` a promise, or a union (possibly with `null`) with a promise member?
+    fn holds_promise(&mut self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        if self.cx.ty.promise_payload(t).is_some() {
+            return true;
+        }
+        self.cx
+            .union_members(t)
+            .is_some_and(|ms| ms.iter().any(|m| self.cx.ty.promise_payload(*m).is_some()))
+    }
+
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
     pub(super) fn await_throws(&mut self, h: &hir::Expr) {

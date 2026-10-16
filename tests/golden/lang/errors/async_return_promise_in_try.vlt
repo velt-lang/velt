@@ -1,0 +1,18 @@
+// Returning a promise from a `try` block of an async function: JavaScript settles the
+// function's promise only after the `try` statement is left, so its `catch` would not see the
+// rejection (issue #1148).
+async function load(): Promise<number> {
+  return 1;
+}
+
+async function f(): Promise<number> {
+  try {
+    return load();
+  } catch {
+    return 0;
+  }
+}
+
+async function main() {
+  console.log(await f());
+}

@@ -15,7 +15,7 @@ use velt_syntax::ast;
 use super::{ensure_body, FnCx, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, RetSource, RetWant};
-use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId, TyKind};
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
@@ -152,7 +152,21 @@ impl FnCx<'_, '_> {
             }
             return self.coerce(h, ret);
         }
+        if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
+            return self.async_returned(e, ret);
+        }
         self.expr_coerce(e, ret, Want::Move)
+    }
+
+    /// Can an async function returning `ret` adopt a returned promise? Not when `ret` is itself
+    /// a promise (an async function's value is never one) or a function type (checked with the
+    /// adapter of `expr_coerce`), nor where `ret` is not known.
+    fn adopts_promise(&self, ret: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        !matches!(
+            self.cx.ty.kind(t),
+            TyKind::Promise(..) | TyKind::FnPtr { .. } | TyKind::Error
+        )
     }
 
     /// `return e` / `return;` in a body whose result type is being inferred.

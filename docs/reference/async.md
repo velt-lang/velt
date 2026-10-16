@@ -20,6 +20,28 @@ last.
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
 `await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
 
+An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
+that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
+promise settles as the returned one does, the same as `return await`. Inside a `try` block (or a
+`catch` block followed by `finally`) that is an error for now: JavaScript adopts the promise only
+after the `try` statement is left, so its `catch` does not see the rejection and its `finally` runs
+first. Write `return await …` there to handle the rejection, or return the promise after the `try`
+statement.
+
+```ts
+async function load(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function viaLoad(n: number): Promise<number> {
+  return load(n);
+}
+
+async function main() {
+  console.log(await viaLoad(21));
+}
+```
+
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
 TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`

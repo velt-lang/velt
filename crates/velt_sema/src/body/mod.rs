@@ -192,6 +192,9 @@ pub(crate) struct Frame {
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
+    /// Nesting depth of the `try` blocks being checked, and of the `catch` blocks that have a
+    /// `finally`: a promise returned there settles after they are left (issue #1148).
+    pub guarded_depth: u32,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
     /// `break`/`continue` there cannot target a loop outside it).
     pub finally_loops: Option<usize>,
@@ -282,6 +285,7 @@ impl Frame {
             yield_ty: None,
             fn_expr_name: None,
             finally_depth: 0,
+            guarded_depth: 0,
             finally_loops: None,
             stmt_yields: Default::default(),
             soft_moves: vec![],
