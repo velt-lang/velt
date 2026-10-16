@@ -104,12 +104,15 @@ impl FnLower<'_, '_> {
                 true
             }
             // A module state slot is a cell every function reaches: the callee may reassign it
-            // (when some code does), as a closure may a variable in a cell.
+            // (when some code does), as a closure may a variable in a cell, or empty an array
+            // held there in place (`XS.length = 0`, `splice`), even one nothing reassigns.
             K::Global(d) => {
-                if !self.slot_reassigned(*d) {
+                let ty = self.sub(e.ty);
+                if !self.slot_reassigned(*d)
+                    && !(self.slot_of(*d).is_some() && self.holds_array(ty))
+                {
                     return false;
                 }
-                let ty = self.sub(e.ty);
                 self.cx.note_share(ty);
                 true
             }
@@ -120,6 +123,23 @@ impl FnLower<'_, '_> {
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
                 self.in_shared_cell(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `ty` an array (or an optional one)? A module slot holding one is counted like a
+    /// variable in a cell even when nothing reassigns the slot: any function may empty or grow
+    /// the array in place while a loop, a callback method or a callee walks its buffer. Maps
+    /// and sets need no such rule: their loops re-read the entries every step and their
+    /// callbacks get shares (prelude `Map`), and a class or object's own arrays are places
+    /// inside the slot, stabilized as such.
+    fn holds_array(&mut self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            hir::TyKind::Array(_) => true,
+            hir::TyKind::Option(inner, _) => {
+                let inner = self.sub(inner);
+                matches!(self.cx.kind(inner), hir::TyKind::Array(_))
             }
             _ => false,
         }

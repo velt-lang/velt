@@ -111,19 +111,25 @@ shares. A variable held in a shared cell (`LocalDef::boxed`, shared with the esc
 that capture it) is like a counted container: a call of the closure may replace what it holds,
 so by-reference `const`s, destructured bindings and `for...of` loops over a place rooted in it
 are stabilized the same way (#819); so are destructured bindings by reference of a counted value
-itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const` evaluated
-once) is such a cell too, one every function reaches: a place inside a slot is stabilized the
-same way, and so is the slot itself when some code reassigns it (one walk over the program finds
-those; a slot nothing reassigns keeps its value while a call runs). A value held in the slot
-(not behind a counted object) is shared like an array element, since any callee may replace it
-there and drop it (#1161). A program without module state is unaffected. The function value of a call through a function value is kept
-alive the same way when it is read from such a place (a field or element reached through a
-counted object, or a variable in a shared cell): the call runs on a share of it, dropped after
-the statement, since the function may replace its holder (`this.f = …`) and so drop its own
-environment while it runs (#1146); one read from a variable or parameter of the caller needs
-nothing. A destructured binding of a value stored inline (a string, tuple,
-object literal or union, bound by reference) refers to a share of it held by the scope; the
-parts that can be changed in place are counted first, so writes through the binding
+itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const`
+evaluated once) is such a cell too, one every function reaches. A place inside a slot is
+stabilized the same way. So is the slot itself when a call may change what it holds: when some
+code reassigns it (one walk over the program finds those), or when it holds an array (or an
+optional one), which any function may empty or grow in place (`XS.length = 0`, `splice`,
+`push`) while a loop, a callback method or a callee walks it. Such an array's type is counted,
+as for a variable in a cell, so `for...of` over it, its callback methods and functions it is
+passed to share each element. Other slots nothing reassigns keep their value while a call
+runs: maps and sets re-read their entries every step of a loop and pass shares to callbacks,
+so `const seen = new Map<string, number>()` stays uncounted. A value held in the slot (not
+behind a counted object) is shared like an array element, since any callee may replace it there
+and drop it (#1161). A program without module state is unaffected. The function value of a
+call through a function value is kept alive the same way when it is read from such a place (a
+field or element reached through a counted object, or a variable in a shared cell): the call
+runs on a share of it, dropped after the statement, since the function may replace its holder
+(`this.f = …`) and so drop its own environment while it runs (#1146); one read from a variable
+or parameter of the caller needs nothing. A destructured binding of a value stored inline (a
+string, tuple, object literal or union, bound by reference) refers to a share of it held by the
+scope; the parts that can be changed in place are counted first, so writes through the binding
 (`t[1] = 7`) still reach the original. Every stabilized borrow is a fact: a container that
 becomes counted makes the values borrowed through it counted too, so uncounted values stay
 reachable only through unique owners.
