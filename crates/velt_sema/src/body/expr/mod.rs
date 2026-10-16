@@ -37,6 +37,7 @@ mod gen_closure;
 mod hoist;
 mod iface_call;
 mod iface_object;
+mod iface_write;
 mod in_keys;
 mod in_place_chain;
 mod indexers;

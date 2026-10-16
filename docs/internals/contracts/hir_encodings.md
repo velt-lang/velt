@@ -58,7 +58,13 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - Interface fields are read through synthesized getter methods: sema adds one `Def::Fn` per
   (impl, field) returning the field (Copy → copy, else borrow-as-clone) and appends it to the
   interface's method slots, so `x.field` on a `T extends I` / `Dyn` receiver is a
-  `ParamMethod`/`Dyn` call.
+  `ParamMethod`/`Dyn` call. An interface the program writes a field through also has one
+  setter slot per writable (non-`readonly`) field after the getters (slot `methods + fields +
+  k`, `k` counting the writable fields before it; `InterfaceDef::methods` lists them as
+  `<set f>`): a `Def::Fn` per (impl, field) taking `this` mutably borrowed and the value
+  borrowed (Copy → copied), which assigns a share of it to the field. `x.f = v` is a
+  `ParamMethod`/`Dyn` call of that slot with arguments `[x, v]`. Interfaces nobody writes
+  through have no setter slots.
 
 ## M2 encodings sema emits
 - Closure `FnDef::params`: one param per capture first (local = `Capture::inner`, mode = capture

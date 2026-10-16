@@ -245,7 +245,12 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
 }
 
 fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
-    let m = cx.iface(iface)?.methods.get(slot as usize)?;
+    let i = cx.iface(iface)?;
+    if slot as usize >= i.methods.len() + i.fields.len() {
+        // A field setter (`crate::iface_writes`): it modifies the receiver and borrows the value.
+        return Some(vec![PassMode::BorrowMut, PassMode::Borrow]);
+    }
+    let m = i.methods.get(slot as usize)?;
     let this = match m.mut_this {
         true => PassMode::BorrowMut,
         false => PassMode::Borrow,
