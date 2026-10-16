@@ -8,6 +8,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
+use super::sequence::later_each;
 use super::{ice, FnLower};
 use crate::vir::{Operand, Proj, Rvalue, Ty};
 
@@ -52,6 +53,16 @@ impl super::Cx<'_> {
             }
         }
         join
+    }
+
+    /// Is `slot` of `iface` a field setter (`<set f>`, hir_encodings.md "Interface values")?
+    fn is_setter_slot(&self, iface: DefId, slot: u32) -> bool {
+        let hir::Def::Interface(idef) = self.hir.def(iface) else {
+            ice("interface call on a non-interface")
+        };
+        idef.methods
+            .get(slot as usize)
+            .is_some_and(|m| m.name.starts_with("<set "))
     }
 
     /// Error type of a call through interface method `slot` of `iface<args>`: sema's
@@ -132,14 +143,25 @@ impl FnLower<'_, '_> {
             .first()
             .unwrap_or_else(|| ice("interface call without receiver"));
         let dty = self.sub(recv.ty);
-        let (modes, throws) = match self.cx.kind(dty) {
+        let (modes, throws, setter) = match self.cx.kind(dty) {
             TyKind::Dyn(iface, args) => (
                 self.cx.dyn_modes(iface, slot),
                 self.cx.slot_throws(iface, slot, &args),
+                self.cx.is_setter_slot(iface, slot),
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
         let rv = self.receiver(recv, transfer);
+        // `x.f = v()` through an interface: `v()` may replace or free what `x` holds (`x = y`,
+        // `xs.pop()`), and JavaScript writes the object `x` held before, so the receiver gets a
+        // reference of its own for the call, as a class method's receiver does (`lower_args`).
+        let rv = match setter && !transfer {
+            true => {
+                let later = later_each(args).first().copied().unwrap_or_default();
+                self.hold(rv, recv.ty, later)
+            }
+            false => rv,
+        };
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,

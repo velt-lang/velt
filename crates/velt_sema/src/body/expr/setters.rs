@@ -72,6 +72,9 @@ impl FnCx<'_, '_> {
 
     /// The parameter type of setter `name` of type `t` (`None` when it is not known here).
     pub(super) fn setter_param_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        if let Some(f) = self.iface_field_of(t, name) {
+            return Some(f.ty);
+        }
         let (ty, slots) = match self.resolve_method(t, &member_key(name, true))? {
             Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
                 (self.cx.fn_info(def).params.first()?.ty, slots)
@@ -105,6 +108,9 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "assign to a property of") {
             self.check_args_loose(args);
             return self.error_expr(span);
+        }
+        if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
+            return self.iface_setter_call(obj, f, arg, span);
         }
         self.method_call_on(obj, &key, &[], args, None, span)
     }
@@ -170,7 +176,7 @@ impl FnCx<'_, '_> {
 
     /// A read-modify-write of setter `prop` needs a getter. Reports and returns false otherwise.
     fn readable(&mut self, t: TyId, prop: &ast::Ident) -> bool {
-        if self.has_getter(t, &prop.name) {
+        if self.has_getter(t, &prop.name) || self.iface_field_of(t, &prop.name).is_some() {
             return true;
         }
         self.cx.err(

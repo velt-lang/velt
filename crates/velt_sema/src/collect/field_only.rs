@@ -185,6 +185,16 @@ impl Ctx<'_> {
             }
             found.push((index, *ty));
         }
+        let writable = self.writable_fields(iface);
+        let setters = writable
+            .iter()
+            .map(|&k| crate::iface_writes::SetterSrc::Field {
+                d,
+                self_ty: t,
+                index: found[k].0,
+                ty: found[k].1,
+            })
+            .collect();
         let methods = found
             .into_iter()
             .map(|(index, ty)| super::getters::field_getter(self, d, t, index, ty))
@@ -196,6 +206,8 @@ impl Ctx<'_> {
             iface_args: vec![],
             methods,
         });
-        Some(((self.impls.len() - 1) as u32, vec![], t))
+        let index = (self.impls.len() - 1) as u32;
+        self.note_setters(index, setters);
+        Some((index, vec![], t))
     }
 }
