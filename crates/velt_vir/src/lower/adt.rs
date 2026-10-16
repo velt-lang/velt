@@ -210,7 +210,14 @@ impl FnLower<'_, '_> {
             self.store(proj(&bp, Proj::Deref(vt)), v);
             b
         };
+        if self.cx.is_any_impl(impl_index) && self.is_proxy(cty) {
+            self.cx.note_proxy_new();
+        }
         let vtable = self.vtable_addr(VtableKey::Impl(impl_index, cty));
+        let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.proxiable(cty) {
+            true => self.proxy_any_parts(data, vtable),
+            false => (data, vtable),
+        };
         self.build_agg(ty, vec![data, vtable])
     }
 

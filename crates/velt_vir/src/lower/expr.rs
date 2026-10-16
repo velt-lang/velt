@@ -15,6 +15,8 @@ impl FnLower<'_, '_> {
     pub(super) fn consume(&mut self, e: &hir::Expr) -> Operand {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
+            let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+            self.cx.note_proxy_cast(from, to);
             return self.consume(inner);
         }
         if let K::Downcast(inner) = &e.kind {
@@ -165,7 +167,11 @@ impl FnLower<'_, '_> {
                 mode,
             } => self.unwrap_variant(expr, *variant, *mode),
             K::New { args, .. } => self.new_object(e.ty, args),
-            K::Upcast(inner) => self.expr(inner),
+            K::Upcast(inner) => {
+                let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                self.cx.note_proxy_cast(from, to);
+                self.expr(inner)
+            }
             K::Downcast(inner) => {
                 let v = self.expr(inner);
                 self.downcast_value(v, inner.ty)

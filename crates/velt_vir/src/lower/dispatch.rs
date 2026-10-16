@@ -109,7 +109,13 @@ impl FnLower<'_, '_> {
         let throws = self.cx.error_ty(throws);
         let rv = self.receiver(recv, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
-        let vt = self.obj_vtable(obj.clone(), cls);
+        let vt = match self.cx.proxiable(cls) {
+            true => {
+                self.proxy_method_check(&obj);
+                self.proxy_obj_vtable(obj.clone(), cls)
+            }
+            false => self.obj_vtable(obj.clone(), cls),
+        };
         let entry = self.dispatch(vt, slot as i128);
         let ret = self.sub(ty);
         self.call_ptr(

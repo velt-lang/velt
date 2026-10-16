@@ -71,6 +71,7 @@ mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_typed;
 mod rc;
 mod rt;
 mod same;
@@ -151,6 +152,9 @@ pub(crate) fn lower_program(
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
+            }
+            if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
+                eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
             }
             let diags = cx.nothing_clash_diagnostics();
             let types_now = cx.types.clone();

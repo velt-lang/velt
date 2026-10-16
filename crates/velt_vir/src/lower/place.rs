@@ -20,11 +20,17 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Adt(..) if self.cx.is_class(ty) => {
                 let obj = self.cx.obj_agg(ty);
+                if self.cx.proxiable(ty) {
+                    self.proxy_guard(base);
+                }
                 let base = self.retained_hop(base, ty);
                 let p = proj(&base, Proj::Deref(Ty::Agg(obj)));
                 proj(&p, Proj::Field(self.cx.vir_field(ty, index)))
             }
             TyKind::Adt(..) | TyKind::Tuple(_) => {
+                if self.cx.proxiable(ty) {
+                    self.proxy_guard(base);
+                }
                 let value = self.content(base, ty);
                 proj(&value, Proj::Field(self.cx.vir_field(ty, index)))
             }
@@ -40,6 +46,9 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
+        if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
+            return self.proxy_field_read(base, bty, index, mode);
+        }
         if mode == UseMode::Move && (self.counted_part(base) || self.in_module_state(base)) {
             // Other owners still see the field (semantics stage 2): share it instead.
             let v = self.field_expr(base, index, UseMode::Borrow);
@@ -373,6 +382,12 @@ impl FnLower<'_, '_> {
     /// `place = value`: evaluate the target's indices, then the new value; drop the old one,
     /// store.
     pub(super) fn assign_expr(&mut self, place: &hir::Expr, value: &hir::Expr) -> Operand {
+        if let hir::ExprKind::Field { base, index, .. } = &place.kind {
+            let bty = self.sub(base.ty);
+            if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
+                return self.proxy_assign(place, base, *index, value);
+            }
+        }
         if let Some(done) = self.str_append(place, value) {
             return done;
         }
@@ -415,7 +430,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The store of `place = v` into `p`, dropping the old value when `drops`.
-    fn store_assigned(
+    pub(super) fn store_assigned(
         &mut self,
         place: &hir::Expr,
         p: Place,
@@ -494,6 +509,12 @@ impl FnLower<'_, '_> {
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        if let hir::ExprKind::Field { base, index, .. } = &place.kind {
+            let bty = self.sub(base.ty);
+            if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
+                return self.proxy_compound(op, place, (base, *index), value);
+            }
+        }
         if op == hir::BinOp::Add {
             if let Some(done) = self.str_append_compound(place, value) {
                 return done;

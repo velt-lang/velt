@@ -751,7 +751,7 @@ entry is an `ICE:`.
 - Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
   any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
-  (`ToDyn`), and reports one converted straight to a typed value. The member slots of the
+  (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
@@ -761,6 +761,15 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of
+  a `Proxy`, the class hierarchies and object types that `AnyTo` in the program's own code
+  converts to, and what values of those types are upcast to (`Upcast`), are *proxiable*
+  (`VELT_DEBUG_PROXY=1` lists them). A value of a proxiable type is the object's address, or the
+  `Proxy` object's address with bit 0 set: `AnyTo` of an `any` holding a `Proxy` sets the bit,
+  boxing clears it again. Field reads, writes and compound assignments on a proxiable type test
+  the bit and call the `get` / `set` traps (glue `ProxyGet` / `ProxySet` per field type), counts
+  clear the bit, and drop and format glue handle the `Proxy` object. Without proxiable types
+  nothing changes. No HIR form was added.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.

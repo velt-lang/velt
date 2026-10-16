@@ -431,6 +431,9 @@ impl FnLower<'_, '_> {
             return Operand::Copy(out);
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        if matches!(self.cx.kind(ty), TyKind::Adt(..)) {
+            self.cx.note_proxy_target(ty);
+        }
         // A class without type arguments: an instance of it or of a subclass. A generic class
         // (`Box<number>`, `Map<string, string>`): the table of that very instantiation, since
         // its class id does not say what its type arguments are.
@@ -480,6 +483,13 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
+        if self.cx.proxiable(ty) {
+            // A proxy converted to a type that may hold one: the tagged `Proxy` object.
+            let err = self.new_block();
+            let data = Operand::Copy(proj(p, Proj::Field(0)));
+            self.proxy_unbox(data, desc.clone(), &out, done, err);
+            self.switch_to(err);
+        }
         self.any_type_error(desc, ty);
         self.switch_to(done);
         Operand::Copy(out)

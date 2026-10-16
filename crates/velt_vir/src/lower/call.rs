@@ -71,6 +71,12 @@ impl FnLower<'_, '_> {
         };
         let mut argv = pre;
         argv.extend(self.lower_args(args, &modes, true));
+        if f.self_ty.is_some() && !args.is_empty() && argv.len() == args.len() {
+            let rty = self.sub(args[0].ty);
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
+                self.proxy_method_check(&argv[0]);
+            }
+        }
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
