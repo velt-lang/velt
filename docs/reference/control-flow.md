@@ -79,6 +79,9 @@ interface Iterable<T, E = never> {
 - A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+  TypeScript's `{ value: undefined, done: true }` is accepted for a finished result, without
+  the `value`. `console.log` of a finished result prints `{ done: true }` where Node prints
+  `{ value: undefined, done: true }` (issue #930, phase 3).
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
   An iterator class that releases something there writes `return(): IteratorResult<T>` and
   returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
