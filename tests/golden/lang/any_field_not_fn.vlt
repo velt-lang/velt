@@ -1,0 +1,9 @@
+// An `any` field holding something other than a function, called through `any` (#924).
+class H { f: any = null; }
+function main(): void {
+  const h = new H();
+  h.f = 3;
+  const ha: any = h;
+  console.log("before");
+  console.log(ha.f(4));
+}

@@ -6,7 +6,7 @@
 
 use velt_sema::hir::{self, DefId, DynMember, DynMemberKind, Nothing, PassMode, TyId, TyKind};
 
-use super::any_member::{ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
+use super::any_member::{SLOT_APPLY, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
 use super::glue::Glue;
 use super::operand::proj;
 use super::rt::Rt;
@@ -309,11 +309,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Call the function value at `fp` (type `fty`) with the arguments; box the result into
-    /// `out` and return the status.
+    /// `out` and return the status. `field`: `fp` is a field, which the function may replace
+    /// while it runs (`this.f = …`): it runs on a share of the value, dropped after the call.
     fn any_apply_value(
         &mut self,
         fp: &Place,
         fty: TyId,
+        field: bool,
         argv: vir::Local,
         argc: vir::Local,
         out: &Place,
@@ -332,6 +334,12 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let slots = self.any_params(argv, argc, &params);
+        let held = field.then(|| {
+            let v = self.share_value(Operand::Copy(fp.clone()), fty);
+            let vt = self.cx.ty(fty);
+            Place::local(self.copy_to_temp(v, vt))
+        });
+        let fp = held.as_ref().unwrap_or(fp);
         let code = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(0)))),
@@ -366,6 +374,9 @@ impl FnLower<'_, '_> {
         let v = self.finish_call(callee, av, ret, None);
         for (p, t) in slots {
             self.drop_glue(p, t);
+        }
+        if let Some(h) = held {
+            self.drop_glue(h, fty);
         }
         if let Operand::Copy(p) = &v {
             self.take_temp(&p.clone());
@@ -537,7 +548,22 @@ impl FnLower<'_, '_> {
             let fty = self.cx.member_ty(ty, i as u32);
             if matches!(self.cx.kind(fty), TyKind::FnPtr { .. }) {
                 let fp = self.field_place(&vp, ty, i as u32);
-                self.any_apply_value(&fp, fty, argv, argc, &outp);
+                self.any_apply_value(&fp, fty, true, argv, argc, &outp);
+            } else if self.cx.is_dynamic(fty) {
+                // An `any` field (`f: any`, holding a function or not): called through its own
+                // apply slot, on a share that keeps it alive while it runs (it may replace the
+                // field). The slot owns the arguments and writes `*out`.
+                let fp = self.field_place(&vp, ty, i as u32);
+                let v = self.share_value(Operand::Copy(fp), fty);
+                let vt = self.cx.ty(fty);
+                let held = Place::local(self.copy_to_temp(v, vt));
+                let (fd, fdesc) = self.any_parts(Operand::Copy(held.clone()), fty);
+                let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
+                let a = vec![fd, a[0].clone(), a[1].clone(), a[2].clone()];
+                let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
+                let st = self.any_slot(fdesc, SLOT_APPLY, a, p);
+                self.drop_glue(held, fty);
+                self.terminate(Terminator::Return(st));
             } else {
                 self.any_drop_args(argv, 0, argc);
                 let st = if self.cx.any_boxable(fty) {
@@ -595,7 +621,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::FnPtr { .. } => {
                 let fp = self.any_value_place(data, ty);
-                self.any_apply_value(&fp, ty, argv, argc, &outp);
+                self.any_apply_value(&fp, ty, false, argv, argc, &outp);
             }
             TyKind::Closure(_) => {
                 self.any_drop_args(argv, 0, argc);

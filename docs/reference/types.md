@@ -1594,7 +1594,8 @@ optional parameter `x?: any` holds `null`, not `undefined` (as with every option
 today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
 Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
-`string`, `number` or `any` key, `x.m(a, b)` and `x(a, b)` when `x` holds a function. The member
+`string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
+or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member
 is found at run time in the value the `any` holds: a field, getter or method of a class
 instance (a subclass's too when it was converted through its base class), an object type's
 field, `length` and elements of an array, `length` of a string, and the members of the standard

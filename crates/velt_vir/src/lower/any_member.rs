@@ -169,7 +169,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Call descriptor slot `slot` of `desc` with `args` of VIR types `params`.
-    fn any_slot(
+    pub(super) fn any_slot(
         &mut self,
         desc: Operand,
         slot: i128,
