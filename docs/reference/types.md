@@ -1804,10 +1804,45 @@ function main(): void {
 
 Calling `serialize("x")` through the `Handler[]` stops with `TypeError: the value is not a Date
 (it is a string)`. The wrapped value is the original object: a write through one is seen
-through the other. The conversion applies where each type argument is the original's or
-`unknown` / `any`, and each parameter and result converts as described (a promise result of
-another type, an array of the type parameter, or a method of its own type parameters keeps the
-conversion an error). A program without such a conversion is unchanged.
+through the other, and every copy of the converted value (an array element read into a
+`const`, a second conversion to `Handler<any, any>`) wraps that same object.
+
+A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
+arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element
+types: the method works on a copy holding the elements, and when it returns the copy is
+written back into the caller's array, map or set, so the caller sees what the method changed.
+Each element written back converts to the original's own element type, checked as above.
+Differences from Node: changing the length of such an array (`push`, `pop`) stops with a
+`TypeError` naming #1185, and the method sees a copy, not the caller's object itself (`===`
+with it, and a reference the method keeps after it returns, differ).
+
+```ts
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+const mapHandler: Handler<Map<unknown, unknown>, [unknown, unknown][]> = {
+  name: "map",
+  serialize: (m) => [...m.entries()],
+};
+
+function main(): void {
+  const all: Handler[] = [mapHandler];
+  const scores = new Map<string, number>([["ann", 3]]);
+  console.log(all[0].serialize(scores)); // [ [ 'ann', 3 ] ]
+}
+```
+
+The conversion applies where each type argument is the original's or `unknown` / `any`, and
+each parameter and result converts as described. It is a compile error, with a note naming the
+case, when a method's parameter has another type holding `unknown` or `any` (a generic class
+such as `Box<unknown>`, or `Map<string, unknown>`; #1185) or is an interface (#924), and when a
+result is a promise of another type, a parameter is an array of the type parameter, or a method
+has type parameters of its own. A parameter of a function value (an optional method
+`revive?(e: E): T` with `E` an `unknown[]`) is checked against its own type as it is (#1185),
+except a generic class with `unknown` arguments, which is a compile error. A program without
+such a conversion is unchanged.
 
 ### Proxy and Reflect
 

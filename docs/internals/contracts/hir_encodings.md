@@ -777,7 +777,14 @@ entry is an `ICE:`.
   (`Ctx::iface_adapters`). Each impl method (`<I> adapter.<m>`, `this` borrowed) calls the same
   slot of the field (`Callee::Dyn`), its arguments converted with `AnyTo` (or, for a function,
   an arrow adapting each call) and its result boxed with `ToDyn` of `Program::any_impl` (or
-  adapted in turn). Lowering sees only these ordinary forms.
+  adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
+  value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
+  `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
+  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
+  `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
+  `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
+  Lowering sees only these ordinary forms.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.

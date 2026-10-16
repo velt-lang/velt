@@ -335,9 +335,15 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
-            d = match self.extends_note(expected, found.ty) {
-                Some(note) => d.with_note(note),
-                None => d.with_note(format!("`{f}` does not declare `implements {e}`")),
+            d = match (
+                self.adapt_refusal(expected, found.ty),
+                self.extends_note(expected, found.ty),
+            ) {
+                (Some(why), _) => d.with_note(format!(
+                    "`{f}` converts to `{e}` through a wrapper that checks each call's arguments, but {why}"
+                )),
+                (None, Some(note)) => d.with_note(note),
+                (None, None) => d.with_note(format!("`{f}` does not declare `implements {e}`")),
             };
             if let Some(note) = self.other_args_note(expected, found.ty) {
                 d = d.with_note(note);
