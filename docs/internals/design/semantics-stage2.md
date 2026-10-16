@@ -125,7 +125,8 @@ nothing reassigns keep their value while a call runs: maps re-read their entries
 a loop and pass shares to callbacks, so `const seen = new Map<string, number>()` stays
 uncounted. A value held in the slot (not
 behind a counted object) is shared like an array element, since any callee may replace it there
-and drop it (#1161). A program without module state is unaffected. The function value of a
+and drop it (#1161). A virtual call's receiver is stabilized like a class method's. A program
+without module state is unaffected, apart from that receiver. The function value of a
 call through a function value is kept alive the same way when it is read from such a place (a
 field or element reached through a counted object, or a variable in a shared cell): the call
 runs on a share of it, dropped after the statement, since the function may replace its holder
