@@ -1,0 +1,12 @@
+// An async arrow without a result type that returns a promise: its result is the promise's
+// value, as in TypeScript (`() => Promise<number>`), and returning the promise itself is
+// reported like it is with a written result type (#1166, #1148), not an internal error.
+async function inner(n: number): Promise<number> {
+  return n * 2;
+}
+
+const f = async (n: number) => inner(n);
+
+async function main() {
+  console.log(await f(1));
+}
