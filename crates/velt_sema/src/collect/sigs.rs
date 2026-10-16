@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::declare::{fn_placeholder, generic_names, ASYNC_DISPOSE, DISPOSE};
@@ -105,7 +105,7 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
             f.1.clone_from(&p.name.name);
         }
         let mut ty = cx.resolve_type(&p.ty, env);
-        if p.rest && !rest_param_type(cx, p, ty) {
+        if p.rest && !rest_param_type(cx, p.ty.span, ty) {
             ty = cx.ty.error;
         }
         if out.iter().any(|q| q.name == p.name.name) {
@@ -137,20 +137,21 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
 
 /// A rest parameter's type must be an array type: `T[]`, `readonly T[]` or an alias of one
 /// (TypeScript's TS2370 otherwise). One typed by a type parameter (`...args: A` with
-/// `A extends unknown[]`) is not supported yet. False after reporting an error.
-fn rest_param_type(cx: &mut Ctx, p: &ast::Param, ty: TyId) -> bool {
+/// `A extends unknown[]`) is not supported yet. False after reporting an error at `at` (the
+/// written type). Closures' rest parameters are checked the same way.
+pub(crate) fn rest_param_type(cx: &mut Ctx, at: Span, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Array(_) | TyKind::Error => return true,
         TyKind::Param(_) => cx.error(
             Diagnostic::error(
                 "a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)",
-                p.ty.span,
+                at,
             )
             .with_note("Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)"),
         ),
         _ => cx.err(
             "a rest parameter must have an array type (`...xs: T[]`)",
-            p.ty.span,
+            at,
         ),
     }
     false

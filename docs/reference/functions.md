@@ -32,6 +32,20 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (TS2370). A rest parameter typed by a type parameter (`...args: A` with
   `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
   supported yet (#943).
+  A module-level constant arrow function or function expression may have one too, typed the
+  same ways: `const total = (...xs: Nums) => …` is the function `function total(...xs: Nums)`
+  (its parameters must be typed). Rest parameters of other arrows and function expressions are
+  not supported yet (see below).
+
+  ```ts
+  type Nums = number[];
+  const total = (...xs: Nums): number => xs.reduce((a, b) => a + b, 0);
+  const join = function (sep: string, ...parts: readonly string[]) {
+    return parts.join(sep);
+  };
+  console.log(total(1, 2, 3), join("-", "a", "b")); // 6 a-b
+  ```
+
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
   `String.fromCharCode`, an array's `push`) accept a spread anywhere.
 - A **spread into fixed parameters** passes the elements of a value whose length is known when
@@ -723,7 +737,8 @@ async function main() {
   cannot be a value, and neither can a generic function that keeps a parameter whose type is a
   promise at the value's type arguments or still depends on a type parameter.
 - **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
-  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`), generic
+  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`, other than
+  a module-level constant's), generic
   function types (`<T>(description: string) => Token<T>`, a value each call instantiates)
   and construct signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value).
   They parse, and using one is an error saying it is not supported yet. A function type's
