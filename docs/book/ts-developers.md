@@ -178,7 +178,8 @@ contents.
   signatures without other members (`{ [key: string]: V }`, a `Record<string, V>`) work as in
   TypeScript ([Type queries](../reference/types.md#type-queries-and-keyof)).
 - Not available: mapped and conditional types, template literal types, the other utility types
-  (`Record` aside), index signatures next to named members, `namespace`. Interfaces merge, and
+  (`Record` aside), index signatures next to named members, values in a `namespace` (namespaces
+  of types work: [Namespaces](../reference/modules.md#namespaces)). Interfaces merge, and
   `declare global` / `declare module` blocks augment them
   ([declaration merging](../reference/classes.md#declaration-merging)); other declarations
   don't merge.

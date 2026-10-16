@@ -704,6 +704,35 @@ async function main() {
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
   now; leaving the optional one out (`install(app)`) is not supported yet.
 
+### `call` and `apply`
+
+`f.call(thisArg, a, b)` and `f.apply(thisArg, [a, b])` call a function value as JavaScript's
+`Function.prototype` does: `f(a, b)`, with `thisArg` evaluated first (after `f`). `apply`'s
+argument spreads into the call as `f(...args)` does: an array literal or a tuple fills the
+parameters one by one, and an array of unknown length only a rest parameter
+(`String.fromCharCode.apply(null, codes)`, `Math.max.apply(null, xs)`), as TypeScript's
+`strictBindCallApply` checks it.
+
+`this` matters only to a function that reads it. Function declarations, arrow functions and the
+static functions of built-in namespaces read none, so any `thisArg` works for them
+(`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
+(`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or
+`undefined` works when the method doesn't use `this`. A variable holding a method read as a value
+(`const f = o.m`) takes no other `this`; other function values, such as parameters, take `null` or
+`undefined`, as `f(x)` calls them. Any other `this` is not supported yet (an error): Velt would
+run the function on the object it keeps, where Node uses the `this` given or throws.
+
+```ts
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+const codes = [104, 105];
+const pair: [number, number] = [3, 4];
+console.log(String.fromCharCode.apply(null, codes)); // hi
+console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
+```
+
 ## Captures
 
 - A closure passed directly as a call argument, or called immediately, is **non-escaping** and

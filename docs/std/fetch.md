@@ -51,7 +51,7 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 |---|---|---|
 | `method` | `string` | default `"GET"`; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased |
 | `headers` | `Headers \| Record<string, string>` | an object literal works: `{ "content-type": "text/csv" }` |
-| `body` | `string \| u8[] \| URLSearchParams` | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
+| `body` | `string \| Uint8Array \| ArrayBuffer \| DataView \| u8[] \| URLSearchParams` (any typed array) | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
 | `redirect` | `"follow" \| "error" \| "manual"` | default `"follow"` (at most 20); `"manual"` returns the 3xx response |
 | `signal` | `AbortSignal` | cancels the request |
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
@@ -72,8 +72,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   `bodyUsed`.
 - Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
   mark is dropped, as in JS),
-  `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS
-  returns an `ArrayBuffer`). A body is read once: a second read throws `IoError`
+  `await res.json<T>()`, `await res.bytes(): Uint8Array` and `await res.arrayBuffer():
+  ArrayBuffer` ([typed arrays](typed_array.md)). A body is read once: a second read throws `IoError`
   (`Body is unusable: Body has already been read`); a response without a body can be read any
   number of times, as in JS. A large body is received into one buffer
   sized from `content-length`, so `bytes()` copies it once.
@@ -99,7 +99,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
   returns, not the property. Dropping a response whose body was not read closes its
   connection.
-- `new Response(body?: string | u8[] | URLSearchParams | BodyStream | null, init?:
+- `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
+  BodyStream | null, init?:
   ResponseInit { status?; statusText?; headers? })`, `Response.json(data, init?)`
   (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status =
   302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
@@ -201,8 +202,7 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   with a `cause`, and the signal's `AbortError` / `TimeoutError` where Node throws a
   `DOMException` (or the abort reason).
 - `res.json()` needs the type of the data (above).
-- Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
-  without a signal has `signal == null`.
+- There is no `Blob` or `FormData`, and a `Request` without a signal has `signal == null`.
 - `res.body` and `req.body` are a `BodyStream`, an async iterable of `u8[]`, not a
   `ReadableStream` (no `getReader()`, `pipeTo()`); `BodyStream.from` stands for
   `ReadableStream.from`.

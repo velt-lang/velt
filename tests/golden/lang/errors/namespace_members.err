@@ -1,0 +1,2 @@
+namespace_members.vlt:7:17: error: namespace `N` has no exported member `Hidden`
+namespace_members.vlt:8:18: error: namespace `N` has no exported member `Missing`

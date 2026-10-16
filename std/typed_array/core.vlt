@@ -1,0 +1,187 @@
+// velt:typed_array/core: `ArrayBuffer`, and `BufferView`, what typed arrays and `DataView` are
+// (a byte range of a buffer). The small part of the typed arrays that `fetch` bodies need: a
+// program that uses `Response` loads this module, and the typed array classes only when it
+// names one or reads `bytes()` (std/prelude/global/fetch_bytes.vlt). Programs use the globals.
+//
+// An `ArrayBuffer` owns a `u8[]` of fixed length. Views (`Uint8Array`, `Float64Array`,
+// `DataView`, …) keep a reference to the buffer and a byte range of it, so two views of one
+// buffer see each other's writes, as in JS.
+
+/**
+ * A fixed-length block of bytes (JS `ArrayBuffer`). Read and write it through a view:
+ * `new Uint8Array(buffer)`, `new DataView(buffer)`, or any other typed array.
+ */
+export class ArrayBuffer {
+  // The bytes (the views read and write them).
+  private bytes: u8[];
+
+  /** `byteLength` zero bytes (`RangeError` for a negative or non-integer length beyond 2^53). */
+  constructor(byteLength: number = 0) {
+    this.bytes = Buffer.alloc(bufferLength(byteLength));
+  }
+
+  // A buffer that owns `bytes` (std only: `TextEncoder.encode`, `Uint8Array.fromBytes`).
+  private static adopt(bytes: u8[]): ArrayBuffer {
+    try {
+      const b = new ArrayBuffer(0);
+      b.bytes = bytes;
+      return b;
+    } catch (e) {
+      panic(`ICE: ArrayBuffer.adopt: ${e.message}`);
+    }
+  }
+
+  /** The number of bytes. */
+  get byteLength(): number {
+    return this.bytes.length as number;
+  }
+
+  /** The length cannot change (JS: false unless made with `maxByteLength`). */
+  get resizable(): bool {
+    return false;
+  }
+
+  /** The most bytes it can hold: its `byteLength`, since it is not resizable. */
+  get maxByteLength(): number {
+    return this.bytes.length as number;
+  }
+
+  /** Whether the buffer was transferred away (never: Velt has no `transfer` yet). */
+  get detached(): bool {
+    return false;
+  }
+
+  /**
+   * A new buffer with a copy of the bytes in [begin, end); negative positions count from the
+   * end, as for an array's `slice`.
+   */
+  slice(begin: number = 0, end: number = Infinity): ArrayBuffer {
+    return ArrayBuffer.adopt(this.bytes.slice(toInteger(begin), toInteger(end)));
+  }
+
+  /**
+   * Whether `v` is a view of a buffer: a typed array or a `DataView` (JS takes any value; Velt
+   * takes these until `unknown` arrives, #924).
+   */
+  static isView(v: ArrayBuffer | BufferView | null): bool {
+    return v instanceof BufferView;
+  }
+
+  /** `JSON.stringify` writes an `ArrayBuffer` as `{}`, as in JS. */
+  toJSON(): Record<string, number> {
+    return {};
+  }
+
+  /** `"[object ArrayBuffer]"`, as `String(buffer)` gives in JS. */
+  toString(): string {
+    return "[object ArrayBuffer]";
+  }
+
+  /** How `console.log` shows the buffer, like Node: `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }`. */
+  __inspect(): NativeInspect {
+    return { text: inspectBuffer(this.bytes) };
+  }
+}
+
+/**
+ * What an `__inspect()` returns for a class that stands for one of Node's own objects (std only:
+ * `ArrayBuffer`, `DataView`): `console.log` prints `text`, and `[ArrayBuffer]` (the class's
+ * name) past Node's depth limit, as Node cuts its objects, where a string `__inspect()` is
+ * printed at any depth (`Date`). crates/velt_vir/src/lower/glue/format.rs knows it by name.
+ */
+export struct NativeInspect {
+  text: string;
+}
+
+/**
+ * A view of a byte range of an `ArrayBuffer` (std only: what every typed array and `DataView`
+ * extends): the buffer, the offset of the range in it (bytes), and its length in elements of
+ * `__size()` bytes.
+ */
+export class BufferView {
+  private buf: ArrayBuffer;
+  private off: usize;
+  private len: usize;
+
+  constructor(buf: ArrayBuffer, off: usize, len: usize) {
+    this.buf = buf;
+    this.off = off;
+    this.len = len;
+  }
+
+  /** The size of an element in bytes (a `DataView`'s elements are bytes). */
+  __size(): usize {
+    return 1;
+  }
+}
+
+/**
+ * Node's text for a buffer's bytes, `ArrayBuffer { [Uint8Contents]: <…>, [byteLength]: n }`,
+ * printed `indent` spaces in (the lines after the first are indented that much).
+ */
+export function inspectBuffer(bytes: u8[], indent: usize = 0): string {
+  const hex = "0123456789abcdef";
+  const n = bytes.length as usize;
+  // Node shows the first 100 bytes (`maxArrayLength`), then how many more there are.
+  const shown: usize = n > 100 ? 100 : n;
+  let contents = "<";
+  for (let i: usize = 0; i < shown; i++) {
+    if (i > 0) {
+      contents += " ";
+    }
+    const b = bytes[i];
+    contents += hex[(b >> 4) as i64];
+    contents += hex[(b & 15) as i64];
+  }
+  if (n > shown) {
+    const more = n - shown;
+    contents += ` ... ${more} more byte${more == 1 ? "" : "s"}`;
+  }
+  contents += ">";
+  const first = `[Uint8Contents]: ${contents}`;
+  const second = `[byteLength]: ${n}`;
+  // Node's `isBelowBreakLength` for two entries (breakLength 80).
+  if (first.length + second.length + indent <= 53) {
+    return `ArrayBuffer { ${first}, ${second} }`;
+  }
+  const pad = " ".repeat(indent as i64);
+  return `ArrayBuffer {\n${pad}  ${first},\n${pad}  ${second}\n${pad}}`;
+}
+
+/**
+ * `new ArrayBuffer(n)`'s length, as JS's `ToIndex`: an error for a negative or huge `n`, and
+ * V8's allocation failure for one beyond a 47-bit address space (which no allocation can have).
+ */
+function bufferLength(n: number): usize throws RangeError {
+  const i = toIndex(n);
+  if (i < 0) {
+    throw new RangeError("Invalid array buffer length");
+  }
+  if (i > 140737488355328) {
+    throw new RangeError("Array buffer allocation failed");
+  }
+  return i as usize;
+}
+
+/**
+ * JS's `ToIndex(n)`: `n` truncated (NaN is 0), or -1 when it is negative or beyond 2^53 - 1
+ * (the caller throws its own `RangeError`).
+ */
+export function toIndex(n: number): i64 {
+  if (!(n > -1)) {
+    // NaN and -0.5 are 0.
+    return n != n || n > -1 ? 0 : -1;
+  }
+  if (n > 9007199254740991) {
+    return -1;
+  }
+  return n as i64;
+}
+
+/** JS's `ToIntegerOrInfinity(n)` clamped to i64: what an optional position argument means. */
+export function toInteger(n: number): i64 {
+  if (n != n) {
+    return 0;
+  }
+  return n as i64;
+}

@@ -6,10 +6,12 @@ mod accessor_rmw;
 mod args;
 mod array_ctor;
 mod assign;
+mod assign_paths;
 mod attempt;
 mod await_union;
 mod builtins;
 mod call;
+mod call_apply;
 mod callback;
 mod callback_sig;
 mod chain;
@@ -32,6 +34,7 @@ mod hoist;
 mod iface_call;
 mod in_keys;
 mod in_place_chain;
+mod indexers;
 mod int32;
 mod intrinsics;
 mod js_list;
@@ -42,6 +45,7 @@ mod literal_keys;
 mod literal_types;
 mod matching;
 pub(crate) mod member;
+mod member_keys;
 mod method;
 mod method_call;
 mod method_value;
@@ -88,6 +92,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
+pub(crate) use call_apply::is_member_read;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.

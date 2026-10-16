@@ -401,22 +401,62 @@ impl FnLower<'_, '_> {
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
         let (res, rty) = self.call_hook(m, obj, ty, None);
-        // The string, or the name before the value, is kept as one piece when the value is
-        // broken across lines: node inserts a custom inspect's text as it is.
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-        let start = Operand::Copy(Place::local(start));
+        let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
-            let a = self.addr(res.clone());
-            self.push_str(buf, a);
-            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.push_inspect_text(buf, &res);
+        } else if self.is_native_inspect(rty) {
+            // What Node prints for one of its own objects (`ArrayBuffer`, `DataView`): the text,
+            // cut to `[ArrayBuffer]` past the depth limit, as Node cuts its objects.
+            let text = self.field_place(&res, rty, 0);
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                lw.push_inspect_text(buf, &text);
+            });
+        } else if let TyKind::Array(_) = self.cx.kind(rty) {
+            // An array: after the name and its length, as Node prints an array subclass or a
+            // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
+            // limit.
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                let start = lw.temp(Ty::U64);
+                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+                let start = Operand::Copy(Place::local(start));
+                let arr = lw.content(&res, rty);
+                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+                lw.push_text(buf, &format!("{name}("));
+                let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
+                lw.push_scalar(buf, len, u64_);
+                lw.push_text(buf, ") ");
+                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.format_nested(buf, &res, rty, depth);
+            });
         } else {
-            let name = self.cx.type_name(ty);
+            // The string, or the name before the value, is kept as one piece when the value is
+            // broken across lines: node inserts a custom inspect's text as it is.
+            let start = self.temp(Ty::U64);
+            self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+            let start = Operand::Copy(Place::local(start));
             self.push_text(buf, &format!("{name} "));
             self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
+    }
+
+    /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
+    /// broken across lines: node inserts a custom inspect's text as it is.
+    fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = Operand::Copy(Place::local(start));
+        let a = self.addr(text.clone());
+        self.push_str(buf, a);
+        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+    }
+
+    /// Is `ty` std's `NativeInspect` (std/typed_array/core.vlt), the result of an `__inspect()`
+    /// that prints one of Node's own objects?
+    fn is_native_inspect(&self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Adt(d, _)
+            if self.cx.adt_def(d).name == "std/typed_array/core::NativeInspect")
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an

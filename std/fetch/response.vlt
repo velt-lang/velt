@@ -359,7 +359,8 @@ export class Response {
     return JSON.parse<T>(await this.text());
   }
 
-  async bytes(): Promise<u8[], IoError | AbortError> {
+  // The body's bytes, as Velt's byte array.
+  private async rawBytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
     if (this.#source == RUNTIME) {
       const r = await velt_rt_http_fetch_resp_bytes(this.#handle);
@@ -376,10 +377,8 @@ export class Response {
     return this.#data ?? [];
   }
 
-  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
-  async arrayBuffer(): Promise<u8[], IoError | AbortError> {
-    return await this.bytes();
-  }
+  // `bytes()` and `arrayBuffer()` are in velt:fetch/typed, loaded with the typed arrays they
+  // give (std/prelude/global/fetch_bytes.vlt).
 
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
   private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {

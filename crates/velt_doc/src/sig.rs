@@ -183,7 +183,8 @@ impl Printer<'_> {
             | TypeExprKind::Conditional(_)
             | TypeExprKind::Infer(_)
             | TypeExprKind::Mapped(_)
-            | TypeExprKind::TemplateLiteral { .. } => self.flat(t.span),
+            | TypeExprKind::TemplateLiteral { .. }
+            | TypeExprKind::Callable { .. } => self.flat(t.span),
             TypeExprKind::Object(fields) => {
                 if fields.is_empty() {
                     return "{}".into();
