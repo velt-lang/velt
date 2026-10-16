@@ -238,7 +238,8 @@ impl Ctx<'_> {
         for p in parts {
             let n = match p.kind {
                 ast::TypeExprKind::Null => Nothing::Null,
-                ast::TypeExprKind::Undefined => {
+                // `T | void` is `T | undefined` (`crate::unions`).
+                ast::TypeExprKind::Undefined | ast::TypeExprKind::Void => {
                     self.writes_undefined |= !self.scopes[env.module].is_std;
                     Nothing::Undefined
                 }

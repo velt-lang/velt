@@ -643,6 +643,9 @@ impl FnCx<'_, '_> {
         let mut values: Vec<Option<hir::Expr>> = fields.iter().map(|_| None).collect();
         for (pname, value) in &ps {
             let Some(i) = fields.iter().position(|f| f.name == pname.name) else {
+                if self.finished_result_value(fields, &pname.name, *value) {
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!(
@@ -681,6 +684,25 @@ impl FnCx<'_, '_> {
             values[i] = Some(h);
         }
         values
+    }
+
+    /// `value: undefined` in a literal of a finished iterator result (`{ done: true }`, an object
+    /// type with a field `done: true` and no `value`): TypeScript's `IteratorReturnResult`
+    /// carries the value, Velt's finished result has none, so the property is left out (issue
+    /// #930). Only the `undefined` literal is left out: it has no effect.
+    fn finished_result_value(
+        &mut self,
+        fields: &[FieldInfo],
+        name: &str,
+        value: Option<&ast::Expr>,
+    ) -> bool {
+        let is_undefined =
+            value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("undefined"));
+        name == "value"
+            && is_undefined
+            && fields.iter().any(|f| {
+                f.name == "done" && self.cx.lit_value(f.ty) == Some(hir::LitValue::Bool(true))
+            })
     }
 
     /// `t` when only its error types are unknown (`Error`): a hint, though not a type yet.

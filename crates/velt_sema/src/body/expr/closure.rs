@@ -447,16 +447,19 @@ impl FnCx<'_, '_> {
                     self.f.ret = Some(h.ty);
                 }
                 let hs = h.span;
-                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value {
+                let adopt = std::mem::take(&mut self.f.adopt_stmt);
+                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value || adopt {
                     S::Expr(h)
                 } else {
                     S::Return(Some(h))
                 };
-                hir::Block {
+                let mut block = hir::Block {
                     stmts: vec![hir::Stmt { kind, span: hs }],
                     value: None,
                     span: e.span,
-                }
+                };
+                self.wrap_adopted(&mut block);
+                block
             }
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
@@ -468,9 +471,10 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => self.finish_inferred_ret(&mut block, "this arrow function"),
+                    None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &block);
+                self.check_returns("closure", ret, span, &mut block);
+                self.wrap_adopted(&mut block);
                 block
             }
         }
