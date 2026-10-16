@@ -35,8 +35,8 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        // A value held in a module state slot (not behind a counted object, which retaining
-        // keeps) is like an element: any callee may replace it there and drop it.
+        // A value held in a module state slot, or inside what one holds, is like an element:
+        // any callee may replace it there and drop it.
         let movable = self.in_array_buffer(a) || self.in_module_slot(a);
         if movable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
@@ -109,7 +109,7 @@ impl FnLower<'_, '_> {
             K::Global(d) => {
                 let ty = self.sub(e.ty);
                 if !self.slot_reassigned(*d)
-                    && !(self.slot_of(*d).is_some() && self.holds_array(ty))
+                    && !(self.slot_of(*d).is_some() && self.contents_replaceable(ty))
                 {
                     return false;
                 }
@@ -128,19 +128,28 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Is `ty` an array (or an optional one)? A module slot holding one is counted like a
-    /// variable in a cell even when nothing reassigns the slot: any function may empty or grow
-    /// the array in place while a loop, a callback method or a callee walks its buffer. Maps
-    /// and sets need no such rule: their loops re-read the entries every step and their
-    /// callbacks get shares (prelude `Map`), and a class or object's own arrays are places
-    /// inside the slot, stabilized as such.
-    fn holds_array(&mut self, ty: TyId) -> bool {
+    /// Can a call replace or free what a value of `ty` holds in place, even when nothing
+    /// reassigns the slot holding it? True for an array (any function may empty or grow it while
+    /// a loop, a callback method or a callee walks its buffer), and for a struct, class, object
+    /// or tuple with a part that owns something (`REG.items = []`, `REG.child = new T()` frees
+    /// the old part while a method borrows it through `this`, or a callee through a parameter).
+    /// A module slot holding such a value is counted like a variable in a cell, so those
+    /// borrows go through a counted object. Maps need no such rule: their loops re-read the
+    /// entries every step and their callbacks get shares (prelude `Map`), so
+    /// `const seen = new Map<string, number>()` stays uncounted.
+    fn contents_replaceable(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
             hir::TyKind::Array(_) => true,
             hir::TyKind::Option(inner, _) => {
                 let inner = self.sub(inner);
-                matches!(self.cx.kind(inner), hir::TyKind::Array(_))
+                self.contents_replaceable(inner)
             }
+            hir::TyKind::Tuple(parts) => parts.into_iter().any(|p| self.cx.needs_drop(p)),
+            hir::TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => self
+                .cx
+                .adt_field_tys(ty)
+                .into_iter()
+                .any(|f| self.cx.needs_drop(f)),
             _ => false,
         }
     }
@@ -163,18 +172,17 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Does the place `e` lie in a module state slot, not behind a counted object (which
-    /// retaining keeps alive)? Every function reaches the slot, so a callee may replace it.
-    /// Called only for places `in_shared_cell` accepted (the slot itself when some code
-    /// reassigns it, or a place inside a slot).
+    /// Does the place `e` lie in a module state slot, or inside what one holds? Every function
+    /// reaches the slot, so a callee may replace the value there, even behind a counted object
+    /// (retaining keeps the object, not what its field holds: `relabel(REG.label)` where
+    /// `relabel` sets `REG.label` still sees the old string, as in JavaScript). Called only for
+    /// places `in_shared_cell` accepted (the slot itself when a call may change it, or a place
+    /// inside a slot).
     fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Global(d) => self.slot_of(*d).is_some(),
-            K::Field { base, .. } | K::Index { base, .. } => {
-                let bty = self.sub(base.ty);
-                !self.cx.counted(bty) && self.in_module_slot(base)
-            }
+            K::Field { base, .. } | K::Index { base, .. } => self.in_module_slot(base),
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.in_module_slot(base)
             }

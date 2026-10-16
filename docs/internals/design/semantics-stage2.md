@@ -114,13 +114,16 @@ are stabilized the same way (#819); so are destructured bindings by reference of
 itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const`
 evaluated once) is such a cell too, one every function reaches. A place inside a slot is
 stabilized the same way. So is the slot itself when a call may change what it holds: when some
-code reassigns it (one walk over the program finds those), or when it holds an array (or an
-optional one), which any function may empty or grow in place (`XS.length = 0`, `splice`,
-`push`) while a loop, a callback method or a callee walks it. Such an array's type is counted,
-as for a variable in a cell, so `for...of` over it, its callback methods and functions it is
-passed to share each element. Other slots nothing reassigns keep their value while a call
-runs: maps and sets re-read their entries every step of a loop and pass shares to callbacks,
-so `const seen = new Map<string, number>()` stays uncounted. A value held in the slot (not
+code reassigns it (one walk over the program finds those), or when what it holds can be
+changed in place. That is an array (or an optional one), which any function may empty or grow
+(`XS.length = 0`, `splice`, `push`) while a loop, a callback method or a callee walks it, and a
+struct, class, object or tuple with a part that owns something, which a call may replace
+(`REG.items = []`) while a method borrows it through `this` or a callee through a parameter.
+Such a type is counted, as for a variable in a cell, so `for...of` over it, its callback
+methods, methods and functions it is passed to share what they borrow from it. Other slots
+nothing reassigns keep their value while a call runs: maps re-read their entries every step of
+a loop and pass shares to callbacks, so `const seen = new Map<string, number>()` stays
+uncounted. A value held in the slot (not
 behind a counted object) is shared like an array element, since any callee may replace it there
 and drop it (#1161). A program without module state is unaffected. The function value of a
 call through a function value is kept alive the same way when it is read from such a place (a
