@@ -276,11 +276,12 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(l, _) => self.info[l.0 as usize].in_cell,
-            // A module `let`: every function reaches its slot, the callee too.
-            K::Global(d) => self.slot_of(*d).is_some(),
+            // A module `let`: every function reaches its slot, the callee too (when some code
+            // reassigns it), and may replace what lies inside any slot.
+            K::Global(d) => self.slot_reassigned(*d),
             K::Field { base, .. } | K::Index { base, .. } => {
                 let bty = self.sub(base.ty);
-                self.cx.counted(bty) || self.callee_replaceable(base)
+                self.cx.counted(bty) || self.callee_replaceable(base) || self.rooted_in_slot(base)
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.callee_replaceable(base)

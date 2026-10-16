@@ -35,8 +35,8 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        // A value held by a module `let` (not behind a counted object, which retaining keeps)
-        // is like an element: any callee may replace the slot and drop it.
+        // A value held in a module state slot (not behind a counted object, which retaining
+        // keeps) is like an element: any callee may replace it there and drop it.
         let movable = self.in_array_buffer(a) || self.in_module_slot(a);
         if movable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
@@ -88,9 +88,9 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the place `e` rooted in a variable held in a shared cell, which a closure the callee
-    /// runs may reassign, or in a module `let`'s slot, which any function may reassign? Its
-    /// value's type is then counted (recorded as shared), so the borrow can share what it
-    /// reaches from the variable.
+    /// runs may reassign, or in a module state slot, which any function may reassign or change
+    /// in place? A variable's value type is then counted (recorded as shared), so the borrow
+    /// can share what it reaches from the variable.
     pub(super) fn in_shared_cell(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
@@ -103,17 +103,21 @@ impl FnLower<'_, '_> {
                 self.cx.note_share(ty);
                 true
             }
-            // A module `let`'s slot is a cell every function reaches: the callee may reassign
-            // it, or change what it holds, as a closure may a variable in a cell.
+            // A module state slot is a cell every function reaches: the callee may reassign it
+            // (when some code does), as a closure may a variable in a cell.
             K::Global(d) => {
-                if self.slot_of(*d).is_none() {
+                if !self.slot_reassigned(*d) {
                     return false;
                 }
                 let ty = self.sub(e.ty);
                 self.cx.note_share(ty);
                 true
             }
-            K::Field { base, .. } | K::Index { base, .. } => self.in_shared_cell(base),
+            // Whatever lies inside a slot, the callee may replace in place (`xs.length = 0`,
+            // `reg.items = []`), even when nothing reassigns the slot itself.
+            K::Field { base, .. } | K::Index { base, .. } => {
+                self.in_shared_cell(base) || self.rooted_in_slot(base)
+            }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
                 self.in_shared_cell(base)
             }
@@ -139,8 +143,10 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Does the place `e` lie in a module `let`'s slot, not behind a counted object (which
+    /// Does the place `e` lie in a module state slot, not behind a counted object (which
     /// retaining keeps alive)? Every function reaches the slot, so a callee may replace it.
+    /// Called only for places `in_shared_cell` accepted (the slot itself when some code
+    /// reassigns it, or a place inside a slot).
     fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {

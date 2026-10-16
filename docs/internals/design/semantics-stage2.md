@@ -111,10 +111,12 @@ shares. A variable held in a shared cell (`LocalDef::boxed`, shared with the esc
 that capture it) is like a counted container: a call of the closure may replace what it holds,
 so by-reference `const`s, destructured bindings and `for...of` loops over a place rooted in it
 are stabilized the same way (#819); so are destructured bindings by reference of a counted value
-itself (`const { a } = o`). A module-level `let`'s slot is such a cell too, one every function
-reaches: a place rooted in it is stabilized the same way, and a value held in the slot itself
-(not behind a counted object) is shared like an array element, since any callee may replace
-the slot and drop it (#1161). The function value of a call through a function value is kept
+itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const` evaluated
+once) is such a cell too, one every function reaches: a place inside a slot is stabilized the
+same way, and so is the slot itself when some code reassigns it (one walk over the program finds
+those; a slot nothing reassigns keeps its value while a call runs). A value held in the slot
+(not behind a counted object) is shared like an array element, since any callee may replace it
+there and drop it (#1161). A program without module state is unaffected. The function value of a call through a function value is kept
 alive the same way when it is read from such a place (a field or element reached through a
 counted object, or a variable in a shared cell): the call runs on a share of it, dropped after
 the statement, since the function may replace its holder (`this.f = …`) and so drop its own

@@ -189,7 +189,7 @@ impl Scan<'_> {
 
 /// The direct sub-expressions of `e` (blocks, closures and calls through function values are
 /// handled by the caller).
-fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+pub(super) fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     match &e.kind {
         E::Lit(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) | E::Block(_) => {}
         E::Unary { expr: x, .. }
