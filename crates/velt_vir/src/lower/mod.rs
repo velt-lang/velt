@@ -25,6 +25,8 @@ mod any;
 mod any_eq;
 mod any_glue;
 mod any_member;
+mod any_set;
+mod any_set_site;
 mod append;
 mod array;
 mod assign_target;
@@ -486,4 +488,9 @@ struct FnLower<'c, 'h> {
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
     frame_closures: HashSet<DefId>,
+    /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
+    /// (frame_envs.rs).
+    direct_siblings: HashMap<LocalId, DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
 }

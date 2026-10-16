@@ -92,7 +92,10 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => self.predicate_facts(callee, args, cond.span),
+            } => match self.dynamic_is_array_facts(callee, args) {
+                Some(facts) => facts,
+                None => self.predicate_facts(callee, args, cond.span),
+            },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -166,7 +169,15 @@ impl FnCx<'_, '_> {
                     });
                     let done = out.iter().any(|f| matches!(f, Fact::Class(m, _) if m == l));
                     if let (Some(tb), false) = (tb, done) {
-                        if let Some(c) = self.common_class(*l, *ta, tb) {
+                        let c = if *ta == tb {
+                            Some(tb)
+                        } else {
+                            self.common_class(*l, *ta, tb)
+                        };
+                        // `u instanceof Map || u instanceof Box` on an `unknown`: read through
+                        // `any` either way (`dynamic_narrow`).
+                        let c = c.or_else(|| self.dynamic_join(*l));
+                        if let Some(c) = c {
                             out.push(Fact::Class(*l, c));
                         }
                     }
@@ -418,6 +429,8 @@ impl FnCx<'_, '_> {
                     "number" => self.cx.ty.f64,
                     "string" => self.cx.ty.str_,
                     "boolean" => self.cx.ty.bool_,
+                    // TypeScript's `Function`: called through the descriptor.
+                    "function" => return (self.dynamic_to_any_fact(operand), vec![]),
                     _ => return (vec![], vec![]),
                 };
                 return (vec![Fact::Class(l, t)], vec![]);

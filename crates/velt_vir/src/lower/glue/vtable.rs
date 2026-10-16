@@ -63,13 +63,18 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) => {
                 self.note_vtable_type(ty);
                 let mut entries = self.impl_entries(index, ty);
+                let mut id = self.class_id_word(ty, true);
                 if self.is_any_impl(index) {
                     entries.extend(self.any_entries(ty));
+                    if matches!(self.kind(ty), TyKind::Array(_) | TyKind::Tuple(_)) {
+                        // `Array.isArray` (any_set_site.rs).
+                        id = super::super::any_set_site::ARRAY_ID;
+                    }
                 } else if let Some(t) = self.any_table_entry(index, ty) {
                     // The name slot, unused in interface tables (crate::lower::any).
                     entries.push((SLOT_NAME, t));
                 }
-                (entries, self.class_id_word(ty, true))
+                (entries, id)
             }
         };
         let tag = match key {
