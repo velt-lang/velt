@@ -133,6 +133,66 @@ mod tests {
         );
     }
 
+    /// `velt check` of `main` importing `lib` (with syntax errors): the errors after `lib`'s
+    /// syntax errors, which must be `syntax` of them.
+    fn importer_errors(main: &str, lib: &str, syntax: usize) -> String {
+        let out = check_files(&[("main.ts", main), ("lib.ts", lib)]);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(
+            lines.len() >= syntax && lines[..syntax].iter().all(|l| l.starts_with("lib.ts: ")),
+            "{out}"
+        );
+        lines[syntax..].iter().map(|l| format!("{l}\n")).collect()
+    }
+
+    /// Each importer below ends with a type error of its own, which must still be reported.
+    const OWN: &str = "main.ts: mismatched types\n";
+
+    #[test]
+    fn check_says_nothing_about_a_class_field_lost_to_a_syntax_error() {
+        let lib = "export class D { x: number = 1; y: = 2; m(): number { return 1; } }\n";
+        let main = "import { D } from './lib';\nconst d = new D();\n\
+            console.log(d.x + d.y + d.m());\nconst { y } = d;\nconst s: string = 1;\n";
+        assert_eq!(importer_errors(main, lib, 1), OWN);
+    }
+
+    #[test]
+    fn check_says_nothing_about_an_interface_member_lost_to_a_syntax_error() {
+        let lib = "export interface J { a: number; b: string; c number; d: boolean }\n";
+        let main = "import { J } from './lib';\n\
+            const j: J = { a: 1, b: \"x\", c: 2, d: true };\nconsole.log(j.c);\n\
+            const s: string = 1;\n";
+        assert_eq!(importer_errors(main, lib, 1), OWN);
+    }
+
+    #[test]
+    fn check_says_nothing_about_a_subclass_method_lost_to_a_syntax_error() {
+        let lib = "export class Base { k(): number { return 1; } }\n\
+            export class Sub extends Base { n(: number { return 2; } o(): number { return 3; } }\n";
+        let main = "import { Sub } from './lib';\nconst t = new Sub();\n\
+            console.log(t.k() + t.n() + t.o());\nconst s: string = 1;\n";
+        assert_eq!(importer_errors(main, lib, 1), OWN);
+    }
+
+    #[test]
+    fn check_says_nothing_about_a_class_body_lost_to_a_syntax_error() {
+        // The class keeps its name but loses its whole body; a subclass declared in the
+        // importer doesn't have the members either. A member `lib` never mentions is still an
+        // error.
+        let lib = "export class W { a: number = 1 b(): number { return 2; } }\n";
+        let main = "import { W } from './lib';\nclass X extends W {}\nconst w = new W();\n\
+            console.log(w.a + w.b(), new X().b(), w.nope);\nconst s: string = 1;\n";
+        let nope = "main.ts: no field `nope` on type `W`\n";
+        assert_eq!(importer_errors(main, lib, 1), format!("{nope}{OWN}"));
+    }
+
+    #[test]
+    fn check_says_nothing_about_a_class_lost_to_a_syntax_error() {
+        let lib = "export class W implements { a: number = 1; b(): number { return 2; } }\n";
+        let main = "import { W } from './lib';\nconst w = new W();\nconst s: string = 1;\n";
+        assert_eq!(importer_errors(main, lib, 3), OWN);
+    }
+
     #[test]
     fn builds_still_stop_at_syntax_errors() {
         let dir = tempfile::tempdir().unwrap();

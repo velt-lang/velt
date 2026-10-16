@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
+use crate::hir::{DefId, TyId, TyKind};
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
 const MAX_DEPTH: u32 = 32;
@@ -76,6 +77,50 @@ pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
         false
     }
     !cx.recovered.is_empty() && go(cx, t, name, &mut HashSet::new())
+}
+
+/// Whether member `name`, which values of type `t` don't have, may be one the parser dropped
+/// from a module it recovered (`Ctx::recovered`): `t` is a class, struct or interface declared
+/// in such a module (or extends one declared there, through base classes and `extends`) whose
+/// source has the word. A class or interface whose body lost a member keeps its name, so its
+/// import finds it; a use of the lost member reports nothing more.
+pub(crate) fn member_maybe_dropped(cx: &Ctx, t: TyId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    def(t).is_some_and(|d| def_member_maybe_dropped(cx, d, name))
+}
+
+/// [`member_maybe_dropped`] for the class, struct or interface `d`.
+pub(crate) fn def_member_maybe_dropped(cx: &Ctx, d: DefId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    if cx.recovered.is_empty() {
+        return false;
+    }
+    let mut todo = vec![d];
+    let mut seen = HashSet::new();
+    while let Some(d) = todo.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let module = if let Some(a) = cx.adt(d) {
+            todo.extend(a.base.and_then(def));
+            a.module
+        } else if let Some(i) = cx.iface(d) {
+            todo.extend(i.parents.iter().map(|b| b.iface));
+            i.module
+        } else {
+            continue;
+        };
+        if cx.recovered.get(&module).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The name an import or export list entry binds (`b` in `a as b`).

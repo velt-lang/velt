@@ -643,6 +643,11 @@ impl FnCx<'_, '_> {
         let mut values: Vec<Option<hir::Expr>> = fields.iter().map(|_| None).collect();
         for (pname, value) in &ps {
             let Some(i) = fields.iter().position(|f| f.name == pname.name) else {
+                if crate::collect::exports::def_member_maybe_dropped(self.cx, d, &pname.name) {
+                    // The parser may have dropped its declaration (`Ctx::recovered`).
+                    self.prop_value(pname, *value, None);
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!(
