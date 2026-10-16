@@ -111,7 +111,12 @@ shares. A variable held in a shared cell (`LocalDef::boxed`, shared with the esc
 that capture it) is like a counted container: a call of the closure may replace what it holds,
 so by-reference `const`s, destructured bindings and `for...of` loops over a place rooted in it
 are stabilized the same way (#819); so are destructured bindings by reference of a counted value
-itself (`const { a } = o`). A destructured binding of a value stored inline (a string, tuple,
+itself (`const { a } = o`). The function value of a call through a function value is kept
+alive the same way when it is read from such a place (a field or element reached through a
+counted object, or a variable in a shared cell): the call runs on a share of it, dropped after
+the statement, since the function may replace its holder (`this.f = …`) and so drop its own
+environment while it runs (#1146); one read from a variable or parameter of the caller needs
+nothing. A destructured binding of a value stored inline (a string, tuple,
 object literal or union, bound by reference) refers to a share of it held by the scope; the
 parts that can be changed in place are counted first, so writes through the binding
 (`t[1] = 7`) still reach the original. Every stabilized borrow is a fact: a container that
