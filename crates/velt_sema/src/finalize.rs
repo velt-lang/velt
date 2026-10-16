@@ -59,6 +59,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                     ty: g.ty,
                     init,
                     span: g.span,
+                    slot: None,
                 })
             }),
         };

@@ -1,0 +1,5 @@
+// A module-level `let` read through a call before its initializer ran: Node throws a
+// `ReferenceError` (here it cannot be caught; the program stops).
+import { addName, firstName } from "./_module_let_cycle/names";
+
+console.log("main runs", addName("b"), firstName());

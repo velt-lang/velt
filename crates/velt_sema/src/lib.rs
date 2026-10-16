@@ -44,6 +44,7 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod holds_promise;
 mod hooks;
 pub mod ide;
 mod index_signatures;
@@ -56,6 +57,7 @@ mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_state;
 mod moves;
 mod namespaces;
 mod nested_closures;
@@ -238,6 +240,7 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let module_state = module_state::build(&mut cx);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
@@ -263,6 +266,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        module_state,
         type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
@@ -320,6 +324,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);
+    cx.module_slots = module_state::order(cx);
+    module_state::check_locked_access(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held

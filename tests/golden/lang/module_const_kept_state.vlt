@@ -1,6 +1,5 @@
-// A closure created while a module constant's initializer runs would keep its state in Node
-// (one closure for the whole program); evaluated at each use, it would start over each time.
-// Such an initializer is an error.
+// A closure created while a module constant's initializer runs keeps its state, as in Node:
+// the constant is evaluated once (per process) and kept in the module state.
 
 class Acc {
   n: number = 0;
@@ -53,5 +52,6 @@ const NEXT = makeAcc();
 const BAG = makeBag();
 
 function main() {
+  console.log(next(), CNT.inc(), NEXT(), BAG.add(1));
   console.log(next(), CNT.inc(), NEXT(), BAG.add(1));
 }

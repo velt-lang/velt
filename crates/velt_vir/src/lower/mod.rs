@@ -60,6 +60,7 @@ mod keys;
 mod layout;
 mod match_switch;
 mod matching;
+mod module_state;
 mod operand;
 mod ops;
 mod param_attrs;
@@ -253,6 +254,8 @@ enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
+    /// `(state: ptr)`: the module state's initializer (module_state.rs).
+    ModuleInit,
 }
 
 /// Program-level lowering state.
@@ -276,6 +279,8 @@ struct Cx<'h> {
     externs: Vec<ExternFn>,
     extern_map: HashMap<String, ExternId>,
     statics: Vec<StaticData>,
+    /// The module state's descriptor, once a slot is used (module_state.rs).
+    module_desc: Option<StaticId>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.

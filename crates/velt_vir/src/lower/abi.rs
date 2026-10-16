@@ -111,6 +111,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
+            Work::ModuleInit => Self::build_module_init(cx),
         }
     }
 

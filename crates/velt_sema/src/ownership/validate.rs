@@ -261,6 +261,8 @@ impl Validator<'_, '_, '_> {
                 | E::UnwrapSome(base, _)
                 | E::UnwrapVariant { expr: base, .. }
                 | E::Downcast(base) => cur = base,
+                // A part of a module-level `let`: lowering shares it, as the state keeps it.
+                E::Global(d) if self.cx.global(*d).is_some_and(|g| g.stored) => return,
                 E::Global(_) => {
                     return errors.push(
                         Diagnostic::error("cannot move out of a module constant", e.span)

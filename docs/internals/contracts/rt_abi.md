@@ -343,6 +343,37 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do.
 
+## Module state [additive, #76]
+
+```c
+struct ModuleDesc {
+  uint64_t size, align;
+  void (*init)(void *state);
+  void (*drop)(void *state);
+  const char *names;   /* each slot's name, NUL-terminated, in slot order */
+};
+void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
+void velt_rt_module_ready(void *state, uint64_t n);
+```
+
+`velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
+allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
+while `init` runs). `init` calls `velt_rt_module_ready(state, i + 1)` after it stored slot `i`;
+an access to a slot whose initializer has not run yet (through a function an earlier
+initializer calls) prints `Uncaught ReferenceError: Cannot access '<name>' before
+initialization` and exits with code 1. The block is not dropped while the program runs (only at
+exit under the debug runtime's `VELT_RC_STATS=1`, for the leak counters). A call with a
+different descriptor than the block was made with (code swapped in by `velt dev`) gets a block
+of its own.
+
+The call takes the process-wide *module lock* unless the thread holds it: inside a task until
+the end of the poll, and every later poll of that task takes it at its start; outside a task (a
+synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
+calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
+keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
+stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
+thread) there is no lock.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 
