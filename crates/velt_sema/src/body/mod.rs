@@ -39,7 +39,7 @@ pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
-mod defaults;
+pub(crate) mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
