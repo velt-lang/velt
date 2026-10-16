@@ -85,59 +85,41 @@ thread_local! {
     static MUTEXES: Cell<u32> = const { Cell::new(0) };
 }
 
-/// The bit of a task's turn word (its `SetPtr`) that says it touched module state. Turns stay
-/// below it (`node::TURNS`).
-pub(super) const TOUCHED: u32 = 1 << 31;
-
-/// Per-poll bookkeeping, kept in the task's `TaskCx`.
+/// A task's part of a poll (in its `TaskCx`): the task's flag "touched module state" (in its
+/// `SetPtr`), and whether this poll took the lock (released when the poll ends).
 pub(super) struct PollState {
-    /// The task's turn word, whose [`TOUCHED`] bit is the task's flag (points into its
-    /// `SetPtr`).
-    word: *mut u32,
-    /// This poll took the lock.
-    took: Cell<bool>,
+    pub(super) touched: *mut bool,
+    pub(super) took: Cell<bool>,
 }
 
-impl PollState {
-    /// Start a poll of the task whose turn word is `word`: a touched task takes the lock first
-    /// (unless this thread holds it already).
-    #[inline]
-    pub(super) fn enter(word: &mut u32) -> PollState {
-        let took = *word & TOUCHED != 0 && used() && take_if_free();
-        PollState {
-            word,
-            took: Cell::new(took),
-        }
-    }
-}
-
-/// The lock while a task's state is dropped outside a poll (a cancelled task), when the task
-/// (turn word `word`) touched module state.
+/// Start a poll of a task whose flag is `touched`: a touched task takes the lock first (unless
+/// this thread holds it already). Whether it took it, for [`end_poll`].
 #[inline]
-pub(super) fn drop_guard(word: u32) -> Option<Guard> {
-    (word & TOUCHED != 0 && used() && take_if_free()).then_some(Guard)
+pub(super) fn start_poll(touched: bool) -> bool {
+    touched && take_if_free()
 }
 
-impl Drop for PollState {
-    /// End the poll: release the lock if this poll took it.
-    #[inline]
-    fn drop(&mut self) {
-        if self.took.get() {
-            release(IN_POLL);
-        }
-    }
-}
-
-/// Releases the lock when dropped.
-pub(super) struct Guard;
-
-impl Drop for Guard {
-    fn drop(&mut self) {
+/// End a poll that took the lock.
+#[inline]
+pub(super) fn end_poll(took: bool) {
+    if took {
         release(IN_POLL);
     }
 }
 
-/// Take the lock for a poll unless this thread holds it already; whether it was taken.
+/// Run `f`, which drops a touched task's state outside a poll (a cancelled task), with the lock.
+#[cold]
+#[inline(never)]
+pub(super) fn with_lock(f: impl FnOnce()) {
+    let took = take_if_free();
+    f();
+    end_poll(took);
+}
+
+/// Take the lock for a poll unless this thread holds it already; whether it was taken. Out of
+/// line: the task paths that may call it stay small for programs without module state.
+#[cold]
+#[inline(never)]
 fn take_if_free() -> bool {
     HELD.with(|h| {
         if h.get() != NOT_HELD {
@@ -149,6 +131,8 @@ fn take_if_free() -> bool {
     })
 }
 
+#[cold]
+#[inline(never)]
 fn release(how: u8) {
     HELD.with(|h| {
         if h.get() == how {
@@ -293,11 +277,11 @@ pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64
     let tcx = super::CURRENT.with(Cell::get);
     match tcx.as_ref() {
         Some(t) => {
-            let ps = &*t.module;
+            let ps = &t.module;
             if !ps.took.get() {
                 no_mutex_held();
                 USED.store(true, Ordering::Relaxed);
-                *ps.word |= TOUCHED;
+                *ps.touched = true;
                 if take_if_free() {
                     ps.took.set(true);
                 }
@@ -332,14 +316,12 @@ mod tests {
 
     #[test]
     fn a_poll_takes_the_lock_only_for_a_touched_task() {
-        USED.store(true, Ordering::Relaxed);
-        let mut word = 3;
-        drop(PollState::enter(&mut word));
+        end_poll(start_poll(false));
         assert_eq!(HELD.with(Cell::get), NOT_HELD);
-        word |= TOUCHED;
-        let ps = PollState::enter(&mut word);
+        let took = start_poll(true);
+        assert!(took);
         assert_eq!(HELD.with(Cell::get), IN_POLL);
-        drop(ps);
+        end_poll(took);
         assert_eq!(HELD.with(Cell::get), NOT_HELD);
     }
 }

@@ -202,9 +202,9 @@ impl<S: StateStore> Future for Compiled<S> {
 impl<S: StateStore> Drop for Compiled<S> {
     fn drop(&mut self) {
         if self.live {
-            let _lock = self.locals.drop_guard();
+            let (drop, state) = (self.drop, self.state.ptr());
             // SAFETY: cancelled before completion: the state owns live locals.
-            unsafe { (self.drop)(self.state.ptr()) }
+            self.locals.drop_with(|| unsafe { drop(state) });
         }
     }
 }
