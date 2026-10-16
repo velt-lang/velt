@@ -467,7 +467,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     objects: the promise would use them after the lock is released. An async closure there is
     fine, since each call gets its own copy of what it captured.
   - The callback cannot use module state (module-level `let`s and kept constants), directly
-    or through a function it calls ([Module state](variables.md#module-state)).
+    or through a function it calls, a field initializer, or a `toString()`, `toJSON()` or
+    `[Symbol.dispose]()` method that std or a drop calls ([Module state](variables.md#module-state)).
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

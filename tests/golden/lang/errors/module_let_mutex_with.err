@@ -1,8 +1,20 @@
-module_let_mutex_with.vlt:14:10
-the function passed to `with` may use module state: it uses `count`
-module_let_mutex_with.vlt:17:10
+module_let_mutex_with.vlt:40:10
+it uses `count`
+module_let_mutex_with.vlt:43:10
 it uses `count` (through `viaBump` -> `bump`)
-module_let_mutex_with.vlt:20:10
+module_let_mutex_with.vlt:46:10
 it uses `names`
-module_let_mutex_with.vlt:24:10
+module_let_mutex_with.vlt:50:10
 it calls a function value
+module_let_mutex_with.vlt:53:10
+it uses `count` (through the field initializers of `Counted`)
+module_let_mutex_with.vlt:56:10
+it passes a function value whose body is not known here to code that may call it
+module_let_mutex_with.vlt:61:10
+it uses `count` (through `Json.toJSON`)
+module_let_mutex_with.vlt:64:10
+it uses `count` (through `Text.toString`)
+module_let_mutex_with.vlt:67:10
+it uses `count` (through `Disposed.[Symbol.dispose]`)
+module_let_mutex_with.vlt:74:10
+it uses `count` (through `Generator.

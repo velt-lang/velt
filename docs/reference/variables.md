@@ -169,12 +169,16 @@ function main() {
   (`Cannot access 'b' before initialization`, exit code 1), as an uncaught one does in Node;
   it cannot be caught.
 - Module state cannot hold a promise (`let p = work();`, `let t = spawn(work());`, also
-  `Promise<T> | null`): it is initialized before `main` runs, where nothing awaits it, and a
+  `Promise<T> | null`, or an object type with a promise field): it is initialized before `main` runs, where nothing awaits it, and a
   promise has one owner while every task reads the state. Start the work in `main` and pass
   the promise, or its result, where it is needed.
 - A `Mutex` `with` callback cannot use module state, directly or through a function it calls
-  (``the function passed to `with` may use module state``); a call of a function value whose
-  body the compiler cannot see counts as a use. `with` blocks the thread while it waits for the
+  (``the function passed to `with` may use module state``). Code that runs without a call
+  counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
+  `[Symbol.dispose]()` methods of the values the callback handles, which `join`, a template,
+  `JSON.stringify`, `using` and the end of a scope call. So does a call of a function value
+  whose body the compiler cannot see, also one the callback hands to the standard library
+  (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with` blocks the thread while it waits for the
   lock, and a task holds the module lock for its code between `await`s, so two tasks could
   wait for each other. Read what the callback needs before `with`, and store what it returns
   after.

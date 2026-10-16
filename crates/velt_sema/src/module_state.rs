@@ -5,13 +5,13 @@
 //! in that order, so an initializer that reads a `let` whose initializer has not run yet is an
 //! error, as Node throws a `ReferenceError` there.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{self, DefId, ExprKind as E, TyKind};
+use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
@@ -160,19 +160,27 @@ struct Reach {
     via: Vec<DefId>,
 }
 
-/// What one body does with module state: its own first use, and the functions it may run (calls,
-/// closures it makes, functions it takes as values, the methods a dynamic call may pick).
+/// What one body does with module state: its own first use, and the code it may run (calls,
+/// closures it makes, functions it takes as values, the methods a dynamic call may pick, the
+/// initializers a `new` or a constant read evaluates); and the types of the values it handles,
+/// whose class hooks it may run without a call (`replaced_holders::implicit`).
 struct Facts {
     direct: Option<String>,
     edges: Vec<DefId>,
+    tys: HashSet<TyId>,
+    /// It resumes a generator: any generator body may run.
+    resumes: bool,
 }
 
 /// A `Mutex` is locked by blocking the thread, while a task holds the module lock for its whole
 /// step: a `with` callback that reaches module state could wait for the module lock while holding
 /// the `Mutex` another thread waits for, holding the module lock. So module state is not
-/// reachable from a `with` callback: not directly, not through the functions it calls, and not
-/// through a function value whose body is not known (rt_abi.md "Module state"; the runtime stops
-/// with an `ICE:` if it happens anyway).
+/// reachable from a `with` callback: not directly, not through the functions it calls, not
+/// through the code that runs without a call (field and constant initializers, and the
+/// `[Symbol.dispose]()`, `toString()`, `toJSON()`, `__inspect()` and `clone()` hooks that drops
+/// and glue run: `replaced_holders::implicit` lists them), and not through a function value whose
+/// body is not known (rt_abi.md "Module state"; the runtime stops with an `ICE:` if it happens
+/// anyway).
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     if cx.module_slots.is_empty() {
         return;
@@ -190,15 +198,10 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         let Some(hir::Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
-        let mut v = FactsOf {
-            cx,
-            std,
-            facts: Facts {
-                direct: None,
-                edges: vec![],
-            },
-            withs: vec![],
-        };
+        let mut v = FactsOf::new(cx, std);
+        if !std {
+            v.facts.tys.extend(f.body.locals.iter().map(|l| l.ty));
+        }
         crate::visit::block(&mut f.body.block, &mut v);
         let (fd, ws) = (v.facts, v.withs);
         cx.defs[d.0 as usize] = Some(hir::Def::Fn(f));
@@ -207,8 +210,54 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         }
         facts.insert(d, fd);
     }
+    // Initializers evaluated where they are used (a constant's at each read, an object type's
+    // field initializers at each `new` or literal): each a node of its own, under the
+    // constant's or the type's `DefId`.
+    for i in 0..cx.info.len() {
+        let (module, inits): (usize, Vec<hir::Expr>) = match &cx.info[i] {
+            DefInfo::Global(g) if !g.stored => (g.module, g.init.iter().cloned().collect()),
+            DefInfo::Adt(a) => (
+                a.module,
+                a.fields
+                    .iter()
+                    .filter_map(|f| f.default.clone())
+                    .chain(a.redefined.iter().filter_map(|r| r.init.clone()))
+                    .collect(),
+            ),
+            _ => continue,
+        };
+        if inits.is_empty() {
+            continue;
+        }
+        let std = cx.modules.get(module).is_some_and(|m| m.is_std);
+        let mut v = FactsOf::new(cx, std);
+        for mut x in inits {
+            crate::visit::expr(&mut x, &mut v);
+        }
+        let (fd, ws) = (v.facts, v.withs);
+        if !std {
+            withs.extend(ws);
+        }
+        facts.insert(DefId(i as u32), fd);
+    }
     if withs.is_empty() {
         return;
+    }
+    // The hooks the values a body handles may run when dropped, formatted or serialised, and
+    // the generator bodies a resume may run.
+    let weak = crate::replaced_holders::implicit::weak_entries(cx);
+    let im = crate::replaced_holders::implicit::Implicit::new(cx, weak);
+    for f in facts.values_mut() {
+        let mut hooks: Vec<DefId> = vec![];
+        for &t in &f.tys {
+            hooks.extend(im.hooks_reached(cx, t));
+        }
+        if f.resumes {
+            hooks.extend(im.generators.iter().copied());
+        }
+        hooks.sort();
+        hooks.dedup();
+        f.edges.extend(hooks);
     }
     let reach = propagate(&facts);
     for (cb, span) in withs {
@@ -227,14 +276,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         let what = match r.via.is_empty() {
             true => r.what,
             false => {
-                let chain: Vec<String> = r
-                    .via
-                    .iter()
-                    .map(|&f| {
-                        let n = &cx.fn_info(f).name;
-                        format!("`{}`", n.rsplit("::").next().unwrap_or(n))
-                    })
-                    .collect();
+                let chain: Vec<String> = r.via.iter().map(|&f| node_name(cx, f)).collect();
                 format!("{} (through {})", r.what, chain.join(" -> "))
             }
         };
@@ -249,13 +291,28 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
     }
 }
 
+/// How a diagnostic names a node of the reach graph: a function, an object type's field
+/// initializers or a constant's initializer.
+fn node_name(cx: &Ctx, d: DefId) -> String {
+    let last = |n: &str| n.rsplit("::").next().unwrap_or(n).to_string();
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Fn(f)) => format!("`{}`", last(&f.name)),
+        Some(DefInfo::Adt(a)) => format!("the field initializers of `{}`", a.name),
+        Some(DefInfo::Global(g)) => format!("the initializer of `{}`", g.name),
+        _ => "code that runs without a call".into(),
+    }
+}
+
 /// Which functions may reach module state: those that use it, and those that may run one of
 /// them (backwards along the edges, to a fixpoint).
 fn propagate(facts: &HashMap<DefId, Facts>) -> HashMap<DefId, Reach> {
     let mut reach: HashMap<DefId, Reach> = HashMap::new();
     let mut callers: HashMap<DefId, Vec<DefId>> = HashMap::new();
     let mut todo = vec![];
-    for (&d, f) in facts {
+    // In `DefId` order, so a diagnostic names the same path on every run.
+    let mut order: Vec<(&DefId, &Facts)> = facts.iter().collect();
+    order.sort_by_key(|(d, _)| **d);
+    for (&d, f) in order {
         for &e in &f.edges {
             callers.entry(e).or_default().push(d);
         }
@@ -284,6 +341,18 @@ fn propagate(facts: &HashMap<DefId, Facts>) -> HashMap<DefId, Reach> {
     reach
 }
 
+/// Is `e` a closure or a named function written in place (an optional parameter's `Some`, or
+/// either branch of a conditional): a function value whose body the visit sees?
+fn written_fn(e: &hir::Expr) -> bool {
+    match &e.kind {
+        E::Closure(_) | E::FnRef(..) => true,
+        E::WrapSome(x) | E::Upcast(x) => written_fn(x),
+        E::If { then, els, .. } => written_fn(then) && written_fn(els),
+        E::Block(b) if b.stmts.is_empty() => b.value.as_deref().is_some_and(written_fn),
+        _ => false,
+    }
+}
+
 /// Collects a body's [`Facts`] and the callbacks of its `with` calls.
 struct FactsOf<'a, 'm> {
     cx: &'a Ctx<'m>,
@@ -292,13 +361,71 @@ struct FactsOf<'a, 'm> {
     withs: Vec<(hir::Expr, velt_common::Span)>,
 }
 
-impl FactsOf<'_, '_> {
-    fn unknown(&mut self) {
-        // The standard library only calls the function values it is given: those are made, or
-        // taken as values, by the code that passes them, where they count.
-        if !self.std && self.facts.direct.is_none() {
-            self.facts.direct = Some("calls a function value".into());
+impl<'a, 'm> FactsOf<'a, 'm> {
+    fn new(cx: &'a Ctx<'m>, std: bool) -> Self {
+        FactsOf {
+            cx,
+            std,
+            facts: Facts {
+                direct: None,
+                edges: vec![],
+                tys: HashSet::new(),
+                resumes: false,
+            },
+            withs: vec![],
         }
+    }
+
+    fn unknown(&mut self, what: &str) {
+        // The standard library only calls the function values it is given: those are made, or
+        // taken as values, by the code that passes them, where they count (`passed`).
+        if !self.std && self.facts.direct.is_none() {
+            self.facts.direct = Some(what.into());
+        }
+    }
+
+    /// The arguments of a call into code this analysis does not follow (the standard library,
+    /// an intrinsic, or a method a dynamic call picks, which may be std's): a function value it
+    /// is handed may run, and only a closure or a named function written there is known.
+    fn passed(&mut self, args: &[hir::Expr]) {
+        for a in args {
+            if !written_fn(a) {
+                self.fn_values_in(a.ty, 0);
+            }
+        }
+    }
+
+    /// The function values a value of type `t` holds by itself (not behind an object): a
+    /// closure's type names its body, any other is not known.
+    fn fn_values_in(&mut self, t: TyId, depth: u32) {
+        if depth > 8 {
+            return;
+        }
+        match self.cx.ty.kind(t) {
+            TyKind::Closure(c) => self.facts.edges.push(*c),
+            TyKind::FnPtr { .. } => self.unknown(
+                "passes a function value whose body is not known here to code that may call it",
+            ),
+            TyKind::Option(x, _) | TyKind::Array(x) | TyKind::Shared(x) => {
+                self.fn_values_in(*x, depth + 1)
+            }
+            TyKind::Tuple(xs) => {
+                for &x in xs {
+                    self.fn_values_in(x, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Is `d` (a function or an object type) the standard library's?
+    fn is_std_def(&self, d: DefId) -> bool {
+        let module = match self.cx.info.get(d.0 as usize) {
+            Some(DefInfo::Fn(f)) => f.module,
+            Some(DefInfo::Adt(a)) => a.module,
+            _ => return true,
+        };
+        self.cx.modules.get(module).is_none_or(|m| m.is_std)
     }
 
     /// The methods a call through slot `slot` of interface `iface` may run.
@@ -337,42 +464,74 @@ impl FactsOf<'_, '_> {
 
 impl crate::visit::VisitMut for FactsOf<'_, '_> {
     fn expr(&mut self, e: &mut hir::Expr) {
+        if !self.std {
+            self.facts.tys.insert(e.ty);
+        }
         match &e.kind {
-            E::Global(d) => {
-                if self.facts.direct.is_none() {
-                    if let Some(g) = self.cx.global(*d).filter(|g| g.stored) {
+            E::Global(d) => match self.cx.global(*d) {
+                Some(g) if g.stored => {
+                    if self.facts.direct.is_none() {
                         self.facts.direct = Some(format!("uses `{}`", g.name));
                     }
                 }
-            }
+                // A constant's initializer runs at each read.
+                Some(g)
+                    if g.init
+                        .as_ref()
+                        .is_some_and(|x| !matches!(x.kind, E::Lit(_))) =>
+                {
+                    self.facts.edges.push(*d)
+                }
+                _ => {}
+            },
             E::Closure(c) | E::FnRef(c, _) => self.facts.edges.push(*c),
-            E::New { def, .. } => {
+            E::New { def, args, .. } => {
                 let ctor = self.cx.adt(*def).and_then(|a| a.ctor);
                 self.facts.edges.extend(ctor);
+                // Its field initializers.
+                self.facts.edges.push(*def);
+                if ctor.is_none_or(|c| self.is_std_def(c)) {
+                    self.passed(args);
+                }
             }
+            E::AdtLit { def, .. } => self.facts.edges.push(*def),
             E::Call { callee, args } => match callee {
-                hir::Callee::Def(f, _) => self.facts.edges.push(*f),
-                hir::Callee::Indirect(_) => self.unknown(),
+                hir::Callee::Def(f, _) => {
+                    self.facts.edges.push(*f);
+                    if self.is_std_def(*f) {
+                        self.passed(args);
+                    }
+                }
+                hir::Callee::Indirect(_) => self.unknown("calls a function value"),
                 hir::Callee::Virtual { slot } => {
+                    self.passed(args);
                     match args.first().and_then(|a| self.cx.class_of(a.ty)) {
                         Some((c, _)) => self.virtual_methods(c, *slot),
-                        None => self.unknown(),
+                        None => self.unknown("calls a function value"),
                     }
                 }
                 hir::Callee::Dyn { slot } => {
+                    self.passed(args);
                     let recv = args.first().map(|a| self.cx.ty.kind(a.ty).clone());
                     match recv {
                         Some(TyKind::Dyn(i, _)) => self.iface_methods(i, *slot),
-                        _ => self.unknown(),
+                        _ => self.unknown("calls a function value"),
                     }
                 }
-                hir::Callee::ParamMethod { iface, slot, .. } => self.iface_methods(*iface, *slot),
+                hir::Callee::ParamMethod { iface, slot, .. } => {
+                    self.passed(args);
+                    self.iface_methods(*iface, *slot)
+                }
                 hir::Callee::Intrinsic(hir::Intrinsic::MutexWith) => {
-                    if let [_, cb] = args.as_slice() {
+                    if let [m, cb] = args.as_slice() {
+                        self.passed(std::slice::from_ref(m));
                         self.withs.push((cb.clone(), cb.span));
                     }
                 }
-                hir::Callee::Intrinsic(_) => {}
+                hir::Callee::Intrinsic(i) => {
+                    self.facts.resumes |= crate::replaced_holders::implicit::resumes(*i);
+                    self.passed(args)
+                }
             },
             _ => {}
         }
