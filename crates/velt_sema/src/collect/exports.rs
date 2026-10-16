@@ -6,6 +6,8 @@
 //! other modules' imports), so they do not depend on the order modules are processed in. Chains
 //! and cycles of re-exports are followed up to [`MAX_DEPTH`] steps.
 
+use std::collections::HashSet;
+
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
@@ -34,6 +36,46 @@ pub(crate) fn all_exports(cx: &Ctx, t: usize) -> Vec<(String, Item)> {
 pub(crate) fn import_target(cx: &Ctx, m: usize, spec: &str) -> Option<usize> {
     let (_, path) = cx.modules[m].imports.iter().find(|(s, _)| s == spec)?;
     cx.modules.iter().position(|mm| mm.path == *path)
+}
+
+/// The identifier-like words of source text `src`.
+pub(crate) fn words(src: &str) -> HashSet<String> {
+    src.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `name`, which module `t` doesn't export, may be a declaration the parser dropped
+/// from a module it recovered (`Ctx::recovered`): one whose source has the word, reached from
+/// `t` through re-exports (`export * from`, `export { name } from`).
+pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
+    fn go(cx: &Ctx, t: usize, name: &str, seen: &mut HashSet<usize>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        if cx.recovered.get(&t).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+        for (imp, exported) in imports_of(cx, t) {
+            if !exported || imp.from.is_empty() {
+                continue;
+            }
+            let Some(s) = import_target(cx, t, &imp.from) else {
+                continue;
+            };
+            let named = imp.names.iter().find(|n| bound_name(n).name == name);
+            let found = match named {
+                Some(n) => go(cx, s, &n.name.name, seen),
+                None => imp.all && go(cx, s, name, seen),
+            };
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+    !cx.recovered.is_empty() && go(cx, t, name, &mut HashSet::new())
 }
 
 /// The name an import or export list entry binds (`b` in `a as b`).

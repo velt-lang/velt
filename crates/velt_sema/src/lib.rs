@@ -165,13 +165,43 @@ pub fn check_with(
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, SEMA_STACK_BUDGET)
+                check_on_current_thread(modules, root, opts, &[], SEMA_STACK_BUDGET)
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts, FALLBACK_STACK_BUDGET),
+            Err(_) => check_on_current_thread(modules, root, opts, &[], FALLBACK_STACK_BUDGET),
+        }
+    })
+}
+
+/// [`check_with`] of modules some of which the parser had to recover (`recovered`: their
+/// indices in `modules` with their source text), for `velt check` to report the errors of the
+/// other modules too. A name imported from a recovered module (directly or through re-exports)
+/// that it doesn't declare but whose source has that word may be a declaration the parser
+/// dropped: importing and using it reports nothing. The caller drops the diagnostics located in
+/// recovered modules (their syntax errors come first). Never builds a program.
+pub fn check_recovered(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    recovered: &[(usize, &str)],
+) -> Diagnostics {
+    std::thread::scope(|s| {
+        let spawned = std::thread::Builder::new()
+            .name("velt-sema".into())
+            .stack_size(SEMA_STACK_BYTES)
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, recovered, SEMA_STACK_BUDGET).1
+            });
+        match spawned {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => {
+                check_on_current_thread(modules, root, opts, recovered, FALLBACK_STACK_BUDGET).1
+            }
         }
     })
 }
@@ -180,6 +210,7 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
     let mut merge_diags = call_sigs::check(modules);
@@ -217,6 +248,9 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
+        cx.recovered = (recovered.iter())
+            .map(|&(m, src)| (m, collect::exports::words(src)))
+            .collect();
         cx.diags.extend(merge_diags.iter().cloned());
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
@@ -232,7 +266,7 @@ fn check_on_current_thread(
     if retry_sharing(&cx) {
         (cx, entry) = new_cx(false);
     }
-    if cx.diags.iter().any(|d| d.is_error()) {
+    if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
