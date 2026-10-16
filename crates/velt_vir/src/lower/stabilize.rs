@@ -7,7 +7,8 @@
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
-//! and shared for the statement, so a closure the callee runs cannot free it.
+//! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
+//! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
 use velt_sema::hir::{self, TyId};
 
@@ -34,7 +35,10 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        if self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
+        // A value held by a module `let` (not behind a counted object, which retaining keeps)
+        // is like an element: any callee may replace the slot and drop it.
+        let movable = self.in_array_buffer(a) || self.in_module_slot(a);
+        if movable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -84,8 +88,9 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the place `e` rooted in a variable held in a shared cell, which a closure the callee
-    /// runs may reassign? Its value's type is then counted (recorded as shared), so the borrow
-    /// can share what it reaches from the variable.
+    /// runs may reassign, or in a module `let`'s slot, which any function may reassign? Its
+    /// value's type is then counted (recorded as shared), so the borrow can share what it
+    /// reaches from the variable.
     pub(super) fn in_shared_cell(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
@@ -95,6 +100,16 @@ impl FnLower<'_, '_> {
                     return false;
                 }
                 let ty = info.ty;
+                self.cx.note_share(ty);
+                true
+            }
+            // A module `let`'s slot is a cell every function reaches: the callee may reassign
+            // it, or change what it holds, as a closure may a variable in a cell.
+            K::Global(d) => {
+                if self.slot_of(*d).is_none() {
+                    return false;
+                }
+                let ty = self.sub(e.ty);
                 self.cx.note_share(ty);
                 true
             }
@@ -119,6 +134,23 @@ impl FnLower<'_, '_> {
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.in_array_buffer(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does the place `e` lie in a module `let`'s slot, not behind a counted object (which
+    /// retaining keeps alive)? Every function reaches the slot, so a callee may replace it.
+    fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. } | K::Index { base, .. } => {
+                let bty = self.sub(base.ty);
+                !self.cx.counted(bty) && self.in_module_slot(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.in_module_slot(base)
             }
             _ => false,
         }
