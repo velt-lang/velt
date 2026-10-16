@@ -48,6 +48,7 @@ mod generic_arrows;
 mod holds_promise;
 mod hooks;
 pub mod ide;
+mod iface_writes;
 mod index_signatures;
 mod infer;
 mod inst_sites;
