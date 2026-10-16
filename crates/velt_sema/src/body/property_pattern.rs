@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use super::pattern::BindCtx;
 use super::places::{is_path, is_place};
 use super::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, StmtKind as S, UseMode};
+use crate::hir::{self, ExprKind as H, LocalId, StmtKind as S, UseMode};
 
 impl FnCx<'_, '_> {
     /// Does destructuring a value of type `ty` with the object pattern `fields` need property
@@ -51,6 +51,8 @@ impl FnCx<'_, '_> {
             self.mk(H::Local(l, UseMode::Borrow), ty, span)
         };
         let mutable = kind == ast::VarKind::Let;
+        let union_ty = obj.ty;
+        let mut bound = vec![];
         for (key, sub) in fields {
             let value = self.member_of(obj.clone(), key, Want::Borrow, key.span);
             let ctx = BindCtx::Let {
@@ -58,10 +60,62 @@ impl FnCx<'_, '_> {
                 place: is_place(&value),
             };
             let pat = self.pattern(sub, value.ty, ctx);
+            if let hir::PatKind::Binding(l, _) = pat.kind {
+                bound.push((key.name.clone(), l));
+            }
             out.push(hir::Stmt {
                 kind: S::LetPat { pat, init: value },
                 span: sub.span,
             });
+        }
+        if kind == ast::VarKind::Const {
+            self.note_destructured_discriminants(union_ty, &bound);
+        }
+    }
+
+    /// `const { value, done } = r` with `r` of a union discriminated by the `bool` field `done`:
+    /// records which other bindings a test of `done` shows to be not null, as TypeScript
+    /// narrows destructured discriminated unions (issue #1114). A binding is recorded for a
+    /// value of `done` when every member with that value has its field with exactly the
+    /// binding's payload type (so a `T` that is itself nullable is never narrowed).
+    fn note_destructured_discriminants(&mut self, u: hir::TyId, bound: &[(String, LocalId)]) {
+        let Some(members) = self.cx.union_members(u) else {
+            return;
+        };
+        for (dkey, dl) in bound {
+            let Some(values) = self.cx.discriminant_values(u, dkey) else {
+                continue;
+            };
+            let bools: Option<Vec<bool>> = values
+                .iter()
+                .map(|v| match v {
+                    hir::LitValue::Bool(b) => Some(*b),
+                    _ => None,
+                })
+                .collect();
+            let Some(bools) = bools else {
+                continue;
+            };
+            let mut facts = vec![];
+            for (key, l) in bound.iter().filter(|(k, _)| k != dkey) {
+                let Some(payload) = self.cx.ty.opt_payload(self.local_ty(*l)) else {
+                    continue;
+                };
+                for b in [true, false] {
+                    let mut with = members.iter().zip(&bools).filter(|(_, v)| **v == b);
+                    let mut any = false;
+                    let all = with.all(|(m, _)| {
+                        any = true;
+                        self.cx.field_of(*m, key).is_some_and(|(_, t)| t == payload)
+                    });
+                    if any && all {
+                        facts.push((b, *l));
+                    }
+                }
+            }
+            if !facts.is_empty() {
+                self.f.destructured_discriminants.insert(*dl, facts);
+            }
         }
     }
 }

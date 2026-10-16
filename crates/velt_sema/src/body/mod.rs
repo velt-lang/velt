@@ -261,6 +261,10 @@ pub(crate) struct Frame {
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
+    /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
+    /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
+    /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
+    pub destructured_discriminants: HashMap<LocalId, Vec<(bool, LocalId)>>,
     /// Calls of type predicates (`isFoo(x)`) whose conditions narrow a local: by the call's
     /// span (`lo`, `hi`), the local and the facts it establishes when the call returns `true`
     /// and `false`. The call checks them at run time (`predicates::predicate_checked`).
@@ -313,6 +317,7 @@ impl Frame {
             const_lits: HashMap::new(),
             regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
+            destructured_discriminants: HashMap::new(),
         }
     }
 }

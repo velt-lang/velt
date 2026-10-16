@@ -30,6 +30,9 @@ impl FnCx<'_, '_> {
     /// Facts that hold when `cond` is true / when it is false.
     pub fn narrowing(&mut self, cond: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
         use ast::BinaryOp as B;
+        if let Some(facts) = self.destructured_facts(cond, true) {
+            return facts;
+        }
         match &cond.kind {
             ast::ExprKind::Paren(inner) => self.narrowing(inner),
             ast::ExprKind::Unary {
@@ -251,6 +254,25 @@ impl FnCx<'_, '_> {
         out
     }
 
+    /// Facts of `done == b` (`if (done)` for `b` true) where `done` is the discriminant binding
+    /// of `const { value, done } = r` (`Frame::destructured_discriminants`): the bindings not
+    /// null when it holds / does not hold `b`.
+    fn destructured_facts(&mut self, e: &ast::Expr, b: bool) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        if !matches!(e.kind, ast::ExprKind::Ident(_)) {
+            return None;
+        }
+        let l = self.named_local(e)?;
+        let facts = self.f.destructured_discriminants.get(&l)?;
+        let when = |v: bool| -> Vec<Fact> {
+            facts
+                .iter()
+                .filter(|(w, _)| *w == v)
+                .map(|(_, l)| Fact::NonNull(*l))
+                .collect()
+        };
+        Some((when(b), when(!b)))
+    }
+
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
     fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
         if let Some(l) = self.nullable_local(e) {
@@ -294,6 +316,11 @@ impl FnCx<'_, '_> {
             (Some(l), None) => (rhs, l),
             _ => return (vec![], vec![]),
         };
+        if let ast::Lit::Bool(b) = lit.lit {
+            if let Some(facts) = self.destructured_facts(other, b) {
+                return facts;
+            }
+        }
         if let Some(facts) = self.discriminant_facts(other, &lit) {
             return facts;
         }

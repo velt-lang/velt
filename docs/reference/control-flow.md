@@ -79,6 +79,9 @@ interface Iterable<T, E = never> {
 - A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+  Destructured into `const { value, done } = r`, a test of `done` (`if (done) break;`,
+  `if (!done)`, `done === false`) narrows `value` to `T` as well, as in TypeScript (when `T`
+  itself cannot be `null`).
   TypeScript's `{ value: undefined, done: true }` is accepted for a finished result, without
   the `value`. `console.log` of a finished result prints `{ done: true }` where Node prints
   `{ value: undefined, done: true }` (issue #930, phase 3).
