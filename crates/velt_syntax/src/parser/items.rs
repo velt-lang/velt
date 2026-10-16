@@ -492,10 +492,15 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`.
+            // `name?: T` is `name: T | null = null`, and `name?: T | undefined` is
+            // `name: T | undefined = undefined`.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-            ty = super::types::or_null(ty);
+            let nothing = match super::types::has_undefined(&ty) {
+                true => Lit::Undefined,
+                false => Lit::Null,
+            };
+            default = Some(self.mk_expr(ExprKind::Lit(nothing), span));
+            ty = super::types::optional_param(ty);
         }
         if rest {
             // Its type must be an array type, which the type checker tells (an alias of one, or
