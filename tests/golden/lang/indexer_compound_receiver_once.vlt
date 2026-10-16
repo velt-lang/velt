@@ -1,0 +1,28 @@
+// check: no leaks
+// An indexer class (a typed array) evaluates its receiver once too: when the right-hand side
+// assigns another array to the variable, the element of the first one is written (#1175).
+function run(): void {
+  let ta = new Uint8Array(1);
+  const first = ta;
+  const second = new Uint8Array(1);
+  function sw(n: number): number {
+    ta = second;
+    return n;
+  }
+  ta[0] += sw(5);
+  console.log(first[0], second[0]);
+  ta = first;
+  first[0] = 0;
+  ta[0] = sw(5);
+  console.log(first[0], second[0]);
+  ta = first;
+  const v = (ta[0] = sw(10));
+  console.log(v, first[0], second[0]);
+  ta = first;
+  first[0] = 0;
+  ta[0] ||= sw(7);
+  ta = first;
+  ta[0] &&= sw(7);
+  console.log(first[0], second[0]);
+}
+run();
