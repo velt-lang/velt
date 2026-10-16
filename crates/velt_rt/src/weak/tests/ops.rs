@@ -169,7 +169,11 @@ fn a_weak_ref_keeps_its_word() {
         assert_eq!(velt_rt_weakref_word(plain), 0);
         release(o);
         assert!(velt_rt_weakref_deref(r).is_null());
-        assert_eq!(velt_rt_weakref_word(r), 0xdead_beef, "kept after the target goes");
+        assert_eq!(
+            velt_rt_weakref_word(r),
+            0xdead_beef,
+            "kept after the target goes"
+        );
         unsafe { velt_rt_weakref_drop(r) };
         unsafe { velt_rt_weakref_drop(plain) };
         // A reused slot takes the new word.
@@ -201,7 +205,9 @@ fn in_any_order_traced() {
             let raw = new_obj(&[]);
             let p = new_obj(&[retain(raw)]);
             // SAFETY: live objects; the map takes the reference to `p` given here.
-            unsafe { velt_rt_weakmap_set_traced(m, raw, retain(p) as u64, Some(TraceFn(trace_obj))) };
+            unsafe {
+                velt_rt_weakmap_set_traced(m, raw, retain(p) as u64, Some(TraceFn(trace_obj)))
+            };
             if first_raw {
                 release(raw);
                 release(p);

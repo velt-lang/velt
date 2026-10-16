@@ -167,8 +167,11 @@ impl FnCx<'_, '_> {
             Some(crate::any::Dynamic::Object) => return true,
             Some(crate::any::Dynamic::Function) => {
                 self.cx.error(
-                    Diagnostic::error(format!("`{tn}` as {what} is not supported yet (#926)"), span)
-                        .with_note("use `object`, or the class or object type of the values it holds"),
+                    Diagnostic::error(
+                        format!("`{tn}` as {what} is not supported yet (#926)"),
+                        span,
+                    )
+                    .with_note("use `object`, or the class or object type of the values it holds"),
                 );
                 return false;
             }

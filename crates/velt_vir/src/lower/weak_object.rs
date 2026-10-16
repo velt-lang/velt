@@ -168,7 +168,11 @@ impl FnLower<'_, '_> {
         self.dyn_key_check(&k, WeakUse::Ref);
         let desc = self.cast_to(k.desc.clone(), Ty::Ptr, Ty::U64);
         let d = self.temp(Ty::U32);
-        self.call_rt(Rt::WeakrefNewWith, vec![k.data.clone(), desc], Some(Place::local(d)));
+        self.call_rt(
+            Rt::WeakrefNewWith,
+            vec![k.data.clone(), desc],
+            Some(Place::local(d)),
+        );
         Operand::Copy(Place::local(d))
     }
 
@@ -189,7 +193,10 @@ impl FnLower<'_, '_> {
         let w = self.temp(Ty::U64);
         self.call_rt(Rt::WeakrefWord, vec![r], Some(Place::local(w)));
         let desc = self.cast_to(Operand::Copy(Place::local(w)), Ty::U64, Ty::Ptr);
-        self.assign(proj(&out, Proj::Field(0)), Rvalue::Use(Operand::Copy(Place::local(d))));
+        self.assign(
+            proj(&out, Proj::Field(0)),
+            Rvalue::Use(Operand::Copy(Place::local(d))),
+        );
         self.assign(proj(&out, Proj::Field(1)), Rvalue::Use(desc));
         self.goto(done);
         self.switch_to(no);
