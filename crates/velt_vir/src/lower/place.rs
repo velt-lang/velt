@@ -127,7 +127,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is field `index` of `ty` a zero-sized `void` field (nothing to read)?
-    fn is_unit_field(&mut self, ty: TyId, index: u32) -> bool {
+    pub(super) fn is_unit_field(&mut self, ty: TyId, index: u32) -> bool {
         let base = match self.cx.kind(ty) {
             TyKind::Shared(inner) => inner,
             _ => ty,

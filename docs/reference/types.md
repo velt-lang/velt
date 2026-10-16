@@ -1784,7 +1784,15 @@ converting it back to `any` see one object, and `console.log(s)` prints the targ
 read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
 on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
 target whose `get` trap answers every key). A method called through a typed proxy runs with
-`this` the proxy, so its reads and writes of `this` run the traps too.
+`this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
+value runs the `get` trap once, as in JavaScript.
+
+`s instanceof C` answers for the proxy's target, as JavaScript does when the handler has no
+`getPrototypeOf` trap. A typed proxy as a `WeakMap` or `WeakSet` key, or a `WeakRef` target, is
+the proxy itself, not its target, and `deref()` gives the proxy back. A typed proxy that goes to
+another task (`spawn`, a `shared` value or `Mutex`, a channel) is copied like any other value
+there: the proxy object together with its target and handler, so it is still a proxy on that
+task, and changes there don't reach the original.
 
 Only the types a proxy is converted to (and the classes related to them) check for one, and only
 in a program that creates a proxy, so other programs and other types pay nothing.

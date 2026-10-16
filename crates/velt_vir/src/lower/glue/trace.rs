@@ -155,7 +155,10 @@ impl FnLower<'_, '_> {
             let done = self.new_block();
             let nn = self.non_null(p.clone());
             self.when(nn, done);
-            let tf = self.trace_fn(c);
+            let (p, tf) = match self.cx.proxiable(c) {
+                true => self.trace_proxiable(p, c),
+                false => (p, self.trace_fn(c)),
+            };
             let (visit, cx) = (
                 Operand::Copy(Place::local(tv.0)),
                 Operand::Copy(Place::local(tv.1)),
@@ -174,6 +177,30 @@ impl FnLower<'_, '_> {
             ];
             self.call_glue(Glue::TraceIn, t, args);
         }
+    }
+
+    /// The object to visit for the pointer `p` of the proxiable type `c`, and its trace glue: a
+    /// typed proxy's `Proxy` object (untagged), opaque.
+    fn trace_proxiable(&mut self, p: Operand, c: TyId) -> (Operand, Operand) {
+        let (obj, tf) = (self.temp(Ty::Ptr), self.temp(Ty::Ptr));
+        let t = self.proxy_tagged(p.clone());
+        let (cold, hot, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(t, cold, hot);
+        self.switch_to(cold);
+        let u = self.proxy_untag(p.clone());
+        self.assign(Place::local(obj), Rvalue::Use(u));
+        self.assign(Place::local(tf), Rvalue::Use(cint(0, Ty::Ptr)));
+        self.goto(join);
+        self.switch_to(hot);
+        self.assign(Place::local(obj), Rvalue::Use(p));
+        let f = self.trace_fn(c);
+        self.assign(Place::local(tf), Rvalue::Use(f));
+        self.goto(join);
+        self.switch_to(join);
+        (
+            Operand::Copy(Place::local(obj)),
+            Operand::Copy(Place::local(tf)),
+        )
     }
 
     /// Body of `Glue::WeakRetain` for map values of type `ty`.

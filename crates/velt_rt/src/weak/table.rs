@@ -301,6 +301,8 @@ impl State {
         Some(old)
     }
 
+    /// A `WeakRef` to `obj`. Bit 0 of `obj` may be set (a typed proxy, whose counted object is
+    /// `obj` with the bit clear): the slot keeps it, so `deref` gives the same word back.
     pub(super) fn new_ref(&mut self, obj: *mut u8) -> RefId {
         let r = match self.free_refs.pop() {
             Some(r) => {
@@ -316,7 +318,7 @@ impl State {
                 (self.refs.len() - 1) as RefId
             }
         };
-        self.node(obj as usize, None).refs.push(r);
+        self.node(obj as usize & !TAG, None).refs.push(r);
         r
     }
 
@@ -324,7 +326,7 @@ impl State {
         match self.refs[r as usize] {
             Some(obj) => {
                 // SAFETY: a set slot names a live object (`forget` clears it first).
-                unsafe { *rc_word(obj as *mut u8) += 1 };
+                unsafe { *rc_word((obj & !TAG) as *mut u8) += 1 };
                 obj as *mut u8
             }
             None => std::ptr::null_mut(),
@@ -333,6 +335,7 @@ impl State {
 
     pub(super) fn drop_ref(&mut self, r: RefId) {
         if let Some(obj) = self.refs[r as usize].take() {
+            let obj = obj & !TAG;
             if let Some(node) = self.nodes.get_mut(&obj) {
                 remove_one(&mut node.refs, &r);
             }
@@ -341,6 +344,9 @@ impl State {
         self.free_refs.push(r);
     }
 }
+
+/// Bit 0 of a `WeakRef`'s target word: set for a typed proxy (`new_ref`).
+const TAG: usize = 1;
 
 fn remove_one<T: PartialEq>(v: &mut Vec<T>, x: &T) {
     if let Some(i) = v.iter().position(|y| y == x) {

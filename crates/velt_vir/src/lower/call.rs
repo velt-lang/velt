@@ -69,9 +69,10 @@ impl FnLower<'_, '_> {
             }
             _ => self.cx.func_for(def, targs.clone()),
         };
+        let receiver_first = pre.is_empty();
         let mut argv = pre;
         argv.extend(self.lower_args(args, &modes, true));
-        if f.self_ty.is_some() && !args.is_empty() && argv.len() == args.len() {
+        if f.self_ty.is_some() && !args.is_empty() && receiver_first {
             let rty = self.sub(args[0].ty);
             if self.cx.is_class(rty) && self.cx.proxiable(rty) {
                 self.proxy_method_check(&argv[0]);

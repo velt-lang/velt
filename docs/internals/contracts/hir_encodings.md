@@ -776,8 +776,13 @@ entry is an `ICE:`.
   `Proxy` object's address with bit 0 set: `AnyTo` of an `any` holding a `Proxy` sets the bit,
   boxing clears it again. Field reads, writes and compound assignments on a proxiable type test
   the bit and call the `get` / `set` traps (glue `ProxyGet` / `ProxySet` per field type), counts
-  clear the bit, and drop and format glue handle the `Proxy` object. Without proxiable types
-  nothing changes. No HIR form was added.
+  clear the bit, and drop and format glue handle the `Proxy` object. Transfer, many-threads
+  check and clone glue of a proxiable type (and of interface values, which may hold one) handle
+  the `Proxy` object as an `any` holding it, then set the bit again; `instanceof` reads the
+  target's class; weak map keys are the untagged `Proxy` object (values of a proxiable type are
+  boxed), and a `WeakRef` keeps the tagged word (rt_abi.md). Sema's update-as-value blocks
+  (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
+  with one read. Without proxiable types nothing changes. No HIR form was added.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.

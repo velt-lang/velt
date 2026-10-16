@@ -1,0 +1,56 @@
+// check: no leaks
+// A typed proxy (#823) as a `WeakMap` / `WeakSet` key and a `WeakRef` target: the key is the
+// proxy itself, not its target, and `deref()` gives the proxy back, whose traps still run.
+function logged(target: any): any {
+  return new Proxy(target, {
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+class State {
+  n: number = 1;
+}
+type Rec = { k: string };
+
+const raw = new State();
+const s = logged(raw) as State;
+const wm = new WeakMap<State, number>();
+wm.set(s, 3);
+console.log(wm.get(s), wm.has(s), wm.has(raw));
+wm.set(raw, 4);
+console.log(wm.get(s), wm.get(raw));
+console.log(wm.delete(s), wm.has(s), wm.has(raw));
+// A proxy as a value (a raw-to-proxy cache).
+const cache = new WeakMap<State, State>();
+cache.set(raw, s);
+const back = cache.get(raw);
+if (back != null) {
+  back.n = 7;
+  console.log(back === s);
+}
+const ws = new WeakSet<State>();
+ws.add(s);
+console.log(ws.has(s), ws.has(raw));
+const wr = new WeakRef<State>(s);
+const d = wr.deref();
+if (d != null) {
+  d.n = 8;
+  console.log(d === s, raw.n);
+}
+const r = logged({ k: "a" }) as Rec;
+const wo = new WeakMap<Rec, string>();
+wo.set(r, "rec");
+console.log(wo.get(r));
+
+// A proxy that goes away while it is a key: its entries go with it.
+function scoped(m: WeakMap<State, number>, set: WeakSet<State>): WeakRef<State> {
+  const p = logged(new State()) as State;
+  m.set(p, 1);
+  set.add(p);
+  return new WeakRef<State>(p);
+}
+const gone = scoped(wm, ws);
+console.log(typeof gone);

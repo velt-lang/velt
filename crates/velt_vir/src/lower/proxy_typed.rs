@@ -35,14 +35,20 @@ use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, 
 impl Cx<'_> {
     /// May a value of the concrete type `t` hold a tagged proxy?
     pub(super) fn proxiable(&self, t: TyId) -> bool {
-        let b = &self.boxing;
-        if b.proxy_roots.is_empty() && b.proxy_types.is_empty() {
+        if !self.has_proxies() {
             return false;
         }
+        let b = &self.boxing;
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.proxy_roots.contains(&self.class_root(*d)),
             _ => b.proxy_types.contains(&t),
         }
+    }
+
+    /// Are there proxiable types at all (so an interface value's data may be a tagged proxy)?
+    pub(super) fn has_proxies(&self) -> bool {
+        let b = &self.boxing;
+        !(b.proxy_roots.is_empty() && b.proxy_types.is_empty())
     }
 
     /// The prelude's `Proxy` class type (only asked for in a program with proxiable types).
@@ -146,17 +152,25 @@ impl Cx<'_> {
 
     /// Display names of the proxiable types (`VELT_DEBUG_PROXY=1`).
     pub(super) fn proxiable_names(&self) -> Vec<String> {
-        let roots = self.boxing.proxy_roots.iter().map(|d| match self.hir.def(*d) {
-            hir::Def::Adt(a) => format!("class {} (and its subclasses)", a.name),
-            _ => "?".into(),
-        });
-        let types = self.boxing.proxy_types.iter().map(|&t| match self.types.kind(t) {
-            TyKind::Adt(d, _) => match self.hir.def(*d) {
-                hir::Def::Adt(a) => a.name.clone(),
+        let roots = self
+            .boxing
+            .proxy_roots
+            .iter()
+            .map(|d| match self.hir.def(*d) {
+                hir::Def::Adt(a) => format!("class {} (and its subclasses)", a.name),
+                _ => "?".into(),
+            });
+        let types = self
+            .boxing
+            .proxy_types
+            .iter()
+            .map(|&t| match self.types.kind(t) {
+                TyKind::Adt(d, _) => match self.hir.def(*d) {
+                    hir::Def::Adt(a) => a.name.clone(),
+                    _ => self.type_name(t),
+                },
                 _ => self.type_name(t),
-            },
-            _ => self.type_name(t),
-        });
+            });
         let mut out: Vec<String> = roots.chain(types).collect();
         out.sort();
         out
@@ -167,20 +181,14 @@ impl FnLower<'_, '_> {
     /// Is bit 0 of the pointer `p` set (a tagged proxy)?
     pub(super) fn proxy_tagged(&mut self, p: Operand) -> Operand {
         let w = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
-        let b = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::BitAnd, w, cint(1, Ty::U64)),
-        );
+        let b = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, w, cint(1, Ty::U64)));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, b, cint(0, Ty::U64)))
     }
 
     /// The pointer `p` with bit 0 cleared.
     pub(super) fn proxy_untag(&mut self, p: Operand) -> Operand {
         let w = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
-        let c = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::BitAnd, w, cint(-2, Ty::U64)),
-        );
+        let c = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, w, cint(-2, Ty::U64)));
         self.rvalue_temp(Ty::Ptr, Rvalue::Cast(c, Ty::Ptr))
     }
 
@@ -248,7 +256,10 @@ impl FnLower<'_, '_> {
                 lw.assign(Place::local(t), Rvalue::Use(own));
             },
         );
-        (Operand::Copy(Place::local(d)), Operand::Copy(Place::local(t)))
+        (
+            Operand::Copy(Place::local(d)),
+            Operand::Copy(Place::local(t)),
+        )
     }
 
     /// In `AnyTo` to the proxiable `ty`: when the descriptor `desc` is the `Proxy` class's,
@@ -353,7 +364,10 @@ impl FnLower<'_, '_> {
                 let f = lw.cx.func(Work::Glue(Glue::ProxyGet, fty));
                 lw.call(Callee::Func(f), vec![u, key, out], None, false);
                 if let Some(slot) = slot {
-                    lw.assign(Place::local(val), Rvalue::Use(Operand::Copy(Place::local(slot))));
+                    lw.assign(
+                        Place::local(val),
+                        Rvalue::Use(Operand::Copy(Place::local(slot))),
+                    );
                 }
             },
             |lw| {
@@ -365,15 +379,29 @@ impl FnLower<'_, '_> {
     }
 
     /// The base of a write to a field of the proxiable `bty`, held (shared) for the statement
-    /// when the right-hand side `value` may write memory (and so drop the object).
+    /// when the right-hand side `value` may write memory (and so drop the object), and always
+    /// when it holds a proxy: a trap is user code, which may drop the last other reference
+    /// (a `get` trap reassigning the variable `s.f += 1` read). The hold is on the cold path.
     fn proxy_hold(&mut self, base: &hir::Expr, bty: TyId, value: &hir::Expr) -> Operand {
         let v = self.expr(base);
-        if !super::sequence::may_write(value) {
-            return self.rvalue_temp(Ty::Ptr, Rvalue::Use(v));
+        if super::sequence::may_write(value) {
+            let s = self.share_value(v, bty);
+            let o = self.own_value(s, bty);
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Use(o));
         }
-        let s = self.share_value(v, bty);
-        let o = self.own_value(s, bty);
-        self.rvalue_temp(Ty::Ptr, Rvalue::Use(o))
+        let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(v));
+        let slot = self.temp(Ty::Ptr);
+        self.assign(Place::local(slot), Rvalue::Use(cint(0, Ty::Ptr)));
+        self.own_temp(slot, bty);
+        self.proxy_split(
+            &v,
+            |lw, u| {
+                lw.retain(u);
+                lw.assign(Place::local(slot), Rvalue::Use(v.clone()));
+            },
+            |_| {},
+        );
+        v
     }
 
     /// Store the owned `v` into field `index` of the `bty` value at `ptr`, through the `set`
@@ -436,6 +464,21 @@ impl FnLower<'_, '_> {
         (base, index): (&hir::Expr, u32),
         value: &hir::Expr,
     ) -> Operand {
+        self.proxy_update(op, place, (base, index), value, None);
+        super::unit()
+    }
+
+    /// [`proxy_compound`](Self::proxy_compound), also giving the field's old value
+    /// (`want_old`, a postfix update used as a value) or its new one (a prefix update): the
+    /// `get` trap runs once, as in JavaScript. `None` gives unit.
+    fn proxy_update(
+        &mut self,
+        op: hir::BinOp,
+        place: &hir::Expr,
+        (base, index): (&hir::Expr, u32),
+        value: &hir::Expr,
+        want_old: Option<bool>,
+    ) -> Operand {
         let bty = self.sub(base.ty);
         let ptr = self.proxy_hold(base, bty, value);
         let (_, fty) = self.proxy_field(bty, index);
@@ -451,8 +494,72 @@ impl FnLower<'_, '_> {
             true => self.take_owned(v),
             false => v,
         };
+        let out = match want_old {
+            Some(true) => Operand::Copy(Place::local(old)),
+            Some(false) => Operand::Copy(Place::local(self.copy_to_temp(v.clone(), fvt))),
+            None => super::unit(),
+        };
         self.proxy_write_at(&ptr, bty, index, place, v);
-        super::unit()
+        out
+    }
+
+    /// `s.f++` / `++s.f` used as a value on the proxiable type of `s`, which sema writes as
+    /// `{ let tmp = s.f; s.f += 1; tmp }` / `{ s.f += 1; s.f }`: one `get` trap, as in
+    /// JavaScript, instead of a second read. `None` when `b` is not such a block.
+    pub(super) fn proxy_update_block(&mut self, b: &hir::Block) -> Option<Operand> {
+        if !self.cx.has_proxies() {
+            return None;
+        }
+        let value = b.value.as_deref()?;
+        let (ca, old) = match b.stmts.as_slice() {
+            [hir::Stmt {
+                kind:
+                    hir::StmtKind::Let {
+                        local,
+                        init: Some(read),
+                    },
+                ..
+            }, hir::Stmt {
+                kind: hir::StmtKind::Expr(ca),
+                ..
+            }] => {
+                let hir::ExprKind::Local(l, _) = &value.kind else {
+                    return None;
+                };
+                (l == local).then_some(())?;
+                (ca, read)
+            }
+            [hir::Stmt {
+                kind: hir::StmtKind::Expr(ca),
+                ..
+            }] => (ca, value),
+            _ => return None,
+        };
+        let want_old = !std::ptr::eq(old, value);
+        let hir::ExprKind::CompoundAssign {
+            op,
+            place,
+            value: one,
+        } = &ca.kind
+        else {
+            return None;
+        };
+        let hir::ExprKind::Field { base, index, .. } = &place.kind else {
+            return None;
+        };
+        let bty = self.sub(base.ty);
+        let fty = self.sub(place.ty);
+        let simple = matches!(one.kind, hir::ExprKind::Lit(_))
+            && matches!(op, hir::BinOp::Add | hir::BinOp::Sub)
+            && same_place(place, old);
+        if !simple
+            || !self.cx.proxiable(bty)
+            || self.is_unit_field(bty, *index)
+            || self.cx.needs_drop(fty)
+        {
+            return None;
+        }
+        Some(self.proxy_update(*op, place, (base, *index), one, Some(want_old)))
     }
 
     /// The vtable of the class object `obj` of the proxiable class `cls` for a virtual call: a
@@ -488,6 +595,75 @@ impl FnLower<'_, '_> {
             },
         );
         Operand::Copy(Place::local(out))
+    }
+
+    /// The class id of the class object (or interface data) `obj`, which may be a tagged
+    /// proxy: a proxy's is its target's, as `instanceof` in JavaScript walks the target's
+    /// prototype chain when the handler has no `getPrototypeOf` trap. `hot` gives the id of an
+    /// untagged `obj`.
+    pub(super) fn proxy_class_id(
+        &mut self,
+        obj: &Operand,
+        hot: impl FnOnce(&mut Self) -> Operand,
+    ) -> Operand {
+        let id = self.temp(Ty::U64);
+        self.proxy_split(
+            obj,
+            |lw, u| {
+                let pty = lw.cx.proxy_class_ty();
+                let target = lw.proxy_hot_place(&u, pty, 0);
+                let v = lw.dyn_class_id(&target, false);
+                lw.assign(Place::local(id), Rvalue::Use(v));
+            },
+            |lw| {
+                let v = hot(lw);
+                lw.assign(Place::local(id), Rvalue::Use(v));
+            },
+        );
+        Operand::Copy(Place::local(id))
+    }
+
+    /// In a glue body of the proxiable `ty` for the value at `place` (a pointer): a tagged
+    /// proxy runs `cold` with a place holding the untagged `Proxy` object and the `Proxy`
+    /// class type, then goes on to `done`; anything else continues here.
+    pub(super) fn proxy_glue_split(
+        &mut self,
+        place: &Place,
+        done: vir::BlockId,
+        cold: impl FnOnce(&mut Self, Place, TyId),
+    ) {
+        let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+        let t = self.proxy_tagged(p.clone());
+        let (c, h) = (self.new_block(), self.new_block());
+        self.branch(t, c, h);
+        self.switch_to(c);
+        let u = self.proxy_untag(p);
+        let pty = self.cx.proxy_class_ty();
+        let up = Place::local(self.copy_to_temp(u, Ty::Ptr));
+        cold(self, up, pty);
+        if !self.dead() {
+            self.goto(done);
+        }
+        self.switch_to(h);
+    }
+
+    /// Transfer to another thread (or check, `many`) the interface value's data at `data`
+    /// when it is a tagged proxy: the `Proxy` object is transferred like an `any` holding it
+    /// (a deep copy of the object, its target and its handler when shared), and tagged again.
+    /// `hot` handles any other data; both continue after.
+    pub(super) fn proxy_dyn_data(
+        &mut self,
+        data: &Place,
+        cold: impl FnOnce(&mut Self, Place, TyId),
+        hot: impl FnOnce(&mut Self),
+    ) {
+        let done = self.new_block();
+        self.proxy_glue_split(data, done, cold);
+        hot(self);
+        if !self.dead() {
+            self.goto(done);
+        }
+        self.switch_to(done);
     }
 
     /// Before a method call whose receiver `recv` is of a proxiable class: a proxy whose
@@ -563,7 +739,12 @@ impl FnLower<'_, '_> {
         let up = self.copy_to_temp(u, Ty::Ptr);
         let a = self.addr(Place::local(up));
         let f = self.cx.func(Work::Glue(Glue::Format, pty));
-        self.call(Callee::Func(f), vec![buf.clone(), a, depth.clone()], None, false);
+        self.call(
+            Callee::Func(f),
+            vec![buf.clone(), a, depth.clone()],
+            None,
+            false,
+        );
         self.goto(done);
         self.switch_to(h);
     }
@@ -586,7 +767,13 @@ impl FnLower<'_, '_> {
 
     /// `Glue::ProxyGet` of the field type `fty`: `(proxy, key: *string, out: *F)`, the `get`
     /// trap's answer for `key` checked as an `F` into `*out`.
-    pub(super) fn proxy_get_glue(&mut self, data: vir::Local, key: vir::Local, out: vir::Local, fty: TyId) {
+    pub(super) fn proxy_get_glue(
+        &mut self,
+        data: vir::Local,
+        key: vir::Local,
+        out: vir::Local,
+        fty: TyId,
+    ) {
         let pty = self.cx.proxy_class_ty();
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
@@ -606,7 +793,13 @@ impl FnLower<'_, '_> {
 
     /// `Glue::ProxySet` of the field type `fty`: `(proxy, key: *string, v: *F)` (owns `*v`):
     /// the `set` trap; `false` is Node's `TypeError` (module code is strict).
-    pub(super) fn proxy_set_glue(&mut self, data: vir::Local, key: vir::Local, v: vir::Local, fty: TyId) {
+    pub(super) fn proxy_set_glue(
+        &mut self,
+        data: vir::Local,
+        key: vir::Local,
+        v: vir::Local,
+        fty: TyId,
+    ) {
         let pty = self.cx.proxy_class_ty();
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
@@ -638,5 +831,24 @@ impl FnLower<'_, '_> {
         self.drop_glue(shown, any);
         self.scopes.pop();
         self.terminate(Terminator::Return(super::unit()));
+    }
+}
+
+/// Do `a` and `b` name the same place (locals, globals and fields of them), so reading one
+/// reads the other? Conservative: `false` for anything else.
+fn same_place(a: &hir::Expr, b: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match (&a.kind, &b.kind) {
+        (K::Local(x, _), K::Local(y, _)) => x == y,
+        (K::Global(x), K::Global(y)) => x == y,
+        (
+            K::Field {
+                base: x, index: i, ..
+            },
+            K::Field {
+                base: y, index: j, ..
+            },
+        ) => i == j && same_place(x, y),
+        _ => false,
     }
 }

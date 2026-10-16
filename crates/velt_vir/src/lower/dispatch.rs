@@ -172,6 +172,11 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&rp, Proj::Field(1)))),
         );
+        if self.cx.has_proxies() {
+            // The interface value may hold a typed proxy (its data tagged): the same check as
+            // a direct call through the proxy.
+            self.proxy_method_check(&data);
+        }
         let entry = self.dispatch(vt, slot as i128);
         let ret = self.sub(ty);
         self.call_ptr(

@@ -60,6 +60,9 @@ impl FnLower<'_, '_> {
             return WordKind::Plain;
         }
         match self.cx.kind(ty) {
+            // A typed proxy's word has bit 0 set, which the runtime must not see as an object.
+            _ if self.cx.proxiable(ty) => WordKind::Boxed,
+            TyKind::Option(e, _) if self.cx.proxiable(e) => WordKind::Boxed,
             _ if self.cx.counted(ty) => WordKind::Direct(ty),
             TyKind::Option(e, _) if vt == Ty::Ptr && self.cx.counted(e) => WordKind::Direct(e),
             _ => WordKind::Boxed,
@@ -72,7 +75,7 @@ impl FnLower<'_, '_> {
             (I::WeakMapSet, [m, key, value]) => self.weakmap_set(m, key, value),
             (I::WeakMapGet | I::WeakMapHas | I::WeakMapDelete, [m, key]) => {
                 let m = self.expr(m);
-                let Some(k) = self.weak_key(key) else {
+                let Some(k) = self.weak_key(key, true) else {
                     return match i {
                         I::WeakMapGet => cint(0, Ty::U64),
                         _ => Operand::Const(crate::vir::Const::Bool(false), Ty::Bool),
@@ -97,7 +100,7 @@ impl FnLower<'_, '_> {
                 self.own_value(v, t)
             }
             (I::WeakRefNew, [target]) => {
-                let Some(k) = self.weak_key(target) else {
+                let Some(k) = self.weak_key(target, false) else {
                     return cint(0, Ty::U32);
                 };
                 let d = self.temp(Ty::U32);
@@ -127,15 +130,26 @@ impl FnLower<'_, '_> {
     }
 
     /// The address of the object `key` (borrowed), whose type becomes counted and weak-capable;
-    /// `None` in a pass where it is not counted yet.
-    fn weak_key(&mut self, key: &hir::Expr) -> Option<Operand> {
+    /// `None` in a pass where it is not counted yet. A typed proxy's is its `Proxy` object's,
+    /// with the tag cleared when `untag` (a map key: the identity is the proxy's, as for an
+    /// `any` holding it); a `WeakRef` keeps the tag (velt_rt gives it back from `deref`).
+    fn weak_key(&mut self, key: &hir::Expr, untag: bool) -> Option<Operand> {
         let kt = self.sub(key.ty);
         self.cx.note_identity(kt);
         self.cx.note_share(kt);
         self.cx.note_weak_seed(kt);
         let k = self.expr(key);
         if self.cx.counted(kt) && self.cx.ty(kt) == Ty::Ptr {
-            return Some(k);
+            if !self.cx.proxiable(kt) {
+                return Some(k);
+            }
+            // The `Proxy` object may be weakly held too, so it releases as weak-capable.
+            let pty = self.cx.proxy_class_ty();
+            self.cx.note_weak_seed(pty);
+            return Some(match untag {
+                true => self.proxy_untag(k),
+                false => self.rvalue_temp(Ty::Ptr, Rvalue::Use(k)),
+            });
         }
         let countable = self.cx.is_class(kt)
             || self.cx.copied_object(kt)
@@ -157,7 +171,7 @@ impl FnLower<'_, '_> {
     /// `__intrinsic_weakmap_set(m, key, value)`: the map (created now when `m` is 0).
     fn weakmap_set(&mut self, m: &hir::Expr, key: &hir::Expr, value: &hir::Expr) -> Operand {
         let m = self.expr(m);
-        let k = self.weak_key(key);
+        let k = self.weak_key(key, true);
         let vty = self.sub(value.ty);
         self.cx.note_share(vty);
         self.cx.note_weak_seed(vty);
@@ -175,7 +189,11 @@ impl FnLower<'_, '_> {
         self.branch(none, new_bb, join);
         self.switch_to(new_bb);
         let kt = self.sub(key.ty);
-        let key_trace = self.trace_fn(kt);
+        // A key that is a `Proxy` object is not a `kt`: opaque (at worst a leak).
+        let key_trace = match self.cx.proxiable(kt) {
+            true => cint(0, Ty::Ptr),
+            false => self.trace_fn(kt),
+        };
         let null = cint(0, Ty::Ptr);
         let (retain, release, trace) = match self.word_kind(vty) {
             WordKind::Plain => (null.clone(), null.clone(), null),

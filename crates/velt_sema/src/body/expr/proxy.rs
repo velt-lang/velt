@@ -49,12 +49,7 @@ impl FnCx<'_, '_> {
 
     /// The `Proxy` object `h` (`new Proxy(...)` of class `d`) as an `any`; `h` itself for
     /// another class.
-    pub(crate) fn proxy_new(
-        &mut self,
-        d: DefId,
-        h: hir::Expr,
-        span: Span,
-    ) -> hir::Expr {
+    pub(crate) fn proxy_new(&mut self, d: DefId, h: hir::Expr, span: Span) -> hir::Expr {
         if !self.user_proxy(d) {
             return h;
         }
