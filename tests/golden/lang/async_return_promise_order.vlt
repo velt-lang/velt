@@ -1,0 +1,120 @@
+// `return p` in an async function settles one microtask later than `return await p`, as in
+// Node: the promise is adopted one step after the function's scopes are left (issue #1148).
+// `viaHop` spells that out; the other functions must interleave with `tick` exactly as there.
+async function inner(): Promise<string> {
+  console.log("inner");
+  return "x";
+}
+async function viaReturn(): Promise<string> {
+  return inner();
+}
+async function viaHop(): Promise<string> {
+  const p = inner();
+  await Promise.resolve(0);
+  return await p;
+}
+async function viaAwait(): Promise<string> {
+  return await inner();
+}
+async function a(): Promise<void> {
+  const v = await viaReturn();
+  console.log("a-return", v);
+}
+async function b(): Promise<void> {
+  const v = await viaAwait();
+  console.log("b-await", v);
+}
+async function c(): Promise<void> {
+  const v = await viaHop();
+  console.log("c-hop", v);
+}
+
+// The same with a rejected promise.
+async function failing(): Promise<string> {
+  console.log("failing");
+  throw new Error("no");
+}
+async function rejReturn(): Promise<string> {
+  return failing();
+}
+async function rejHop(): Promise<string> {
+  const p = failing();
+  await Promise.resolve(0);
+  return await p;
+}
+async function rejAwait(): Promise<string> {
+  return await failing();
+}
+async function ra(): Promise<void> {
+  try {
+    await rejReturn();
+  } catch (e) {
+    console.log("a-return", (e as Error).message);
+  }
+}
+async function rb(): Promise<void> {
+  try {
+    await rejAwait();
+  } catch (e) {
+    console.log("b-await", (e as Error).message);
+  }
+}
+async function rc(): Promise<void> {
+  try {
+    await rejHop();
+  } catch (e) {
+    console.log("c-hop", (e as Error).message);
+  }
+}
+
+// A value of `T | Promise<T>` takes the steps only when it is a promise.
+async function slowValue(): Promise<number> {
+  await Promise.resolve(0);
+  return 2;
+}
+async function either(fn: () => number | Promise<number>): Promise<number> {
+  return fn();
+}
+async function ua(): Promise<void> {
+  console.log("plain", await either(() => 1));
+}
+async function ub(): Promise<void> {
+  console.log("slow", await either(slowValue));
+}
+
+async function tick(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await Promise.resolve(0);
+    console.log("tick", i);
+  }
+}
+
+async function main(): Promise<void> {
+  const pa = a();
+  const pb = b();
+  const pc = c();
+  const pt = tick(4);
+  console.log("m");
+  await pa;
+  await pb;
+  await pc;
+  await pt;
+  console.log("-- rejected");
+  const qa = ra();
+  const qb = rb();
+  const qc = rc();
+  const qt = tick(5);
+  console.log("m");
+  await qa;
+  await qb;
+  await qc;
+  await qt;
+  console.log("-- union");
+  const ux = ua();
+  const uy = ub();
+  const ut = tick(5);
+  console.log("m");
+  await ux;
+  await uy;
+  await ut;
+}
