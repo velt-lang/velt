@@ -7,28 +7,23 @@
 
 use velt_common::Span;
 
+mod blocks;
 mod jsx;
+mod type_level;
+mod type_parts;
 
+pub use blocks::*;
 pub use jsx::*;
+pub use type_level::*;
+pub use type_parts::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
-/// Member name of the computed key `[Symbol.dispose]` (a method declaration
-/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an [`Ident`] with this exact
-/// name. No plain identifier can collide with it.
-pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
-
-/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
-
-/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
-
-/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
-
-pub use crate::ast_names::{COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS};
+pub use crate::ast_names::{
+    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR,
+    SYMBOL_DISPOSE, SYMBOL_ITERATOR,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
@@ -91,14 +86,10 @@ pub enum ItemKind {
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
     /// declaration of the same name).
     Augment(Augment),
-}
-
-#[derive(Clone, Debug)]
-pub struct Augment {
-    /// `declare module "spec"`: the module specifier (resolved like an import's) and its span;
-    /// `None` for `declare global`.
-    pub module: Option<(String, Span)>,
-    pub items: Vec<Item>,
+    /// `namespace N { … }` / `declare namespace N { … }`: a scope of types (TypeScript's
+    /// namespace without values). Its members are named `N.T` outside it; `namespace A.B { … }`
+    /// is parsed as `A` holding the exported namespace `B`.
+    Namespace(Namespace),
 }
 
 #[derive(Clone, Debug)]
@@ -245,6 +236,8 @@ pub struct InterfaceDecl {
     /// Fields every implementor must have (same name and type).
     pub fields: Vec<Field>,
     pub methods: Vec<InterfaceMethod>,
+    /// Call and construct signatures, as for [`TypeExprKind::Callable`].
+    pub call_sigs: Vec<CallSig>,
 }
 
 /// Interface method: required (`body: None`) or with a default implementation.
@@ -308,6 +301,12 @@ pub enum TypeExprKind {
     Array(Box<TypeExpr>),
     /// `[A, B]`
     Tuple(Vec<TypeExpr>),
+    /// `...T` in a tuple type (a variadic tuple type, `[string, ...A]`): `T`'s elements. Only
+    /// a direct element of [`TypeExprKind::Tuple`].
+    TupleRest(Box<TypeExpr>),
+    /// `T?` / `name?: T` in a tuple type: an element that may be left out (`[A, B?]`). Only a
+    /// direct element of [`TypeExprKind::Tuple`].
+    TupleOptional(Box<TypeExpr>),
     /// `(a: A, b: B) => R`, optionally `=> R throws E` (the function may throw `E`).
     Function {
         params: Vec<TypeExpr>,
@@ -351,12 +350,30 @@ pub enum TypeExprKind {
         /// `readonly [key: string]: T`
         readonly: bool,
     },
+    /// An object type with call or construct signatures (`{ (x: T): R; n: number }`), as
+    /// written; sema gives it TypeScript's type (`velt_sema::call_sigs`).
+    Callable {
+        sigs: Vec<CallSig>,
+        /// The other members: an `Object` (empty when there are none) or an `IndexSig`.
+        members: Box<TypeExpr>,
+    },
     /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
     /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof
     /// import("m")`, `typeof f<T>`); sema resolves it to the error type without a diagnostic.
     Query(Vec<Ident>),
     /// `keyof T`: the union of `T`'s keys.
     KeyOf(Box<TypeExpr>),
+    /// `C extends E ? T : F`: a conditional type (issue #934). `E` may hold `infer X`.
+    Conditional(Box<ConditionalType>),
+    /// `infer X` in the `extends` clause of a conditional type.
+    Infer(Ident),
+    /// `{ readonly [K in S as N]?: V }`: a mapped type (issue #934).
+    Mapped(Box<MappedType>),
+    /// `` `on${K}` ``: a template literal type; `quasis` has one more element than `types`.
+    TemplateLiteral {
+        quasis: Vec<String>,
+        types: Vec<TypeExpr>,
+    },
     /// `null` in type position.
     Null,
     /// `undefined` in type position (issue #930).
@@ -372,28 +389,6 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
-}
-
-/// The key of an index signature, `[name: ty]` (the name is documentation only).
-#[derive(Clone, Debug)]
-pub struct IndexKey {
-    pub name: Ident,
-    pub ty: TypeExpr,
-}
-
-/// `name: T` / `name?: T` / `readonly name: T` in an object type.
-#[derive(Clone, Debug)]
-pub struct ObjectTypeField {
-    pub name: Ident,
-    /// For an optional field, the written type plus `| null`.
-    pub ty: TypeExpr,
-    /// `name?: T` — parsed as `name: T | null`; the flag makes it an optional field of the object
-    /// type (left out by `JSON.stringify` while `null`). An object literal may leave out any
-    /// `T | null` field of an object type.
-    pub optional: bool,
-    /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
-    pub readonly: bool,
-    pub span: Span,
 }
 
 // ─────────────────────────── Statements ───────────────────────────

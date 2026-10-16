@@ -43,6 +43,9 @@ impl Ctx<'_> {
             }
             operands.push((ty, p.span));
         }
+        if let Some(t) = self.literal_meet(&operands, t.span) {
+            return t;
+        }
         // A primitive with object types is a branded type.
         let bases: Vec<usize> = (0..operands.len())
             .filter(|&i| self.brandable(operands[i].0))
@@ -58,6 +61,22 @@ impl Ctx<'_> {
                 .collect(),
             None => parts.iter().collect(),
         };
+        // A function with properties: an interface or object type with call signatures and
+        // members (`{ (): T; stop(): void }`, which the parser writes as this intersection).
+        let is_fn =
+            |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_));
+        if operands.iter().any(|&(o, _)| is_fn(self, o))
+            && operands.iter().any(|&(o, _)| self.is_object_type(o))
+        {
+            self.error(
+                Diagnostic::error(
+                    "a function with properties (call signatures next to members) is not supported yet (#921)",
+                    t.span,
+                )
+                .with_note("pass the function and the members separately, or an object with the function as a method"),
+            );
+            return self.ty.error;
+        }
         for (&(ty, span), p) in operands.iter().zip(&parts) {
             if !self.intersectable(ty, span, written_name(p)) {
                 return self.ty.error;
@@ -187,7 +206,13 @@ impl Ctx<'_> {
     }
 
     /// The intersection of `a` and `b`; `Err` says why no value has both types.
-    fn meet(&mut self, a: TyId, b: TyId, module: usize, depth: u32) -> Result<TyId, String> {
+    pub(crate) fn meet(
+        &mut self,
+        a: TyId,
+        b: TyId,
+        module: usize,
+        depth: u32,
+    ) -> Result<TyId, String> {
         if a == b {
             return Ok(a);
         }

@@ -8,7 +8,7 @@ helper), and explain it in your final report.
 | Contract | File | Producer → Consumer |
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
-| AST | `crates/velt_syntax/src/ast.rs` + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
+| AST | `crates/velt_syntax/src/ast.rs` (with `ast/blocks.rs`, `ast/type_parts.rs`, `ast/type_level.rs`, `ast/jsx.rs`) + `parse_file` (`parse_with` for the loader: `define`, ambient declarations) | frontend → sema |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
@@ -57,6 +57,20 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   untested), and for JIT code an in-memory ELF image per version registered through the GDB JIT
   interface (Linux; macOS untested, LLDB needs `plugin.jit-loader.gdb.enable on`); on COFF no line
   tables, and internal functions become external symbols so the PDB names them.
+
+## Namespaces and call signatures (additive AST extension)
+- `ItemKind::Namespace(Namespace)` (`ast/blocks.rs`): `[declare] namespace N { … }` with its
+  items (type aliases, interfaces, nested namespaces; each `Item::exported` as written).
+  `namespace A.B { … }` is `A` holding the exported namespace `B`. `declare global { … }` (an
+  `ItemKind::Augment`) may hold namespaces too. Sema flattens them into items named `N.T`.
+- `CallSig { sig: FnSig, construct, span }` (`ast/type_parts.rs`): a call signature
+  `(x: T): R` / `<T>(x: T): R`, or with `construct` a construct signature `new (x: T): C`, in an
+  interface or object type, as written (`sig.name` is empty; parameters keep their names, `?`
+  and initializers). `InterfaceDecl::call_sigs` holds an interface's;
+  `TypeExprKind::Callable { sigs, members }` is an object type with signatures (`members`: the
+  `Object` or `IndexSig` of its other members). Sema gives them TypeScript's type: one
+  signature alone is that function type, otherwise the intersection of the signatures and the
+  members (and an interface's bases).
 
 ## Who owns what
 | Area | Crates / files |

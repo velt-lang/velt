@@ -1,12 +1,14 @@
-//! Losers of a combinator that settled (#150): one created during the current poll of the task
-//! that is ready to go on runs before the owner's continuation, like its JS microtask, so a loop
-//! whose combinators settle without suspending finishes its losers as it goes instead of piling
-//! them up until it suspends; one that yielded waits for the task's next poll.
+//! Losers of a combinator that settled (#150): one that is ready to go on runs before the
+//! owner's continuation, like its JS microtask, so a loop of combinators that settle at once
+//! finishes its losers as it goes instead of piling them up; one that yielded waits for the
+//! task's next poll.
 
 use crate::task::latch::{
     velt_rt_latch_free, velt_rt_latch_new, velt_rt_latch_open, velt_rt_latch_wait,
 };
-use crate::task::local::{velt_rt_fut_box, velt_rt_fut_detach};
+use crate::task::local::{
+    velt_rt_await_ready, velt_rt_await_tick, velt_rt_fut_box, velt_rt_fut_detach,
+};
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now, VeltFut, PENDING, READY};
 use std::ffi::c_void;
@@ -64,24 +66,42 @@ static FINISHED_BY_ROUND: AtomicUsize = AtomicUsize::new(0);
 //   }
 // }
 // The rejecting sibling resolves the waiter's promise and throws: the waiter is ready when the
-// owner gives it up, and the loop never suspends.
+// owner gives it up. Its step was queued by `resolve`, before the owner's `await` step
+// (`velt_rt_await_tick`, as compiled code takes it), so it finishes before the next round.
 unsafe extern "C" fn loop_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    for _ in 0..ROUNDS {
+    let st = &mut *(s as *mut [u64; 3]);
+    loop {
+        if st[2] != 0 {
+            if velt_rt_await_ready(st[2], cx) == 0 {
+                return PENDING;
+            }
+            st[2] = 0;
+            FINISHED_BY_ROUND.fetch_add(FINISHED.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+        if st[1] as usize == ROUNDS {
+            break;
+        }
+        st[1] += 1;
         let latch = velt_rt_latch_new();
         let w = waiter(velt_rt_latch_wait(latch), &FINISHED);
         assert_eq!(velt_rt_fut_poll(w, cx), PENDING);
         velt_rt_latch_open(latch);
         velt_rt_fut_detach(w, None);
         velt_rt_latch_free(latch);
-        FINISHED_BY_ROUND.fetch_add(FINISHED.load(Ordering::SeqCst), Ordering::SeqCst);
+        let t = velt_rt_await_tick(cx);
+        assert_ne!(
+            t, 0,
+            "the waiter's step is queued: the owner's step goes behind it"
+        );
+        st[2] = t;
     }
-    *(s as *mut i64) = 0;
+    st[0] = 0;
     READY
 }
 
 #[test]
 fn ready_losers_finish_in_the_round_that_gave_them_up() {
-    let mut st = [0i64; 2];
+    let mut st = [0u64; 3];
     unsafe { velt_rt_block_on(loop_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(FINISHED.load(Ordering::SeqCst), ROUNDS);
     // Counted, not timed: each round's loser ran before the next round started.

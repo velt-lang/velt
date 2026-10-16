@@ -27,6 +27,8 @@ pub(crate) struct Names {
     pub defs: Vec<TypeName>,
     /// Type alias names of structural types (`Ctx::alias_names`).
     pub aliases: HashMap<TyId, String>,
+    /// Every type alias's name, by `Ctx::aliases` index (deferred types, `TyKind::Op`).
+    pub alias_decls: Vec<String>,
 }
 
 impl Names {
@@ -36,6 +38,11 @@ impl Names {
             table: cx.ty.table.clone(),
             defs,
             aliases: cx.alias_names.clone(),
+            alias_decls: cx
+                .aliases
+                .iter()
+                .map(|a| a.decl.name.name.clone())
+                .collect(),
         }
     }
 
@@ -84,6 +91,10 @@ impl Names {
             }
             TyKind::Promise(x, e) => with_args("Promise", &[*x, *e]),
             TyKind::Shared(x) => with_args("shared", &[*x]),
+            TyKind::Op(crate::hir::TyOp::Alias(a), args) => {
+                let name = self.alias_decls.get(*a as usize).map_or("unknown", |n| n);
+                with_args(name, args)
+            }
             TyKind::FnPtr {
                 params,
                 ret,
@@ -156,9 +167,9 @@ fn type_name(d: &DefInfo) -> TypeName {
         DefInfo::Adt(a) if a.kind == crate::hir::AdtKind::Anon => {
             TypeName::Anon(a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect())
         }
-        DefInfo::Adt(a) => TypeName::Named(a.name.clone()),
-        DefInfo::Enum(e) => TypeName::Named(e.name.clone()),
-        DefInfo::Iface(i) => TypeName::Named(i.name.clone()),
+        DefInfo::Adt(a) => TypeName::Named(crate::namespaces::written(&a.name).into_owned()),
+        DefInfo::Enum(e) => TypeName::Named(crate::namespaces::written(&e.name).into_owned()),
+        DefInfo::Iface(i) => TypeName::Named(crate::namespaces::written(&i.name).into_owned()),
         // Function values display with their parameter names (the IDE records a
         // `TyKind::Closure(def)` type for closures and named functions used as values).
         DefInfo::Fn(f) => {

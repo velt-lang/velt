@@ -75,6 +75,7 @@ fn as_interface(item: &ast::Item) -> Option<ast::Item> {
         extends: vec![],
         fields,
         methods: vec![],
+        call_sigs: vec![],
     };
     Some(ast::Item {
         kind: ast::ItemKind::Interface(decl),
@@ -121,7 +122,10 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
                 || names(ret, name)
                 || throws.as_deref().is_some_and(|x| names(x, name))
         }
-        K::GenericFunction { ty, .. } | K::Construct(ty) => names(ty, name),
+        K::GenericFunction { ty, .. }
+        | K::Construct(ty)
+        | K::TupleRest(ty)
+        | K::TupleOptional(ty) => names(ty, name),
         K::Indexed { object, key } => names(object, name) || names(key, name),
         K::Object(fs) => fs.iter().any(|f| names(&f.ty, name)),
         K::IndexSig {
@@ -129,7 +133,20 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
         } => {
             fields.iter().any(|f| names(&f.ty, name)) || names(&key.ty, name) || names(value, name)
         }
+        K::Callable { sigs, members } => {
+            names(&crate::call_sigs::lower(sigs, members, t.span), name)
+        }
         K::KeyOf(t) => names(t, name),
+        K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
+            .iter()
+            .any(|x| names(x, name)),
+        K::Mapped(m) => {
+            names(&m.source, name)
+                || m.name.as_ref().is_some_and(|x| names(x, name))
+                || names(&m.value, name)
+        }
+        K::TemplateLiteral { types, .. } => types.iter().any(|x| names(x, name)),
+        K::Infer(_) => false,
         K::Predicate { ty, .. } => ty.as_deref().is_some_and(|x| names(x, name)),
         K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => false,
     }

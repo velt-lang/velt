@@ -1,0 +1,2 @@
+extend_ambiguous_subclass.vlt:24:28
+error: ambiguous extension method `m` on `Base<string>`

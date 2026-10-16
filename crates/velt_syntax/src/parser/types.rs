@@ -8,24 +8,22 @@ use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
 impl<'a> Parser<'a> {
-    /// Full type including unions: `A | B | null` (a leading `|` is allowed), whose members may
-    /// be intersections (`A & B | C` is `(A & B) | C`).
-    pub(super) fn parse_type(&mut self) -> PResult<TypeExpr> {
-        self.guarded(|p| {
-            let lo = p.cur_lo();
-            p.eat(Tok::Pipe);
-            let first = p.parse_intersection()?;
-            if !p.at(Tok::Pipe) {
-                return Ok(first);
-            }
-            let mut members = vec![first];
-            while p.eat(Tok::Pipe) {
-                members.push(p.parse_intersection()?);
-            }
-            Ok(TypeExpr {
-                kind: TypeExprKind::Union(members),
-                span: p.span_from(lo),
-            })
+    /// A union type (no conditional type at the top level). Unguarded: its callers are
+    /// `parse_type`, which counts the nesting depth once for both.
+    pub(super) fn parse_union_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.eat(Tok::Pipe);
+        let first = self.parse_intersection()?;
+        if !self.at(Tok::Pipe) {
+            return Ok(first);
+        }
+        let mut members = vec![first];
+        while self.eat(Tok::Pipe) {
+            members.push(self.parse_intersection()?);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Union(members),
+            span: self.span_from(lo),
         })
     }
 
@@ -76,7 +74,9 @@ impl<'a> Parser<'a> {
         lo: u32,
         mut ty: TypeExpr,
     ) -> PResult<TypeExpr> {
-        while self.at(Tok::LBracket) && matches!(self.nth(1), Tok::Str(_)) {
+        // `T["k"]`, `T[K]`, `T[number]`: an indexed access. As in TypeScript, the `[` must be on
+        // the same line as the type (`x: T` and a statement starting with `[`).
+        while self.at(Tok::LBracket) && self.nth(1) != Tok::RBracket && !self.line_break_before() {
             self.bump();
             let key = self.parse_type()?;
             self.expect(Tok::RBracket)?;
@@ -213,6 +213,10 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            Tok::Template(..) => self.parse_template_type(),
+            Tok::Ident if self.at_word("infer") && Self::is_ident_like(self.nth(1)) => {
+                self.parse_infer_type(lo)
+            }
             // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
             // resolves to the class of the method.
             Tok::Kw(Kw::This) => {
@@ -354,8 +358,12 @@ impl<'a> Parser<'a> {
     fn parse_object_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
+        if self.at_mapped_type() {
+            return self.parse_mapped_type(lo);
+        }
         let mut fields = Vec::new();
         let mut index: Option<IndexSignature> = None;
+        let mut sigs = vec![];
         while !self.at(Tok::RBrace) {
             let flo = self.cur_lo();
             // `readonly` is a modifier only when a field name follows (a field may be named
@@ -376,7 +384,8 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
-            if self.skip_call_signature() {
+            if let Some(sig) = self.parse_call_signature()? {
+                sigs.push(sig);
                 if !self.eat_type_member_end() {
                     break;
                 }
@@ -385,7 +394,7 @@ impl<'a> Parser<'a> {
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
             let mut ty = if self.at(Tok::LParen) || self.at(Tok::Lt) {
-                self.parse_method_sig_type(flo, &name, optional)?
+                self.parse_method_sig_type(flo, &name)?
             } else {
                 self.expect(Tok::Colon)?;
                 self.parse_type()?
@@ -405,13 +414,21 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RBrace)?;
+        let span = self.span_from(lo);
         let kind = match index {
             Some(ix) => ix.into_type(fields),
             None => TypeExprKind::Object(fields),
         };
+        let ty = TypeExpr { kind, span };
+        if sigs.is_empty() {
+            return Ok(ty);
+        }
         Ok(TypeExpr {
-            kind,
-            span: self.span_from(lo),
+            kind: TypeExprKind::Callable {
+                sigs,
+                members: Box::new(ty),
+            },
+            span,
         })
     }
 
@@ -464,23 +481,6 @@ impl<'a> Parser<'a> {
         *index = Some(sig);
     }
 
-    /// Tuple element types up to (not including) `]`. Element labels (`[kind: string, b64:
-    /// string]`) are documentation in TypeScript and are dropped.
-    fn parse_tuple_elems(&mut self) -> PResult<Vec<TypeExpr>> {
-        let mut out = Vec::new();
-        while !self.at(Tok::RBracket) {
-            if Self::is_name(self.peek()) && self.nth(1) == Tok::Colon {
-                self.bump();
-                self.bump();
-            }
-            out.push(self.parse_type()?);
-            if !self.eat(Tok::Comma) {
-                break;
-            }
-        }
-        Ok(out)
-    }
-
     /// A return type: a type, or a type predicate (`x is T`, `this is T`, `asserts x is T`,
     /// `asserts x`).
     pub(super) fn parse_ret_type(&mut self) -> PResult<TypeExpr> {
@@ -510,40 +510,31 @@ impl<'a> Parser<'a> {
     }
 
     /// A method signature in an object type or an optional one in an interface (`m(x: T): R`,
-    /// `m?(x: T): R`), after its name: a field of function type `(x: T) => R`. A generic one is
-    /// not supported yet (function types have no type parameters).
-    pub(super) fn parse_method_sig_type(
-        &mut self,
-        lo: u32,
-        name: &Ident,
-        optional: bool,
-    ) -> PResult<TypeExpr> {
+    /// `m?(x: T): R`), after its name: a field of function type `(x: T) => R`; a generic one
+    /// (`m<T>(x: T): T`, `m?<T>(x: T): T`) is a field of generic function type `<T>(x: T) => T`.
+    pub(super) fn parse_method_sig_type(&mut self, lo: u32, name: &Ident) -> PResult<TypeExpr> {
         let sig = self.parse_sig_rest(lo, name.clone(), false)?;
-        if let Some(g) = sig.generics.first() {
-            let msg = if optional {
-                format!(
-                    "an optional method signature can't be generic yet: `{}?` is a field of function type, and function types have no type parameters",
-                    name.name
-                )
-            } else {
-                format!(
-                    "generic method signatures are only supported in interfaces: declare `{}` in an interface",
-                    name.name
-                )
-            };
-            self.error(msg, g.name.span);
-        }
         let span = self.span_from(lo);
         let ret = sig.ret.unwrap_or(TypeExpr {
             kind: TypeExprKind::Void,
             span: Span::new(span.file, span.hi, span.hi),
         });
-        Ok(TypeExpr {
+        let ty = TypeExpr {
             kind: TypeExprKind::Function {
                 rest: sig.params.last().is_some_and(|p| p.rest),
                 params: sig.params.into_iter().map(|p| p.ty).collect(),
                 ret: Box::new(ret),
                 throws: sig.throws.map(Box::new),
+            },
+            span,
+        };
+        if sig.generics.is_empty() {
+            return Ok(ty);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::GenericFunction {
+                type_params: sig.generics,
+                ty: Box::new(ty),
             },
             span,
         })
@@ -570,6 +561,7 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         let mut rest = false;
+        let mut seen_optional = false;
         // `(this: T, …) => R`: the type of `this`, no parameter (`fn_exprs`).
         self.parse_this_param()?;
         self.this_param = None;
@@ -583,9 +575,24 @@ impl<'a> Parser<'a> {
                 self.reject_mut_modifier();
             }
             rest = self.eat(Tok::DotDotDot);
+            let name_span = self.cur_span();
+            // `x?: T`: an optional parameter, typed `T | null` as in a declaration.
+            let mut optional = false;
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();
                 self.bump();
+            } else if self.at_ident_like()
+                && self.nth(1) == Tok::Question
+                && self.nth(2) == Tok::Colon
+            {
+                self.bump();
+                let question = self.cur_span();
+                self.bump();
+                self.bump();
+                optional = true;
+                if rest {
+                    self.error("a rest parameter cannot be optional", question);
+                }
             } else if matches!(self.peek(), Tok::LBracket | Tok::LBrace) {
                 // A destructured parameter (`([a, b]: [A, B]) => R`), named only for the
                 // reader, like `a:`; without the `:` the `[`/`{` starts the type.
@@ -597,7 +604,15 @@ impl<'a> Parser<'a> {
                     }
                 });
             }
-            params.push(self.parse_type()?);
+            let ty = self.parse_type()?;
+            if seen_optional && !optional && !rest {
+                self.error(
+                    "a required parameter cannot follow an optional parameter",
+                    name_span,
+                );
+            }
+            seen_optional |= optional;
+            params.push(if optional { or_null(ty) } else { ty });
             if !self.eat(Tok::Comma) {
                 break;
             }

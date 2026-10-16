@@ -1,6 +1,5 @@
-call_signatures.vlt:3:3: error: call signatures in an interface or object type are not supported yet
-  = note: for a callable value, write a function type: `type F = (x: T) => R`
-call_signatures.vlt:7:3: error: call signatures in an interface or object type are not supported yet
-  = note: for a callable value, write a function type: `type F = (x: T) => R`
-call_signatures.vlt:11:3: error: construct signatures in an interface or object type are not supported yet
-  = note: pass a factory function instead (`create: (x: T) => C`), or the class's type itself
+call_signatures.vlt:21:15: error: mismatched types
+call_signatures.vlt:4:3: error: a function with properties (call signatures next to members) is not supported yet (#921)
+call_signatures.vlt:8:3: error: intersections of function types (overloads) are not supported
+call_signatures.vlt:12:3: error: generic function types (`<T>(x: T) => R`) are not supported yet
+call_signatures.vlt:16:3: error: construct signatures (`new (...) => T`) are not supported yet

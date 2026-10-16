@@ -8,7 +8,9 @@ record_key_errors.vlt:44:24: error: `i64` cannot be a `Record` key
 record_key_errors.vlt:45:13: error: `f64` cannot be a `Record` key
 required because `dec` uses it as a `Record` key
 record_key_errors.vlt:46:15: error: `boolean` cannot be a `Record` key
-record_key_errors.vlt:47:9: error: `u8` cannot be a `Record` key
+record_key_errors.vlt:47:13: error: `u8` cannot be a `Record` key
+record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
+required because `Box` uses it as a `Record` key
 record_key_errors.vlt:48:9: error: `i64` cannot be a `Record` key
 record_key_errors.vlt:50:5: error: `__delete` is internal to `Record`: a record has no methods of its own
 remove a key with `delete r[k]` (on a `Record<string, V>`)

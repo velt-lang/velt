@@ -1,0 +1,63 @@
+// check: no leaks
+// `===` on `any` / `unknown` inside generic code compares the values they hold, as `===` on two
+// `any`s does (#1103 review): `indexOf` / `includes` / `lastIndexOf`, a generic `eq<T>`, and
+// `Set` / `Map` keys, which compare by SameValueZero (`NaN` is itself, `-0` is `0`).
+class P {
+  constructor(public n: number) {}
+}
+function eq<T>(a: T, b: T): boolean {
+  return a === b;
+}
+const xs: any[] = [undefined, null, 1, "s", NaN, -0];
+console.log(xs.indexOf(1), xs.includes("s"), xs.includes(null), xs.indexOf(undefined));
+console.log(xs.indexOf(NaN), xs.indexOf(0), xs.lastIndexOf("s"), xs.includes(2));
+const built = "a" + "b".repeat(2);
+const ys: any[] = ["abb", 2];
+console.log(ys.indexOf(built), ys.includes(1 + 1));
+const s = new Set<any>();
+s.add(1);
+s.add(1);
+s.add("a");
+s.add("a");
+s.add(NaN);
+s.add(NaN);
+s.add(0);
+s.add(-0);
+s.add(null);
+s.add(undefined);
+s.add(null);
+s.add(true);
+s.add(true);
+console.log(s.size, s.has(1), s.has("a"), s.has(NaN), s.has(-0), s.has(null), s.has(undefined), s.has(false));
+const m = new Map<any, number>();
+m.set("k", 1);
+m.set("k", 2);
+m.set(1, 3);
+m.set(1.0, 4);
+m.set(NaN, 5);
+m.set(NaN, 6);
+console.log(m.size, m.get("k"), m.get(1), m.get(NaN), m.get("x" + "k".substring(0)) == null);
+const p1 = new P(1);
+const p2 = new P(1);
+const objs: any[] = [p1];
+console.log(objs.indexOf(p1), objs.indexOf(p2), objs.includes(p2));
+const os = new Set<any>();
+os.add(p1);
+os.add(p2);
+os.add(p1);
+console.log(os.size, os.has(p1), os.has(new P(1)));
+console.log(eq<any>("x" + 1, "x1"), eq<any>(1, 1), eq<any>(NaN, NaN), eq<any>(0, -0));
+console.log(eq<any>(p1, p1), eq<any>(p1, p2), eq<any>(null, undefined), eq<any>(null, null));
+const us: unknown[] = [1, "u"];
+console.log(us.indexOf("u"), us.includes(1), eq<unknown>("u", "u"));
+const su = new Set<unknown>();
+su.add("z");
+su.add("z");
+console.log(su.size);
+// Many keys built at run time: one entry each.
+const big = new Map<any, number>();
+for (let i = 0; i < 200; i++) {
+  big.set("k" + (i % 50), i);
+  big.set(i % 30, i);
+}
+console.log(big.size, big.get("k7"), big.get(7));

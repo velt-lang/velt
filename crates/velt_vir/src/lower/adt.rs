@@ -45,7 +45,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Aggregate value of concrete type `ty` from owned field operands (registered as a temp).
-    fn build_agg(&mut self, ty: TyId, ops: Vec<Operand>) -> Operand {
+    pub(super) fn build_agg(&mut self, ty: TyId, ops: Vec<Operand>) -> Operand {
         let Ty::Agg(a) = (match self.cx.boxed(ty) {
             true => self.cx.payload_ty(ty),
             false => self.cx.ty(ty),
@@ -194,6 +194,12 @@ impl FnLower<'_, '_> {
         let v = self.consume(e);
         if self.dead() {
             return unit();
+        }
+        if self.cx.is_any_impl(impl_index)
+            && matches!(self.cx.kind(cty), TyKind::Dyn(..))
+            && !self.cx.is_dynamic(cty)
+        {
+            return self.make_dyn_any(v, cty, ty);
         }
         let data = if self.cx.is_class(cty) || self.cx.boxed(cty) {
             v

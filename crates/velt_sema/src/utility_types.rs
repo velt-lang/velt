@@ -8,7 +8,7 @@ use velt_syntax::ast;
 
 use crate::anon::{shape_field, ShapeField};
 use crate::ctx::Ctx;
-use crate::hir::{DefId, LitValue, TyId, TyKind};
+use crate::hir::{DefId, LitValue, Nothing, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The operators, by name (a user type of the same name wins, as for every built-in).
@@ -85,6 +85,7 @@ impl Ctx<'_> {
         let t = self.resolve_type(object, env);
         let t = self.subst(t, &env.args);
         let k = self.resolve_type(key, env);
+        let k = self.subst(k, &env.args);
         if t == self.ty.error || k == self.ty.error {
             return self.ty.error;
         }
@@ -93,7 +94,28 @@ impl Ctx<'_> {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
             _ => None,
         };
-        let Some(fields) = self.object_fields(op, t, written, object.span) else {
+        // A record: a closed one (`Record<"a" | "b", V>`) has those keys as fields; an open
+        // one (`Record<string, V>`) gives `V` for any string key.
+        let fields = match self.record_type_args(t) {
+            Some((rk, rv)) if self.record_key_names(rk).is_none() => {
+                let any_key = matches!(
+                    self.ty.kind(k),
+                    TyKind::Str | TyKind::Int(_) | TyKind::Float(_)
+                ) || self.literal_strings(k).is_some_and(|ks| !ks.is_empty());
+                if any_key && *self.ty.kind(rk) == TyKind::Str {
+                    return rv;
+                }
+                let (shown, key_shown) = (self.display(t), self.display(k));
+                self.err(
+                    format!("`{shown}[{key_shown}]` is not supported yet (#934)"),
+                    key.span,
+                );
+                return self.ty.error;
+            }
+            Some(_) => self.relatable_fields(t),
+            None => self.object_fields(op, t, written, object.span),
+        };
+        let Some(fields) = fields else {
             return self.ty.error;
         };
         let Some(keys) = self.utility_keys(op, t, &fields, k, key.span) else {
@@ -102,10 +124,18 @@ impl Ctx<'_> {
         let tys: Vec<TyId> = keys
             .iter()
             .filter_map(|k| fields.iter().find(|f| &f.name == k))
-            .map(|f| match f.optional {
-                true => self.ty.option(f.ty),
-                false => f.ty,
-            })
+            // `{ [K in keyof T]: … }[keyof T]` reads the mapped type as TypeScript does too.
+            .map(
+                |f| match (f.optional, env.ts_optional || is_type_level(object)) {
+                    (false, _) => f.ty,
+                    (true, false) => self.ty.option(f.ty),
+                    // In a conditional or mapped type, as TypeScript reads it: `F | undefined`.
+                    (true, true) => match *self.ty.kind(f.ty) {
+                        TyKind::Option(p, n) => self.ty.option_of(p, n.join(Nothing::Undefined)),
+                        _ => self.ty.option_of(f.ty, Nothing::Undefined),
+                    },
+                },
+            )
             .collect();
         match tys.as_slice() {
             [one] => *one,
@@ -156,8 +186,8 @@ impl Ctx<'_> {
                         .collect(),
                 )
             }
-            TyKind::Param(_) if self.checking_unused_aliases => None,
-            TyKind::Param(_) => {
+            TyKind::Param(_) | TyKind::Op(..) if self.defer_param_form() => None,
+            TyKind::Param(_) | TyKind::Op(..) => {
                 let shown = written.unwrap_or(shown);
                 self.error(
                     Diagnostic::error(
@@ -252,6 +282,11 @@ impl Ctx<'_> {
             .iter()
             .map(|m| match self.ty.kind(*m) {
                 TyKind::Literal(LitValue::Str(s)) => Some(s.clone()),
+                // A number names the property it spells (`T[1]` is `T["1"]`).
+                TyKind::Literal(LitValue::Int(_, i)) => Some(i.to_string()),
+                TyKind::Literal(LitValue::Float(_, bits)) => {
+                    Some(crate::type_level::js_number(f64::from_bits(*bits)))
+                }
                 _ => None,
             })
             .collect();
@@ -300,4 +335,12 @@ fn in_op(op: &str) -> String {
         true => format!("in `{op}`"),
         false => format!("in {op}"),
     }
+}
+
+/// A mapped or conditional type, written in place.
+fn is_type_level(t: &ast::TypeExpr) -> bool {
+    matches!(
+        t.kind,
+        ast::TypeExprKind::Mapped(_) | ast::TypeExprKind::Conditional(_)
+    )
 }

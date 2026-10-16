@@ -58,12 +58,36 @@ pub(crate) enum Resolved {
 impl FnCx<'_, '_> {
     pub(crate) fn resolve_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         if let Some(r) = self.own_method(recv, name) {
+            // A subclass's static of the name doesn't hide an inherited `extend` instance
+            // method, as it doesn't hide an inherited instance method.
+            if matches!(
+                r,
+                Resolved::Def {
+                    is_static: true,
+                    ..
+                }
+            ) {
+                if let Some(e) = self.inherited_extension_method(recv, name) {
+                    if !matches!(
+                        e,
+                        Resolved::Def {
+                            is_static: true,
+                            ..
+                        }
+                    ) {
+                        return Some(e);
+                    }
+                }
+            }
             return Some(r);
         }
         if let Some(r) = self.iface_method(recv, name) {
             return Some(r);
         }
         if let Some(r) = self.extension_method(recv, name) {
+            return Some(r);
+        }
+        if let Some(r) = self.inherited_extension_method(recv, name) {
             return Some(r);
         }
         self.builtin_method(recv, name).map(Resolved::Builtin)
@@ -162,18 +186,35 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// An error if `r` (the resolved method `name` of `recv`) comes from an `extend` block and
-    /// several equally specific blocks give `recv` a method `name`.
-    pub(crate) fn check_extension_ambiguity(
-        &mut self,
-        r: &Resolved,
-        recv: TyId,
-        name: &str,
-        span: Span,
-    ) {
-        let Resolved::Def { def, .. } = r else {
+    /// The method `name` of an `extend` block of a base class of class `recv`, nearest base
+    /// first: a subclass has its bases' extension methods as it has their own methods
+    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/fetch/typed.vlt).
+    fn inherited_extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        let base = self.cx.base_of(recv)?;
+        self.base_extension_method(base, name)
+    }
+
+    /// The method `name` of an `extend` block of class `t` or of one of its base classes,
+    /// nearest first (`super.m()` too).
+    pub(super) fn base_extension_method(&mut self, t: TyId, name: &str) -> Option<Resolved> {
+        let mut t = t;
+        for _ in 0..64 {
+            if let Some(r) = self.extension_method(t, name) {
+                return Some(r);
+            }
+            t = self.cx.base_of(t)?;
+        }
+        None
+    }
+
+    /// An error if `r` (a resolved method `name`) comes from an `extend` block and several
+    /// equally specific blocks give the type it was found on a method `name`.
+    pub(crate) fn check_extension_ambiguity(&mut self, r: &Resolved, name: &str, span: Span) {
+        let Resolved::Def { def, recv_ty, .. } = r else {
             return;
         };
+        // The type the method was found on (a base class's, for an inherited `extend` method).
+        let recv = *recv_ty;
         let from_extension = self
             .cx
             .extensions

@@ -1,0 +1,3 @@
+promise_one_consumer.vlt:11:21
+use of moved value `p`
+a promise has one consumer in Velt

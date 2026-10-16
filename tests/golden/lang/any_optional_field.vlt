@@ -1,0 +1,29 @@
+// check: no leaks
+// A left-out optional `any` / `unknown` field holds `undefined`, as in JavaScript (#1103
+// review): object literals typed by an interface or an object type, class fields, spreads.
+interface I {
+  p: number;
+  q?: any;
+}
+class C {
+  q?: any;
+  r?: unknown;
+  s: number = 1;
+}
+const o: I = { p: 1 };
+console.log(o.q === undefined, typeof o.q, o.q === null, o.q == null, o);
+const t: { p: number; q?: any; r?: unknown } = { p: 2 };
+console.log(t.q === undefined, typeof t.q, typeof t.r, t);
+const c = new C();
+console.log(c.q === undefined, typeof c.q, c.r === undefined, c);
+const o2: I = { p: 3, q: null };
+console.log(o2.q === null, typeof o2.q, o2);
+const sp = { ...o };
+console.log(sp, sp.q === undefined);
+o.q = 5;
+console.log(o, (o.q as number) + 1);
+o.q = undefined;
+console.log(o.q === undefined, typeof o.q);
+const o3: I = { p: 4, q: "s" };
+const sp3 = { ...o3 };
+console.log(sp3, typeof sp3.q);

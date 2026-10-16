@@ -448,5 +448,11 @@ these answers:
 
 ## Not proposed
 
-- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`).
+- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`). Since #934
+  phase 1 they are evaluated where their type arguments are known (`velt_sema::type_level`).
+  Since phase 2, an alias whose body needs an argument that is still a type parameter is the
+  stuck operator `TyOp::Alias` (`TyKind::Op`), reduced by `Ctx::canon` once its arguments are
+  concrete; `type_level::instances` reduces each one an instantiation reaches, and lowering reads
+  the reductions from `hir::Program::type_ops`. This is the first `TyKind::Op`; step 4's
+  operators join the same `TyOp`.
 - Re-checking generic bodies per instantiation (C++ templates).

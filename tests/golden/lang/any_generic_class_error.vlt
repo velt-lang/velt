@@ -1,0 +1,14 @@
+// A `Bx<string>` in an `any` is not a `Bx<number>`: a `TypeError`, not a string read as a number
+// (#1103 review). Node would keep the wrong value.
+class Bx<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+function main(): void {
+  const ab: any = new Bx<string>("s");
+  console.log("before");
+  const u: Bx<number> = ab;
+  console.log(u.v + 1);
+}

@@ -46,6 +46,8 @@ enum Test {
     Object,
     /// A type parameter: the test of the type it is instantiated with (`Intrinsic::Truthy`).
     Generic,
+    /// `any` / `unknown`: the test of the type the value holds (`Intrinsic::AnyTruthy`).
+    Dynamic,
     /// `void`, an enum with payloads: not a condition.
     Rejected,
 }
@@ -84,6 +86,7 @@ impl FnCx<'_, '_> {
             Test::Const(c) => self.then_const(h, c),
             Test::Object => self.then_const(h, true),
             Test::Generic => self.generic_truthy(h),
+            Test::Dynamic => self.intrinsic(Intrinsic::AnyTruthy, vec![h], b, span),
             Test::Rejected => {
                 self.report_condition(&h);
                 self.error_expr(span)
@@ -92,6 +95,9 @@ impl FnCx<'_, '_> {
     }
 
     fn test_of(&mut self, t: TyId) -> Test {
+        if self.cx.dynamic(t).is_some() {
+            return Test::Dynamic;
+        }
         if t == self.cx.ty.bool_ || self.cx.ty.is_bottom(t) {
             return Test::Bool;
         }
@@ -117,7 +123,9 @@ impl FnCx<'_, '_> {
                     None => Test::Object,
                 }
             }
-            TyKind::Param(_) => Test::Generic,
+            // Chosen per instance by lowering, like a type parameter's (a deferred type may be
+            // a string or a number there).
+            TyKind::Param(_) | TyKind::Op(..) => Test::Generic,
             TyKind::Unit | TyKind::Result(..) | TyKind::Simd(_) => Test::Rejected,
             _ => Test::Object,
         }

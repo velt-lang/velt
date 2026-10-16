@@ -130,6 +130,56 @@ pub fn ty(t: &TypeExpr) -> String {
             format!("typeof {}", path.join("."))
         }
         TypeExprKind::KeyOf(t) => format!("keyof {}", ty(t)),
+        TypeExprKind::Conditional(c) => format!(
+            "({} extends {} ? {} : {})",
+            ty(&c.check),
+            ty(&c.extends),
+            ty(&c.then),
+            ty(&c.else_)
+        ),
+        TypeExprKind::Infer(n) => format!("infer {}", n.name),
+        TypeExprKind::Mapped(m) => {
+            let modifier = |m: MappedModifier, word: &str| match m {
+                MappedModifier::Keep => String::new(),
+                MappedModifier::Add => format!("+{word}"),
+                MappedModifier::Remove => format!("-{word}"),
+            };
+            let name = m
+                .name
+                .as_ref()
+                .map(|n| format!(" as {}", ty(n)))
+                .unwrap_or_default();
+            format!(
+                "{{{}[{} in {}{name}]{}: {}}}",
+                modifier(m.readonly, "readonly "),
+                m.param.name,
+                ty(&m.source),
+                modifier(m.optional, "?"),
+                ty(&m.value)
+            )
+        }
+        TypeExprKind::TemplateLiteral { quasis, types } => {
+            let mut out = String::from("`");
+            for (i, q) in quasis.iter().enumerate() {
+                out.push_str(q);
+                if let Some(t) = types.get(i) {
+                    out.push_str(&format!("${{{}}}", ty(t)));
+                }
+            }
+            out + "`"
+        }
+        TypeExprKind::Callable { sigs, members } => {
+            let sigs: Vec<String> = sigs
+                .iter()
+                .map(|s| {
+                    let params: Vec<String> = s.sig.params.iter().map(|p| ty(&p.ty)).collect();
+                    let ret = s.sig.ret.as_ref().map(ty).unwrap_or_else(|| "void".into());
+                    let new = if s.construct { "new " } else { "" };
+                    format!("{new}({}): {ret}", params.join(", "))
+                })
+                .collect();
+            format!("{{{} & {}}}", sigs.join("; "), ty(members))
+        }
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Undefined => "undefined".into(),
         TypeExprKind::Void => "void".into(),
@@ -138,6 +188,8 @@ pub fn ty(t: &TypeExpr) -> String {
             format!("<{}>{}", names.join(", "), ty(t))
         }
         TypeExprKind::Construct(t) => format!("new {}", ty(t)),
+        TypeExprKind::TupleRest(t) => format!("...{}", ty(t)),
+        TypeExprKind::TupleOptional(t) => format!("{}?", ty(t)),
         TypeExprKind::Predicate {
             param,
             ty: t,

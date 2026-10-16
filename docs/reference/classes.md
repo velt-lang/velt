@@ -149,7 +149,13 @@ hidden classes and no runtime shape checks.
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
   body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
   statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
-  nearest first. A static method of a generic class is called without type arguments
+  nearest first. Instance methods of an `extend A` block apply to subclasses too: `new B().m()`
+  finds `m` in `B` and its bases' bodies, then in `B`'s `extend` blocks, then in each base
+  class's, nearest first, and `super.m()` in `B` finds `A`'s. An `extend` method is not
+  virtual, so a subclass cannot redefine one (in its body or in an `extend` block of its own):
+  ``` `m` is an `extend` method of `A` and cannot be redefined in a subclass yet ``` (a call
+  through an `A` would run the `extend` method). This covers std's too: `bytes()` and
+  `arrayBuffer()` of `Response` and `Request` are `extend` methods (#1133 lifts the restriction). A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
   the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
   also a bounded one (`class Box<T extends Named>`).
@@ -572,8 +578,10 @@ console.log(p.x + p.y); // 3
 - An interface merges only with interfaces, not with a class, function or enum of its name.
 - `var NAME: T;` in `declare global` declares a build-time constant (see
   [`define`](../tooling/manifest.md#define)).
+- A namespace of types in `declare global` is declared in its module, as a `declare namespace`
+  ([Namespaces](modules.md#namespaces)), like a `declare global` interface.
 - Not supported yet: other declarations in `declare global` and `declare module` blocks
-  (functions, namespaces, `var` in `declare module`), declaring a new interface in another module with
+  (functions, namespaces in `declare module`, `var` in `declare module`), declaring a new interface in another module with
   `declare module`, a `declare global` interface visible in other modules, and a shorthand
   `declare module "spec";`.
 

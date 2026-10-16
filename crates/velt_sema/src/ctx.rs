@@ -8,7 +8,7 @@ use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
 use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
-use crate::types::{int_name, Types};
+use crate::types::{display_key, int_name, Types};
 use crate::SourceModule;
 
 /// A name visible at module level.
@@ -47,6 +47,7 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
@@ -79,6 +80,8 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// The state of type-level evaluation (`crate::type_level`).
+    pub(crate) type_level: crate::type_level::State,
     /// The program (not std) writes `undefined`, as a type or a value. The checks that only
     /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
     /// skipped otherwise; the type table alone cannot tell, since the prelude declares
@@ -196,6 +199,8 @@ pub(crate) struct Ctx<'m> {
     /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
     /// second check of a program the borrowing version rejects (`crate::check_with`).
     pub held_borrows: bool,
+    /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
+    pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
@@ -247,6 +252,7 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
@@ -259,6 +265,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            type_level: Default::default(),
             writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],
@@ -306,6 +313,7 @@ impl<'m> Ctx<'m> {
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
+            ns_private: vec![],
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
@@ -538,23 +546,6 @@ impl<'m> Ctx<'m> {
         }
     }
 
-    /// The item a written type path names: `T`, or `ns.T` through namespace import `ns`.
-    pub fn lookup_path_at(
-        &self,
-        module: usize,
-        path: &[velt_syntax::ast::Ident],
-        at: Span,
-    ) -> Option<Item> {
-        match path {
-            [name] => self.lookup_item_at(module, &name.name, at),
-            [ns, name] if self.scopes[module].namespaces.contains_key(&ns.name) => {
-                let key = format!("{}.{}", ns.name, name.name);
-                self.scopes[module].items.get(&key).copied()
-            }
-            _ => None,
-        }
-    }
-
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves
     /// of it are soft (`crate::ownership::strings`).
     pub fn is_string_value(&self, t: TyId) -> bool {
@@ -664,14 +655,15 @@ impl<'m> Ctx<'m> {
                 .join(", ")
         };
         let with_args = |s: &Self, name: &str, args: &[TyId]| {
+            let name = crate::namespaces::written(name);
             if args.is_empty() {
-                name.to_string()
+                name.into_owned()
             } else {
                 format!("{name}<{}>", list(s, args))
             }
         };
         if let Some(n) = self.alias_names.get(&t) {
-            return n.clone();
+            return crate::namespaces::written(n).into_owned();
         }
         match self.ty.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),
@@ -751,6 +743,7 @@ impl<'m> Ctx<'m> {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),
             },
+            TyKind::Op(o, args) => self.display_op(*o, args, names),
             TyKind::Closure(d) => match self.try_fn(*d) {
                 Some(f) => {
                     let ps: Vec<String> = f
@@ -776,20 +769,5 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
-    }
-}
-
-/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
-/// identifier, otherwise quoted (`{ "content-type": string }`).
-pub(crate) fn display_key(name: &str) -> String {
-    let mut chars = name.chars();
-    let ident = chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
-    if ident {
-        name.to_string()
-    } else {
-        format!("{name:?}")
     }
 }

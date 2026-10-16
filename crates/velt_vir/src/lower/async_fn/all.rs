@@ -102,6 +102,9 @@ impl FnLower<'_, '_> {
         let ready = self.rvalue_temp(Ty::U32, Rvalue::Cast(all_done, Ty::U32));
         let (cs, ds) = (children.clone(), done.clone());
         self.after_poll(k, ready, move |lw| lw.cancel_children(&cs, &ds, elem, slot));
+        // Settled: the code after the `await` takes its step (suspend.rs `await_step`).
+        let (cs, ds) = (children.clone(), done.clone());
+        self.await_step(move |lw| lw.cancel_children(&cs, &ds, elem, slot));
         self.collect_results(&children, arr_ty, elem, err)
     }
 
@@ -134,6 +137,8 @@ impl FnLower<'_, '_> {
                 self.release_sibling(other, od, elem, rty);
             }
         }
+        // Rejected: the handler takes its step after the losers' (suspend.rs `await_step`).
+        self.await_step(|lw| lw.drop_glue(Place::local(own), rty));
         let ev = self.cx.view(rty, 1);
         let e = Operand::Copy(proj(
             &proj(&Place::local(own), Proj::Cast(ev)),

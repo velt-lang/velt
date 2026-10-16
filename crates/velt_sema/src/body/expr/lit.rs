@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
         match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => self.dynamic_nothing(Nothing::Null, t, span),
             Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
                 self.nothing_mismatch("null", t, span)
             }
@@ -166,6 +167,9 @@ impl FnCx<'_, '_> {
     fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
         self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
         match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => {
+                self.dynamic_nothing(Nothing::Undefined, t, span)
+            }
             Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
             Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
@@ -343,6 +347,10 @@ impl FnCx<'_, '_> {
 
     fn printable_depth(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 16 {
+            return true;
+        }
+        if self.cx.dynamic(t).is_some() {
+            // Printed by the glue of the type it holds (hir_encodings.md "any and unknown").
             return true;
         }
         let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {

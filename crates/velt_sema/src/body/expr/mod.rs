@@ -6,10 +6,12 @@ mod accessor_rmw;
 mod args;
 mod array_ctor;
 mod assign;
+mod assign_paths;
 mod attempt;
 mod await_union;
 mod builtins;
 mod call;
+mod call_apply;
 mod callback;
 mod callback_sig;
 mod chain;
@@ -22,6 +24,7 @@ mod discriminated;
 mod dispose_call;
 mod division;
 pub(crate) mod downcast;
+mod dynamic;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -31,6 +34,7 @@ mod hoist;
 mod iface_call;
 mod in_keys;
 mod in_place_chain;
+mod indexers;
 mod int32;
 mod intrinsics;
 mod js_list;
@@ -41,6 +45,7 @@ mod literal_keys;
 mod literal_types;
 mod matching;
 pub(crate) mod member;
+mod member_keys;
 mod method;
 mod method_call;
 mod method_value;
@@ -57,6 +62,7 @@ mod overload_call;
 mod process;
 mod promise_new;
 mod promise_reads;
+mod promise_then;
 mod push_items;
 mod record;
 mod record_call;
@@ -86,6 +92,7 @@ use velt_syntax::ast;
 use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
+pub(crate) use call_apply::is_member_read;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
@@ -123,6 +130,9 @@ impl FnCx<'_, '_> {
         let h = self.with_lets(temps, h);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
+        // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an
+        // optional field) is an `any` in user code, as in TypeScript.
+        let h = self.collapse_dynamic_option(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);

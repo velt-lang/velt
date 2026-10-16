@@ -5,12 +5,15 @@
 //! sits inside (each comment stays with its field, as in a class body).
 
 use velt_common::Span;
-use velt_syntax::ast::{Ident, IndexKey, Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
+use velt_syntax::ast::{
+    CallSig, Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr,
+    TypeExprKind,
+};
 
 use super::decls::braced;
 use super::Printer;
 use crate::doc::{cat, group, if_break, indent, join, line, nil, text, Doc};
-use crate::source::{chars_after, fn_type_param_name, literal_tokens, slice};
+use crate::source::{chars_after, fn_type_param_name, literal_tokens, optional_label, slice};
 
 impl<'a> Printer<'a> {
     /// A type in a position that accepts unions.
@@ -61,6 +64,14 @@ impl<'a> Printer<'a> {
                 cat![self.generic_params(type_params), self.ty(ty)]
             }
             TypeExprKind::Construct(ty) => cat!["new ", self.ty(ty)],
+            TypeExprKind::TupleRest(ty) => match fn_type_param_name(self.src, ty.span.lo) {
+                Some(label) => cat!["...", label.to_string(), ": ", self.ty(ty)],
+                None => cat!["...", self.ty_operand(ty)],
+            },
+            TypeExprKind::TupleOptional(ty) => match optional_label(self.src, ty.span.lo) {
+                Some(label) => cat![label.to_string(), "?: ", self.ty(ty)],
+                None => cat![self.ty_operand(ty), "?"],
+            },
             TypeExprKind::Union(members) => {
                 let docs = members.iter().map(|m| self.ty_operand(m)).collect();
                 join(&text(" | "), docs)
@@ -86,11 +97,57 @@ impl<'a> Printer<'a> {
                 let members = index_sig_members(fields, key, value, *readonly);
                 self.index_sig_type(&members, t.span)
             }
+            TypeExprKind::Callable { sigs, members } => {
+                let members = callable_members(sigs, members);
+                self.index_sig_type(&members, t.span)
+            }
             TypeExprKind::Query(path) => {
                 let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
                 text(format!("typeof {}", path.join(".")))
             }
             TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
+            TypeExprKind::Conditional(c) => {
+                let check = self.ty_cond_operand(&c.check);
+                let extends = self.ty_cond_operand(&c.extends);
+                let then = self.ty(&c.then);
+                let else_ = self.ty(&c.else_);
+                cat![check, " extends ", extends, " ? ", then, " : ", else_]
+            }
+            TypeExprKind::Infer(name) => cat!["infer ", name.name.clone()],
+            TypeExprKind::Mapped(m) => {
+                let sign = |m: MappedModifier, word: &'static str| match m {
+                    MappedModifier::Keep => "",
+                    MappedModifier::Add => word,
+                    MappedModifier::Remove => match word {
+                        "readonly " => "-readonly ",
+                        _ => "-?",
+                    },
+                };
+                let readonly = sign(m.readonly, "readonly ");
+                let optional = sign(m.optional, "?");
+                let name = match &m.name {
+                    Some(n) => cat![" as ", self.ty(n)],
+                    None => nil(),
+                };
+                let source = self.ty(&m.source);
+                let value = self.ty(&m.value);
+                cat![
+                    "{ ",
+                    readonly,
+                    "[",
+                    m.param.name.clone(),
+                    " in ",
+                    source,
+                    name,
+                    "]",
+                    optional,
+                    ": ",
+                    value,
+                    " }"
+                ]
+            }
+            // Kept as written: the quasis' escapes are in the source only.
+            TypeExprKind::TemplateLiteral { .. } => text(slice(self.src, t.span).to_string()),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
@@ -162,6 +219,7 @@ impl<'a> Printer<'a> {
     fn index_sig_member(&mut self, m: &IndexSigMember) -> Doc {
         match m {
             IndexSigMember::Field(f) => self.object_type_field(f),
+            IndexSigMember::Sig(s) => self.call_sig(s),
             IndexSigMember::Index {
                 key,
                 value,
@@ -179,6 +237,12 @@ impl<'a> Printer<'a> {
                 ]
             }
         }
+    }
+
+    /// A call signature `<T>(x: T): R` or a construct signature `new (x: T): C`.
+    pub(super) fn call_sig(&mut self, s: &CallSig) -> Doc {
+        let new = if s.construct { "new " } else { "" };
+        cat![new, self.fn_sig(&s.sig, "", s.span.hi)]
     }
 
     /// `name: T` / `name?: T` / `readonly name: T`
@@ -225,10 +289,24 @@ impl<'a> Printer<'a> {
         join(&text(" | "), docs)
     }
 
+    /// The check or `extends` type of a conditional type: a conditional or function type there
+    /// needs parentheses.
+    fn ty_cond_operand(&mut self, t: &TypeExpr) -> Doc {
+        match t.kind {
+            TypeExprKind::Conditional(_)
+            | TypeExprKind::Function { .. }
+            | TypeExprKind::GenericFunction { .. }
+            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
+            _ => self.ty(t),
+        }
+    }
+
     /// A type where a bare union would not parse (`extends`, `implements`, bounds, targets).
     pub(super) fn ty_no_union(&mut self, t: &TypeExpr) -> Doc {
         match t.kind {
-            TypeExprKind::Union(_) | TypeExprKind::Intersection(_) => cat!["(", self.ty(t), ")"],
+            TypeExprKind::Union(_)
+            | TypeExprKind::Intersection(_)
+            | TypeExprKind::Conditional(_) => cat!["(", self.ty(t), ")"],
             _ => self.ty(t),
         }
     }
@@ -254,7 +332,11 @@ impl<'a> Printer<'a> {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
             | TypeExprKind::KeyOf(_)
-            | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
+            | TypeExprKind::Conditional(_)
+            | TypeExprKind::Infer(_)
+            | TypeExprKind::Function { .. }
+            | TypeExprKind::GenericFunction { .. }
+            | TypeExprKind::Construct(_) => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)
                 if is_readonly_op(slice(self.src, t.span)) =>
@@ -276,18 +358,28 @@ impl<'a> Printer<'a> {
     ) -> Option<Doc> {
         let after = chars_after(self.src, name.span.hi);
         let is_sig = match after {
-            (Some('?'), Some('(')) => optional,
-            (Some('('), _) => !optional,
+            (Some('?'), Some('(' | '<')) => optional,
+            (Some('(' | '<'), _) => !optional,
             _ => false,
         };
         if !is_sig {
             return None;
         }
         let f = match &ty.kind {
-            TypeExprKind::Union(members) if optional => members
-                .iter()
-                .find(|m| matches!(m.kind, TypeExprKind::Function { .. }))?,
+            TypeExprKind::Union(members) if optional => members.iter().find(|m| {
+                matches!(
+                    m.kind,
+                    TypeExprKind::Function { .. } | TypeExprKind::GenericFunction { .. }
+                )
+            })?,
             _ => ty,
+        };
+        // `m<T>(x: T): T`: a field of generic function type.
+        let (generics, f) = match &f.kind {
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                (self.generic_params(type_params), &**ty)
+            }
+            _ => (nil(), f),
         };
         let TypeExprKind::Function {
             params,
@@ -309,7 +401,16 @@ impl<'a> Printer<'a> {
         } else {
             cat![": ", self.ty(ret)]
         };
-        Some(cat![key, q, "(", join(&text(", "), docs), ")", ret, throws])
+        Some(cat![
+            key,
+            q,
+            generics,
+            "(",
+            join(&text(", "), docs),
+            ")",
+            ret,
+            throws
+        ])
     }
 
     /// A function type's parameters, the last one a rest parameter (`...xs: T[]`) when `rest`.
@@ -330,6 +431,9 @@ impl<'a> Printer<'a> {
     }
 
     fn fn_type_param(&mut self, t: &TypeExpr) -> Doc {
+        if let Some(name) = optional_label(self.src, t.span.lo) {
+            return cat![name.to_string(), "?: ", self.ty_optional_field(t)];
+        }
         let ty = self.ty(t);
         match fn_type_param_name(self.src, t.span.lo) {
             Some(name) => cat![name.to_string(), ": ", ty],
@@ -365,9 +469,10 @@ fn is_readonly_op(src: &str) -> bool {
         .is_some_and(|r| r.starts_with(char::is_whitespace))
 }
 
-/// A member of an object type with an index signature, in source order.
+/// A member of an object type with an index signature or call signatures, in source order.
 pub(super) enum IndexSigMember<'a> {
     Field(&'a ObjectTypeField),
+    Sig(&'a CallSig),
     Index {
         key: &'a IndexKey,
         value: &'a TypeExpr,
@@ -379,6 +484,7 @@ impl IndexSigMember<'_> {
     fn range(&self) -> (u32, u32) {
         match self {
             IndexSigMember::Field(f) => (f.span.lo, f.span.hi),
+            IndexSigMember::Sig(s) => (s.span.lo, s.span.hi),
             IndexSigMember::Index { key, value, .. } => (key.name.span.lo, value.span.hi),
         }
     }
@@ -408,5 +514,26 @@ pub(super) fn index_sig_members<'a>(
             .filter(|f| f.span.lo > at)
             .map(IndexSigMember::Field),
     );
+    out
+}
+
+/// The members of an object type with call signatures `sigs` and other members `members` (an
+/// object type or one with an index signature), in source order.
+pub(super) fn callable_members<'a>(
+    sigs: &'a [CallSig],
+    members: &'a TypeExpr,
+) -> Vec<IndexSigMember<'a>> {
+    let mut out = match &members.kind {
+        TypeExprKind::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+        } => index_sig_members(fields, key, value, *readonly),
+        TypeExprKind::Object(fields) => fields.iter().map(IndexSigMember::Field).collect(),
+        _ => vec![],
+    };
+    out.extend(sigs.iter().map(IndexSigMember::Sig));
+    out.sort_by_key(|m| m.range().0);
     out
 }

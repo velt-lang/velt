@@ -189,6 +189,29 @@ fn declare_global_and_module_blocks() {
 }
 
 #[test]
+fn namespaces() {
+    round_trips(
+        "export namespace Define {
+  // a prop
+  export type Prop<T> = { value: T };
+
+  interface Hidden {
+    a: number;
+  }
+}
+",
+    );
+    round_trips(
+        "declare namespace A {
+  namespace B {
+    type X = number;
+  }
+}
+",
+    );
+}
+
+#[test]
 fn bracketed_and_numeric_keys_keep_their_spelling() {
     // `[7]: 5` once printed as `7: 5`: brackets stay, and numeric names print as written.
     round_trips("const r = { a: 1, [7]: 5, [\"lit\"]: 3, 8: 4, 0x10: 6 };\n");
@@ -202,4 +225,146 @@ fn members_without_semicolons_parse() {
         "interface I {\n  a: number\n  m(): string\n}\ntype O = {\n  b: string\n  c?: number\n};\n";
     let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
     round_trips(&got);
+}
+
+#[test]
+fn call_and_construct_signatures_keep_their_form() {
+    // Interfaces stay interfaces (they merge, and `extends` / `implements` name them), members
+    // keep their order, and parameters their names, `?` and initializers.
+    round_trips(
+        "interface F {
+  // c
+  (x: number, y: string): string;
+}
+",
+    );
+    round_trips(
+        "interface H {
+  (x: number): string;
+  stop(): void;
+  n: number;
+}
+",
+    );
+    round_trips("interface E extends F {\n  (z: boolean): void;\n}\n");
+    round_trips("interface P {\n  new (x: number): P;\n  <T>(y: T): T;\n}\n");
+    round_trips("interface I {\n  (x: number): string;\n  [key: string]: number;\n}\n");
+    round_trips("type Q = { (x?: number): void };\n");
+    round_trips("type D = { (x = 1): void };\n");
+    round_trips("type G = { <T>(x: T): T; z: string };\n");
+    round_trips("type U = { new (x: number): Foo } | null;\n");
+    round_trips("type S = { (): void; (x: number): number };\n");
+    round_trips("let f: { (x: number): string } = g;\n");
+}
+
+#[test]
+fn construct_and_generic_function_types_in_unions_keep_their_parentheses() {
+    // `new (x: number) => Foo | null` would return `Foo | null`.
+    round_trips("type U = (new (x: number) => Foo) | null;\n");
+    round_trips("type A = (new () => Foo)[];\n");
+    round_trips("type B = (<T>(x: T) => T) | null;\n");
+    round_trips("type C = (new () => Foo) & { n: number };\n");
+}
+
+#[test]
+fn call_signatures_are_formatted() {
+    let got = format_source(
+        "interface F { (x:number):string; n:number }\ntype T = {(x:number):string}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "interface F {\n  (x: number): string;\n  n: number;\n}\n\ntype T = { (x: number): string };\n"
+    );
+    if let Err(msg) = common::check(&got) {
+        panic!("{msg}");
+    }
+}
+
+#[test]
+fn a_type_alias_may_end_at_the_closing_brace() {
+    let got = format_source(
+        "namespace N { type U = string }\ndeclare global {\n  namespace G { type V = number }\n}\n",
+    )
+    .unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(
+        got,
+        "namespace N {\n  type U = string;\n}\n\ndeclare global {\n  namespace G {\n    type V = number;\n  }\n}\n"
+    );
+}
+
+#[test]
+fn var_declarations_keep_var() {
+    round_trips("function f(n: number) {\n  var hi = n / 16;\n  var lo = n % 16;\n  let s = 1;\n  return hi + lo + s;\n}\n");
+    let got = format_source(
+        "function f() {\n  var a = 1, b = 2;\n  let c = 3, d = 4;\n  return a + b + c + d;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(got, "function f() {\n  var a = 1;\n  var b = 2;\n  let c = 3;\n  let d = 4;\n  return a + b + c + d;\n}\n");
+}
+
+#[test]
+fn async_generic_object_literal_methods() {
+    round_trips(
+        "const o = {
+  async go<T>(x: T): Promise<T> {
+    return x;
+  },
+};
+console.log(o);
+",
+    );
+}
+
+#[test]
+fn let_after_var_stays_let() {
+    // A `for (let …)` after a `var` statement (its declaration starts at the name).
+    round_trips(
+        "function f(): void {\n  var x = 1;\n  for (let i = 0; i < 1; i++) {}\n  for (let i = 0, j = 1; i < j; i++) {}\n  console.log(x);\n}\n",
+    );
+    let got =
+        format_source("function f(): void {\n  var x = 1;\n  let y = 2, z = 3;\n}\n").unwrap();
+    assert_eq!(
+        got,
+        "function f(): void {\n  var x = 1;\n  let y = 2;\n  let z = 3;\n}\n"
+    );
+}
+
+#[test]
+fn var_keeps_var_across_nested_declarations() {
+    // The first initializer contains declarations; the next declarator is still a `var`.
+    let got = format_source(
+        "function f() {\n  var a = () => { let x = 1; return x; }, b = 2;\n  var c = { m() { const q = 1; return q; } }, d = 3;\n  let e = () => { var y = 1; return y; }, g = 4;\n  return b + d + g;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        got,
+        "function f() {\n  var a = () => {\n    let x = 1;\n    return x;\n  };\n  var b = 2;\n  var c = {\n    m() {\n      const q = 1;\n      return q;\n    },\n  };\n  var d = 3;\n  let e = () => {\n    var y = 1;\n    return y;\n  };\n  let g = 4;\n  return b + d + g;\n}\n"
+    );
+    round_trips(&got);
+}
+
+#[test]
+fn optional_parameters_in_function_types() {
+    round_trips("type F = (app: App, options?: Options) => void;\n");
+    round_trips("type F = (x?: string | null) => string;\n");
+}
+
+#[test]
+fn optional_and_rest_tuple_elements() {
+    round_trips("type A = [x?: number, ...rest: string[]];\n");
+    round_trips("type B = [string, number?];\n");
+    round_trips("type C = readonly [Ref, ...A];\n");
+}
+
+#[test]
+fn generic_method_signatures_in_object_types() {
+    round_trips("type S = { run<T>(fn: () => T): T | undefined; stop(): void };\n");
+    round_trips("interface I {\n  wrap?<A>(a: A): A;\n  name: string;\n}\n");
+}
+
+#[test]
+fn catch_binding_annotations() {
+    round_trips("try {\n  f();\n} catch (e: unknown) {\n  g(e);\n}\n");
+    round_trips("try {\n  f();\n} catch (err: any) {\n  g(err);\n}\n");
 }

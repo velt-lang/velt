@@ -1,0 +1,162 @@
+// ArrayBuffer, DataView, the RangeErrors of typed arrays, and bytes between TextEncoder,
+// TextDecoder and typed arrays, as in Node.
+function main() {
+  console.log(new ArrayBuffer(4), new ArrayBuffer(0));
+  console.log(new ArrayBuffer(60));
+  console.log(new ArrayBuffer(120));
+  console.log({ a: new ArrayBuffer(3) });
+  const ab = new ArrayBuffer(8);
+  const all = new Uint8Array(ab);
+  all.set([1, 2, 3, 4, 5, 6, 7, 8]);
+  console.log(ab.byteLength, ab.slice(2, 4), ab.slice(-2), new Uint8Array(ab.slice(1)).length);
+  console.log(
+    ArrayBuffer.isView(all),
+    ArrayBuffer.isView(new DataView(ab)),
+    ArrayBuffer.isView(ab),
+  );
+  console.log(JSON.stringify(ab), String(ab), JSON.stringify({ v: new DataView(ab) }));
+  const dv = new DataView(ab);
+  dv.setUint16(0, 0x1234);
+  dv.setUint16(2, 0x1234, true);
+  dv.setFloat32(4, 1.5, true);
+  console.log(all, dv.getUint16(0), dv.getUint16(0, true), dv.getInt8(0), dv.getFloat32(4, true));
+  console.log(
+    dv.getInt32(0),
+    dv.getUint32(0, true),
+    dv.byteLength,
+    dv.byteOffset,
+    dv.buffer === ab,
+  );
+  dv.setInt8(0, 300);
+  dv.setUint32(0, -1);
+  dv.setFloat64(0, Math.PI);
+  console.log(all, dv.getFloat64(0), dv.getFloat64(0, true), dv.getInt16(6), dv.getUint8(7));
+  console.log(new DataView(new ArrayBuffer(40), 1));
+  console.log(new DataView(ab, 2, 4).byteLength, new DataView(ab, 8).byteLength);
+  try {
+    dv.getUint8(-1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    dv.getUint8(8);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    dv.getFloat64(1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    dv.setUint8(8, 1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new DataView(ab, 9);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new DataView(ab, 2, 7);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new DataView(ab, -1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint16Array(new ArrayBuffer(3));
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint16Array(new ArrayBuffer(4), 1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(new ArrayBuffer(4), 5);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(new ArrayBuffer(4), 1, 4);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(-1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(2).set([1, 2, 3]);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(2).set([1], 2);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new Uint8Array(2).with(2, 0);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  try {
+    new ArrayBuffer(-1);
+  } catch (e) {
+    console.log(`${e.name}: ${e.message}`);
+  }
+  // Views of one buffer see each other's writes; a Float64Array's bytes are little-endian.
+  const f = new Float64Array(2);
+  const u = new Uint8Array(f.buffer);
+  const w = new Uint16Array(f.buffer, 8, 2);
+  f[0] = 1;
+  w[0] = 0xffff;
+  console.log(u, f[1], new Uint32Array(f.buffer, 4, 1)[0]);
+  // TextEncoder and TextDecoder speak Uint8Array.
+  const enc = new TextEncoder();
+  const bytes = enc.encode("héllo, wörld");
+  console.log(bytes, bytes.byteLength, bytes instanceof Uint8Array);
+  const dec = new TextDecoder();
+  console.log(
+    dec.decode(bytes),
+    dec.decode(bytes.subarray(0, 3)),
+    dec.decode(bytes.buffer),
+    dec.decode(new DataView(bytes.buffer, 7)),
+  );
+  const dest = new Uint8Array(5);
+  const r = enc.encodeInto("aé😀", dest);
+  console.log(r.read, r.written, dest);
+  const r2 = enc.encodeInto("😀", new Uint8Array(3));
+  console.log(r2.read, r2.written);
+  // Chunks merged into one array, as sigx's request reader does.
+  const chunks = [enc.encode("ab"), enc.encode("c"), enc.encode("def")];
+  let total = 0;
+  for (const c of chunks) {
+    total += c.byteLength;
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  console.log(dec.decode(merged), merged.length);
+  // Nested, a multi-line buffer or view is indented with its container, as in Node.
+  console.log({ big: new ArrayBuffer(60) });
+  console.log({ v: new DataView(new ArrayBuffer(40), 1) });
+  console.log([new DataView(new ArrayBuffer(2))]);
+  // Past Node's depth limit they print as `[ArrayBuffer]`, `[DataView]`, `[Uint8Array]` (a
+  // `Date` keeps its text).
+  const dv2 = new DataView(new ArrayBuffer(4), 1, 2);
+  console.log({ a: { b: { dv2 } } });
+  console.log({ a: { b: { c: new ArrayBuffer(2), d: new Uint8Array(2), e: new Date(0) } } });
+  console.log({ a: { b: { c: { u: new Uint8Array(2) } } } }, [[new ArrayBuffer(1)]]);
+}

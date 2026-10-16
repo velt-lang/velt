@@ -1,0 +1,9 @@
+// A namespace member declared without `export` is visible only inside the namespace (TS2694).
+namespace N {
+  type Hidden = number;
+  export type Shown = Hidden;
+}
+const shown: N.Shown = 1;
+const hidden: N.Hidden = 2;
+const missing: N.Missing = 3;
+console.log(shown, hidden, missing);

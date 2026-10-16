@@ -91,20 +91,70 @@ fn disjoint_suspension_locals_share_state_bytes() {
     let p = sequential_program();
     let v = lower_ok(&p);
     let child = state_size(&v, "delayed");
-    // result + tag, `a`, and ONE child state: the two awaited children never coexist.
+    // result + tag, `a`, ONE child state (the two awaited children never coexist), and the
+    // ticket of an `await` step (rt_abi_async.md §1).
     let seq = state_size(&v, "seq");
     assert!(
-        seq <= 16 + 8 + child,
+        seq <= 16 + 8 + child + 8,
         "seq state {seq} bytes, child {child}\n{v}"
     );
-    // tag + one string + one sleep future: `x` and `y` live in disjoint blocks.
-    assert!(state_size(&v, "phases") <= 8 + 24 + 8, "{v}");
+    // tag + one string + one sleep future + an `await` step's ticket: `x` and `y` live in
+    // disjoint blocks.
+    assert!(state_size(&v, "phases") <= 8 + 24 + 8 + 8, "{v}");
     let out = run(&p);
     assert_eq!(out.stdout, "42\nab\ncd\n");
     for polls in [0, 1, 2, 3] {
         let r = poll_then_drop(&v, "_V6phases", &[], polls);
         assert_eq!(r.live_allocs, 0, "leak after {polls} polls");
     }
+}
+
+/// `async function seq() { return (await delayed(1, 1)) + (await delayed(2, 41)); }` and
+/// `async function main() { console.log(await seq()); }`: only awaits, no started promise.
+fn await_only_program() -> Program {
+    let mut pb = PB::new();
+    let t = pb.t;
+    let delayed = delayed(&mut pb);
+    let (pi, pv) = (pb.promise(t.i64), pb.promise(t.unit));
+    let seq = {
+        let f = FB::new("seq", pi);
+        let d = |ms, v| await_(call(delayed, vec![int(ms, t.i64), v], pi), t.i64);
+        let sum = bin(
+            velt_sema::hir::BinOp::Add,
+            d(1, int(1, t.i64)),
+            d(2, int(41, t.i64)),
+        );
+        pb.add_fn(f.build_async(vec![ret(Some(sum))]))
+    };
+    let f = FB::new("main", pv);
+    let body = vec![se(print(vec![await_(call(seq, vec![], pi), t.i64)], t))];
+    pb.add_main(f.build_async(body));
+    pb.finish()
+}
+
+/// A program in which nothing can make the await word non-0 is lowered without any `await`
+/// step code (await_order.rs); one that starts a promise keeps the steps.
+#[test]
+fn unobservable_await_steps_are_not_lowered() {
+    let tick = |v: &vir::Program| v.externs.iter().any(|e| e.symbol == "velt_rt_await_tick");
+    let p = await_only_program();
+    let v = lower_ok(&p);
+    assert!(
+        !tick(&v),
+        "unobservable await steps were lowered
+{v}"
+    );
+    assert_eq!(
+        run(&p).stdout,
+        "42
+"
+    );
+    let started = lower_ok(&sequential_program());
+    assert!(
+        tick(&started),
+        "a program that starts a promise lost its steps
+{started}"
+    );
 }
 
 /// ```text

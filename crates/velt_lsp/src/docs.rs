@@ -180,6 +180,7 @@ impl FileDocs {
         let lo = item.span.lo;
         match &item.kind {
             ast::ItemKind::Import(_) | ast::ItemKind::Augment(_) => {}
+            ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ast::ItemKind::Function(f) => self.sig(&f.sig, lo),
             ast::ItemKind::ExternFn(sig) => self.sig(sig, lo),
             ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
@@ -263,9 +264,10 @@ impl FileDocs {
                 params.iter().for_each(|t| self.type_fields(t));
                 self.type_fields(ret);
             }
-            ast::TypeExprKind::GenericFunction { ty, .. } | ast::TypeExprKind::Construct(ty) => {
-                self.type_fields(ty)
-            }
+            ast::TypeExprKind::GenericFunction { ty, .. }
+            | ast::TypeExprKind::Construct(ty)
+            | ast::TypeExprKind::TupleRest(ty)
+            | ast::TypeExprKind::TupleOptional(ty) => self.type_fields(ty),
             ast::TypeExprKind::Object(fields) => {
                 for f in fields {
                     self.add(&f.name, f.span.lo);
@@ -282,7 +284,28 @@ impl FileDocs {
                 self.type_fields(&key.ty);
                 self.type_fields(value);
             }
+            ast::TypeExprKind::Callable { sigs, members } => {
+                for s in sigs {
+                    s.sig.params.iter().for_each(|p| self.type_fields(&p.ty));
+                    s.sig.ret.iter().for_each(|t| self.type_fields(t));
+                }
+                self.type_fields(members);
+            }
             ast::TypeExprKind::KeyOf(t) => self.type_fields(t),
+            ast::TypeExprKind::Conditional(c) => {
+                [&c.check, &c.extends, &c.then, &c.else_]
+                    .into_iter()
+                    .for_each(|t| self.type_fields(t));
+            }
+            ast::TypeExprKind::Mapped(m) => {
+                self.type_fields(&m.source);
+                m.name.iter().for_each(|t| self.type_fields(t));
+                self.type_fields(&m.value);
+            }
+            ast::TypeExprKind::TemplateLiteral { types, .. } => {
+                types.iter().for_each(|t| self.type_fields(t))
+            }
+            ast::TypeExprKind::Infer(_) => {}
             ast::TypeExprKind::Predicate { ty, .. } => {
                 ty.iter().for_each(|t| self.type_fields(t));
             }
