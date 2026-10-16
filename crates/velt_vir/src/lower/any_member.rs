@@ -10,6 +10,7 @@
 //! | 7 | `AnyCall`: `(data, key: *string, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 8 | `AnyApply`: `(data, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs; only in a program that writes through `any`) |
+//! | 11 | `AnyHas` (any_has.rs; only in a program that tests `key in x` on an `any`) |
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
@@ -62,6 +63,9 @@ impl Cx<'_> {
         if self.boxing.any_writes {
             slots.push((super::any_set::SLOT_SET, Glue::AnySet));
             slots.push((super::any_set::SLOT_SET_INDEX, Glue::AnySetIndex));
+        }
+        if self.boxing.any_has {
+            slots.push((super::any_has::SLOT_HAS, Glue::AnyHas));
         }
         slots
             .into_iter()
@@ -383,15 +387,14 @@ impl FnLower<'_, '_> {
         self.any_nullish_check(desc, NullKey::Str(&key));
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
-        self.any_status_check(
-            st,
-            (
-                "TypeError: reading '",
-                Some(&key),
-                "' through `any` is not supported for this value yet (#924)",
-            ),
-            None,
-        );
+        // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
+        // instance, which a method call through a proxy with traps reads, is the common case.
+        let tail = if self.in_reflect {
+            "' through a proxy or `Reflect.get` is not supported for this value yet, such as a method of a class instance (#823)"
+        } else {
+            "' through `any` is not supported for this value yet (#924)"
+        };
+        self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None);
     }
 
     fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {

@@ -13,6 +13,16 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, UseMode};
 
 impl FnCx<'_, '_> {
+    /// A member of an `any` is read, called or written here: lowering adds the member slots
+    /// (`Program::dyn_members`). The standard library's own dynamic operations (`Proxy` and
+    /// `Reflect`, std/prelude/zz_proxy.vlt) don't count: they run only in a program whose own
+    /// code constructs a `Proxy` or calls `Reflect`, which counts there (`proxy.rs`).
+    pub(crate) fn note_dyn_members(&mut self) {
+        if !self.cx.scopes[self.module].is_std {
+            self.cx.note_dyn_members();
+        }
+    }
+
     /// The receiver `obj` of a dynamic member access: `Ok(any type)` for an `any`, `Err(obj)`
     /// for anything else. An `unknown` reports its error and gives `Ok(None)`.
     fn dynamic_receiver(&mut self, obj: hir::Expr) -> Result<(hir::Expr, Option<TyId>), hir::Expr> {
@@ -26,7 +36,7 @@ impl FnCx<'_, '_> {
                 let mut obj = obj;
                 set_place_mode(&mut obj, UseMode::Borrow);
                 let any = obj.ty;
-                self.cx.note_dyn_members();
+                self.note_dyn_members();
                 Ok((obj, Some(any)))
             }
         }

@@ -319,3 +319,19 @@ fn private_names() {
 }",
     );
 }
+
+#[test]
+fn an_optional_function_field_keeps_its_unparenthesized_form() {
+    // `get?: (t: any) => any` is valid TypeScript (lib.es2015.proxy.d.ts writes it so).
+    holds(
+        "type H = {
+  get?: (target: any, p: string, receiver: any) => any;
+  has?: (target: any, p: string) => boolean;
+  f?: (() => void) | null;
+};
+",
+    );
+    holds("function f(cb?: (x: i64) => void) {}\n");
+    let out = velt_fmt::format_source("type H = { g?: ((x: i64) => i64) };\n").unwrap();
+    assert_eq!(out, "type H = { g?: (x: i64) => i64 };\n");
+}

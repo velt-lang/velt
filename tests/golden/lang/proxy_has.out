@@ -1,0 +1,6 @@
+true false true a,b,virtual
+true true false true
+true true false true
+true false
+true
+{ a: 1 } [ Box { size: 1 } ] 3

@@ -579,6 +579,7 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
             Ok(found) => found,

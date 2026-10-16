@@ -327,6 +327,11 @@ pub enum Intrinsic {
     /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an
     /// element of an array, inside its length).
     AnySetIndex,
+    /// `(x: borrow any, key: borrow string | any) -> bool`: `key in x` (a key of type `any`
+    /// holding a number names an element by its string): whether the value held has the
+    /// property (a proxy: its `has` trap); a `TypeError` for a `null` / `undefined` value or one
+    /// not supported yet. Sets `Program::dyn_members`.
+    AnyHas,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
 }

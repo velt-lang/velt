@@ -39,8 +39,13 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "NaN",
     "Number",
     "Object",
+    // `new Proxy(target, handler)` is an `any` in Velt for now (#823); the operations on it
+    // run the handler's traps as in Node.
+    "Proxy",
+    "ProxyHandler",
     "RangeError",
     "ReferenceError",
+    "Reflect",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
@@ -321,6 +326,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Object", &["entries", "keys", "values"]),
+    ("Reflect", &["get", "has", "set"]),
     ("String", &["fromCharCode"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
