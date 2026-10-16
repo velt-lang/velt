@@ -35,6 +35,27 @@ pub(crate) struct Rewritten {
     pub diags: Vec<Diagnostic>,
     /// Name spans of the capturing nested functions left as declarations (reported here).
     pub kept: HashSet<Span>,
+    /// The recursive closure groups made.
+    pub groups: Vec<ClosureGroup>,
+}
+
+/// Nested functions of one block that call each other (or one calling itself), made closure
+/// constants that refer to each other: sema checks them together, each capturing every
+/// variable of `captures` in that order, so they share one environment layout and a member
+/// makes another from its own environment (`Intrinsic::ClosureSibling`).
+#[derive(Clone, Debug)]
+pub(crate) struct ClosureGroup {
+    /// The members in source order.
+    pub names: Vec<String>,
+    /// Their name spans (the `const` patterns).
+    pub name_spans: Vec<Span>,
+    /// The spans of their arrow functions.
+    pub arrow_spans: Vec<Span>,
+    /// The enclosing variables and closure constants the members use, sorted.
+    pub captures: Vec<String>,
+    /// The members' arrow functions, as rewritten (sema checks them in trials before the
+    /// statements declaring them).
+    pub arrows: Vec<ast::Expr>,
 }
 
 /// The rewritten modules, or `None` when no function body declares a nested function.
@@ -75,6 +96,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
         modules,
         diags: rw.diags,
         kept: rw.kept,
+        groups: rw.groups,
     })
 }
 
@@ -82,6 +104,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
 struct Rw {
     diags: Vec<Diagnostic>,
     kept: HashSet<Span>,
+    groups: Vec<ClosureGroup>,
 }
 
 /// A nested function declaration of a block that may become a closure constant.
@@ -156,6 +179,7 @@ impl Rw {
     /// placed as described in the module docs; then everything inside is rewritten.
     fn block(&mut self, stmts: &mut Vec<ast::Stmt>, locals: &HashSet<String>) {
         let mut locals = std::borrow::Cow::Borrowed(locals);
+        let groups_before = self.groups.len();
         if stmts
             .iter()
             .any(|s| matches!(&s.kind, S::Item(i) if matches!(i.kind, I::Function(_))))
@@ -167,6 +191,25 @@ impl Rw {
         }
         for s in stmts.iter_mut() {
             self.stmt(s, &locals);
+        }
+        // The arrows of the groups made here, once everything inside them is rewritten.
+        for g in &mut self.groups[groups_before..] {
+            if !g.arrows.is_empty() {
+                continue;
+            }
+            g.arrows = g
+                .name_spans
+                .iter()
+                .map(|span| {
+                    stmts
+                        .iter()
+                        .find_map(|s| match &s.kind {
+                            S::Var(v) if v.pattern.span == *span => v.init.clone(),
+                            _ => None,
+                        })
+                        .expect("ICE: a group member's constant")
+                })
+                .collect();
         }
     }
 
@@ -229,15 +272,56 @@ impl Rw {
                 .collect()
         };
         let edges: HashMap<usize, Vec<usize>> = idx.iter().map(|&a| (a, uses_of(a))).collect();
-        // Recursion through closures: not supported yet; those stay declarations.
+        // Recursion through closures: each set of functions calling each other becomes a
+        // recursive closure group (`ClosureGroup`); the shapes it does not cover stay
+        // declarations, reported.
         let mut keep = HashSet::new();
-        for &a in &idx {
-            if let Some(path) = cycle(a, &edges) {
-                keep.insert(a);
-                self.report_recursion(&cands, a, &path);
+        let mut group_of: HashMap<usize, usize> = HashMap::new();
+        let mut recursive: Vec<Vec<usize>> = vec![];
+        for g in sccs(&idx, &edges) {
+            let cyclic = g.len() > 1 || edges[&g[0]].contains(&g[0]);
+            if !cyclic {
+                continue;
             }
+            if let Some(why) = g.iter().find_map(|&a| group_misfit(stmts, &cands[a])) {
+                for &a in &g {
+                    keep.insert(a);
+                    if let Some(path) = cycle(a, &edges) {
+                        self.report_recursion(&cands, a, &path, &why);
+                    }
+                }
+                continue;
+            }
+            for &a in &g {
+                group_of.insert(a, recursive.len());
+            }
+            recursive.push(g);
         }
         let idx: Vec<usize> = idx.into_iter().filter(|a| !keep.contains(a)).collect();
+        // A group is placed as one: its members' uses, positions and captured locals joined.
+        let node = |a: usize| group_of.get(&a).map_or(a, |&g| recursive[g][0]);
+        let members = |n: usize| -> Vec<usize> {
+            match group_of.get(&n) {
+                Some(&g) => recursive[g].clone(),
+                None => vec![n],
+            }
+        };
+        let nodes: Vec<usize> = idx.iter().copied().filter(|&a| node(a) == a).collect();
+        let node_edges: HashMap<usize, Vec<usize>> = nodes
+            .iter()
+            .map(|&n| {
+                let mut out: Vec<usize> = vec![];
+                for m in members(n) {
+                    for &b in &edges[&m] {
+                        let b = node(b);
+                        if b != n && !keep.contains(&b) && !out.contains(&b) {
+                            out.push(b);
+                        }
+                    }
+                }
+                (n, out)
+            })
+            .collect();
         // Where each one goes: before the first statement using it, at most where it is
         // declared, after the block's locals it captures.
         let n = stmts.len();
@@ -260,34 +344,39 @@ impl Rw {
             }
         }
         // Users first, so a closure's position bounds those it uses.
-        let order = topo(&idx, &edges);
+        let order = topo(&nodes, &node_edges);
         let mut pos: HashMap<usize, usize> = HashMap::new();
         let mut bad = HashSet::new();
         for &a in &order {
-            let c = &cands[a];
+            let ms = members(a);
             let first_use = stmt_refs
                 .iter()
-                .position(|r| r.as_ref().is_some_and(|r| r.contains(&c.name.name)))
+                .position(|r| {
+                    r.as_ref()
+                        .is_some_and(|r| ms.iter().any(|&m| r.contains(&cands[m].name.name)))
+                })
                 .unwrap_or(n);
-            let by_users = idx
+            let by_users = nodes
                 .iter()
-                .filter(|u| edges[u].contains(&a))
+                .filter(|u| node_edges[u].contains(&a))
                 .filter_map(|u| pos.get(u).copied())
                 .min()
                 .unwrap_or(n);
             let hi = first_use.min(by_users);
-            let after = c
-                .free
+            let after = ms
                 .iter()
+                .flat_map(|&m| cands[m].free.iter())
                 .filter(|v| locals.contains(*v))
                 .filter_map(|v| declared.get(v).map(|&j| (j + 1, v)))
                 .max();
             let lo = after.map_or(0, |(j, _)| j);
-            let p = lo.max(c.at.min(hi));
+            let at = ms.iter().map(|&m| cands[m].at).min().expect("ICE: empty group");
+            let p = lo.max(at.min(hi));
             if p > hi {
                 let (_, var) = after.expect("ICE: a lower bound comes from a local");
+                let c = &cands[ms[0]];
                 self.report_early_use(c, var);
-                bad.insert(a);
+                bad.extend(ms.iter().copied());
             }
             pos.insert(a, p);
         }
@@ -298,11 +387,36 @@ impl Rw {
         if idx.is_empty() {
             return vec![];
         }
-        // Emit: at each position, the closures used by others first.
+        // The recursive groups left: what each captures (the locals and closure constants its
+        // members use), in one order for all members.
+        let converted: HashSet<&str> = idx.iter().map(|&a| cands[a].name.name.as_str()).collect();
+        for ms in recursive.iter().filter(|ms| !ms.iter().any(|a| bad.contains(a))) {
+            let own: HashSet<&str> = ms.iter().map(|&m| cands[m].name.name.as_str()).collect();
+            let captures: std::collections::BTreeSet<String> = ms
+                .iter()
+                .flat_map(|&m| cands[m].free.iter())
+                .filter(|v| !own.contains(v.as_str()))
+                .filter(|v| locals.contains(*v) || converted.contains(v.as_str()))
+                .cloned()
+                .collect();
+            let mut sorted = ms.clone();
+            sorted.sort_by_key(|&m| cands[m].at);
+            self.groups.push(ClosureGroup {
+                names: sorted.iter().map(|&m| cands[m].name.name.clone()).collect(),
+                name_spans: sorted.iter().map(|&m| cands[m].name.span).collect(),
+                arrow_spans: sorted.iter().map(|&m| item_span(&stmts[cands[m].at])).collect(),
+                captures: captures.into_iter().collect(),
+                arrows: vec![],
+            });
+        }
+        // Emit: at each position, the closures used by others first (a group's members in
+        // source order).
         let mut at_pos: HashMap<usize, Vec<usize>> = HashMap::new();
         for &a in order.iter().rev() {
             if idx.contains(&a) {
-                at_pos.entry(pos[&a]).or_default().push(a);
+                let mut ms = members(a);
+                ms.sort_by_key(|&m| cands[m].at);
+                at_pos.entry(pos[&a]).or_default().extend(ms);
             }
         }
         let moved: HashMap<usize, usize> = idx.iter().map(|&a| (cands[a].at, a)).collect();
@@ -310,7 +424,7 @@ impl Rw {
         let mut made: HashMap<usize, ast::Stmt> = HashMap::new();
         for (&at, &a) in &moved {
             let s = old[at].take().expect("ICE: statement taken twice");
-            made.insert(a, closure_const(s));
+            made.insert(a, closure_const(s, group_of.contains_key(&a)));
         }
         for (j, s) in old.into_iter().enumerate() {
             for a in at_pos.remove(&j).unwrap_or_default() {
@@ -323,7 +437,7 @@ impl Rw {
         idx.iter().map(|&a| cands[a].name.name.clone()).collect()
     }
 
-    fn report_recursion(&mut self, cands: &[Cand], a: usize, path: &[usize]) {
+    fn report_recursion(&mut self, cands: &[Cand], a: usize, path: &[usize], why: &str) {
         let c = &cands[a];
         let through = match path {
             [] => String::new(),
@@ -343,7 +457,7 @@ impl Rw {
                 ),
                 c.name.span,
             )
-            .with_note("a nested function using the enclosing function's locals is a closure, and a closure cannot refer to itself yet")
+            .with_note(why.to_string())
             .with_note("pass the locals it uses as parameters, or declare it at module level"),
         );
     }
@@ -504,6 +618,92 @@ fn cycle(a: usize, edges: &HashMap<usize, Vec<usize>>) -> Option<Vec<usize>> {
     None
 }
 
+/// The strongly connected components of `nodes` under `edges` (Tarjan), each in no particular
+/// order, the components in reverse topological order.
+fn sccs(nodes: &[usize], edges: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
+    struct T<'a> {
+        edges: &'a HashMap<usize, Vec<usize>>,
+        index: HashMap<usize, usize>,
+        low: HashMap<usize, usize>,
+        stack: Vec<usize>,
+        on: HashSet<usize>,
+        out: Vec<Vec<usize>>,
+    }
+    fn visit(t: &mut T, v: usize) {
+        let i = t.index.len();
+        t.index.insert(v, i);
+        t.low.insert(v, i);
+        t.stack.push(v);
+        t.on.insert(v);
+        for &w in &t.edges[&v] {
+            if !t.index.contains_key(&w) {
+                visit(t, w);
+                let l = t.low[&v].min(t.low[&w]);
+                t.low.insert(v, l);
+            } else if t.on.contains(&w) {
+                let l = t.low[&v].min(t.index[&w]);
+                t.low.insert(v, l);
+            }
+        }
+        if t.low[&v] == t.index[&v] {
+            let mut c = vec![];
+            while let Some(w) = t.stack.pop() {
+                t.on.remove(&w);
+                c.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            c.sort_unstable();
+            t.out.push(c);
+        }
+    }
+    let mut t = T {
+        edges,
+        index: HashMap::new(),
+        low: HashMap::new(),
+        stack: vec![],
+        on: HashSet::new(),
+        out: vec![],
+    };
+    for &v in nodes {
+        if !t.index.contains_key(&v) {
+            visit(&mut t, v);
+        }
+    }
+    t.out
+}
+
+/// Why the member `c` of a set of nested functions calling each other cannot join a recursive
+/// closure group, if it cannot: a generator, or a result type that is neither written nor
+/// `void`.
+fn group_misfit(stmts: &[ast::Stmt], c: &Cand) -> Option<String> {
+    let S::Item(item) = &stmts[c.at].kind else {
+        return None;
+    };
+    let I::Function(f) = &item.kind else {
+        return None;
+    };
+    if f.sig.is_generator {
+        return Some("a generator function value cannot refer to itself yet".into());
+    }
+    if f.sig.ret.is_none() && scan::returns_value(&f.body) {
+        return Some(format!(
+            "a nested function using the enclosing function's locals and calling itself needs its result type written (`function {}(...): T`)",
+            c.name.name
+        ));
+    }
+    None
+}
+
+/// The span of a declaration statement's item (the span of its closure constant's arrow).
+fn item_span(s: &ast::Stmt) -> Span {
+    match &s.kind {
+        S::Item(item) => item.span,
+        _ => s.span,
+    }
+}
+
 /// `nodes` ordered so that a node comes before every node it uses (`edges`, acyclic among
 /// `nodes`), keeping source order otherwise.
 fn topo(nodes: &[usize], edges: &HashMap<usize, Vec<usize>>) -> Vec<usize> {
@@ -534,8 +734,10 @@ fn topo(nodes: &[usize], edges: &HashMap<usize, Vec<usize>>) -> Vec<usize> {
     out
 }
 
-/// The statement of a nested function declaration as its closure constant.
-fn closure_const(s: ast::Stmt) -> ast::Stmt {
+/// The statement of a nested function declaration as its closure constant. A member of a
+/// recursive group gets its result type written when it returns nothing (`void`, or
+/// `Promise<void>` when async): the group's function types are known before their bodies.
+fn closure_const(s: ast::Stmt, in_group: bool) -> ast::Stmt {
     let S::Item(item) = s.kind else {
         unreachable!("ICE: not a declaration")
     };
@@ -543,6 +745,25 @@ fn closure_const(s: ast::Stmt) -> ast::Stmt {
         unreachable!("ICE: not a function declaration")
     };
     let name = f.sig.name.clone();
+    let mut f = f;
+    if in_group && f.sig.ret.is_none() {
+        let at = Span::new(name.span.file, name.span.hi, name.span.hi);
+        let named = |n: &str, args: Vec<ast::TypeExpr>| ast::TypeExpr {
+            kind: ast::TypeExprKind::Named {
+                path: vec![ast::Ident {
+                    name: n.into(),
+                    span: at,
+                }],
+                args,
+            },
+            span: at,
+        };
+        let void = named("void", vec![]);
+        f.sig.ret = Some(match f.sig.is_async {
+            true => named("Promise", vec![void]),
+            false => void,
+        });
+    }
     let init = if f.sig.is_generator {
         let mut f = f;
         f.sig.name.name = String::new();

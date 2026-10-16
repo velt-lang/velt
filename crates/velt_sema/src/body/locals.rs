@@ -165,7 +165,13 @@ impl FnCx<'_, '_> {
         let j = (0..self.outer.len())
             .rev()
             .find(|&j| frame_lookup(&self.outer[j], name).is_some())?;
-        let mut prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
+        let prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
+        // A member of a recursive closure group, inside the group: the member's hidden local.
+        let (j, mut prev) = match self.group_peer(j, prev, name, span) {
+            Some((k, l)) if k == self.outer.len() => return Some(l),
+            Some((k, l)) => (k, l),
+            None => (j, prev),
+        };
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         let mut narrowing = frame_narrowing(&self.outer[j], prev);
         // A captured closure `const` is still that closure: a call through the capture fills

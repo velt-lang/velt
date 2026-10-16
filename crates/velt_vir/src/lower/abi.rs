@@ -75,6 +75,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ctor_self: None,
             init_stack: vec![],
             frame_closures: HashSet::new(),
+            self_env: None,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -243,6 +244,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(self.cx.out_ptr_attrs(out));
         }
         if let Some(env) = env {
+            self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
         }
         self.declare_body_locals(f, info);

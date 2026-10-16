@@ -479,4 +479,6 @@ struct FnLower<'c, 'h> {
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
     frame_closures: HashSet<DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
 }

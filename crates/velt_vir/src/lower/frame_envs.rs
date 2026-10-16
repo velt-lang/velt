@@ -37,6 +37,10 @@ pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
     s.block(&f.body.block);
     let mut out = s.immediate;
     for (local, def) in s.lets {
+        // A member of a recursive closure group shares its env with the members it makes.
+        if matches!(hir.def(def), hir::Def::Fn(c) if group_member(c)) {
+            continue;
+        }
         let uses = s.uses.get(&local).copied().unwrap_or(0);
         let calls = s.calls.get(&local).copied().unwrap_or(0);
         if uses == calls && !s.captured.contains(&local) {
@@ -44,6 +48,26 @@ pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
         }
     }
     out
+}
+
+/// Is closure `f` a member of a recursive closure group (its body starts with the
+/// `Intrinsic::ClosureSibling` lets of the members it uses)?
+pub(super) fn group_member(f: &hir::FnDef) -> bool {
+    f.body.block.stmts.iter().any(|s| {
+        matches!(
+            &s.kind,
+            hir::StmtKind::Let {
+                init: Some(hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        callee: hir::Callee::Intrinsic(hir::Intrinsic::ClosureSibling(_)),
+                        ..
+                    },
+                    ..
+                }),
+                ..
+            }
+        )
+    })
 }
 
 struct Scan<'h> {

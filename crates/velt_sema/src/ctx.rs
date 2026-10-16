@@ -149,6 +149,12 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_all: HashSet<Span>,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: HashSet<Span>,
+    /// Recursive closure groups made by `crate::nested_closures`.
+    pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
+    /// Group and member of each group member, by the name span of its `const`.
+    pub group_names: HashMap<Span, (usize, usize)>,
+    /// Definitions of the closures that are members of a recursive closure group.
+    pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
@@ -292,6 +298,9 @@ impl<'m> Ctx<'m> {
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             kept_nested: HashSet::new(),
+            closure_groups: vec![],
+            group_names: HashMap::new(),
+            group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
             overloaded_methods: HashSet::new(),
