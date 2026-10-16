@@ -743,7 +743,8 @@ entry is an `ICE:`.
   generic class and `typeof x === "function"` narrow a dynamic local with `Fact::Class(l, any)`
   (an `unknown` reads as `AnyTo(Share(x))` to `any`; an `any` stays as it is).
 - `Intrinsic::AnyHas(x, key)` is `key in x` on an `any` `x` (key `string`, or `any`: a number
-  names an element by its string), of type `bool`; `x` is borrowed. It runs user code (a
+  names an element by its string), of type `bool`; `x` is borrowed. Lowering evaluates `key`
+  before `x`, as JavaScript does, although `x` is the first argument. It runs user code (a
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
@@ -754,8 +755,12 @@ entry is an `ICE:`.
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
-  Proxy` or a `Reflect.*` call in the program's own code does. Lowering numbers the two classes
-  last among class ids, so programs without them keep theirs.
+  Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
+  as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
+  a target through a proxy starts at a noted write). Lowering recognizes the two classes by
+  their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
+  named `Proxy` is its own) and numbers them last among class ids, so programs without them
+  keep theirs.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.

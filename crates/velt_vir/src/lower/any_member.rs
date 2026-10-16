@@ -387,15 +387,14 @@ impl FnLower<'_, '_> {
         self.any_nullish_check(desc, NullKey::Str(&key));
         let args = vec![data.clone(), key.clone(), out];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
-        self.any_status_check(
-            st,
-            (
-                "TypeError: reading '",
-                Some(&key),
-                "' through `any` is not supported for this value yet (#924)",
-            ),
-            None,
-        );
+        // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
+        // instance, which a method call through a proxy with traps reads, is the common case.
+        let tail = if self.in_reflect {
+            "' through a proxy or `Reflect.get` is not supported for this value yet, such as a method of a class instance (#823)"
+        } else {
+            "' through `any` is not supported for this value yet (#924)"
+        };
+        self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None);
     }
 
     fn any_index_at(&mut self, data: &Operand, desc: &Operand, i: Operand, out: Operand) {

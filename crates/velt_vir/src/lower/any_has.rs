@@ -31,13 +31,16 @@ impl FnLower<'_, '_> {
     /// string). The key is evaluated before the object, as in JavaScript.
     pub(super) fn any_has(&mut self, o: &hir::Expr, k: &hir::Expr) -> Operand {
         self.cx.note_any_has();
-        let (data, desc) = self.any_receiver(o);
         let kt = self.sub(k.ty);
         let kv = self.expr(k);
         if self.dead() {
             return Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
         }
         let kp = self.place_of(kv, kt);
+        let (data, desc) = self.any_receiver(o);
+        if self.dead() {
+            return Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+        }
         let ka = if self.cx.is_dynamic(kt) {
             // The key's string: a string as it is, a number formatted.
             let ks = self.temp(Ty::Agg(STR_AGG));

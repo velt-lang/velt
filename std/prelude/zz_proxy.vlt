@@ -45,6 +45,19 @@ function proxyIndex(s: string): number {
 }
 
 /**
+ * `Reflect.<op>(target, key, receiver)` on a plain target: the receiver must be the target or
+ * a proxy (whose operation forwards to the target here). Another object as the receiver, whose
+ * own property JavaScript would read or write, is not supported yet.
+ */
+function proxyReceiverCheck(op: string, target: any, receiver: any): void {
+  if (receiver !== target && !(receiver instanceof Proxy)) {
+    panic(
+      `TypeError: Reflect.${op} with a receiver other than the target or a proxy is not supported yet (#823)`,
+    );
+  }
+}
+
+/**
  * A proxy for another object: the operations on it run the handler's traps. Create one with
  * `new Proxy(target, handler)`; the result is an `any`.
  */
@@ -113,8 +126,11 @@ export class Proxy {
 export class Reflect {
   /** `target[key]`, with `receiver` (default: `target`) as the receiver a proxy target sees. */
   static get(target: any, key: any, receiver?: any): any {
-    if (receiver !== undefined && target instanceof Proxy) {
-      return target.__get(key, receiver);
+    if (receiver != null) {
+      if (target instanceof Proxy) {
+        return target.__get(key, receiver);
+      }
+      proxyReceiverCheck("get", target, receiver);
     }
     // An array element named by its string (`"1"`), as a trap passes it on.
     if (typeof key === "string" && Array.isArray(target)) {
@@ -128,8 +144,11 @@ export class Reflect {
 
   /** `target[key] = value`; whether it was written. */
   static set(target: any, key: any, value: any, receiver?: any): boolean {
-    if (receiver !== undefined && target instanceof Proxy) {
-      return target.__set(key, value, receiver);
+    if (receiver != null) {
+      if (target instanceof Proxy) {
+        return target.__set(key, value, receiver);
+      }
+      proxyReceiverCheck("set", target, receiver);
     }
     if (typeof key === "string" && Array.isArray(target)) {
       const i = proxyIndex(key);

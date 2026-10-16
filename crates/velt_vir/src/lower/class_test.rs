@@ -47,19 +47,13 @@ impl Cx<'_> {
         }
     }
 
-    /// Pre-order ids of every class (from 1), with the last id of each subtree.
     /// Is `d` one of the prelude's proxy classes (`number_classes`)?
     fn numbered_last(&self, d: DefId) -> bool {
-        let hir::Def::Adt(a) = self.hir.def(d) else {
-            return false;
-        };
-        ["Proxy", "Reflect"].iter().any(|n| {
-            a.name == *n
-                || a.name.ends_with(&format!("::{n}"))
-                || a.name.ends_with(&format!(".{n}"))
-        })
+        use super::any_proxy::{PRELUDE_PROXY, PRELUDE_REFLECT};
+        matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_PROXY || a.name == PRELUDE_REFLECT)
     }
 
+    /// Pre-order ids of every class (from 1), with the last id of each subtree.
     fn number_classes(&self) -> HashMap<DefId, (u64, u64)> {
         let mut children: HashMap<Option<DefId>, Vec<DefId>> = HashMap::new();
         for i in 0..self.hir.defs.len() {

@@ -495,4 +495,7 @@ struct FnLower<'c, 'h> {
     direct_siblings: HashMap<LocalId, DefId>,
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
+    /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
+    /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
+    in_reflect: bool,
 }

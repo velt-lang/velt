@@ -1810,6 +1810,10 @@ function main(): void {
 **Planned** (#823): typed proxies (`new Proxy<T>` used as a `T`, the tagged pointer of #823's
 design); the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and `defineProperty` traps
 and their `Reflect` functions; symbol keys through a proxy; `Array.isArray` of an array proxy;
-proxies of functions (`apply`, `construct`). Until then each is a compile error or a
-`TypeError` naming #823. A getter of a plain target read by `Reflect.get(t, k, receiver)` runs
-with `this` the target (Node: the receiver).
+proxies of functions (`apply`, `construct`); a method call through a proxy over a class
+instance whose handler has traps (`p.m()`, where JavaScript runs `m` with `this` the proxy);
+`Reflect.get` / `Reflect.set` with a receiver that is neither the target nor a proxy. Until
+then each is a compile error or a `TypeError` naming #823. A method call through a proxy whose
+handler has no traps is the call on the target. When the receiver is a proxy, a getter of a
+plain target read by `Reflect.get(t, k, receiver)` runs with `this` the target, and so does a
+setter written by `Reflect.set(t, k, v, receiver)` (Node: the receiver).

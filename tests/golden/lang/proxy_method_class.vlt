@@ -1,0 +1,28 @@
+// A method call through a proxy over a class instance: with a handler without traps it is the
+// call on the target. With traps, JavaScript reads the method through the `get` trap and runs
+// it with `this` the proxy, so its reads of `this` run the traps too; that needs typed proxies
+// and throws a `TypeError` naming #823 for now. A function-valued field works with traps.
+class C {
+  x: number = 1;
+  f: () => number = () => 7;
+  m(): number {
+    return this.x;
+  }
+}
+function main(): void {
+  const plain = new Proxy(new C(), {});
+  console.log(plain.m());
+  const traced = new Proxy(new C(), {
+    get(t, k, r) {
+      console.log("get", k);
+      return Reflect.get(t, k, r);
+    },
+  });
+  console.log(traced.f());
+  const p = new Proxy(new C(), {
+    has(t, k) {
+      return true;
+    },
+  });
+  console.log(p.m());
+}

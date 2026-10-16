@@ -20,6 +20,13 @@ use super::rt::Rt;
 use super::FnLower;
 use crate::vir::{self, Operand, Place, Terminator, Ty, STR_AGG};
 
+/// The qualified names of the prelude's `Proxy` and `Reflect` classes: a program's own
+/// classes are named after their modules, which are never under `std/`.
+pub(super) const PRELUDE_PROXY: &str = "std/prelude/zz_proxy::Proxy";
+pub(super) const PRELUDE_REFLECT: &str = "std/prelude/zz_proxy::Reflect";
+/// The start of the names of `Reflect`'s methods.
+pub(super) const PRELUDE_REFLECT_METHODS: &str = "std/prelude/zz_proxy::Reflect.";
+
 /// How the key reaches a proxy slot.
 #[derive(Clone, Copy)]
 pub(super) enum ProxyKey {
@@ -30,18 +37,12 @@ pub(super) enum ProxyKey {
 }
 
 impl FnLower<'_, '_> {
-    /// Is `ty` the prelude's `Proxy` class?
+    /// Is `ty` the prelude's `Proxy` class (not a program's own class of that name)?
     pub(super) fn is_proxy(&self, ty: TyId) -> bool {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return false;
         };
-        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
-            return false;
-        };
-        let named = a.name == "Proxy" || a.name.ends_with("::Proxy") || a.name.ends_with(".Proxy");
-        named
-            && a.kind == hir::AdtKind::Class
-            && a.fields.first().map(|f| f.name.as_str()) == Some("#target")
+        matches!(self.cx.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_PROXY)
     }
 
     /// The key as an owned `any` temporary.

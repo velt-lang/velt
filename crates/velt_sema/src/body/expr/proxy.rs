@@ -80,9 +80,9 @@ impl FnCx<'_, '_> {
         let Some(impl_index) = self.cx.any_impl() else {
             return h;
         };
+        // No write is noted here: every write that reaches the target through a proxy starts
+        // at a write the program's own code makes (`p.k = v`, `Reflect.set`), noted there.
         self.cx.note_dyn_members();
-        // A proxy forwards writes to its target through `any` (`Reflect.set`): any field of it.
-        self.note_dynamic_write("", span);
         let any = self.cx.ty.intern(hir::TyKind::Dyn(defs.any, vec![]));
         let kind = H::ToDyn {
             expr: Box::new(h),
