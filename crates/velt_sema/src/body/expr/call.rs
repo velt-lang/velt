@@ -134,7 +134,15 @@ impl FnCx<'_, '_> {
     }
 
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.
@@ -571,6 +579,7 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
             Ok(found) => found,

@@ -507,7 +507,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyCall
         | I::AnyApply
         | I::AnySet
-        | I::AnySetIndex => true,
+        | I::AnySetIndex
+        // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
+        | I::AnyHas => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat

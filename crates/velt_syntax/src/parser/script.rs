@@ -91,7 +91,7 @@ impl Parser<'_> {
     }
 
     /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
-    /// `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
+    /// [`rest_arrow`] constant, a `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
     /// symbol or string the module constant holds), and those a staying declaration refers to
     /// (to a fixed point).
     fn kept_vars(&self, items: &[Item]) -> Vec<bool> {
@@ -100,6 +100,7 @@ impl Parser<'_> {
             .map(|i| match &i.kind {
                 ItemKind::Var(v) => {
                     i.exported
+                        || rest_arrow(v)
                         || (v.kind == VarKind::Const
                             && bound_names(&v.pattern)
                                 .iter()
@@ -144,6 +145,31 @@ impl Parser<'_> {
             !touching && before != Some('.') && !after.is_some_and(ident)
         })
     }
+}
+
+/// `const f = (...xs: T[]) => …` (or a function expression): a non-generic arrow constant with
+/// a rest parameter and typed parameters, which sema checks as the function `function f(...xs:
+/// T[])` at module level (a function value cannot take rest arguments yet), so it stays there
+/// like a function declaration.
+fn rest_arrow(v: &VarDecl) -> bool {
+    let Some(Expr {
+        kind:
+            ExprKind::Arrow {
+                type_params,
+                params,
+                ..
+            },
+        ..
+    }) = &v.init
+    else {
+        return false;
+    };
+    v.kind == VarKind::Const
+        && v.ty.is_none()
+        && matches!(v.pattern.kind, PatternKind::Ident(_))
+        && type_params.is_empty()
+        && params.iter().any(|p| p.rest)
+        && params.iter().all(|p| p.ty.is_some())
 }
 
 /// The names a declaration pattern binds.

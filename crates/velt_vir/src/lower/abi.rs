@@ -77,6 +77,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frame_closures: HashSet::new(),
             direct_siblings: HashMap::new(),
             self_env: None,
+            in_reflect: false,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -167,6 +168,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
+        lw.in_reflect = f
+            .name
+            .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);

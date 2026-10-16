@@ -27,7 +27,9 @@ function has left every scope it returns from (`finally` blocks run, `using` val
 and the iterator of a `for…of` is closed first, and an enclosing `catch` does not see the
 rejection), and one microtask later than `return await` would settle. A `return` that a
 `finally` block cancels (with `continue`, `break` or another `return`) adopts nothing. A plain
-value of a `T | Promise<T>` is returned at once.
+value of a `T | Promise<T>` is returned at once. Without a written result type the function's result is the promise's value type, as in
+TypeScript: `const f = async (n: number) => load(n)` with `load(n): Promise<number>` is a
+`(n: number) => Promise<number>`.
 
 ```ts
 async function load(n: number): Promise<number> {
@@ -45,7 +47,9 @@ async function main() {
 
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
-TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+TypeScript: its body returns `View`. The same holds for such an arrow as the value of a
+module-level constant or a field initializer (`const load: () => number | Promise<number> = async
+() => 1;`). Such a result is told apart with `r instanceof Promise`
 ([unions](types.md#union-types)):
 
 ```ts

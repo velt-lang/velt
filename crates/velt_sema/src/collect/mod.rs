@@ -23,7 +23,7 @@ mod classes;
 mod comparable;
 mod constants;
 mod declare;
-mod exports;
+pub(crate) mod exports;
 mod extend_shadow;
 mod field_only;
 pub(crate) mod forwarders;

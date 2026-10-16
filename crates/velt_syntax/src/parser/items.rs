@@ -447,7 +447,7 @@ impl<'a> Parser<'a> {
     }
 
     /// One parameter, the `index`-th: `name: T`, `name?: T`, `name: T = e`, `name = e` (the type
-    /// stated by the default, as for class fields), `...name: T[]`, or a destructuring pattern
+    /// stated by the default, as for class fields), `...name: T[]` (or another array type), or a destructuring pattern
     /// `[a, b]: T` / `{ a, b }: T = e`.
     pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
@@ -498,12 +498,8 @@ impl<'a> Parser<'a> {
             ty = super::types::or_null(ty);
         }
         if rest {
-            if !matches!(ty.kind, TypeExprKind::Array(_)) {
-                self.error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    ty.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
             if let Some(d) = &default {
                 self.error("a rest parameter cannot have a default value", d.span);
             }

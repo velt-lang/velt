@@ -268,6 +268,18 @@ impl Ctx<'_> {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
             }
+            // A member of a namespace import of a module the parser recovered may be a
+            // declaration it dropped (`Ctx::recovered`).
+            let recovered = self.scopes[env.module]
+                .namespaces
+                .get(&path[0].name)
+                .is_some_and(|&t| {
+                    let member = path.last().map_or("", |i| i.name.as_str());
+                    crate::collect::exports::maybe_dropped(self, t, member)
+                });
+            if recovered {
+                return self.ty.error;
+            }
             // A namespace declaration's member that is missing or not exported (TS2694).
             let (ns, member) = name.rsplit_once('.').unwrap_or_default();
             let prefix = format!("{ns}.");

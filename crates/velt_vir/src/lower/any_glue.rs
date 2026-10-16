@@ -7,6 +7,7 @@
 use velt_sema::hir::{self, DefId, DynMember, DynMemberKind, Nothing, PassMode, TyId, TyKind};
 
 use super::any_member::{SLOT_APPLY, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
+use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
 use super::rt::Rt;
@@ -241,7 +242,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the arguments `from..argc` of `argv`.
-    fn any_drop_args(&mut self, argv: vir::Local, from: u64, argc: vir::Local) {
+    pub(super) fn any_drop_args(&mut self, argv: vir::Local, from: u64, argc: vir::Local) {
         let any = self.cx.any_ty();
         let i = Place::local(self.temp(Ty::U64));
         self.assign(i.clone(), Rvalue::Use(cint(from as i128, Ty::U64)));
@@ -413,6 +414,9 @@ impl FnLower<'_, '_> {
 
     fn any_get_body(&mut self, data: vir::Local, key: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
+        if self.is_proxy(ty) {
+            return self.proxy_get_body(data, ProxyKey::Str(key), &outp, ty);
+        }
         if self.prelude_record(ty).is_some() {
             return self.any_get_record(data, key, &outp, ty);
         }
@@ -528,6 +532,9 @@ impl FnLower<'_, '_> {
 
     fn any_index_body(&mut self, data: vir::Local, i: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
+        if self.is_proxy(ty) {
+            return self.proxy_get_body(data, ProxyKey::Num(i), &outp, ty);
+        }
         match self.cx.kind(ty) {
             TyKind::Array(elem) => {
                 let vp = self.any_value_place(data, ty);
@@ -572,6 +579,9 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
+        if self.is_proxy(ty) {
+            return self.proxy_call_body((data, key, argv, argc, out), ty);
+        }
         let outp = self.any_out(out);
         // A record's function values (later).
         let adt = self

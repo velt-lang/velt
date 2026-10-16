@@ -288,6 +288,13 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        if crate::collect::exports::member_maybe_dropped(self.cx, recv.ty, &prop.name) {
+            // The parser may have dropped its declaration (`Ctx::recovered`).
+            for a in args {
+                self.expr(a, None, Want::Move);
+            }
+            return self.error_expr(span);
+        }
         let tn = self.cx.display(recv.ty);
         let mut d = Diagnostic::error(
             format!("no method named `{}` found for type `{tn}`", prop.name),

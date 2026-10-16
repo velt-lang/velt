@@ -417,6 +417,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
+    /// The arrow (by span) that an adapter outside any body calls in place, and the function
+    /// type it is checked as (`callback::immediate_wrapper`).
+    pub immediate_hint: Option<(Span, TyId)>,
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
@@ -471,6 +474,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             thread_adapter: None,
             member_choices: HashMap::new(),
             detached: false,
+            immediate_hint: None,
             collect_iterable_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
