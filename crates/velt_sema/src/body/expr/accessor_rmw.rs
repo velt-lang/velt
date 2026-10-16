@@ -19,6 +19,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::assign_paths::is_pure_value;
 use super::setters::{side_effect_free, synth};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
@@ -58,9 +59,13 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        let later = match rmw {
+            Rmw::Compound(_, v) | Rmw::Logical(_, v) => Some(v),
+            Rmw::Update(..) => None,
+        };
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, later, &mut stmts);
         let e = self.accessor_rmw_in(recv, prop, rmw, as_value, span, &mut stmts);
         self.pop_scope();
         e
@@ -224,7 +229,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
         let v = match self.setter_param_ty(recv.ty, &prop.name) {
             Some(t) => self.value_for(value, t),
             None => self.expr(value, None, Want::Move),
@@ -256,15 +261,20 @@ impl FnCx<'_, '_> {
     }
 
     /// The receiver to read and write through: `obj` itself when evaluating it again has no
-    /// effect (a variable, `this`, a path of fields), else a temporary holding it. A path through
-    /// a getter (`h.inner.value++`) runs that getter once, as in JS.
+    /// effect (a variable, `this`, a path of fields) and `later` (the value evaluated between
+    /// the read and the write, if any) cannot change what it names, else a temporary holding
+    /// it. A path through a getter (`h.inner.value++`) runs that getter once, as in JS, and in
+    /// `holder.val += f()` the setter runs on the object `holder` named before `f` ran, even
+    /// when `f` assigns another one to `holder`.
     pub(super) fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
         object: &ast::Expr,
+        later: Option<&ast::Expr>,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        if side_effect_free(object) && is_field_path(&obj) {
+        let stable = is_this(object) || later.is_none_or(is_pure_value);
+        if stable && side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
         set_place_mode(&mut obj, UseMode::Move);
@@ -317,6 +327,15 @@ impl FnCx<'_, '_> {
             UseMode::Move
         };
         self.mk(H::Local(l, mode), ty, span)
+    }
+}
+
+/// `this` (parentheses removed), which nothing can assign another object to.
+fn is_this(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => is_this(inner),
+        _ => false,
     }
 }
 

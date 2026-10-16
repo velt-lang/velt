@@ -235,7 +235,8 @@ hidden classes and no runtime shape checks.
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
-  then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
+  then the getter runs, then the right-hand side, then the setter, on the object `x` named
+  first even when the right-hand side assigns another one to `x` (which `??=`, `||=` and `&&=`
   skip when the old value decides). A getter may change its object (a signal recording who
   read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
   non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
