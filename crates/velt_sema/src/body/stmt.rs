@@ -491,6 +491,11 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                if std::mem::take(&mut self.f.adopt_stmt) {
+                    // A promise to adopt: stored, then the scopes are left (`async_returned`).
+                    Self::push(out, S::Expr(h), span);
+                    return;
+                }
                 self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }

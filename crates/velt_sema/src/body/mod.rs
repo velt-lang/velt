@@ -164,6 +164,19 @@ pub(crate) struct CaptureCx {
     pub narrowed: bool,
 }
 
+/// A promise an async function returns (`expr::tasks`, `async_returned`): the `return` stores
+/// it in `slot` (`T | null`) and leaves the body's scopes with `break` [`ADOPT_LABEL`]; then
+/// `value` (reading `bind`, the promise moved out of `slot`) is returned.
+#[derive(Clone)]
+pub(crate) struct Adopted {
+    pub slot: LocalId,
+    pub bind: LocalId,
+    pub value: hir::Expr,
+}
+
+/// The label of the loop around the body of an async function that returns a promise.
+pub(crate) const ADOPT_LABEL: &str = "<adopt>";
+
 /// Per-function checking state; closures push a new frame (the enclosing one is saved).
 #[derive(Clone)]
 pub(crate) struct Frame {
@@ -192,9 +205,11 @@ pub(crate) struct Frame {
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
-    /// Nesting depth of the `try` blocks being checked, and of the `catch` blocks that have a
-    /// `finally`: a promise returned there settles after they are left (issue #1148).
-    pub guarded_depth: u32,
+    /// The promises this async function returns (`expr::tasks`, `async_returned`), awaited
+    /// once the body's scopes are left (`wrap_adopted`; issue #1148).
+    pub adopted: Vec<Adopted>,
+    /// The `return` being checked stores a promise to adopt: it becomes that statement.
+    pub adopt_stmt: bool,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
     /// `break`/`continue` there cannot target a loop outside it).
     pub finally_loops: Option<usize>,
@@ -289,7 +304,8 @@ impl Frame {
             yield_ty: None,
             fn_expr_name: None,
             finally_depth: 0,
-            guarded_depth: 0,
+            adopted: vec![],
+            adopt_stmt: false,
             finally_loops: None,
             stmt_yields: Default::default(),
             soft_moves: vec![],

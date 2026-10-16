@@ -35,18 +35,10 @@ impl FnCx<'_, '_> {
         out: &mut Vec<hir::Stmt>,
     ) {
         self.f.tries.push(vec![]);
-        self.f.guarded_depth += 1;
         let b = self.block(body);
-        self.f.guarded_depth -= 1;
         let srcs = self.f.tries.pop().expect("ICE: try stack");
-        let guarded = u32::from(finally.is_some());
         let c = match catch {
-            Some((pat, blk)) => {
-                self.f.guarded_depth += guarded;
-                let c = self.catch_clause(srcs, pat.as_ref(), blk, span);
-                self.f.guarded_depth -= guarded;
-                Some(c)
-            }
+            Some((pat, blk)) => Some(self.catch_clause(srcs, pat.as_ref(), blk, span)),
             None => {
                 srcs.into_iter().for_each(|s| self.throw_src(s));
                 None

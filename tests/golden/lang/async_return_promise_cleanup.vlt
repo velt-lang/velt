@@ -1,0 +1,106 @@
+// An async function adopts a returned promise only after every scope it returns from is left,
+// as in JS (issue #1148): `finally` blocks run, `using` values are disposed and the iterator of
+// a `for…of` is closed first, and a `catch` does not see the promise's rejection.
+class Res {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose](): void {
+    console.log("dispose", this.name);
+  }
+}
+class AsyncRes {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  async [Symbol.asyncDispose](): Promise<void> {
+    console.log("async dispose", this.name);
+  }
+}
+async function slow(n: number): Promise<number> {
+  await Promise.resolve(0);
+  console.log("slow done", n);
+  return n;
+}
+async function bad(): Promise<number> {
+  await Promise.resolve(0);
+  console.log("bad done");
+  throw new Error("bad");
+}
+function* numbers(): Generator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log("numbers closed");
+  }
+}
+
+async function inTry(): Promise<number> {
+  try {
+    return slow(1);
+  } finally {
+    console.log("finally");
+  }
+}
+async function notCaught(): Promise<number> {
+  try {
+    return bad();
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+    return 0;
+  }
+}
+async function inCatch(): Promise<number> {
+  try {
+    throw new Error("t");
+  } catch (e) {
+    return slow(2);
+  } finally {
+    console.log("finally after catch");
+  }
+}
+async function inForOf(): Promise<number> {
+  for (const x of numbers()) {
+    return slow(x * 10);
+  }
+  return 0;
+}
+async function withUsing(): Promise<number> {
+  using r = new Res("r");
+  return slow(3);
+}
+async function withAwaitUsing(): Promise<number> {
+  await using r = new AsyncRes("a");
+  return slow(4);
+}
+async function nested(): Promise<number> {
+  using outer = new Res("outer");
+  try {
+    for (const x of numbers()) {
+      using inner = new Res("inner");
+      if (x > 0) {
+        return slow(5);
+      }
+    }
+  } finally {
+    console.log("finally nested");
+  }
+  return 0;
+}
+
+async function main(): Promise<void> {
+  console.log(await inTry());
+  try {
+    console.log(await notCaught());
+  } catch (e) {
+    console.log("rejected", (e as Error).message);
+  }
+  console.log(await inCatch());
+  console.log(await inForOf());
+  console.log(await withUsing());
+  console.log(await withAwaitUsing());
+  console.log(await nested());
+}

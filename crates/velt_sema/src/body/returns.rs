@@ -169,6 +169,101 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// The body `block` of an async function that returns promises (`async_returned`): as in
+    /// JS, each is awaited once every scope of the body is left. The body becomes
+    /// `let <adopted> = null; …; <adopt>: while (true) { body; break; }` (the `break` only when
+    /// the body may fall off its end), then per stored promise `if (<adopted> != null) return
+    /// value;` (the last one unconditional when the body cannot fall off its end).
+    pub(crate) fn wrap_adopted(&mut self, block: &mut hir::Block) {
+        let adopted = std::mem::take(&mut self.f.adopted);
+        if adopted.is_empty() {
+            return;
+        }
+        let span = block.span;
+        let (unit, never, bool_) = (self.cx.ty.unit, self.cx.ty.never, self.cx.ty.bool_);
+        let label = super::ADOPT_LABEL.to_string();
+        let stmt = |kind| hir::Stmt { kind, span };
+        let falls_off = !crate::flow::block_diverges(block, &self.cx.ty);
+        let mut body = std::mem::take(&mut block.stmts);
+        if let Some(v) = block.value.take() {
+            body.push(stmt(S::Expr(*v)));
+        }
+        if falls_off {
+            body.push(stmt(S::Break(Some(label.clone()))));
+        }
+        let mut stmts = vec![];
+        for a in &adopted {
+            let ty = self.f.locals[a.slot.0 as usize].ty;
+            let null = self.mk(H::Lit(hir::Lit::Null), ty, span);
+            stmts.push(stmt(S::Let {
+                local: a.slot,
+                init: Some(null),
+            }));
+        }
+        let cond = self.mk(H::Lit(hir::Lit::Bool(true)), bool_, span);
+        stmts.push(stmt(S::While {
+            label: Some(label),
+            cond,
+            body: hir::Block {
+                stmts: body,
+                value: None,
+                span,
+            },
+            step: None,
+        }));
+        let last = adopted.len() - 1;
+        for (i, a) in adopted.into_iter().enumerate() {
+            let slot_ty = self.f.locals[a.slot.0 as usize].ty;
+            let pty = self.f.locals[a.bind.0 as usize].ty;
+            let ret = stmt(S::Return(Some(a.value)));
+            let read = self.mk(H::Local(a.slot, hir::UseMode::Move), slot_ty, span);
+            if i == last && !falls_off {
+                // Only a stored promise leads here.
+                let p = self.mk(H::UnwrapSome(Box::new(read), hir::UseMode::Move), pty, span);
+                stmts.push(stmt(S::Let {
+                    local: a.bind,
+                    init: Some(p),
+                }));
+                stmts.push(ret);
+                continue;
+            }
+            let bind = self.pat(hir::PatKind::Binding(a.bind, hir::UseMode::Move), pty, span);
+            let some = self.pat(hir::PatKind::Some(Box::new(bind)), slot_ty, span);
+            let returns = hir::Block {
+                stmts: vec![ret],
+                value: None,
+                span,
+            };
+            let none = hir::Block {
+                stmts: vec![],
+                value: None,
+                span,
+            };
+            let arms = vec![
+                hir::Arm {
+                    pat: some,
+                    guard: None,
+                    body: self.mk(H::Block(returns), never, span),
+                },
+                hir::Arm {
+                    pat: self.pat(hir::PatKind::None, slot_ty, span),
+                    guard: None,
+                    body: self.mk(H::Block(none), unit, span),
+                },
+            ];
+            let m = self.mk(
+                H::Match {
+                    scrutinee: Box::new(read),
+                    arms,
+                },
+                unit,
+                span,
+            );
+            stmts.push(stmt(S::Expr(m)));
+        }
+        block.stmts = stmts;
+    }
+
     /// `return e` / `return;` in a body whose result type is being inferred.
     pub(super) fn infer_return(&mut self, e: Option<&ast::Expr>, span: Span) -> Option<hir::Expr> {
         let Some(e) = e else {

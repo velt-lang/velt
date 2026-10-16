@@ -1,2 +1,0 @@
-async_return_promise_in_try.vlt:10:12
-error: returning a promise from a `try` block of an async function is not supported yet

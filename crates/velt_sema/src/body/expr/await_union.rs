@@ -12,6 +12,18 @@ use crate::hir::{self, ExprKind as H, PatKind as P, UseMode};
 impl FnCx<'_, '_> {
     /// The awaited value of `h`, or `Err(h)` when `h` is not a union with a promise member.
     pub(super) fn await_union(&mut self, h: hir::Expr, span: Span) -> Result<hir::Expr, hir::Expr> {
+        self.await_union_with(h, span, &mut |s, read, p| s.mk(H::Await(Box::new(read)), p, span))
+    }
+
+    /// [`await_union`](Self::await_union) where `on_promise` gives the value of an arm whose
+    /// member is a promise (`read`, settling with the payload type given): `Await(read)`, or
+    /// a never-typed expression for a promise an async function adopts (`tasks.rs`).
+    pub(super) fn await_union_with(
+        &mut self,
+        h: hir::Expr,
+        span: Span,
+        on_promise: &mut dyn FnMut(&mut Self, hir::Expr, hir::TyId) -> hir::Expr,
+    ) -> Result<hir::Expr, hir::Expr> {
         let sty = h.ty;
         let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
         // `Promise<T> | null` is an optional promise, not a union: one member, no variant.
@@ -99,7 +111,11 @@ impl FnCx<'_, '_> {
             }
             let read = self.mk(H::Local(b, mode), *m, span);
             let (value, vty) = match self.cx.ty.promise_payload(*m) {
-                Some(p) => (self.mk(H::Await(Box::new(read)), p, span), p),
+                Some(p) => {
+                    let value = on_promise(self, read, p);
+                    let vty = value.ty;
+                    (value, vty)
+                }
                 None => (read, *m),
             };
             let body = if ret == unit {

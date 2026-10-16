@@ -1,0 +1,23 @@
+finally
+slow done 1
+1
+bad done
+rejected bad
+finally after catch
+slow done 2
+2
+numbers closed
+slow done 10
+10
+dispose r
+slow done 3
+3
+async dispose a
+slow done 4
+4
+dispose inner
+numbers closed
+finally nested
+dispose outer
+slow done 5
+5

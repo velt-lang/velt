@@ -440,6 +440,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         None => fcx.inferred_fn_ret(def, &mut block),
     };
     fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block);
+    fcx.wrap_adopted(&mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
     fcx.note_refused_facts(diags_before);

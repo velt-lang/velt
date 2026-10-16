@@ -22,11 +22,11 @@ callback, or `Promise<T> | null`) awaits a promise and gives any other value as 
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
-promise settles as the returned one does, the same as `return await`. Inside a `try` block (or a
-`catch` block followed by `finally`) that is an error for now: JavaScript adopts the promise only
-after the `try` statement is left, so its `catch` does not see the rejection and its `finally` runs
-first. Write `return await …` there to handle the rejection, or return the promise after the `try`
-statement.
+promise settles as the returned one does. The steps are Node's: the promise is adopted after the
+function has left every scope it returns from (`finally` blocks run, `using` values are disposed
+and the iterator of a `for…of` is closed first, and an enclosing `catch` does not see the
+rejection), and one microtask later than `return await` would settle. A plain value of a
+`T | Promise<T>` is returned at once.
 
 ```ts
 async function load(n: number): Promise<number> {
