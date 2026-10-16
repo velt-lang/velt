@@ -274,7 +274,14 @@ impl FnCx<'_, '_> {
                 }
                 return self.error_expr(span);
             }
-            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. }) {
+            // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
+            // call of the value it holds.
+            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || matches!(
+                    self.cx.dynamic(fty),
+                    Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
+                )
+            {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),

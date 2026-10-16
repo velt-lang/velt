@@ -89,6 +89,8 @@ impl PB {
             type_ops: Default::default(),
             any_impl: None,
             dyn_members: None,
+            object: None,
+            function: None,
             unknown: None,
         }
     }

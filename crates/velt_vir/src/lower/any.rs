@@ -64,14 +64,28 @@ const FOUND: [&str; 8] = [
 ];
 
 impl Cx<'_> {
-    /// Is `t` `any` or `unknown`?
+    /// Is `t` `any`, `unknown`, `object` or `Function`?
     pub(super) fn is_dynamic(&self, t: TyId) -> bool {
         let Some(i) = self.hir.any_impl else {
             return false;
         };
         let any = self.hir.impls[i as usize].iface;
         match self.types.kind(t) {
-            TyKind::Dyn(d, args) if args.is_empty() => *d == any || Some(*d) == self.hir.unknown,
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                *d == any
+                    || [self.hir.unknown, self.hir.object, self.hir.function].contains(&Some(*d))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `t` `object` or `Function` (issue #926)?
+    pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                self.hir.any_impl.is_some()
+                    && [self.hir.object, self.hir.function].contains(&Some(*d))
+            }
             _ => false,
         }
     }

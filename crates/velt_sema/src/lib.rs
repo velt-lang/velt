@@ -270,6 +270,8 @@ fn check_on_current_thread(
         type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
+        object: any.and_then(|a| a.imp.map(|_| a.object)),
+        function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members,
     };
     (Some(program), diags)

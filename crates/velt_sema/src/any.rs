@@ -9,6 +9,11 @@
 //! between them changes nothing at run time. `T | null` and unions are unpacked when they are
 //! boxed: a dynamic value always holds one concrete type, and `null` / `undefined` hold the
 //! nothing of `boolean | null` / `boolean | undefined`.
+//!
+//! `object` and `Function` (issue #926) are two more interfaces of the prelude with the same
+//! representation: the dynamic value restricted to non-primitive values and to functions. Only
+//! such values convert to them (`Ctx::is_object_ty`, `is_function_ty`), so `T extends object`
+//! tells objects from primitives; they convert to `any` / `unknown` as they are.
 
 use crate::ctx::Ctx;
 use std::collections::HashMap;
@@ -22,6 +27,10 @@ use crate::hir::{DefId, DynMember, DynMemberKind, ImplDef, Nothing, TyId, TyKind
 pub(crate) struct AnyDefs {
     pub any: DefId,
     pub unknown: DefId,
+    /// TypeScript's `object`: a dynamic value that holds no primitive.
+    pub object: DefId,
+    /// TypeScript's `Function`: a dynamic value that holds a function.
+    pub function: DefId,
     /// Index of `impl<T> any for T` in `Ctx::impls`, added when a value is first converted
     /// to `any` or `unknown` ([`Ctx::any_impl`]): a program without them is unchanged.
     pub imp: Option<u32>,
@@ -34,6 +43,22 @@ pub(crate) struct AnyDefs {
 pub(crate) enum Dynamic {
     Any,
     Unknown,
+    /// `object`: members need narrowing first, as on an `unknown`.
+    Object,
+    /// `Function`: calls go through the descriptor, as on an `any`.
+    Function,
+}
+
+impl Dynamic {
+    /// The name of the type, as written.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Dynamic::Any => "any",
+            Dynamic::Unknown => "unknown",
+            Dynamic::Object => "object",
+            Dynamic::Function => "Function",
+        }
+    }
 }
 
 /// After the declarations: find the prelude's dynamic interfaces.
@@ -41,9 +66,15 @@ pub(crate) fn add_impl(cx: &mut Ctx) {
     let (Some(any), Some(unknown)) = (cx.prelude_iface("any"), cx.prelude_iface("unknown")) else {
         return;
     };
+    let (Some(object), Some(function)) = (cx.prelude_iface("object"), cx.prelude_iface("Function"))
+    else {
+        return;
+    };
     cx.any = Some(AnyDefs {
         any,
         unknown,
+        object,
+        function,
         imp: None,
         members: false,
     });
@@ -78,7 +109,63 @@ impl Ctx<'_> {
         match self.ty.kind(t) {
             TyKind::Dyn(d, _) if *d == defs.any => Some(Dynamic::Any),
             TyKind::Dyn(d, _) if *d == defs.unknown => Some(Dynamic::Unknown),
+            TyKind::Dyn(d, _) if *d == defs.object => Some(Dynamic::Object),
+            TyKind::Dyn(d, _) if *d == defs.function => Some(Dynamic::Function),
             _ => None,
+        }
+    }
+
+    /// Is `t` a type whose values are no primitives (TypeScript's `object`): class and
+    /// struct instances, object types, arrays, tuples, maps, functions, interface values and
+    /// the dynamic types other than `unknown`? A union is one when each member is; enums,
+    /// brands, literal types and `T | null` are not. A type parameter is one only through its
+    /// bound (`Ctx::satisfies`).
+    pub(crate) fn is_object_ty(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::Promise(..)
+            | TyKind::Shared(_)
+            | TyKind::Result(..)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Dyn(..) => self.dynamic(t) != Some(Dynamic::Unknown),
+            TyKind::Adt(d, _) => {
+                if let Some((_, members)) = self.union_def(t) {
+                    return members.iter().all(|m| self.is_object_ty(*m));
+                }
+                self.enum_info(*d).is_none() && self.brand_base(t).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `t` a function type (what TypeScript's `Function` takes), or `Function` / `any`?
+    pub(crate) fn is_function_ty(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+            TyKind::Dyn(..) => matches!(
+                self.dynamic(t),
+                Some(Dynamic::Function) | Some(Dynamic::Any)
+            ),
+            _ => false,
+        }
+    }
+
+    /// Does the dynamic interface `iface` take values of type `t`? Every type is an `any` and
+    /// an `unknown`; `object` takes non-primitive types and `Function` function types.
+    /// `None` when `iface` is no dynamic interface.
+    pub(crate) fn dynamic_takes(&self, iface: DefId, t: TyId) -> Option<bool> {
+        let defs = self.any?;
+        if iface == defs.any || iface == defs.unknown {
+            Some(true)
+        } else if iface == defs.object {
+            Some(self.is_object_ty(t))
+        } else if iface == defs.function {
+            Some(self.is_function_ty(t))
+        } else {
+            None
         }
     }
 

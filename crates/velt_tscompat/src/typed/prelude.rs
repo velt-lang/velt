@@ -67,6 +67,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
     "any",
     "unknown",
+    "object",
+    "Function",
     // Builtins.
     "console",
     "Promise",

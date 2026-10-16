@@ -80,9 +80,26 @@ impl FnCx<'_, '_> {
         };
         let t = self.local_ty(l);
         match (self.cx.dynamic(t), self.any_ty()) {
-            (Some(Dynamic::Unknown), Some(any)) => vec![Fact::Class(l, any)],
+            (Some(Dynamic::Unknown | Dynamic::Object), Some(any)) => vec![Fact::Class(l, any)],
             _ => vec![],
         }
+    }
+
+    /// `x` (an `unknown` variable) reads as an `object` where `typeof x === "object"` holds
+    /// (TypeScript's `object | null`; issue #926).
+    pub(crate) fn dynamic_to_object_fact(&mut self, e: &ast::Expr) -> Vec<Fact> {
+        let Some(l) = self.own_dynamic_local(e) else {
+            return vec![];
+        };
+        let t = self.local_ty(l);
+        let Some(defs) = self.cx.any else {
+            return vec![];
+        };
+        if self.cx.dynamic(t) != Some(Dynamic::Unknown) {
+            return vec![];
+        }
+        let object = self.cx.ty.intern(hir::TyKind::Dyn(defs.object, vec![]));
+        vec![Fact::Class(l, object)]
     }
 
     /// The type an `any` / `unknown` value `t` narrows to by `instanceof` of the generic class
