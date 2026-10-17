@@ -770,6 +770,22 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
+  an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
+  or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the
+  original interface value (moved in; dropping the adapter drops it), through an `ImplDef` of
+  `I<B>` for that struct. Sema makes one struct and impl per `(I, A, B)` the program converts
+  (`Ctx::iface_adapters`). Each impl method (`<I> adapter.<m>`, `this` borrowed) calls the same
+  slot of the field (`Callee::Dyn`), its arguments converted with `AnyTo` (or, for a function,
+  an arrow adapting each call) and its result boxed with `ToDyn` of `Program::any_impl` (or
+  adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
+  value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
+  `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
+  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
+  `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
+  `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
+  Lowering sees only these ordinary forms.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with

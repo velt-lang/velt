@@ -1,0 +1,61 @@
+// check: no leaks
+// A generic interface value converted to `unknown` arguments wraps the original (#1153). Every
+// copy of the converted value reaches the one original: a `for...of` element, an array element
+// read into a `const`, a copy, and a second conversion (`Box<unknown>` to `Box<any>`) all write
+// to the same object, as in Node.
+interface Counter<T> {
+  add(v: T): void;
+  total(): number;
+}
+
+class LenCounter implements Counter<string> {
+  n = 0;
+  add(v: string): void {
+    this.n += v.length;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+interface Box<T> {
+  get(): T;
+  put(v: T): void;
+}
+
+class Cell implements Box<string> {
+  v = "a";
+  get(): string {
+    return this.v;
+  }
+  put(v: string): void {
+    this.v = v;
+  }
+}
+
+const shared = new LenCounter();
+const table: Counter<unknown>[] = [shared];
+
+function main(): void {
+  const lc = new LenCounter();
+  const counters: Counter<unknown>[] = [lc];
+  for (const c of counters) c.add("abc");
+  counters[0].add("de");
+  const first = counters[0];
+  first.add("f");
+  console.log(lc.total(), counters[0].total(), first.total());
+
+  const cell = new Cell();
+  const b1: Box<unknown> = cell;
+  const c = b1;
+  c.put("c");
+  const b2: Box<any> = b1;
+  console.log(cell.get(), b1.get(), b2.get());
+  b2.put("two");
+  console.log(cell.get(), c.get(), b2.get());
+
+  for (const t of table) t.add("xy");
+  const t0 = table[0];
+  t0.add("z");
+  console.log(shared.total(), table[0].total(), t0.total());
+}

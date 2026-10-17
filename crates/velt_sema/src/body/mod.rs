@@ -447,6 +447,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The member of a recursive closure group whose arrow is about to be checked: group,
     /// member and its definition.
     pub pending_member: Option<(usize, usize, DefId)>,
+    /// Checking the body of an interface adapter's method (`expr/iface_adapt.rs`): an `unknown`
+    /// converts to a typed value checked at run time, and a function value to another function
+    /// type through an adapting arrow.
+    pub adapting: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -488,6 +492,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_trial: false,
             this_calls: Default::default(),
             pending_member: None,
+            adapting: false,
         }
     }
 
