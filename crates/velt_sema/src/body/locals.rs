@@ -422,6 +422,42 @@ impl FnCx<'_, '_> {
             .collect()
     }
 
+    /// The facts the innermost scope holds now about locals declared outside it: what a branch
+    /// that ends here passes on to the code after it (assumed at its start and not undone by an
+    /// assignment since, or established by its own statements).
+    pub fn scope_end_facts(&self) -> Vec<super::narrow::Fact> {
+        use super::narrow::Fact;
+        let Some(s) = self.f.scopes.last() else {
+            return vec![];
+        };
+        let outer = |l: &LocalId| !s.names.values().any(|x| x == l);
+        let narrowed = s
+            .narrowed
+            .iter()
+            .filter(|l| outer(l))
+            .map(|l| Fact::NonNull(*l));
+        let excluded = s
+            .excluded
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, n)| Fact::Excludes(*l, *n));
+        let members = s
+            .members
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, vs)| Fact::Members(*l, vs.clone()));
+        let classes = s
+            .classes
+            .iter()
+            .filter(|(l, _)| outer(l))
+            .map(|(l, t)| Fact::Class(*l, *t));
+        narrowed
+            .chain(excluded)
+            .chain(members)
+            .chain(classes)
+            .collect()
+    }
+
     pub fn restore_narrowing(&mut self, st: &NarrowState) {
         for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(st) {
             s.narrowed = n.clone();

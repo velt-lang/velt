@@ -605,9 +605,13 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
   never evaluated). Parentheses end a chain: `(x?.a).b` needs `x?.a` to be non-null.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
-  so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed.
+  TypeScript; assigning a non-null value narrows too. After an `if`, what holds is what each
+  branch that does not leave ends with: the facts of the condition it started from unless it
+  reassigned the variable, and what its own statements established (`if (x == null) { x = d; }`
+  narrows `x` after it; `if (x == null) return; else x = null;` does not). A narrowed field
+  is re-checked when read, so a call that set it to `null` in between panics instead of
+  reading `null`. Inside a closure, a variable narrowed where the closure is created stays
+  narrowed.
 - A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
   `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
   may run the closure, and then the variable no longer holds what was checked. Test a `const`
