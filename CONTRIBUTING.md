@@ -223,9 +223,12 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   (`Generated with …`) and trailers (`Co-authored-by:`), links to chat or agent sessions,
   absolute machine paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`,
   `/private/tmp/…`), review-process wording ("review round", "addressed the review", "Stacked on
-  #N": say these in a comment), and commits whose author is not the pull request author's GitHub noreply address
-  (`<id>+<login>@users.noreply.github.com`; the repository variable `PR_LINT_AUTHORS` overrides
-  it). Text in code spans and blocks is exempt from the wording rules, not from the path rule.
+  #N": say these in a comment), and commits not by the pull request's author: GitHub must
+  attribute each commit to the author's account (any email verified there; the GitHub noreply
+  address `<id>+<login>@users.noreply.github.com` keeps it private), or its email must be in the
+  repository variable `PR_LINT_AUTHORS`. Merge commits, such as "Update branch", are not checked
+  for authorship. Text in code spans and blocks is exempt from the wording rules, but not from
+  the path rule or from whole session URLs.
   Editing the description re-runs it. Before opening a pull request, check the description
   locally: `cargo xtask pr-lint --title "<title>" --body-file <file>` (commits since
   `origin/main` and `git config user.email` by default).

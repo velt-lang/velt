@@ -31,6 +31,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The pull request's commits with the GitHub account each is attributed to (works for forks).
+  pull-requests: read
 
 jobs:
   hygiene:
@@ -46,17 +48,29 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
+      - if: github.event_name == 'pull_request'
+        name: the GitHub account of each commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/commits"
+          --jq '.[] | [.sha, (.author.login // "")] | @tsv' > "$RUNNER_TEMP/logins.tsv"
       # The text comes in through the environment, never into the script itself (a title or
-      # description is untrusted input). The expected author is the repository variable
-      # PR_LINT_AUTHORS (comma-separated emails) when set, else the pull request author's
-      # GitHub noreply addresses, the identity commits on main carry.
+      # description is untrusted input). A commit passes the author rule when GitHub attributes
+      # it to the pull request's author (any email verified on their account), or when its email
+      # is one of PR_LINT_AUTHORS: the repository variable when set, else the author's GitHub
+      # noreply addresses. Merge commits (a maintainer's "Update branch") are not checked.
       - if: github.event_name == 'pull_request'
         name: cargo xtask pr-lint
         env:
           RUSTUP_TOOLCHAIN: stable
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
           PR_LINT_AUTHORS: >-
             ${{ vars.PR_LINT_AUTHORS || format('{0}+{1}@users.noreply.github.com,{1}@users.noreply.github.com',
             github.event.pull_request.user.id, github.event.pull_request.user.login) }}
-        run: cargo xtask pr-lint --base HEAD^1 --head HEAD^2
+        run: >-
+          cargo xtask pr-lint --base HEAD^1 --head HEAD^2
+          --commit-logins "$RUNNER_TEMP/logins.tsv"
