@@ -178,9 +178,12 @@ impl FnCx<'_, '_> {
             None => (j, prev),
         };
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
-        // A closure created before the function's last assignment of the variable may run after
-        // it, when the narrowing where the closure is created no longer holds (`assign_ends`).
-        let assigned = self.assigned_after(j, prev, span.lo);
+        // A variable some closure assigns is not narrowed in the closures that capture it: the
+        // check outside may no longer hold when they run (TS does not narrow it there either).
+        let by_closure = self.assigned_by_closure_in(j, prev);
+        let assigned = by_closure || self.assigned_after(j, prev, span.lo);
+        // What a closure assigning the variable keeps the closure from seeing (for the note).
+        let dropped = by_closure.then(|| frame_narrowing(&self.outer[j], prev));
         let none: Narrowing = (false, None, None);
         let mut narrowing = match assigned {
             true => none.clone(),
@@ -206,6 +209,9 @@ impl FnCx<'_, '_> {
             };
         }
         let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        if let Some(n) = dropped {
+            self.note_dropped_capture(inner, name, n);
+        }
         if let Some(c) = closure {
             self.f.closure_consts.insert(inner, c);
         }
@@ -213,6 +219,22 @@ impl FnCx<'_, '_> {
             self.f.method_values.insert(inner);
         }
         Some(inner)
+    }
+
+    /// Does a closure assign local `l` of enclosing frame `outer[j]` (or the variable it
+    /// captures)?
+    fn assigned_by_closure_in(&self, j: usize, l: LocalId) -> bool {
+        let mut l = l;
+        for f in self.outer[..=j].iter().rev() {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => {
+                    let name = &f.locals[l.0 as usize].name;
+                    return f.closure_assigned.contains_key(name);
+                }
+            }
+        }
+        false
     }
 
     /// Does the function declaring local `l` of enclosing frame `outer[j]` (or the variable it

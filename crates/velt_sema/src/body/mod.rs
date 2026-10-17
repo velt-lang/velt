@@ -447,6 +447,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub optional_slots: Vec<(Span, OptionalSlot)>,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
+    /// the variable as it is, without the check `checked_narrowed_read` adds.
+    pub raw_read: Option<Span>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -502,6 +505,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             weak_key_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
+            raw_read: None,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,
