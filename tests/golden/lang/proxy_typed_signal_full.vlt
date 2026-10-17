@@ -44,20 +44,11 @@ function effect(fn: () => void): Effect {
 }
 
 let nextId = 0;
-const ids: WeakMap<object, number> = new WeakMap();
-
-function idOf(o: any): string {
-  let id = ids.get(o);
-  if (id == null) {
-    id = nextId++;
-    ids.set(o, id);
-  }
-  return `#${id}.`;
-}
 
 function reactive(target: any): any {
-  const cache: WeakMap<object, any> = new WeakMap();
-  const prefix = idOf(target);
+  // Nested proxies, one per key (sigx caches them per raw object in a `WeakMap`).
+  const cache: Map<string, any> = new Map();
+  const prefix = `#${nextId++}.`;
   return new Proxy(target, {
     get(t: any, key: string | symbol, receiver: any): any {
       if (key === "$set") {
@@ -66,15 +57,16 @@ function reactive(target: any): any {
           Reflect.set(receiver, "todo", v.todo);
         };
       }
+      if (key === "__raw") return t;
       track(prefix + String(key));
       const v = Reflect.get(t, key);
       if (typeof v === "object" && v !== null) {
-        let c = cache.get(v);
-        if (c == null) {
-          c = reactive(v);
-          cache.set(v, c);
-        }
-        return c;
+        const k = String(key);
+        const c = cache.get(k);
+        if (c != null && Reflect.get(c, "__raw") === v) return c;
+        const n = reactive(v);
+        cache.set(k, n);
+        return n;
       }
       return v;
     },

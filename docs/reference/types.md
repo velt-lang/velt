@@ -1878,6 +1878,9 @@ trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, 
 the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
 type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
 stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
+Calling a function-typed field of a typed proxy (`s.$set(v)`) reads it through the `get` trap
+before the arguments, then calls the function the trap answered, whatever its own parameter
+types (a closure taking `any`), and checks its result against the field's result type.
 `s.count++` used as a
 value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
 in JavaScript. A field read through a typed proxy runs after the operands before it, as any
@@ -1922,9 +1925,9 @@ function main(): void {
 
 **Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
 `defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
-as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns, called
-as a method or a function-typed field of a typed proxy (`s.$set(v)`; `(s as any).$set(v)` works),
-or a `get` trap that answers a method name with another function; a method call through an
+as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
+as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
+of a class; a method call through an
 interface value holding a proxy whose handler has a `get` trap; a method read as a value through
 `any` and called on its own; `Array.isArray` of an array proxy; proxies of functions (`apply`,
 `construct`); `Reflect.get` / `Reflect.set` with a receiver

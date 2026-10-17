@@ -792,7 +792,11 @@ entry is an `ICE:`.
   a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call
-  then runs with `this` the proxy. Object conversions keep a proxy's identity: `AdtLit` has
+  then runs with `this` the proxy. A call of a function-typed field of a proxiable object
+  type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
+  `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
+  arguments boxed, its result converted to the field's result type (velt_vir
+  `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
   `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to

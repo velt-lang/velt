@@ -208,7 +208,10 @@ impl FnLower<'_, '_> {
         let fd = self.copy_to_temp(Operand::Copy(proj(&res, Proj::Field(0))), Ty::Ptr);
         let fdesc = Operand::Copy(proj(&res, Proj::Field(1)));
         let ok = Place::local(self.temp(Ty::Bool));
-        self.assign(ok.clone(), Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)));
+        self.assign(
+            ok.clone(),
+            Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
+        );
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         for (def, targs) in cands {
             let Some(fty) = self.cx.method_value_ty(*def, targs) else {
@@ -225,19 +228,21 @@ impl FnLower<'_, '_> {
             let thunk = self
                 .cx
                 .func(Work::Thunk(ThunkKind::Unbound, *def, targs.clone()));
-            let mut same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, code, cfunc(thunk)));
+            let mut same =
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, code, cfunc(thunk)));
             if let Some(e) = entry {
                 let own = self.cx.self_entry(*def, targs.clone());
-                let at = self.rvalue_temp(
-                    Ty::Bool,
-                    Rvalue::Binary(BinOp::Eq, e.clone(), cfunc(own)),
-                );
+                let at =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, e.clone(), cfunc(own)));
                 same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, same, at));
             }
             let hit = self.new_block();
             self.branch(same, hit, next);
             self.switch_to(hit);
-            self.assign(ok.clone(), Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)));
+            self.assign(
+                ok.clone(),
+                Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
+            );
             self.goto(next);
             self.switch_to(next);
         }

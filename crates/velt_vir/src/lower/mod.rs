@@ -71,6 +71,7 @@ mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_call;
 mod proxy_method;
 mod proxy_typed;
 mod proxy_write;

@@ -160,9 +160,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         if kind == ThunkKind::Unbound {
             let sym = format!("_Gthunk_unbound_{}", lw.cx.instance_symbol(&f.name, targs));
-            lw.panic_msg(
-                "TypeError: calling a method read as a value is not supported yet (#823)",
-            );
+            lw.panic_msg("TypeError: calling a method read as a value is not supported yet (#823)");
             lw.terminate(Terminator::Unreachable);
             return lw.finish(sym, params, abi.ret);
         }
