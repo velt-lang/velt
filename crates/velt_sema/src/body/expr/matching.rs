@@ -289,10 +289,7 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_nullish(s, rhs, span);
         }
-        s = match self.nullish_into_chain(s, rhs, span) {
-            Ok(h) => return h,
-            Err(s) => s,
-        };
+        s = self.flatten_chain(s);
         let Some(payload) = self.present_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);
@@ -423,6 +420,7 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let s = self.expr(object, None, Want::Borrow);
+        let s = self.flatten_chain(s);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         if self
             .cx

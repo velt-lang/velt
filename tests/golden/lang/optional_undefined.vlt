@@ -81,6 +81,21 @@ function maybeLen(s?: string): number | undefined {
   return s?.length;
 }
 
+class Leaf {
+  name: string | null = null;
+}
+
+class Mid {
+  leaf: Leaf | null = null;
+}
+
+// A chain continued past a link whose rest may be `null`: `m?.leaf` may be `null`, and
+// `?.name` on it gives `undefined`; `name` itself may be `null`.
+function deep(m: Mid | null): string {
+  const n = m?.leaf?.name;
+  return `${n} ${m?.leaf?.name ?? "d"} ${typeof n}`;
+}
+
 function main() {
   u();
   u("a", 1);
@@ -134,4 +149,11 @@ function main() {
   chain(new Item());
   nested(null);
   console.log(maybeLen(), maybeLen("abc"));
+  const bare = new Mid();
+  const withLeaf = new Mid();
+  withLeaf.leaf = new Leaf();
+  const named = new Mid();
+  named.leaf = new Leaf();
+  named.leaf.name = "x";
+  console.log(deep(null), "|", deep(bare), "|", deep(withLeaf), "|", deep(named));
 }
