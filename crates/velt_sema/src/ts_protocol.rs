@@ -20,6 +20,27 @@ use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
+/// Does a user module call a method named `throw` (`g.throw(e)`, a generator's)? Then a `yield`
+/// in a `try` with a `catch` may throw what `throw()` passes in (`body/generators.rs`);
+/// otherwise generators are compiled as if nothing could be thrown in.
+pub(crate) fn calls_throw(modules: &[crate::SourceModule]) -> bool {
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Call { callee, .. } = &e.kind {
+                if let ast::ExprKind::Member { prop, .. } = &callee.kind {
+                    self.0 |= prop.name == "throw";
+                }
+            }
+        }
+    }
+    let mut f = Find(false);
+    for m in modules.iter().filter(|m| !m.is_std) {
+        velt_syntax::visit::walk_module(&m.ast, &mut f);
+    }
+    f.0
+}
+
 /// The prelude's protocol types whose second argument TypeScript reads as `TReturn`.
 const PROTOCOL_TYPES: [&str; 9] = [
     "Generator",
@@ -49,10 +70,10 @@ fn no_return_spelling(t: &ast::TypeExpr) -> bool {
     }
 }
 
-/// Do the written arguments of a protocol type use TypeScript's spelling (a third argument, or
-/// a "returns nothing" second one), so that no error type is written?
+/// Do the written arguments of a protocol type use TypeScript's spelling (a "returns nothing"
+/// second one), so that no error type is written?
 pub(crate) fn ts_spelling(args: &[ast::TypeExpr]) -> bool {
-    args.len() == 3 || (args.len() == 2 && no_return_spelling(&args[1]))
+    args.len() >= 2 && no_return_spelling(&args[1])
 }
 
 impl Ctx<'_> {
@@ -75,19 +96,40 @@ impl Ctx<'_> {
             return Some(args.iter().map(|a| self.resolve_type(a, env)).collect());
         }
         let t = self.resolve_type(&args[0], env);
+        // `Generator<T, X, N>`: `N` is the type of `next(value)`'s argument.
+        let next = match (name, args.get(2)) {
+            ("Generator", Some(n)) => self.next_arg(n, env),
+            _ => None,
+        };
+        let with_next = |cx: &mut Self, mut v: Vec<TyId>| {
+            if let Some(n) = next {
+                if v.len() == 1 {
+                    v.push(cx.ty.never);
+                }
+                v.push(n);
+            }
+            v
+        };
         if no_return_spelling(&args[1]) {
-            return Some(vec![t]);
+            return Some(with_next(self, vec![t]));
         }
         let second = self.resolve_type(&args[1], env);
         if t == self.ty.error || second == self.ty.error {
             return None;
         }
         if second == self.ty.unit {
-            return Some(vec![t]);
+            return Some(with_next(self, vec![t]));
         }
         if args.len() == 3 {
-            self.report_ts_return(name, t, second, args[1].span, true);
-            return None;
+            // An error type second (Velt's `E`); anything else can only be TS's `TReturn`.
+            if !self.shapes_done {
+                self.deferred_ts_returns
+                    .push((name, t, second, args[1].span));
+            } else if !self.error_like(second, 0) {
+                self.report_ts_return(name, t, second, args[1].span, true);
+                return None;
+            }
+            return Some(with_next(self, vec![t, second]));
         }
         let check = (name, t, second, args[1].span);
         if self.shapes_done {
@@ -96,6 +138,23 @@ impl Ctx<'_> {
             self.deferred_ts_returns.push(check);
         }
         Some(vec![t, second])
+    }
+
+    /// The `TNext` argument of `Generator<T, X, N>`: `None` when it says "no value" (`void`,
+    /// `undefined`, `never`), so the generator takes no `next(value)`.
+    fn next_arg(&mut self, n: &ast::TypeExpr, env: &TyEnv) -> Option<TyId> {
+        let nothing = match &n.kind {
+            ast::TypeExprKind::Void => true,
+            ast::TypeExprKind::Named { path, args } if path.len() == 1 && args.is_empty() => {
+                matches!(path[0].name.as_str(), "undefined" | "never")
+            }
+            _ => false,
+        };
+        if nothing {
+            return None;
+        }
+        let t = self.resolve_type(n, env);
+        (t != self.ty.error && !self.ty.is_bottom(t) && t != self.ty.unit).then_some(t)
     }
 
     /// Is `item` the prelude's `IteratorResult<T>` alias?

@@ -172,6 +172,10 @@ pub struct Program {
     /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
     /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
     pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
+    /// The program may call a generator's `throw()` (hir_encodings.md "Generators"): a
+    /// generator's resume function then also handles an error thrown in at each `yield`;
+    /// otherwise it has no code for that.
+    pub generator_throw: bool,
 }
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").

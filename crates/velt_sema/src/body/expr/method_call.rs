@@ -99,9 +99,23 @@ impl FnCx<'_, '_> {
             return self.no_method(recv, prop, args, span);
         };
         if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {
+            // `next(value)` on a `Generator<T, E, N>`: the prelude's `nextWith(value)`.
+            let n = self.cx.generator_next_ty(recv.ty);
+            if args.len() == 1 && !self.cx.ty.is_bottom(n) {
+                if let Some(Resolved::Def {
+                    def,
+                    slots,
+                    recv_ty,
+                    ..
+                }) = self.resolve_method(recv.ty, "nextWith")
+                {
+                    return self
+                        .def_method_call(recv, def, slots, recv_ty, type_args, args, exp, span);
+                }
+            }
             self.cx.error(
                 Diagnostic::error("`next()` takes no argument", args[0].span).with_note(
-                    "TypeScript allows this (`next(value)` makes the paused `yield` evaluate to `value`); Velt doesn't because a generator's `yield` has no value; write `next()`, and pass values into the generator through its parameters or an object both sides share",
+                    "`next(value)` makes the paused `yield` evaluate to `value`, which needs the generator's type to say what it takes: declare it `Generator<T, void, N>` (`N`: the type of the values `next` passes), or write `next()`",
                 ),
             );
             self.check_args_loose(args);

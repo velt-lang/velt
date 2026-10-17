@@ -173,6 +173,8 @@ pub(crate) struct Ctx<'m> {
     pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
@@ -334,6 +336,7 @@ impl<'m> Ctx<'m> {
             group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
+            gen_throw: false,
             overloaded_methods: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
@@ -754,7 +757,7 @@ impl<'m> Ctx<'m> {
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
-                DefInfo::Adt(a) => with_args(self, &a.name, args),
+                DefInfo::Adt(a) => with_args(self, &a.name, self.shown_args(*d, args)),
                 DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),

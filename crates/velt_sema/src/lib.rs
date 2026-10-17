@@ -244,6 +244,7 @@ fn check_on_current_thread(
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
+        cx.gen_throw = ts_protocol::calls_throw(modules);
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -288,6 +289,7 @@ fn check_on_current_thread(
         impls,
         counted_objects,
         any,
+        gen_throw,
         ..
     } = cx;
     let defs = defs
@@ -309,6 +311,7 @@ fn check_on_current_thread(
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members,
+        generator_throw: gen_throw,
     };
     (Some(program), diags)
 }

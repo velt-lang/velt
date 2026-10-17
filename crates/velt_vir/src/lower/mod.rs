@@ -238,6 +238,9 @@ enum Work {
     /// `(state: ptr)`: request the awaited close of an async generator instance (sets
     /// `CLOSE_BIT`; async_fn/generator.rs).
     AsyncCloseStart(DefId, Vec<TyId>),
+    /// `(state: ptr, error: ptr) -> u32`: resume a generator instance with an error thrown in
+    /// (`throw()`; async_fn/gen_send.rs).
+    GenThrow(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),
