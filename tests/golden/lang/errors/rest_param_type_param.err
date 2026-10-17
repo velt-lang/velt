@@ -1,0 +1,2 @@
+a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)
+a rest parameter must have an array type (`...xs: T[]`)

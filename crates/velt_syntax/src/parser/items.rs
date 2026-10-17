@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
+    pub(super) fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
         let kind = match self.cur_kw() {
             Some(Kw::Import) => {
                 if !import_ok {
@@ -134,7 +134,16 @@ impl<'a> Parser<'a> {
                 ItemKind::Var(var)
             }
             Some(Kw::Declare) if self.at_augment() => ItemKind::Augment(self.parse_augment()?),
+            Some(Kw::Declare) if self.at_namespace(1) => {
+                ItemKind::Namespace(self.parse_namespace()?)
+            }
+            None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
+            _ if self.at_var_decl() => {
+                let var = self.parse_var_decl()?;
+                self.expect_semi()?;
+                ItemKind::Var(var)
+            }
             _ if self.at_using_decl() => {
                 let span = self.cur_span();
                 self.error(
@@ -199,7 +208,7 @@ impl<'a> Parser<'a> {
             sig = self.parse_fn_sig(next_lo, next_async)?;
         }
         let this_param = self.this_param.take();
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         // Without a `this` parameter, `this` in a function declaration is sema's to report.
         if this_param.is_some() {
             self.check_fn_this(this_param, &body, false);
@@ -438,7 +447,7 @@ impl<'a> Parser<'a> {
     }
 
     /// One parameter, the `index`-th: `name: T`, `name?: T`, `name: T = e`, `name = e` (the type
-    /// stated by the default, as for class fields), `...name: T[]`, or a destructuring pattern
+    /// stated by the default, as for class fields), `...name: T[]` (or another array type), or a destructuring pattern
     /// `[a, b]: T` / `{ a, b }: T = e`.
     pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
@@ -483,18 +492,19 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`.
+            // `name?: T` is `name: T | null = null`, and `name?: T | undefined` is
+            // `name: T | undefined = undefined`.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-            ty = super::types::or_null(ty);
+            let nothing = match super::types::has_undefined(&ty) {
+                true => Lit::Undefined,
+                false => Lit::Null,
+            };
+            default = Some(self.mk_expr(ExprKind::Lit(nothing), span));
+            ty = super::types::optional_param(ty);
         }
         if rest {
-            if !matches!(ty.kind, TypeExprKind::Array(_)) {
-                self.error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    ty.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
             if let Some(d) = &default {
                 self.error("a rest parameter cannot have a default value", d.span);
             }
@@ -513,13 +523,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
+    /// `type Name<T> = T;` (the `;` may be left out before the `}` of a block, namespace or
+    /// `declare global` and at the end of the file, as everywhere in TypeScript).
+    pub(super) fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
         let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
-        self.expect_semi()?;
+        if !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
+            self.expect_semi()?;
+        }
         Ok(TypeAlias { name, generics, ty })
     }
 
@@ -528,6 +542,9 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let kind = if self.eat_kw(Kw::Const) {
             VarKind::Const
+        } else if self.at_var_decl() {
+            self.bump(); // var
+            VarKind::Let
         } else {
             self.expect_kw(Kw::Let, "let")?;
             VarKind::Let

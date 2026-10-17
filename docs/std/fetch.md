@@ -12,8 +12,8 @@ take and return the same `Request` and `Response`, as in Deno and Bun. The optio
 signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
 global too, as in TypeScript, so an init object can be built before the call:
 `const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
-`velt:fetch` exports the same names and [`BodyStream`](#bodystream), the type of `res.body` and
-`req.body`.
+`velt:fetch` exports the same names and [`BodyStream`](#bodystream), a Velt body stream of
+`u8[]` chunks.
 
 ```ts
 type User = { id: number; name: string };
@@ -51,7 +51,7 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 |---|---|---|
 | `method` | `string` | default `"GET"`; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased |
 | `headers` | `Headers \| Record<string, string>` | an object literal works: `{ "content-type": "text/csv" }` |
-| `body` | `string \| u8[] \| URLSearchParams` | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
+| `body` | `string \| Uint8Array \| ArrayBuffer \| DataView \| u8[] \| URLSearchParams` (any typed array) | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
 | `redirect` | `"follow" \| "error" \| "manual"` | default `"follow"` (at most 20); `"manual"` returns the 3xx response |
 | `signal` | `AbortSignal` | cancels the request |
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
@@ -72,8 +72,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   `bodyUsed`.
 - Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
   mark is dropped, as in JS),
-  `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS
-  returns an `ArrayBuffer`). A body is read once: a second read throws `IoError`
+  `await res.json<T>()`, `await res.bytes(): Uint8Array` and `await res.arrayBuffer():
+  ArrayBuffer` ([typed arrays](typed_array.md)). A body is read once: a second read throws `IoError`
   (`Body is unusable: Body has already been read`); a response without a body can be read any
   number of times, as in JS. A large body is received into one buffer
   sized from `content-length`, so `bytes()` copies it once.
@@ -81,12 +81,13 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
   or give the variable one (`const users: User[] = await res.json()`); an untyped
   `res.json()` is a compile error that says so.
-- `res.body` is the body as it arrives: `for await (const chunk of res.body)` yields `u8[]`
-  chunks (JS: a `ReadableStream` of `Uint8Array`s), so a large download need not be held in
-  memory: each chunk is at most 64 KiB, however much a compressed body expands. It is a
-  `BodyStream | null`: null for a status without a body (101, 103, 204, 205, 304), for a
-  `HEAD` request's response and for a response made without one. Reading it uses the body up,
-  as `text()` does.
+- `res.body` is the body as it arrives, a [`ReadableStream`](streams.md) of `Uint8Array`s:
+  `res.body.getReader()` or `for await (const chunk of res.body)`, so a large download need not
+  be held in memory: each chunk is at most 64 KiB, however much a compressed body expands. It is
+  `null` for a status without a body (101, 103, 204, 205, 304), for a `HEAD` request's response
+  and for a response made without one. Reading it uses the body up, as `text()` does; getting
+  it does not. A `ReadableStream` is not a body yet (`new Response(stream)`, #1129): stream a
+  body with [`BodyStream`](#bodystream).
 - A body the server compressed (`content-encoding: gzip`, `deflate` or `br`, or several of
   them, such as `deflate, gzip`: up to five) is decoded as it arrives, whichever way you read
   it; the headers stay as received. A list naming another coding leaves the body as sent, and
@@ -99,7 +100,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
   returns, not the property. Dropping a response whose body was not read closes its
   connection.
-- `new Response(body?: string | u8[] | URLSearchParams | BodyStream | null, init?:
+- `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
+  BodyStream | null, init?:
   ResponseInit { status?; statusText?; headers? })`, `Response.json(data, init?)`
   (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status =
   302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
@@ -112,20 +114,19 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 `new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
 `url`, `method`, `headers`, `redirect`, `signal` (`AbortSignal | null`: JS gives every request
 a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`
-and `body` (a [`BodyStream`](#bodystream), `null` without a body). `fetch(request)` sends it
+and `body` (a [`ReadableStream`](streams.md) of `Uint8Array`s, `null` without a body). `fetch(request)` sends it
 (its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
-a `BodyStream` is read whole before the request is sent (**Planned**: streamed uploads).
+a stream is read whole before the request is sent (**Planned**: streamed uploads).
 
 A [server](http.md#the-request) hands its handler a `Request` for what it received: its `url`
 is absolute, its headers are immutable, and its body is received while it is read.
 
 ## `BodyStream`
 
-A body read chunk by chunk: `for await (const chunk of stream)` yields `u8[]` chunks (JS: a
-`ReadableStream` of `Uint8Array`s). `res.body` and `req.body` are one, and
-`BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one from an async iterable, such as an
-async generator (JS: `ReadableStream.from`), for `new Response(stream)`: a server sends each
-chunk as it is made. A stream is read once. An error the iterable throws reaches the reader as
+Velt's body stream of `u8[]` chunks (in JS a body can also be a
+[`ReadableStream`](streams.md) of `Uint8Array`s; Velt doesn't take one yet, #1129): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
+from an async iterable, such as an async generator, for `new Response(stream)`: a server sends
+each chunk as it is made, and `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws reaches the reader as
 an `IoError` (`"EIO"`) carrying its text.
 
 ```ts
@@ -201,11 +202,9 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   with a `cause`, and the signal's `AbortError` / `TimeoutError` where Node throws a
   `DOMException` (or the abort reason).
 - `res.json()` needs the type of the data (above).
-- Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
-  without a signal has `signal == null`.
-- `res.body` and `req.body` are a `BodyStream`, an async iterable of `u8[]`, not a
-  `ReadableStream` (no `getReader()`, `pipeTo()`); `BodyStream.from` stands for
-  `ReadableStream.from`.
+- There is no `Blob` or `FormData`, and a `Request` without a signal has `signal == null`.
+- `res.body` and `req.body` have no `pipeTo()`, `pipeThrough()`, `tee()` or BYOB reader
+  ([streams](streams.md)).
 - Mistakes JS reports with a catchable `RangeError` or `TypeError` stop the program instead,
   like an index out of bounds: `new Response(body, { status })` outside 200–599,
   a body with a status that has none (204, 205, 304), `Response.redirect(url, status)` with a

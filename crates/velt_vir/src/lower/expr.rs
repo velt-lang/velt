@@ -39,9 +39,12 @@ impl FnLower<'_, '_> {
                 mode: UseMode::Move,
                 ..
             } => match &v {
-                Operand::Copy(p) => {
-                    self.take_temp(&p.clone());
-                    v
+                Operand::Copy(p) if self.take_temp(&p.clone()) => v,
+                // Out of a variable that only borrows its value (`const s = this.f`, narrowed):
+                // nothing was transferred, so the consumer gets another reference (#1140).
+                _ if self.borrowed_root(e) => {
+                    let ty = self.sub(e.ty);
+                    self.share_value(v, ty)
                 }
                 _ => v,
             },
@@ -54,6 +57,15 @@ impl FnLower<'_, '_> {
                 }
             },
         }
+    }
+
+    /// Is the moved part `e` (`x.f`, `x!`, a narrowed member of `x`) rooted at a variable that
+    /// does not own its value (a binding by reference, or a borrowed parameter)?
+    fn borrowed_root(&self, e: &hir::Expr) -> bool {
+        super::place::part_root(e).is_some_and(|id| {
+            let info = &self.info[id.0 as usize];
+            !info.droppable && info.vir.is_some()
+        })
     }
 
     /// Deep copy of a value of concrete type `ty` into a fresh (unregistered) temporary.
@@ -182,6 +194,10 @@ impl FnLower<'_, '_> {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
         };
+        if let Some(slot) = g.slot {
+            // A module-level `let`: its slot, read in place (sema shares what it moves out).
+            return Operand::Copy(self.module_slot(slot));
+        }
         let saved = std::mem::take(&mut self.targs);
         let v = self.consume(&g.init);
         self.targs = saved;
@@ -219,6 +235,12 @@ impl FnLower<'_, '_> {
                 let hir::Def::Global(g) = self.cx.hir.def(d) else {
                     return None;
                 };
+                // A module-level `let` (its slot holds the array, which code may replace or
+                // modify) is never read from the stored initializer.
+                if g.slot.is_some() {
+                    self.cx.tables.insert(d, None);
+                    return None;
+                }
                 let stored = self.store_table(g);
                 self.cx.tables.insert(d, stored);
                 stored?

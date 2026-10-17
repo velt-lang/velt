@@ -1,0 +1,59 @@
+// check: no leaks
+// Member reads and calls on `any` (phase 1b of #924), compared with Node: fields, getters and
+// methods of class instances (a subclass through its base class too), `Map` members, array
+// `length` and elements, string `length`, object type fields, function values, `string`,
+// `number` and `any` keys, missing members (`undefined`) and chains.
+class Point {
+  x: number;
+  y: number;
+  label: string = "p";
+  constructor(x: number, y: number) { this.x = x; this.y = y; }
+  get sum(): number { return this.x + this.y; }
+  scale(k: number): Point { return new Point(this.x * k, this.y * k); }
+  describe(prefix: string, suffix?: string): string { return prefix + this.label + (suffix ?? "!"); }
+  touch(): void { this.label = "touched"; }
+}
+class Animal {
+  name: string;
+  constructor(name: string) { this.name = name; }
+  speak(): string { return this.name + " makes a sound"; }
+}
+class Dog extends Animal {
+  tricks: number = 3;
+  override speak(): string { return this.name + " barks"; }
+}
+interface Opts { size: number; tag: string; }
+function make(): Animal { return new Dog("rex"); }
+function main(): void {
+  const p: any = new Point(1, 2);
+  console.log(p.x, p.y, p.label, p.sum);
+  console.log(p.missing);
+  console.log(p.describe("<"), p.describe("<", ">"));
+  const q: any = p.scale(3);
+  console.log(q.x, q.y, q.sum);
+  p.touch();
+  console.log(p.label, p.touch());
+  const a: any = make();
+  console.log(a.name, a.tricks, a.speak());
+  const m: any = new Map<string, number>();
+  m.set("a", 1);
+  m.set("b", 2);
+  console.log(m.size, m.get("a"), m.has("b"), m.has("z"), m.get("z"));
+  const xs: any = [10, 20, 30];
+  console.log(xs.length, xs[0], xs[2], xs[5], xs[1.5]);
+  const s: any = "hello";
+  console.log(s.length);
+  const o: any = { size: 4, tag: "t" } as Opts;
+  console.log(o.size, o.tag, o.other);
+  const f: any = (n: number, t: string) => t + n;
+  console.log(f(1, "a"));
+  const k1: any = "label";
+  const k2: any = 1;
+  console.log(p[k1], xs[k2]);
+  const key: string = "y";
+  console.log(p[key], p["x"]);
+  const holder: any = { fn: (n: number) => n + 1, inner: { deep: "d" } };
+  console.log(holder.fn(41), holder.inner.deep);
+  const nested: any = [[1, 2], [3]];
+  console.log(nested[0][1], nested[1].length);
+}

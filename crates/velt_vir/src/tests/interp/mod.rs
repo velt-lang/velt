@@ -119,7 +119,8 @@ impl<'p> Interp<'p> {
     fn new(p: &'p Program) -> Self {
         let mut it = Interp {
             p,
-            heap: vec![0; 16],
+            // Bytes 8..16: `cx` (async_rt.rs `CX`), pointing at the await word at 16..24 (0).
+            heap: [0u64, 16, 0].iter().flat_map(|w| w.to_le_bytes()).collect(),
             stack: vec![],
             statics: vec![],
             allocs: HashMap::new(),

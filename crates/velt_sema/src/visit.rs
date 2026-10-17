@@ -235,3 +235,8 @@ impl VisitMut for Exprs<'_> {
 pub(crate) fn exprs_mut(b: &mut Block, f: &mut dyn FnMut(&mut Expr)) {
     block(b, &mut Exprs(f));
 }
+
+/// [`exprs_mut`] over one expression tree.
+pub(crate) fn exprs_in(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
+    expr(e, &mut Exprs(f));
+}

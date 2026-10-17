@@ -59,6 +59,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                     ty: g.ty,
                     init,
                     span: g.span,
+                    slot: None,
                 })
             }),
         };
@@ -66,7 +67,8 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
     }
 }
 
-/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods).
+/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods, and
+/// setter slots after those when the program writes through `d`, `crate::iface_writes`).
 fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
     let n = cx.iface(d).map_or(0, |i| i.methods.len());
     // The dispatch group's flag, not the method's own return type: one implementation may
@@ -81,6 +83,10 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         .zip(&promise)
         .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
         .collect();
+    let setters = match cx.iface_written(d) {
+        true => cx.writable_fields(d),
+        false => vec![],
+    };
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -110,6 +116,12 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             })
             .chain(i.fields.iter().map(|f| InterfaceMethodDef {
                 name: format!("<{}>", f.name),
+                default: None,
+                promise: false,
+                throws: None,
+            }))
+            .chain(setters.iter().map(|&k| InterfaceMethodDef {
+                name: format!("<set {}>", i.fields[k].name),
                 default: None,
                 promise: false,
                 throws: None,

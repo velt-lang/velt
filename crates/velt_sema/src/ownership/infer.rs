@@ -308,8 +308,13 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 .global(*d)
                 .map(|g| (g.ty, g.name.clone()))
                 .unwrap_or((cx.ty.error, String::new()));
-            if crate::body::pure_init::shares_on_move(cx, *d) {
-                // A function computed at each use: another reference to it is owned.
+            let mutable = cx.global(*d).is_some_and(|g| g.stored);
+            if mutable && cx.is_copy(ty) {
+                return false;
+            }
+            if mutable || crate::body::pure_init::shares_on_move(cx, *d) {
+                // A function computed at each use, or a module-level `let` the module state
+                // keeps: another reference to it is owned.
                 let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));
                 let read = Expr {
                     kind: read,

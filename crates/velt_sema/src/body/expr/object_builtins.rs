@@ -86,9 +86,7 @@ impl FnCx<'_, '_> {
             return None;
         };
         if ns.name == "Array" && prop.name == "isArray" && self.builtin_array(ns) {
-            if let Some(h) = self.dynamic_args("Array.isArray", args, span) {
-                return Some(h);
-            }
+            // An `any` / `unknown` argument is `dynamic_narrow`'s, checked before.
             return Some(self.array_is_array(args, span));
         }
         if !self.is_prelude_object(ns) {
@@ -106,7 +104,7 @@ impl FnCx<'_, '_> {
             self.cx
                 .err(format!("`Object.{name}` takes no type arguments"), span);
         }
-        if let Some(h) = self.dynamic_args(&format!("Object.{name}"), args, span) {
+        if let Some(h) = self.reject_dynamic_args(&format!("Object.{name}"), args, span) {
             return Some(h);
         }
         Some(match name {
@@ -132,7 +130,7 @@ impl FnCx<'_, '_> {
 
     /// An error when an argument of `what` is `any` or `unknown` (`None`: none is), whose
     /// run-time tests are #924's.
-    pub(super) fn dynamic_args(
+    pub(super) fn reject_dynamic_args(
         &mut self,
         what: &str,
         args: &[ast::Expr],

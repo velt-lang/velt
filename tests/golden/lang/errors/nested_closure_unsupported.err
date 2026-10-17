@@ -1,0 +1,6 @@
+nested_closure_unsupported.vlt:6:13: error: `down` uses local variables of the enclosing function and calls itself: not supported yet
+`down` is a generator, and a generator function value cannot refer to itself yet
+nested_closure_unsupported.vlt:12:12: error: `ping` uses local variables of the enclosing function and calls itself through `pong`: not supported yet
+write its result type: `function ping(...): T`
+nested_closure_unsupported.vlt:15:12: error: `pong` uses local variables of the enclosing function and calls itself through `ping`: not supported yet
+nested_closure_unsupported.vlt:24:12: error: `twice` is used before `k`, a local it uses, is declared: not supported yet

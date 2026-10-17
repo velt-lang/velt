@@ -262,6 +262,19 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
+        if let Some(target) = self.literal_iface(exp) {
+            return self.iface_object(props, target, span);
+        }
+        if let Some(at) = props.iter().find_map(super::iface_object::is_accessor) {
+            self.cx.error(
+                Diagnostic::error(
+                    "getters and setters in object literals are not supported yet where no interface with methods is expected",
+                    at,
+                )
+                .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
+            );
+            return self.error_expr(span);
+        }
         if let Some(props) = self.local_computed_keys(props) {
             return self.object_lit(&props, exp, span);
         }
@@ -531,12 +544,15 @@ impl FnCx<'_, '_> {
     /// declared as (`AB` for `type AB = A & B`), else `d`'s own name.
     fn literal_name(&mut self, d: DefId) -> String {
         let a = self.cx.adt(d).expect("ICE: struct");
-        let name = a.name.clone();
+        let name = crate::namespaces::written(&a.name).into_owned();
         if a.kind != AdtKind::Anon || !a.generics.names.is_empty() {
             return name;
         }
         let t = self.cx.ty.intern(TyKind::Adt(d, vec![]));
-        self.cx.alias_names.get(&t).cloned().unwrap_or(name)
+        match self.cx.alias_names.get(&t) {
+            Some(n) => crate::namespaces::written(n).into_owned(),
+            None => name,
+        }
     }
 
     /// A struct literal from its values by field index (omitted ones take their default).
@@ -638,6 +654,14 @@ impl FnCx<'_, '_> {
         let mut values: Vec<Option<hir::Expr>> = fields.iter().map(|_| None).collect();
         for (pname, value) in &ps {
             let Some(i) = fields.iter().position(|f| f.name == pname.name) else {
+                if self.finished_result_value(fields, &pname.name, *value) {
+                    continue;
+                }
+                if crate::collect::exports::def_member_maybe_dropped(self.cx, d, &pname.name) {
+                    // The parser may have dropped its declaration (`Ctx::recovered`).
+                    self.prop_value(pname, *value, None);
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!(
@@ -676,6 +700,25 @@ impl FnCx<'_, '_> {
             values[i] = Some(h);
         }
         values
+    }
+
+    /// `value: undefined` in a literal of a finished iterator result (`{ done: true }`, an object
+    /// type with a field `done: true` and no `value`): TypeScript's `IteratorReturnResult`
+    /// carries the value, Velt's finished result has none, so the property is left out (issue
+    /// #930). Only the `undefined` literal is left out: it has no effect.
+    fn finished_result_value(
+        &mut self,
+        fields: &[FieldInfo],
+        name: &str,
+        value: Option<&ast::Expr>,
+    ) -> bool {
+        let is_undefined =
+            value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("undefined"));
+        name == "value"
+            && is_undefined
+            && fields.iter().any(|f| {
+                f.name == "done" && self.cx.lit_value(f.ty) == Some(hir::LitValue::Bool(true))
+            })
     }
 
     /// `t` when only its error types are unknown (`Error`): a hint, though not a type yet.

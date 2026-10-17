@@ -142,6 +142,9 @@ impl FnCx<'_, '_> {
             let obj = self.expr(rhs, None, Want::Borrow);
             return self.present_test(obj, name, true, span);
         }
+        if let Some(h) = self.dynamic_in(lhs, rhs, span) {
+            return h;
+        }
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };

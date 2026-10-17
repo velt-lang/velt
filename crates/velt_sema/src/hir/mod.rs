@@ -38,7 +38,7 @@ use std::collections::HashMap;
 
 use velt_common::Span;
 
-pub use fields::{FieldDef, FieldInit};
+pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{FloatTy, IntTy, SimdTy};
@@ -104,6 +104,19 @@ pub enum TyKind {
     Symbol,
     /// A SIMD vector or mask: Copy, 16 bytes.
     Simd(SimdTy),
+    /// A type operator that can't be evaluated yet because an argument it inspects is still a
+    /// type parameter (docs/internals/design/deferred-types.md, #934 phase 2). Only in generic
+    /// definitions: once its arguments are concrete, sema reduces it, and lowering replaces it by
+    /// its entry in `Program::type_ops`.
+    Op(TyOp, Vec<TyId>),
+}
+
+/// The operator of a [`TyKind::Op`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TyOp {
+    /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
+    /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
+    Alias(u32),
 }
 
 /// The value of a literal type.
@@ -141,11 +154,36 @@ pub struct Program {
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
     /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
     pub null_proto_records: bool,
+    /// The program's module state (module-level `let`s), `None` when it has none
+    /// (hir_encodings.md "Module state").
+    pub module_state: Option<ModuleState>,
+    /// Every deferred type (`TyKind::Op`) with concrete arguments that an instantiation of a
+    /// generic definition reaches, and the type it reduces to (no `Op` in it).
+    pub type_ops: HashMap<TyId, TyId>,
     /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
     pub any_impl: Option<u32>,
     /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
     /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
     pub unknown: Option<DefId>,
+    /// The prelude's `object` and `Function` interfaces when `any_impl` is set (issue #926):
+    /// `Dyn(object, [])` and `Dyn(Function, [])` are dynamic types too, with the same
+    /// representation and tables as `any`.
+    pub object: Option<DefId>,
+    pub function: Option<DefId>,
+    /// The methods and accessors of each struct / class / object type by name, own ones before
+    /// inherited ones, when the program reads or calls a member of an `any`
+    /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
+    /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
+    pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
+}
+
+/// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
+#[derive(Clone, Debug)]
+pub struct ModuleState {
+    /// The state tuple: element `i` is the type of slot `i`.
+    pub ty: TyId,
+    /// The global of each slot, in initialization order (Node's module evaluation order).
+    pub slots: Vec<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -374,9 +412,13 @@ pub struct GlobalDef {
     pub name: String,
     pub ty: TyId,
     /// Evaluated at each use (a constant expression, or pure calls and closures, sema
-    /// `body::pure_init`), except a table: an array literal that lowering stores once as data.
+    /// `body::pure_init`), except a table: an array literal that lowering stores once as data,
+    /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
     pub init: Expr,
     pub span: Span,
+    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
+    /// that is read, written and borrowed like a field.
+    pub slot: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]

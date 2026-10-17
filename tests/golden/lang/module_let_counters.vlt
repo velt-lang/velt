@@ -1,0 +1,35 @@
+let count = 0;
+let label = "n";
+const seen = new Map<string, number>();
+let items: string[] = [];
+
+function bump(): number {
+  count += 1;
+  count++;
+  return count;
+}
+
+function note(k: string) {
+  seen.set(k, (seen.get(k) ?? 0) + 1);
+  items.push(k);
+}
+
+function main() {
+  console.log(bump(), bump(), count);
+  note("a");
+  note("b");
+  note("a");
+  console.log(seen.get("a"), seen.size, items.length, items.join(","));
+  label = label + "!";
+  console.log(label);
+  const alias = items;
+  alias.push("c");
+  console.log(items.length);
+  items = ["x"];
+  console.log(items.length, alias.length);
+  const add = (n: number) => {
+    count += n;
+  };
+  add(10);
+  console.log(count);
+}

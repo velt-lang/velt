@@ -1,0 +1,8 @@
+// What an object literal's methods throw reaches a `catch` in a module imported before the one
+// holding the literal. Expected output from node.
+import { drive, depth } from "./_object_literal_catcher";
+import { failing, recursive } from "./_object_literal_maker";
+
+console.log(drive(failing(), 4));
+console.log(depth(recursive(), 3));
+console.log(drive(recursive(), 2));

@@ -90,6 +90,10 @@ impl FnLower<'_, '_> {
     }
 
     fn let_stmt(&mut self, local: LocalId, init: Option<&hir::Expr>) {
+        // A member only ever called: never made (frame_envs.rs).
+        if self.self_env.is_some() && self.direct_siblings.contains_key(&local) {
+            return;
+        }
         if let Some(
             e @ hir::Expr {
                 kind:

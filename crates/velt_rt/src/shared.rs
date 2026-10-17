@@ -63,15 +63,18 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
     (p as *mut RawMutex).write(RawMutex::INIT);
 }
 
-/// Lock (blocking the thread; `with` bodies never await, so holds are short).
+/// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
+/// stays held meanwhile: a `with` callback never takes it (task/local/module_state.rs).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
     (*(p as *const RawMutex)).lock();
+    crate::task::local::mutex_locked();
 }
 
 /// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
+    crate::task::local::mutex_unlocked();
     (*(p as *const RawMutex)).unlock();
 }
 

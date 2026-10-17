@@ -1,0 +1,7 @@
+// A proxy is an `any` for now (#823): converting one straight to a typed value is an error
+// (TypeScript gives it the target's type).
+type State = { n: number };
+function main(): void {
+  const s: State = new Proxy({ n: 1 }, {});
+  console.log(s.n);
+}

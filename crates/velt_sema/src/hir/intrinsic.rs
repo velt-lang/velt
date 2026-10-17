@@ -111,6 +111,12 @@ pub enum Intrinsic {
     /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
     /// where the function value is known (const_fields after specialization).
     FnCapturesNothing,
+    /// Inside a member of a recursive closure group (sema `nested_closures`): the closure
+    /// value of member `def` of the same group, made from the running closure's own
+    /// environment (`{ code of def, env }`, sharing it). The members capture the same
+    /// variables in the same order, so their environments have one layout. No args; the
+    /// result is owned.
+    ClosureSibling(super::DefId),
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,
@@ -299,4 +305,36 @@ pub enum Intrinsic {
     /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
     /// `null == undefined`, `"1" == 1`, `true == 1`).
     AnyLooseEq,
+    /// `(x: borrow any, key: borrow string | any) -> any`: `x.key` / `x[key]` (a key of type
+    /// `any` holding a number reads like `AnyIndex`): the member of the value held, boxed;
+    /// `undefined` when the value's fixed shape has no such member; a `TypeError` for a
+    /// `null` / `undefined` receiver or a member not supported through `any` yet. Sets
+    /// `Program::dyn_members`.
+    AnyGet,
+    /// `(x: borrow any, i: f64) -> any`: `x[i]` with a number key (array elements).
+    AnyIndex,
+    /// `(x: borrow any, key: borrow string, text: string, args: owned any...) -> any`: the
+    /// method call `x.key(args)`; each argument is converted to the parameter's type as by
+    /// `AnyTo`. `text` names the callee in a `TypeError` (`x.key is not a function`).
+    AnyCall,
+    /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value
+    /// `f` holds (`text` as for `AnyCall`).
+    AnyApply,
+    /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` /
+    /// `x[key] = v` (a key of type `any` holding a number writes like `AnySetIndex`): `v`
+    /// converted to the member's type as by `AnyTo` and stored, or passed to its setter; a
+    /// `TypeError` for a `null` / `undefined` receiver, a member the value's fixed shape does not
+    /// have (a record takes any key), a getter without a setter, or a member not supported
+    /// through `any` yet. Sets `Program::dyn_members`.
+    AnySet,
+    /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an
+    /// element of an array, inside its length).
+    AnySetIndex,
+    /// `(x: borrow any, key: borrow string | any) -> bool`: `key in x` (a key of type `any`
+    /// holding a number names an element by its string): whether the value held has the
+    /// property (a proxy: its `has` trap); a `TypeError` for a `null` / `undefined` value or one
+    /// not supported yet. Sets `Program::dyn_members`.
+    AnyHas,
+    /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
+    AnyIsArray,
 }

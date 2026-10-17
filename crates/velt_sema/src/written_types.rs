@@ -47,6 +47,8 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             format!("<{}>{}", names.join(", "), written(ty))
         }
         T::Construct(ty) => format!("new {}", written(ty)),
+        T::TupleRest(ty) => format!("...{}", written(ty)),
+        T::TupleOptional(ty) => format!("{}?", written(ty)),
         T::Union(ts) => list(ts, " | "),
         T::Intersection(ts) => ts
             .iter()
@@ -78,6 +80,7 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             ));
             format!("{{ {} }}", fs.join("; "))
         }
+        T::Callable { sigs, members } => written(&crate::call_sigs::lower(sigs, members, t.span)),
         T::Query(path) => {
             let path: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
             format!("typeof {}", path.join("."))

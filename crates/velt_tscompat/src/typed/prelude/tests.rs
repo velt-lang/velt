@@ -78,7 +78,8 @@ fn collect(
         | I::Interface(_)
         | I::Import(_)
         | I::ExternFn(_)
-        | I::Augment(_) => None,
+        | I::Augment(_)
+        | I::Namespace(_) => None,
     };
     if let Some(name) = name.filter(|_| item.exported) {
         if !name.name.starts_with("__") {

@@ -1,0 +1,16 @@
+// A namespace of types in `declare global { … }` is declared in the module (its members are
+// exported from the namespace, as in a `declare namespace`).
+type Node = { tag: string };
+
+declare global {
+  namespace UI {
+    type Element = Node;
+    interface Attributes {
+      key?: string;
+    }
+  }
+}
+
+const e: UI.Element = { tag: "div" };
+const a: UI.Attributes = { key: "k" };
+console.log(e.tag, a.key);

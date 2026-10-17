@@ -57,6 +57,39 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, env, cint(0, Ty::Ptr)))
     }
 
+    /// `Intrinsic::ClosureSibling(def)` in a member of a recursive closure group: `{ code of
+    /// def, this closure's env }`, a new reference to the env. The members' envs have one
+    /// layout (sema captures the group's variables in one order in each), and a member's env
+    /// is always a counted heap env (frame_envs.rs leaves members out).
+    pub(super) fn closure_sibling(&mut self, def: DefId, ty: TyId) -> Operand {
+        let targs = self.targs.clone();
+        let code = self.cx.func(Work::Fn(def, targs.clone()));
+        let ca = self.cx.closure_agg();
+        let Some(env) = self.self_env else {
+            // An async member holds its captures, not its env: a new env from them (each
+            // call of an async closure has its own captures anyway, the assigned ones in
+            // cells).
+            let ea = self.cx.env_agg(def, &targs);
+            let p = self.counted_alloc(Ty::Agg(ea));
+            let d = cfunc(self.cx.func(Work::EnvDrop(def, targs.clone())));
+            let c = cfunc(self.cx.func(Work::EnvClone(def, targs)));
+            self.fill_env_from(def, p.clone(), d, c, true);
+            let t = self.temp(Ty::Agg(ca));
+            self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![cfunc(code), p]));
+            let ty = self.sub(ty);
+            self.own_temp(t, ty);
+            return Operand::Copy(Place::local(t));
+        };
+        let t = self.temp(Ty::Agg(ca));
+        self.assign(
+            Place::local(t),
+            Rvalue::Aggregate(ca, vec![cfunc(code), Operand::Copy(Place::local(env))]),
+        );
+        let ty = self.sub(ty);
+        let v = self.share_value(Operand::Copy(Place::local(t)), ty);
+        self.own_value(v, ty)
+    }
+
     /// `ExprKind::Closure(def)`: build `{ code, env }` (instantiated with the current type args).
     pub(super) fn closure(&mut self, def: DefId, ty: TyId) -> Operand {
         self.closure_value(def, ty, false)
@@ -156,6 +189,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
         drop_fn: Operand,
         clone_fn: Operand,
     ) {
+        self.fill_env_from(def, env, drop_fn, clone_fn, false);
+    }
+
+    /// [`fill_env`](Self::fill_env); `from_own`: from this function's own captures instead
+    /// (capture `k` from local `k`, shared: a member of a recursive closure group making
+    /// another, which captures the same variables in the same order).
+    fn fill_env_from(
+        &mut self,
+        def: DefId,
+        env: Operand,
+        drop_fn: Operand,
+        clone_fn: Operand,
+        from_own: bool,
+    ) {
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
@@ -170,6 +217,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         self.assign(proj(&base, Proj::Field(2)), Rvalue::Use(transfer));
         for (k, c) in f.captures.iter().enumerate() {
+            let mut c = *c;
+            if from_own {
+                c.outer = hir::LocalId(k as u32);
+                c.share = true;
+            }
             let Some(outer) = self.local_target(c.outer) else {
                 continue;
             };

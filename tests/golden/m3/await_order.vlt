@@ -1,0 +1,56 @@
+// `await` takes Node's steps (#1104): started promises interleave, and the code after an
+// `await` waits behind the callbacks queued before it. Expected output recorded with Node 22.
+function log(s: string) {
+  console.log(s);
+}
+
+async function a() {
+  log("a1");
+  await Promise.resolve(0);
+  log("a2");
+}
+
+async function b() {
+  log("b1");
+  await Promise.resolve(0);
+  log("b2");
+}
+
+async function v(): Promise<number> {
+  return 1;
+}
+
+async function ra(): Promise<number> {
+  return await Promise.resolve(3);
+}
+
+async function ticker(n: string) {
+  for (let i = 0; i < 6; i++) {
+    log(`${n}${i}`);
+    await Promise.resolve(0);
+  }
+}
+
+async function started() {
+  const pa = a();
+  const pb = b();
+  log("m");
+  await pa;
+  await pb;
+}
+
+async function steps() {
+  const x = ticker("t");
+  log(`v ${await v()}`);
+  log(`ra ${await ra()}`);
+  Promise.resolve(1).then((n) => log(`then ${n}`));
+  queueMicrotask(() => log("qm"));
+  log(`v2 ${await v()}`);
+  await x;
+}
+
+async function main() {
+  await started();
+  log("--");
+  await steps();
+}

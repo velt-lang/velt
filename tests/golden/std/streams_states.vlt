@@ -1,0 +1,122 @@
+// Constructor errors, a released reader's `closed`, an errored stream read after
+// `await reader.closed`, a read that rejects in `for await`, and `ReadableStream.from` not
+// reading ahead. Expected output is Node 22's.
+
+async function* gen(pulls: { n: number }): AsyncGenerator<number> {
+  pulls.n++;
+  yield 1;
+  pulls.n++;
+  yield 2;
+}
+
+async function main() {
+  try {
+    new ReadableStream<number>({
+      start(c) {
+        throw new Error("sx");
+      },
+    });
+    console.log("no throw");
+  } catch (e) {
+    console.log("ctor threw", e.message);
+  }
+  for (const h of [-1, NaN]) {
+    try {
+      new ReadableStream<number>({}, { highWaterMark: h });
+    } catch (e) {
+      console.log(e.name, e.message);
+    }
+  }
+
+  const r1 = new ReadableStream<number>({
+    pull(c) {
+      c.enqueue(1);
+    },
+  }).getReader();
+  const pending = r1.closed.then(
+    () => console.log("closed ok"),
+    (e) => console.log("closed rejected", e.name, e.message),
+  );
+  r1.releaseLock();
+  await pending;
+  try {
+    await r1.closed;
+  } catch (e) {
+    console.log("later closed", e.message);
+  }
+  try {
+    await r1.read();
+  } catch (e) {
+    console.log("read", e.message);
+  }
+  try {
+    await r1.cancel();
+  } catch (e) {
+    console.log("cancel", e.message);
+  }
+
+  const r2 = new ReadableStream<number>({
+    start(c) {
+      c.close();
+    },
+  }).getReader();
+  await r2.closed;
+  r2.releaseLock();
+  try {
+    await r2.closed;
+  } catch (e) {
+    console.log("closed, then released", e.message);
+  }
+
+  // An errored stream used again after `await reader.closed`.
+  const r3 = new ReadableStream<number>({
+    start(c) {
+      c.error(new Error("boom"));
+    },
+  }).getReader();
+  try {
+    await r3.closed;
+  } catch (e) {
+    console.log("r3 closed", e.message);
+  }
+  try {
+    await r3.cancel();
+  } catch (e) {
+    console.log("r3 cancel", e.message);
+  }
+  try {
+    await r3.read();
+  } catch (e) {
+    console.log("r3 read", e.message);
+  }
+  try {
+    await r3.closed;
+  } catch (e) {
+    console.log("r3 closed again", e.message);
+  }
+  try {
+    await r3.read();
+  } catch (e) {
+    console.log("r3 read again", e.message);
+  }
+
+  const s4 = new ReadableStream<number>({
+    pull(c) {
+      c.error(new Error("bad"));
+    },
+  });
+  try {
+    for await (const x of s4) {
+      console.log(x);
+    }
+  } catch (e) {
+    console.log("for await", e.message, s4.locked);
+  }
+
+  const pulls = { n: 0 };
+  const s5 = ReadableStream.from(gen(pulls));
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 0));
+  console.log("from: pulls before a read", pulls.n);
+  const r5 = s5.getReader();
+  console.log((await r5.read()).value, pulls.n);
+}

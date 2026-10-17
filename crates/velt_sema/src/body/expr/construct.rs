@@ -18,6 +18,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(c) = self.proxy_class_name(class) {
+            return self.new_expr(&c, args, exp, span);
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
@@ -125,7 +128,8 @@ impl FnCx<'_, '_> {
             type_args: ck.type_args,
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        self.proxy_new(d, h, exp, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
@@ -157,6 +161,16 @@ impl FnCx<'_, '_> {
             _ => false,
         };
         let tn = self.cx.display(k);
+        if matches!(
+            self.cx.dynamic(k),
+            Some(crate::any::Dynamic::Object | crate::any::Dynamic::Function)
+        ) {
+            self.cx.error(
+                Diagnostic::error(format!("`{tn}` as {what} is not supported yet (#926)"), span)
+                    .with_note("use the class or object type of the values it holds; a `Set` or `Map` takes `object` keys, but holds them strongly"),
+            );
+            return false;
+        }
         let d = match primitive {
             true => Diagnostic::error(
                 format!("type `{tn}` does not satisfy the constraint `object`"),
@@ -234,8 +248,12 @@ impl FnCx<'_, '_> {
             .join(".");
         let item = self.lookup_type_path(path);
         let Some(Item::Def(d)) = item else {
-            self.cx
-                .err(format!("cannot find class `{name}` in this scope"), t.span);
+            let msg = format!("cannot find class `{name}` in this scope");
+            match item {
+                // Not reported when its import was not (`Ctx::poisoned`).
+                None => self.cx.not_found(msg, &name, t.span),
+                Some(_) => self.cx.err(msg, t.span),
+            }
             return None;
         };
         let Some(a) = self.cx.adt(d) else {

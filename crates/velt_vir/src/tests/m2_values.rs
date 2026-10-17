@@ -29,12 +29,14 @@ fn globals_are_rematerialized_constants() {
         ty: vec2,
         init: adt_lit(vd, vec![flt(0.5, t.f64), flt(2.0, t.f64)], vec2),
         span: SP,
+        slot: None,
     }));
     let greeting = pb.add_def(Def::Global(GlobalDef {
         name: "HELLO".into(),
         ty: t.str,
         init: s("hello", t),
         span: SP,
+        slot: None,
     }));
     let g = |d, ty| ex(velt_sema::hir::ExprKind::Global(d), ty);
     let mut f = FB::new("main", t.unit);

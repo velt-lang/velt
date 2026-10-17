@@ -1,0 +1,32 @@
+// check: no leaks
+// #1084: an async closure that stays on its task shares a generator it captured.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+function pump(): () => Promise<string | null> {
+  const chunks = gen();
+  return async () => {
+    const { value, done } = await chunks.next();
+    return done ? null : value;
+  };
+}
+
+function* nums(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+
+async function main() {
+  const next = pump();
+  console.log(await next());
+  console.log(await next());
+  console.log(await next());
+  const it = nums();
+  const take = async (): Promise<number> => {
+    const r = it.next();
+    return r.done ? -1 : r.value;
+  };
+  console.log(await take(), await take(), await take());
+}

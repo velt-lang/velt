@@ -1,0 +1,14 @@
+// An unexported member is visible only in its own block, and messages name it as written.
+namespace N {
+  type A = number;
+  export type X = A;
+}
+namespace N {
+  interface A {
+    b: string;
+  }
+  export type Y = A;
+}
+const a: N.A = 1;
+const y: N.Y = { a: "s" };
+console.log(a, y);

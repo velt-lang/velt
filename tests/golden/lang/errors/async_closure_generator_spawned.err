@@ -1,0 +1,2 @@
+async_closure_generator_spawned.vlt:9:21: error: an async closure that may run on another thread cannot capture the generator `chunks`
+but it reaches `spawn` here
