@@ -19,6 +19,7 @@ mod chain;
 mod closure;
 mod closure_sig;
 mod coerce;
+mod constraints;
 mod construct;
 mod conversions;
 mod discriminated;

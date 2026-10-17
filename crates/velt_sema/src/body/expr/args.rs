@@ -27,6 +27,8 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
+    /// Per slot, a bound that is a type (`Generics::constraints`); empty when none has one.
+    pub constraints: Vec<Option<TyId>>,
     /// A `std/` function called from user code: a float argument for a parameter it declares
     /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
@@ -341,6 +343,7 @@ impl FnCx<'_, '_> {
             ret: c.ret,
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
+            constraints: c.constraints.clone(),
             js_numbers: c.js_numbers,
             positions: c.positions,
             js_api: c.js_api,
@@ -400,6 +403,7 @@ impl FnCx<'_, '_> {
                 known[k] = slots[k];
             }
             let expected = self.cx.subst_known(p.ty, &known);
+            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
@@ -636,6 +640,7 @@ impl FnCx<'_, '_> {
                     self.cx.error(d);
                 }
             }
+            self.check_constraint(c, k, t, slots, &name, span);
             out.push(t);
         }
         out

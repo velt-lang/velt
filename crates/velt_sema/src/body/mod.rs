@@ -361,6 +361,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Generic params in scope (for annotations inside the body).
     pub env: TyEnv,
     pub bounds: Vec<Vec<Bound>>,
+    /// Type bounds of the generic params in scope (`Generics::constraints`).
+    pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
@@ -460,6 +462,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             module,
             env,
             bounds: vec![],
+            constraints: vec![],
             fn_name: String::new(),
             owner: None,
             body_def: None,

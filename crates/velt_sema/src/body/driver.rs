@@ -404,6 +404,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     let mut fcx = FnCx::new(cx, f.module, env, frame);
     fcx.literal.decided = decided;
     fcx.bounds = f.generics.bounds.clone();
+    fcx.constraints = f.generics.constraints.clone();
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
     fcx.body_def = Some(def);

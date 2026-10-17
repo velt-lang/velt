@@ -365,9 +365,29 @@ impl<'a> Parser<'a> {
             let name = self.parse_ident()?;
             let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
+                let lo = self.cur_lo();
+                self.eat(Tok::Pipe);
                 bounds.push(self.parse_type_no_union()?);
                 while self.eat(Tok::Amp) {
                     bounds.push(self.parse_type_no_union()?);
+                }
+                // `T extends A | B`: one bound, a union type (`A & B | C` is `(A & B) | C`).
+                if self.at(Tok::Pipe) {
+                    let first = match bounds.len() {
+                        1 => bounds.remove(0),
+                        _ => TypeExpr {
+                            kind: TypeExprKind::Intersection(std::mem::take(&mut bounds)),
+                            span: self.span_from(lo),
+                        },
+                    };
+                    let mut members = vec![first];
+                    while self.eat(Tok::Pipe) {
+                        members.push(self.parse_intersection()?);
+                    }
+                    bounds = vec![TypeExpr {
+                        kind: TypeExprKind::Union(members),
+                        span: self.span_from(lo),
+                    }];
                 }
             }
             let default = self.type_param_default(&out, &name)?;

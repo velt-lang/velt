@@ -258,6 +258,7 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            constraints: vec![],
             js_numbers: false,
             positions: false,
             js_api: false,
