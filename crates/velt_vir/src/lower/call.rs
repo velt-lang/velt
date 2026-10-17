@@ -70,20 +70,7 @@ impl FnLower<'_, '_> {
             _ => self.cx.func_for(def, targs.clone()),
         };
         let mut argv = pre;
-        // A receiver in module state the method cannot reach is borrowed in place
-        // (receiver.rs); any other receiver is stabilized with the arguments.
-        let in_place = argv.is_empty()
-            && f.self_ty.is_some()
-            && matches!(modes.first(), Some(PassMode::Borrow | PassMode::BorrowMut))
-            && self.receiver_in_place(def, args);
-        match in_place {
-            true => {
-                let recv = self.borrowed_arg(&args[0]);
-                argv.push(recv);
-                argv.extend(self.lower_args(&args[1..], &modes[1..], true));
-            }
-            false => argv.extend(self.lower_args(args, &modes, true)),
-        }
+        argv.extend(self.lower_args(args, &modes, true));
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);

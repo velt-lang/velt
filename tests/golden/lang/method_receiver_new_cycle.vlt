@@ -1,7 +1,7 @@
 // check: no leaks
 // A method on a module `let` whose body creates classes whose field initializers create the
-// class itself, or each other (#1188): deciding whether the method may reach module state
-// terminates, and the method runs as in Node.
+// class itself, or each other (#1188): the receiver is held for the call and the method runs as
+// in Node.
 class Link { next: Link | null = "a".length > 5 ? new Link() : null; }
 class A { b: B | null = "a".length > 5 ? new B() : null; }
 class B { a: A | null = "b".length > 5 ? new A() : null; }

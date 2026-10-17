@@ -40,7 +40,7 @@ pub fn may_change_memory(e: &hir::Expr) -> bool {
 /// does: `o.grow()`, `o.g` with a getter, `xs[0]` (a future index hook), `f(x)`, `o.s = v`
 /// with a setter. A new
 /// intrinsic that can run user code belongs here.
-pub fn runs_user_code(i: hir::Intrinsic) -> bool {
+fn runs_user_code(i: hir::Intrinsic) -> bool {
     use hir::Intrinsic as I;
     matches!(
         i,

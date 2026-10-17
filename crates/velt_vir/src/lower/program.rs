@@ -43,7 +43,6 @@ impl<'h> Cx<'h> {
             work_map: HashMap::new(),
             queue: VecDeque::new(),
             building: HashSet::new(),
-            reach: Default::default(),
             asyncs: HashMap::new(),
             by_ref_params: HashSet::new(),
             shared_envs: HashMap::new(),

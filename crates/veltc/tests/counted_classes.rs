@@ -173,23 +173,22 @@ fn programs_without_weak_collections_have_no_weak_capable_types() {
     assert!(w.is_empty(), "{w:?}");
 }
 
-/// A method on a module `let` that only changes its own fields cannot replace the `let`, so its
-/// receiver is borrowed in place and the class stays uncounted; one whose method reassigns the
-/// `let` (through a function it calls) gets a share for the call, which counts the class (#1188).
+/// A method called on a module `let` it may reassign keeps its receiver alive with a share, which
+/// counts the class (#1188). A method that only changes its own fields is held the same way:
+/// deciding soundly that a method cannot reach module state also has to follow every dispose
+/// hook a drop may run, so every direct method call on a module state receiver is held for now.
 #[test]
-fn a_module_let_receiver_is_held_only_when_the_method_may_replace_it() {
-    let plain = counted(
-        "class P { n = 1; plain(): number { this.n++; return this.n; } }
-         let cur = new P();
-         function touch(): void { cur = new P(); }
-         function main() { touch(); console.log(cur.plain()); }",
-    );
-    assert!(!plain.iter().any(|t| t == "class P"), "{plain:?}");
-    let swaps = counted(
-        "class P { n = 1; bump(): number { touch(); return this.n; } }
-         let cur = new P();
-         function touch(): void { cur = new P(); }
-         function main() { console.log(cur.bump()); }",
-    );
-    assert!(swaps.iter().any(|t| t == "class P"), "{swaps:?}");
+fn a_module_let_receiver_is_held_for_the_call() {
+    for method in [
+        "plain(): number { this.n++; return this.n; }",
+        "plain(): number { touch(); return this.n; }",
+    ] {
+        let c = counted(&format!(
+            "class P {{ n = 1; {method} }}
+             let cur = new P();
+             function touch(): void {{ cur = new P(); }}
+             function main() {{ touch(); console.log(cur.plain()); }}"
+        ));
+        assert!(c.iter().any(|t| t == "class P"), "{method}: {c:?}");
+    }
 }
