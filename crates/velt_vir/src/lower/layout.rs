@@ -191,6 +191,12 @@ impl Cx<'_> {
             TyKind::Adt(..) => (self.adt_field_tys(t), 0),
             k => ice(format_args!("field of {k:?}")),
         };
+        // Past the fields: a struct's presence flags (`Cx::part_types`, `Cx::presence_slot`),
+        // stored after them in field order.
+        if i as usize >= tys.len() {
+            let stored = tys.iter().filter(|&&f| !self.is_unit(f)).count();
+            return base + (stored + i as usize - tys.len()) as u32;
+        }
         let before = tys[..i as usize]
             .iter()
             .filter(|&&f| !self.is_unit(f))
