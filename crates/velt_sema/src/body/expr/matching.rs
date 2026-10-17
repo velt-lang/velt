@@ -67,8 +67,29 @@ impl FnCx<'_, '_> {
             );
         }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
-            // A `T | undefined` is never `null`: still evaluated, then constant.
-            (true, "null", Some(Nothing::Undefined)) => self.constant_test(s, !is_eq, span),
+            // A `T | undefined` is never `null`: still evaluated, then constant. TypeScript
+            // accepts it; a warning says so, since an optional parameter or field left out is
+            // `undefined`, not `null` (code written when it was `null` tests the wrong one).
+            (true, "null", Some(Nothing::Undefined)) => {
+                if !self.cx.scopes[self.module].is_std {
+                    let tn = self.cx.display(s.ty);
+                    let (op, value, loose) = match is_eq {
+                        true => ("===", "false", "=="),
+                        false => ("!==", "true", "!="),
+                    };
+                    let mut d = Diagnostic::error(
+                        format!("this `{op} null` is always {value}: `{tn}` is never `null`"),
+                        span,
+                    )
+                    .with_note("an optional parameter or field left out is `undefined`, not `null`")
+                    .with_note(format!(
+                        "write `{loose} null` to test for either, or `{op} undefined`"
+                    ));
+                    d.severity = velt_common::Severity::Warning;
+                    self.cx.error(d);
+                }
+                self.constant_test(s, !is_eq, span)
+            }
             // The `null` of a `T | null` may stand for JavaScript's `undefined` in this phase
             // (an absent optional field, `Map.get`, `find`): which one is not known.
             (true, "undefined", Some(Nothing::Null)) => {

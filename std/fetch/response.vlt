@@ -123,7 +123,7 @@ export class Response {
   }
 
   // The constructor's work; `type` (if not 0) replaces the `content-type` the body implies.
-  private setUp(body: BodyInit | null, init: ResponseInit | null, type: u32) {
+  private setUp(body: BodyInit | null, init: ResponseInit | null | undefined, type: u32) {
     if (init != null) {
       this.init(init);
     }

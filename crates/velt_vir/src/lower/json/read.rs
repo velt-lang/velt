@@ -383,6 +383,15 @@ impl FnLower<'_, '_> {
         e: TyId,
         fail: BlockId,
     ) {
+        // `T | null | undefined` (an option of a `T | null`): JSON has no `undefined`, so the
+        // value is present and the payload reads `null` as its own nothing.
+        if matches!(self.cx.kind(e), TyKind::Option(..)) {
+            if let Ty::Agg(_) = self.cx.ty(ty) {
+                self.json_read(r, &proj(place, Proj::Field(1)), ctx, e, fail);
+                self.assign(proj(place, Proj::Field(0)), Rvalue::Use(Self::ctrue()));
+                return;
+            }
+        }
         let ro = Operand::Copy(Place::local(r));
         let kind = self.temp(Ty::U32);
         self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(kind)));

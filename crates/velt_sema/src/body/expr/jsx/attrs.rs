@@ -246,7 +246,23 @@ impl FnCx<'_, '_> {
             "attribute values are passed to the JSX provider '{}' as `JSX.AttrValue`",
             p.source
         );
+        // An `undefined` value leaves the attribute out, as a `null` does: a provider whose
+        // `JSX.AttrValue` has only `null` gets that.
+        let h = match self.undefined_only(h.ty) && self.null_only(p.attr_value) {
+            true => self.undefined_as_null(h),
+            false => h,
+        };
         self.jsx_coerce(h, p.attr_value, &note)
+    }
+
+    /// Is `t` a `T | undefined` (not also `null`)?
+    pub(super) fn undefined_only(&self, t: TyId) -> bool {
+        self.cx.ty.nothing_of(t) == Some(hir::Nothing::Undefined)
+    }
+
+    /// Is `t` a `T | null` (not also `undefined`)?
+    pub(super) fn null_only(&self, t: TyId) -> bool {
+        self.cx.ty.nothing_of(t) == Some(hir::Nothing::Null)
     }
 }
 

@@ -537,9 +537,14 @@ impl FnCx<'_, '_> {
                 if self.cx.ty.opt_payload(h.ty).is_none() {
                     return h;
                 }
+                // A target field that cannot hold `undefined` (`name: string` from a
+                // `Partial<U>`'s `name?: string`) keeps the earlier value when the source holds
+                // `undefined`, present or not (TypeScript types the result so, too).
+                let keeps_undefined = expected
+                    .is_none_or(|t| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()));
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.
-                    Some(p) if src.presence => {
+                    Some(p) if src.presence && keeps_undefined => {
                         let b = self.cx.ty.bool_;
                         let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
                         let ty = h.ty;

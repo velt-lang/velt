@@ -149,7 +149,7 @@ function outgoing(
       bytes: [],
       stream: null,
       redirect: init.redirect ?? "follow",
-      signal: signal,
+      signal: signal ?? null,
       ca: init.ca ?? "",
     };
   }
@@ -180,7 +180,7 @@ function outgoing(
     bytes: body.bytes,
     stream: body.stream,
     redirect: init.redirect ?? "follow",
-    signal: signal,
+    signal: signal ?? null,
     ca: init.ca ?? "",
   };
 }

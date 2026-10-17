@@ -134,10 +134,18 @@ impl FnCx<'_, '_> {
             if name == "key" {
                 continue;
             }
-            // An optional field's value is passed as is (`null` when absent); the message names
-            // the type as written.
+            // An optional field's value is passed as is (`undefined` when absent, which a
+            // `JSX.AttrValue` with only `null` gets as `null`, `attrs::attr_converted`); the
+            // message names the type as written.
             let shown = match optional.get(i).copied().unwrap_or(false) {
                 true => self.cx.ty.core(ty).unwrap_or(ty),
+                false => ty,
+            };
+            let ty = match self.undefined_only(ty) && self.null_only(p.attr_value) {
+                true => {
+                    let core = self.cx.ty.core(ty).unwrap_or(ty);
+                    self.cx.ty.option_of(core, crate::hir::Nothing::Null)
+                }
                 false => ty,
             };
             if !self.fits(ty, p.attr_value) {

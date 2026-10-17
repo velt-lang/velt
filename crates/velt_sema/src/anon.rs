@@ -493,16 +493,13 @@ pub(crate) fn shape_field(f: &FieldInfo) -> ShapeField {
     }
 }
 
-/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present `null`
-/// (`hir::FieldDef::presence`): an optional field whose declared type is nullable but whose
-/// type has no `undefined` to stand for "absent". Since an optional field reads as
-/// `T | undefined` (`a?: T | null` as `T | null | undefined`, issue #930), its own `undefined`
-/// is "absent" and keeps it apart from a present `null`, so no field needs the flag now.
+/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present value
+/// (`hir::FieldDef::presence`): an optional field (`a?: T`, read as `T | undefined`) of an
+/// object type or struct, so that an absent key and one holding `undefined` stay apart, as in
+/// JavaScript (`"a" in o`, printing, spread; issue #930). A class's optional field is an own
+/// property holding `undefined` until set, and `a?: any` holds its own `undefined`.
 pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
-    f.optional
-        && kind != AdtKind::Class
-        && ty.opt_payload(f.declared).is_some()
-        && !ty.nothing_of(f.ty).is_some_and(|n| n.has_undefined())
+    f.optional && kind != AdtKind::Class && ty.nothing_of(f.ty).is_some()
 }
 
 /// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): an
