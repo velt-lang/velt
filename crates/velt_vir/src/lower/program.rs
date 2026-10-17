@@ -36,6 +36,7 @@ impl<'h> Cx<'h> {
             extern_map: HashMap::new(),
             statics: vec![],
             module_desc: None,
+            reassigned_slots: None,
             static_map: HashMap::new(),
             tables: HashMap::new(),
             funcs: vec![],

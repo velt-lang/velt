@@ -1,0 +1,24 @@
+// check: no leaks
+// Getters and methods called through an `any` held in a module-level `let` that they replace
+// (#1161): the value lives until the access returns, as in Node.
+
+class T {
+  label: string = "t" + String(1);
+  get g(): number { G = null; return 1; }
+  m(): string { G = null; return this.label + "m"; }
+  get h(): string { G = 5; return this.label + "h"; }
+}
+let G: any = new T();
+function clearG(): number { G = null; return 3; }
+function useAny(x: any): string { G = null; return String(x.label); }
+function main(): void {
+  console.log(G.g);
+  G = new T();
+  console.log(G.m());
+  G = new T();
+  console.log(G.h, G);
+  G = new T();
+  console.log(G.label, clearG());
+  G = new T();
+  console.log(useAny(G), G);
+}

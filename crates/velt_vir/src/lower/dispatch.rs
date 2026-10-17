@@ -127,7 +127,15 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.receiver(recv, transfer);
+        // The method or an argument may replace or free the receiver where it was read from
+        // (`XS[0].m(clear())` where `clear` empties a module array, `this.items[0].m(reset())`),
+        // so it is stabilized as a class method's receiver is (`lower_args`): a receiver read
+        // through a counted object, a cell or module state is shared for the call, then held
+        // against the arguments.
+        let rv = match !transfer && !super::call::is_moved(recv) {
+            true => self.stable_borrow(recv, &args[1..]),
+            false => self.receiver(recv, transfer),
+        };
         let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
