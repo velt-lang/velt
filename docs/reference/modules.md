@@ -69,7 +69,8 @@ module imported only for its types (`import type { … }`, or an import whose ev
 `type`) is not evaluated: neither its statements nor its variables' initializers run. A
 module's statements run in source order with its module-level variables
 ([module state](variables.md#module-state)): each after the initializers above it and before
-those below it. An error they throw and don't catch prints `Uncaught …` and ends the program
+those below it (a variable that statements on both sides of a module-level variable use must
+be declared with one name and an initializer, for now). An error they throw and don't catch prints `Uncaught …` and ends the program
 with exit code 1. Top-level `await` is only allowed in the root file, and an imported module's
 statements can't start asynchronous work yet (a timer, a promise chain, `queueMicrotask`,
 `spawn`): they run before the scheduler starts (#846).

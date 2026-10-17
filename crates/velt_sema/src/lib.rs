@@ -221,8 +221,9 @@ fn check_on_current_thread(
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
     let chunks = module_chunks::split(modules, root);
-    let modules = chunks.as_deref().unwrap_or(modules);
-    let mut merge_diags = call_sigs::check(modules);
+    let modules = chunks.modules.as_deref().unwrap_or(modules);
+    let mut merge_diags = chunks.diags.clone();
+    merge_diags.extend(call_sigs::check(modules));
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
@@ -261,6 +262,7 @@ fn check_on_current_thread(
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();
         cx.diags.extend(merge_diags.iter().cloned());
+        cx.promoted_consts = chunks.promoted.clone();
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();

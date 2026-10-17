@@ -102,6 +102,7 @@ pub(crate) struct Ctx<'m> {
     pub counted_objects: Vec<TyId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
+    pub promoted_consts: HashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
@@ -306,6 +307,7 @@ impl<'m> Ctx<'m> {
             counted_objects: Vec::new(),
             module_slots: Vec::new(),
             module_scripts: Vec::new(),
+            promoted_consts: HashSet::new(),
             global_cycles: 0,
             unions: HashMap::new(),
             recursive_unions: HashMap::new(),

@@ -1,0 +1,5 @@
+// A variable that an imported module's top-level statements share across a module-level
+// variable must have one name and an initializer, for the statements to run in order.
+import { b } from "./_script_split_lib";
+
+console.log("main", b);

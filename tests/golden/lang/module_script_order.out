@@ -4,4 +4,6 @@ f bb
 s2 20
 local 2
 c 2 1
-main 1 1 10 20 2
+obj 6
+d 10 6
+main 1 1 10 20 2 10

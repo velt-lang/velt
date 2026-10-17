@@ -2,6 +2,6 @@
 // An imported module's top-level statements run at their own places among its module-level
 // variables, as Node runs a module's body in order: each statement after the variables above
 // it and before those below it.
-import { handlers, extra, a, b, c } from "./_module_script_order/m";
+import { handlers, extra, a, b, c, d } from "./_module_script_order/m";
 
-console.log("main", handlers.size, extra.size, a, b, c);
+console.log("main", handlers.size, extra.size, a, b, c, d);

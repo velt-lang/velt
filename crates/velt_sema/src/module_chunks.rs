@@ -6,11 +6,13 @@
 //! function of its own (named `#script<N>`, which no source can spell, with an empty name span
 //! like the generated `main`), and `module_scripts` gives each one a module state slot at its
 //! own position. A variable the parser moved into the generated `main` that a later chunk uses
-//! goes back to module level (it splits the statements there too); when that is not possible
-//! (a destructuring pattern, no initializer) the module keeps one chunk.
+//! goes back to module level (it splits the statements there too; a `const` becomes a module
+//! state slot, not a constant: [`Split::promoted`]). When that is not possible (a destructuring
+//! pattern, no initializer) the statements can't run in order: an error.
 
 use std::collections::HashSet;
 
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::nested_closures::scan::scan_stmt;
@@ -19,17 +21,33 @@ use crate::SourceModule;
 /// The name prefix of the chunk functions.
 pub(crate) const CHUNK: &str = "#script";
 
-/// The modules with their imported top-level statements split, or `None` when none needs it.
-pub(crate) fn split(modules: &[SourceModule], root: usize) -> Option<Vec<SourceModule>> {
+/// What [`split`] made.
+#[derive(Default)]
+pub(crate) struct Split {
+    /// The modules with their imported top-level statements split, or `None` when none needs it.
+    pub modules: Option<Vec<SourceModule>>,
+    /// The spans of the `const` declarations moved back to module level: each is a module state
+    /// slot (evaluated once, in order), not a constant evaluated where it is used.
+    pub promoted: std::collections::HashSet<Span>,
+    pub diags: Vec<Diagnostic>,
+}
+
+/// Split the imported modules' top-level statements (module docs).
+pub(crate) fn split(modules: &[SourceModule], root: usize) -> Split {
+    let mut out = Split::default();
     let splits: Vec<Option<Vec<ast::Item>>> = modules
         .iter()
         .enumerate()
-        .map(|(m, module)| (m != root).then(|| split_module(module)).flatten())
+        .map(|(m, module)| {
+            (m != root)
+                .then(|| split_module(module, &mut out))
+                .flatten()
+        })
         .collect();
     if splits.iter().all(Option::is_none) {
-        return None;
+        return out;
     }
-    let out = modules
+    let split = modules
         .iter()
         .zip(splits)
         .map(|(m, items)| SourceModule {
@@ -45,11 +63,12 @@ pub(crate) fn split(modules: &[SourceModule], root: usize) -> Option<Vec<SourceM
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
-    Some(out)
+    out.modules = Some(split);
+    out
 }
 
 /// `module`'s items with its generated `main` split into chunks, if it has more than one.
-fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
+fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>> {
     let at = module.ast.items.iter().position(|it| {
         matches!(&it.kind, ast::ItemKind::Function(f)
             if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi)
@@ -72,6 +91,8 @@ fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
         .map(|it| it.span.lo)
         .collect();
     let mut promoted: HashSet<usize> = HashSet::new();
+    let mut failed: HashSet<usize> = HashSet::new();
+    let reported = out.diags.len();
     loop {
         let chunk_of = |i: usize| cuts.iter().filter(|&&c| c < stmts[i].span.lo).count();
         let mut more = vec![];
@@ -87,7 +108,17 @@ fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
                 .any(|j| chunk_of(j) != chunk_of(i) && names.iter().any(|n| refs[j].contains(n)));
             if used_later {
                 if !matches!(v.pattern.kind, ast::PatternKind::Ident(_)) || v.init.is_none() {
-                    return None;
+                    if !failed.insert(i) {
+                        continue;
+                    }
+                    out.diags.push(
+                        Diagnostic::error(
+                            "this variable is used by top-level statements after a module-level variable, which is not supported yet for a variable declared without an initializer or by destructuring",
+                            v.pattern.span,
+                        )
+                        .with_note("an imported module's statements run in order with its module-level variables, so a variable they share must be a module-level variable itself: declare one variable per name, with an initializer (`const x = obj.x;`)"),
+                    );
+                    continue;
                 }
                 more.push(i);
             }
@@ -95,10 +126,16 @@ fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
         if more.is_empty() {
             break;
         }
+        // Promoting may split a chunk a failed variable's uses share: check again.
+        failed.clear();
+        out.diags.truncate(reported);
         for i in more {
             cuts.push(stmts[i].span.lo);
             promoted.insert(i);
         }
+    }
+    if !failed.is_empty() {
+        return None;
     }
     let mut chunks: Vec<(usize, Vec<ast::Stmt>)> = vec![];
     let mut vars: Vec<ast::Item> = vec![];
@@ -108,6 +145,9 @@ fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
                 unreachable!("ICE: promoted statement is a variable")
             };
             let span = s.span;
+            if v.kind == ast::VarKind::Const {
+                out.promoted.insert(v.span);
+            }
             vars.push(ast::Item {
                 kind: ast::ItemKind::Var(v),
                 exported: false,
@@ -130,11 +170,11 @@ fn split_module(module: &SourceModule) -> Option<Vec<ast::Item>> {
     for (n, (_, ss)) in chunks.into_iter().enumerate() {
         let lo = ss.first().map_or(script.sig.span.lo, |s| s.span.lo);
         let hi = ss.last().map_or(script.sig.span.hi, |s| s.span.hi);
-        let span = velt_common::Span::new(script.sig.span.file, lo, hi);
+        let span = Span::new(script.sig.span.file, lo, hi);
         let mut sig = script.sig.clone();
         sig.name = ast::Ident {
             name: format!("{CHUNK}{n}"),
-            span: velt_common::Span::new(span.file, lo, lo),
+            span: Span::new(span.file, lo, lo),
         };
         sig.span = span;
         items.push(ast::Item {
