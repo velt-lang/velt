@@ -1,0 +1,14 @@
+// TypeScript accepts these (tsc --strict); Velt says they are not supported yet (#942): a
+// function value has no receiver.
+interface Counter {
+  n: number;
+}
+function read(this: Counter): number {
+  return this.n;
+}
+const o = { n: 1, read };
+const f = read;
+const g = function (this: Counter): number {
+  return this.n;
+};
+console.log(o.read(), f.call(o), g.call(o));

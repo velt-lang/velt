@@ -4,7 +4,9 @@
 //! `strictBindCallApply` requires). `thisArg` is evaluated, after `f` and before the arguments,
 //! as JavaScript does (a class or namespace name has no effect to evaluate).
 //!
-//! The `this` a call passes matters only to a function that reads it. Velt's functions,
+//! A function declared with a `this` parameter that its body uses runs on `thisArg`
+//! (`this_param.rs`). Otherwise the `this` a call passes matters only to a function that reads
+//! it. Velt's functions,
 //! arrow functions and static functions of the built-in namespaces other than `Promise` read
 //! none, so any `thisArg` works for them; `Promise`'s statics take `Promise`. A method read as a
 //! value (`o.m`, `C.m`) keeps the object or class it was read from, so its `thisArg` must be
@@ -75,6 +77,17 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
         };
+        if let ast::ExprKind::Ident(id) = &strip(f).kind {
+            if self.is_fn_item(id) {
+                if let Some(Item::Def(d)) = self.lookup_item(&id.name, id.span) {
+                    if self.takes_this(d) {
+                        let h =
+                            self.this_fn_call(d, &id.name, this_arg, &[], &call_args, exp, span);
+                        return Some(h);
+                    }
+                }
+            }
+        }
         if let Some(t) = this_arg {
             if let Some(why) = self.this_not_ignored(f, t) {
                 self.cx.error(
