@@ -59,8 +59,26 @@ for (const n of names) {
 }
 ```
 
-A file with top-level statements cannot also declare `main`, and only the root file runs them:
-an imported module's top-level statements are an error (put the code in a function).
+A file with top-level statements cannot also declare `main`.
+
+An imported module's top-level statements run once, when the module is evaluated, as in Node:
+the modules are evaluated before the root file's statements run, each after the modules it
+imports (in the order of its `import`s, depth first) and before the module that imports it. A
+circular import finds the module that is still being evaluated and goes on without it. A
+module imported only for its types (`import type { … }`, or an import whose every name is
+`type`) is not evaluated, so its statements don't run. They run with the module's
+[module state](variables.md#module-state), in source order with its module-level `let`s and
+kept constants; an error they throw and don't catch prints `Uncaught …` and ends the program
+with exit code 1. Top-level `await` is only allowed in the root file.
+
+```ts
+// registry.ts
+export const registry: string[] = [];
+export function register(name: string): void {
+  registry.push(name);
+}
+register("trim"); // runs when a module imports registry.ts
+```
 
 ## Re-exports
 

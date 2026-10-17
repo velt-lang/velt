@@ -1,0 +1,5 @@
+export interface Shape {
+  n: number;
+}
+
+console.log("types loaded");

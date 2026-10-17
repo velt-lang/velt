@@ -28,9 +28,13 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     if lets.is_empty() {
         return Vec::new();
     }
-    let modules = module_order(cx);
+    let (modules, evaluated) = module_order(cx);
     let rank: HashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-    let mut sorted = lets;
+    // A module no value import reaches is never evaluated: its top-level statements don't run.
+    let mut sorted: Vec<_> = lets
+        .into_iter()
+        .filter(|(m, _, d)| evaluated[*m] || !crate::module_scripts::is_script(cx, *d))
+        .collect();
     sorted.sort_by_key(|(m, start, _)| (rank.get(m).copied().unwrap_or(usize::MAX), *start));
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
     let pos: HashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();
@@ -64,8 +68,9 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
 }
 
 /// Module indices in evaluation order: those reachable from the root by a post-order walk over
-/// imports, then any others (which have no code that runs first).
-fn module_order(cx: &Ctx) -> Vec<usize> {
+/// value imports, then any others (which have no code that runs first); and per module, whether
+/// the walk reached it (whether Node evaluates it).
+fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>) {
     let by_path: HashMap<&str, usize> = cx
         .modules
         .iter()
@@ -78,11 +83,11 @@ fn module_order(cx: &Ctx) -> Vec<usize> {
     let mut stack = vec![(cx.root, 0usize)];
     seen[cx.root] = true;
     while let Some((m, next)) = stack.pop() {
-        let imports = &cx.modules[m].imports;
-        if let Some((_, path)) = imports.get(next) {
+        let module = &cx.modules[m];
+        if let Some((spec, path)) = module.imports.get(next) {
             stack.push((m, next + 1));
             if let Some(&dep) = by_path.get(path.as_str()) {
-                if !seen[dep] {
+                if !seen[dep] && evaluates(module, spec) {
                     seen[dep] = true;
                     stack.push((dep, 0));
                 }
@@ -98,7 +103,22 @@ fn module_order(cx: &Ctx) -> Vec<usize> {
         }
     }
     out.extend(root);
-    out
+    (out, seen)
+}
+
+/// Does `module` import `spec` for more than its types: an import or re-export of `spec` that
+/// TypeScript keeps (not `import type { … }`, nor one whose every name is `type`), or a
+/// side-effect `import "spec"`?
+fn evaluates(module: &crate::SourceModule, spec: &str) -> bool {
+    module.ast.items.iter().any(|it| match &it.kind {
+        velt_syntax::ast::ItemKind::Import(imp) if imp.from == spec => {
+            imp.namespace.is_some()
+                || imp.all
+                || imp.names.is_empty()
+                || imp.names.iter().any(|n| !n.type_only)
+        }
+        _ => false,
+    })
 }
 
 /// Every module global `e` reads directly.
