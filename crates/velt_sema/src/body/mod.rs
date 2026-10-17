@@ -423,6 +423,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
+    /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
+    pub weak_key_args: bool,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
@@ -476,6 +479,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,
+            weak_key_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
             literal: Default::default(),

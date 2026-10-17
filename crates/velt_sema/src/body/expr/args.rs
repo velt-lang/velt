@@ -91,6 +91,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let weak_key = std::mem::take(&mut self.weak_key_args);
         let expanded;
         let args = match self.expand_spreads(c, args, span) {
             Ok(Some(a)) => {
@@ -166,7 +167,13 @@ impl FnCx<'_, '_> {
                 h
             };
             let arg_ty = h.ty;
-            let mut h = self.coerce(h, target);
+            let mut h = if weak_key && hargs.is_empty() {
+                self.weak_key_coerce(h, target)
+            } else if p.mode != PassMode::Owned {
+                self.object_arg_coerce(h, target)
+            } else {
+                self.coerce(h, target)
+            };
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
             }

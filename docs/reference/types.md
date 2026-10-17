@@ -1843,6 +1843,16 @@ with TypeScript's rules:
 - An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
   checked at run time: a `boolean`, `number`, `string` or `symbol` is a `TypeError` (Node would
   keep the primitive); `null` and `undefined` pass.
+- A value of a type parameter without an `object` bound converts with `as object` too
+  (`function toRaw<T>(observed: T) { ... observed as object ... }`): a `T | null` or a union
+  is unpacked to the value it holds, and a primitive is the same `TypeError`.
+- `object` can be a `WeakMap` key, a `WeakSet` member and a `WeakRef` target
+  ([WeakMap, WeakSet and WeakRef](../std/prelude.md#weakmap-weakset-and-weakref)): the key is
+  the object it holds, whichever type it reached `object` through. A primitive (passed as an
+  `any`), `null` or `undefined` finds nothing in `get`, `has` and `delete`, and is
+  JavaScript's `TypeError` in `set`, `add` and `new WeakRef`; a value Velt cannot hold weakly
+  yet (a function value, a tuple) is a `TypeError` there too. A variable passed as a key or
+  target stays alive to the end of its scope. `Function` keys are not supported yet.
 - `typeof u === "object"` narrows an `unknown` to `object` and `typeof u === "function"` to
   `Function`; a union with `object` or
   `Function` is that type when its other members are objects (or functions), `null` and

@@ -36,7 +36,7 @@ pub(super) const TAG_BOOLEAN: u64 = 2;
 pub(super) const TAG_NUMBER: u64 = 3;
 pub(super) const TAG_STRING: u64 = 4;
 const TAG_SYMBOL: u64 = 5;
-const TAG_FUNCTION: u64 = 6;
+pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 
 /// `typeof` text of each tag.
@@ -396,6 +396,7 @@ impl FnLower<'_, '_> {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
                 // `null` and `undefined` are what `object | null` holds.
+                self.cx.note_to_object(None);
                 let fvt = self.cx.ty(from);
                 let p = Place::local(self.copy_to_temp(v, fvt));
                 self.check_not_primitive(&p, ty);
@@ -409,8 +410,148 @@ impl FnLower<'_, '_> {
         self.own_value(r, ty)
     }
 
+    /// Does a value of the concrete type `t` need unpacking or checking on its way into
+    /// `object` (issue #926: `x as object` of an unbounded `T`)? Options, unions, primitives,
+    /// literal and enum types, `void`, and `any` / `unknown`, which may hold a primitive.
+    pub(super) fn object_unpacks(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(..)
+            | TyKind::Unit
+            | TyKind::Bool
+            | TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Str
+            | TyKind::Symbol
+            | TyKind::Literal(_) => true,
+            TyKind::Dyn(..) => self.cx.is_dynamic(t) && !self.cx.is_narrow_dynamic(t),
+            _ => self.is_enum(t),
+        }
+    }
+
+    /// The owned value `v` of the concrete type `t` as the `object` `ty`: an option holds its
+    /// payload or the dynamic `null` / `undefined`, a union the member it holds; a primitive
+    /// (in an `any`, or a member) stops with a `TypeError`, as `x as object` of an `unknown`.
+    pub(super) fn object_unpack(&mut self, v: Operand, t: TyId, ty: TyId) -> Operand {
+        let vt = self.cx.ty(ty);
+        let out = Place::local(self.temp(vt));
+        // Assigned on every path: a union's switch has a default edge.
+        let zero = self.zero_value(vt);
+        self.assign(out.clone(), Rvalue::Use(zero));
+        self.object_into(v, t, ty, &out);
+        self.own_value(Operand::Copy(out), ty)
+    }
+
+    fn object_into(&mut self, v: Operand, t: TyId, ty: TyId, out: &Place) {
+        if self.dead() {
+            return;
+        }
+        if matches!(self.cx.kind(t), TyKind::Dyn(..)) {
+            self.cx.note_to_object(None);
+        }
+        match self.cx.kind(t) {
+            TyKind::Dyn(..) if self.cx.is_dynamic(t) => {
+                self.assign(out.clone(), Rvalue::Use(v));
+                if !self.cx.is_narrow_dynamic(t) {
+                    self.check_not_primitive(out, ty);
+                }
+            }
+            TyKind::Dyn(..) => {
+                let o = self.make_dyn_any(v, t, ty);
+                self.move_into(o, out);
+            }
+            TyKind::Unit => self.any_nothing_into(hir::Nothing::Undefined, out),
+            TyKind::Option(inner, n) => {
+                let vt = self.cx.ty(t);
+                let p = Place::local(self.copy_to_temp(v, vt));
+                let some = self.option_is_some(&p, t);
+                let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+                self.branch(some, yes, no);
+                self.switch_to(yes);
+                let pp = self.some_payload(&p, t);
+                self.object_into(Operand::Copy(pp), inner, ty, out);
+                self.goto(done);
+                self.switch_to(no);
+                self.any_nothing_into(n, out);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ if self.is_enum(t) && self.union_payloads(t) => {
+                let vt = self.cx.ty(t);
+                let p = Place::local(self.copy_to_temp(v, vt));
+                self.for_each_variant(&p, t, |lw, k, parts| match parts.as_slice() {
+                    [(pp, pt)] => lw.object_into(Operand::Copy(pp.clone()), *pt, ty, out),
+                    _ => match lw.variant_literal(t, k) {
+                        Some(l) => {
+                            let lt = lw.cx.intern(TyKind::Literal(l));
+                            lw.not_object_error(lt, ty);
+                        }
+                        None => lw.any_nothing_into(hir::Nothing::Undefined, out),
+                    },
+                });
+            }
+            _ if self.object_unpacks(t) => self.not_object_error(t, ty),
+            _ => {
+                let o = self.object_leaf(v, t, ty);
+                self.move_into(o, out);
+            }
+        }
+    }
+
+    /// Store the owned temporary `o` into `out`, which takes over its ownership.
+    fn move_into(&mut self, o: Operand, out: &Place) {
+        if let Operand::Copy(p) = &o {
+            self.take_temp(p);
+        }
+        self.assign(out.clone(), Rvalue::Use(o));
+    }
+
+    /// Does the enum type `t` hold payloads (a union, not a C-like or string enum)?
+    fn union_payloads(&mut self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(t) else {
+            return false;
+        };
+        let n = self.cx.enum_def(d).variants.len() as u32;
+        (0..n).any(|k| !self.cx.variant_tys(t, k).is_empty())
+    }
+
+    /// Stop with the `TypeError` of a value of the primitive type `t` converted to `object`.
+    fn not_object_error(&mut self, t: TyId, ty: TyId) {
+        let tag = match self.enum_strings(t) {
+            Some(_) => TAG_STRING,
+            None if self.is_enum(t) => TAG_NUMBER,
+            None => self.cx.any_tag(t),
+        };
+        let msg = format!(
+            "TypeError: the value is not an {} (it is {})",
+            self.any_target_name(ty),
+            FOUND[tag as usize]
+        );
+        self.panic_msg(&msg);
+        self.terminate(Terminator::Unreachable);
+        let next = self.new_block();
+        self.switch_to(next);
+    }
+
+    /// An object value of the concrete type `t` as the `object` `ty`, as `make_dyn` boxes it.
+    fn object_leaf(&mut self, v: Operand, t: TyId, ty: TyId) -> Operand {
+        self.cx.note_dyn_identity(ty, t);
+        self.cx.note_to_object(Some(t));
+        let data = if self.cx.is_class(t) || self.cx.boxed(t) {
+            v
+        } else {
+            let vt = self.cx.ty(t);
+            let b = self.alloc(vt);
+            let bp = self.operand_place(b.clone(), Ty::Ptr);
+            self.store(proj(&bp, Proj::Deref(vt)), v);
+            b
+        };
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let table = self.vtable_addr(VtableKey::Impl(imp, t));
+        self.build_agg(ty, vec![data, table])
+    }
+
     /// Is `t` TypeScript's `object` (issue #926)?
-    fn is_object_ty(&self, t: TyId) -> bool {
+    pub(super) fn is_object_ty(&self, t: TyId) -> bool {
         matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
     }
 

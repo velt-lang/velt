@@ -1,0 +1,76 @@
+// check: no leaks
+// `object` as a `WeakMap` key, a `WeakSet` member and a `WeakRef` target (issue #926): class
+// instances, object literals and arrays, also through `any` and `unknown`, are the same key.
+// Entries go when their keys are freed; `WeakRef`s show it at once (Node clears them at a later
+// garbage collection, so Node prints `alive 3` below).
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+const ids = new WeakMap<object, number>();
+const seen = new WeakSet<object>();
+let next = 0;
+
+function idOf(o: object): number {
+  const id = ids.get(o);
+  if (id != null) {
+    return id;
+  }
+  next++;
+  ids.set(o, next);
+  return next;
+}
+
+function visit(o: object): boolean {
+  if (seen.has(o)) {
+    return false;
+  }
+  seen.add(o);
+  return true;
+}
+
+function churn(refs: WeakRef<object>[]): void {
+  const p = new Point(1);
+  const lit = { name: "lit" };
+  const xs = [1, 2];
+  console.log(idOf(p), idOf(lit), idOf(xs), idOf(p), idOf(xs));
+  console.log(visit(p), visit(p), visit(lit), seen.has(xs), ids.has(lit));
+  refs.push(new WeakRef(p));
+  refs.push(new WeakRef(lit));
+  refs.push(new WeakRef(xs));
+}
+
+function alive(refs: WeakRef<object>[]): number {
+  let n = 0;
+  for (const r of refs) {
+    if (r.deref() !== undefined) {
+      n++;
+    }
+  }
+  return n;
+}
+
+function main(): void {
+  const refs: WeakRef<object>[] = [];
+  churn(refs);
+  console.log("alive", alive(refs));
+
+  // The same object through `any` and `unknown` is the same key.
+  const kept = new Point(7);
+  const a: any = kept;
+  const u: unknown = kept;
+  ids.set(a, 100);
+  console.log(ids.get(kept), ids.get(u as object), ids.has(kept), ids.delete(kept), ids.has(a));
+
+  // `deref()` gives back the object itself.
+  const r = new WeakRef<object>(kept);
+  const back = r.deref();
+  console.log(back === kept, typeof back);
+  ids.set(kept, 1);
+  console.log(back !== undefined ? ids.get(back) : -1);
+
+}
+

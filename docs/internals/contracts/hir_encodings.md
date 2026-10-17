@@ -715,7 +715,7 @@ entry is an `ICE:`.
   `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
   of one object, such as a class and its base, compare the data pointers; `==` of an object
   and a primitive stops with a `TypeError`).
-- A dynamic value is never boxed again: `ToDyn` never has a dynamic operand (an `any | null`
+- A dynamic value is never boxed again: `ToDyn` has no dynamic operand but a weak key (below; an `any | null`
   unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
   interface value; lowering keeps its data pointer and takes the `any` table of the concrete
   type from the interface table. Into a union or literal type, `AnyTo` is applied per member
@@ -778,7 +778,13 @@ entry is an `ICE:`.
   values) into `object` and functions into `Function`; `find_impl` of either interface answers
   for the type, so `T extends object` is a bound that primitives fail. A `ToDyn` operand may then
   be a type parameter bound by `object` / `Function`; when its instantiation is itself dynamic,
-  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`).
+  lowering keeps the value as it is. `x as object` of a type parameter without that bound (or
+  of one `| null`) is such a `ToDyn` too; lowering unpacks an option or union instantiation and
+  stops with a `TypeError` on a primitive. The one `ToDyn` with a dynamic operand is a weak
+  operation's key (`WeakMap.set(k, v)` and the others, `new WeakRef(k)`) written `any` and
+  converted to `object` unchecked: a primitive reaches the operation, which behaves as in
+  JavaScript. A variable passed there as the key is shared (`Intrinsic::Share`), not moved.
+  A call of a `Function` is `AnyApply` (result `any`).
   `AnyTo` from `any` / `unknown` to `object` checks the tag: a boolean, number, string or
   symbol is a `TypeError`. `typeof x === "function"` narrows an `unknown` local with
   `Fact::Class(l, Function)`. Once

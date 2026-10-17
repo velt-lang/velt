@@ -96,6 +96,9 @@ pub(super) struct State {
     pub(super) maps: Vec<Option<MapData>>,
     free_maps: Vec<MapId>,
     refs: Vec<Option<usize>>,
+    /// A word kept with each `WeakRef` slot for the compiler (the descriptor of an `object`
+    /// target, so `deref()` can rebuild the dynamic value); 0 when not given.
+    ref_words: Vec<u64>,
     free_refs: Vec<RefId>,
 }
 
@@ -104,6 +107,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     maps: Vec::new(),
     free_maps: Vec::new(),
     refs: Vec::new(),
+    ref_words: Vec::new(),
     free_refs: Vec::new(),
 });
 
@@ -223,10 +227,22 @@ impl State {
 
     /// Inserts or replaces an entry; returns the values to release.
     pub(super) fn set(&mut self, m: MapId, key: *mut u8, value: u64) -> Vec<(ReleaseFn, u64)> {
+        let key_trace = self.map(m).key_trace;
+        self.set_traced(m, key, value, key_trace)
+    }
+
+    /// [`State::set`] with the key's own trace glue (`key_trace`) instead of the map's: the
+    /// keys of a map whose key type is dynamic (`WeakMap<object, V>`) have different types.
+    pub(super) fn set_traced(
+        &mut self,
+        m: MapId,
+        key: *mut u8,
+        value: u64,
+        key_trace: Option<TraceFn>,
+    ) -> Vec<(ReleaseFn, u64)> {
         let old = self.delete(m, key).unwrap_or_default();
         let k = key as usize;
         let map = self.map(m);
-        let key_trace = map.key_trace;
         let members = match map.value_trace {
             // SAFETY: a nonzero value of a map with value glue is a live counted object, owned
             // by the map from here on.
@@ -301,18 +317,21 @@ impl State {
         Some(old)
     }
 
-    pub(super) fn new_ref(&mut self, obj: *mut u8) -> RefId {
+    pub(super) fn new_ref(&mut self, obj: *mut u8, word: u64) -> RefId {
         let r = match self.free_refs.pop() {
             Some(r) => {
                 self.refs[r as usize] = Some(obj as usize);
+                self.ref_words[r as usize] = word;
                 r
             }
             None => {
                 if self.refs.is_empty() {
                     // Id 0 is never a `WeakRef` slot (as for maps).
                     self.refs.push(None);
+                    self.ref_words.push(0);
                 }
                 self.refs.push(Some(obj as usize));
+                self.ref_words.push(word);
                 (self.refs.len() - 1) as RefId
             }
         };
@@ -329,6 +348,11 @@ impl State {
             }
             None => std::ptr::null_mut(),
         }
+    }
+
+    /// The word given when `r` was made.
+    pub(super) fn ref_word(&self, r: RefId) -> u64 {
+        self.ref_words.get(r as usize).copied().unwrap_or(0)
     }
 
     pub(super) fn drop_ref(&mut self, r: RefId) {

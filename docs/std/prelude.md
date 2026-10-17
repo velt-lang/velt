@@ -187,8 +187,11 @@ in JavaScript: when nothing else refers to a key, its entries go (their values a
 and a `WeakRef` to it returns `null` from then on. Keys, members and targets are objects: class
 instances, object types and arrays, compared by identity (a primitive is an error, as in
 TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
-structs, function and interface values are not supported as keys yet). Like JavaScript's, the
-maps are not iterable and have no `size`.
+structs, function and interface values are not supported as keys yet). An `object` key
+(`WeakMap<object, V>`, as reactive libraries write their caches) is the object it holds
+([object and Function](../reference/types.md#object-and-function)); `deref()` of a
+`WeakRef<object>` returns `undefined` once the target was freed, as in JavaScript. Like
+JavaScript's, the maps are not iterable and have no `size`.
 
 ```ts
 class Node {
