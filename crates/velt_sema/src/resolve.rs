@@ -148,11 +148,8 @@ impl Ctx<'_> {
                 self.ty.error
             }
             ast::TypeExprKind::Undefined => {
-                self.err(
-                    "`undefined` alone as a type is not supported yet; write `T | undefined`",
-                    t.span,
-                );
-                self.ty.error
+                self.writes_undefined = true;
+                self.ty.undefined()
             }
         }
     }
@@ -658,7 +655,7 @@ impl Ctx<'_> {
         }
         if self.mixes_nothings(body, &args) {
             self.err(
-                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                "this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)",
                 span,
             );
             return self.ty.error;
@@ -686,10 +683,19 @@ impl Ctx<'_> {
                     Some((_, members)) => members,
                     None => vec![*p],
                 };
+                let direct = members.len() == 1;
                 for m in members {
                     if let TyKind::Param(i) = self.ty.kind(m) {
                         let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
-                        if arg.is_some_and(|m| !m.within(*n)) {
+                        // `P | undefined` at `P = T | null` is `T | null | undefined`.
+                        let clash = |m: crate::hir::Nothing| {
+                            if direct {
+                                n.has_null() && m.has_undefined()
+                            } else {
+                                !m.within(*n)
+                            }
+                        };
+                        if arg.is_some_and(clash) {
                             return true;
                         }
                     }

@@ -92,6 +92,7 @@ mod sync;
 pub(crate) mod tasks;
 mod this_param;
 mod this_type;
+mod three_state;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
@@ -109,7 +110,7 @@ impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
+        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
         let adapted = match self.cx.ty.kind(fn_ty) {
             TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
@@ -131,7 +132,7 @@ impl FnCx<'_, '_> {
 
     /// `exp` with a surrounding `| null` removed (the value is wrapped after checking).
     pub fn hint(&self, exp: Option<TyId>) -> Option<TyId> {
-        exp.map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+        exp.map(|t| self.cx.ty.core(t).unwrap_or(t))
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
@@ -185,6 +186,13 @@ impl FnCx<'_, '_> {
                 optional,
             } if !*optional && args.iter().any(|a| matches!(a.kind, A::Spread(_))) => {
                 self.call_spreading(callee, type_args, args, exp, span)
+            }
+            // A destructuring default (`pattern_defaults::undefined_or`): applies on `undefined`.
+            A::Call { callee, args, .. }
+                if args.len() == 2
+                    && matches!(&callee.kind, A::Ident(i) if i.name == super::pattern_defaults::UNDEFINED_OR) =>
+            {
+                self.undefined_or(&args[0], &args[1], exp, span)
             }
             A::Call {
                 callee,

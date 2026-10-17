@@ -266,6 +266,13 @@ impl<'a> Printer<'a> {
     /// The type of a parameter `name?: T` as written: the parser added `| null` (a written
     /// `| null` is redundant there and dropped too).
     pub(super) fn ty_optional(&mut self, t: &TypeExpr) -> Doc {
+        // `p?: T | null | undefined` keeps its written `null` (the parser adds none there):
+        // without it the type would be `T | undefined`.
+        let has_undefined = matches!(&t.kind, TypeExprKind::Union(ms)
+            if ms.iter().any(|m| matches!(m.kind, TypeExprKind::Undefined)));
+        if has_undefined {
+            return self.ty_optional_field(t);
+        }
         self.ty_without_nulls(t, |_| true)
     }
 

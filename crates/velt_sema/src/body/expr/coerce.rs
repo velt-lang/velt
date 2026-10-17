@@ -13,7 +13,7 @@
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Nothing, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
@@ -81,6 +81,48 @@ impl FnCx<'_, '_> {
         {
             if !found.within(want) {
                 return Err(h);
+            }
+        }
+        // `undefined` alone (an option of `never`): always its nothing, which is `exp`'s.
+        if let (Some(n), Some(_)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp)) {
+            if self.cx.ty.core(h.ty) == Some(self.cx.ty.never) {
+                let span = h.span;
+                let value = self.nothing_value(n, exp, span);
+                if matches!(h.kind, H::Lit(_)) {
+                    return Ok(value);
+                }
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(h),
+                        span,
+                    }],
+                    value: Some(Box::new(value)),
+                    span,
+                };
+                return Ok(self.mk(H::Block(block), exp, span));
+            }
+        }
+        // Into a `T | null | undefined` (an option of a `T | null`): a `T | null` is its
+        // payload, a `T | undefined` moves its nothing (hir_encodings.md "Undefined").
+        if self.is_three_state(exp) && !self.is_three_state(h.ty) {
+            match self.cx.ty.nothing_of(h.ty) {
+                Some(Nothing::Undefined) => {
+                    let core = self.cx.ty.core(exp).expect("ICE: option without a payload");
+                    let undef = self.cx.ty.option_of(core, Nothing::Undefined);
+                    let h = self.try_coerce(h, undef)?;
+                    return Ok(self.undefined_to_three_state(h, exp));
+                }
+                Some(_) => {
+                    let mid = self
+                        .cx
+                        .ty
+                        .opt_payload(exp)
+                        .expect("ICE: option without a payload");
+                    let span = h.span;
+                    let h = self.try_coerce(h, mid)?;
+                    return Ok(self.mk(H::WrapSome(Box::new(h)), exp, span));
+                }
+                None => {}
             }
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {

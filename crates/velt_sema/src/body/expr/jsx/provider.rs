@@ -137,7 +137,7 @@ impl FnCx<'_, '_> {
             // An optional field's value is passed as is (`null` when absent); the message names
             // the type as written.
             let shown = match optional.get(i).copied().unwrap_or(false) {
-                true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                true => self.cx.ty.core(ty).unwrap_or(ty),
                 false => ty,
             };
             if !self.fits(ty, p.attr_value) {

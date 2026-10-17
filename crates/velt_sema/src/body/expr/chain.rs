@@ -39,7 +39,7 @@ impl FnCx<'_, '_> {
             self.pop_scope();
             return Some(self.error_expr(span));
         }
-        let payload = self.cx.ty.opt_payload(s.ty);
+        let payload = self.present_payload(s.ty);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         let dynamic = self
             .cx

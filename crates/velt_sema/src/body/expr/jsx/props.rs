@@ -301,7 +301,7 @@ impl FnCx<'_, '_> {
             .map(|(i, (name, ty))| {
                 let optional = optional.get(i).copied().unwrap_or(false);
                 let shown = match optional {
-                    true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                    true => self.cx.ty.core(ty).unwrap_or(ty),
                     false => ty,
                 };
                 CommonField {

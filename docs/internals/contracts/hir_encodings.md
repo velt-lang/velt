@@ -642,9 +642,20 @@ entry is an `ICE:`.
 
 ## Undefined (issue #930, phase 1)
 - `TyKind::Option(T, Nothing)`: `Nothing::Null` is `T | null` (every option before #930),
-  `Nothing::Undefined` is `T | undefined`, and `Nothing::Both` is `T | null | undefined`, which
-  sema reports as not supported yet (`Ctx::union_with`), so lowering never sees it. A union
-  `A | B | undefined` is `Option(union, Undefined)`.
+  `Nothing::Undefined` is `T | undefined`, and `Nothing::Both` is `T | null | undefined`. A
+  union `A | B | undefined` is `Option(union, Undefined)`. `undefined` alone as a type is
+  `Option(never, Undefined)` (its one value is the nothing).
+- `T | null | undefined` (phase 1b) is an option of a `T | null` whose own nothing is
+  `undefined`: its payload (`TyTable::payload`, what `WrapSome`, `UnwrapSome` and
+  `PatKind::Some` hold) is `Option(T, Null)`, which `TyTable::intern` interns with it. A present
+  value is `WrapSome(WrapSome(v))`, `null` is `WrapSome(Lit::Null)` (the `Lit::Null` typed
+  `T | null`), and `undefined` is `Lit::Null` typed `T | null | undefined`; `PatKind::None`
+  matches `undefined` only, `Some(None)` matches `null`. Lowering sees the type as
+  `Option(Option(T, Null), Undefined)` (`Cx::kind`), so layout and glue are those of two nested
+  options. `TyTable::intern` makes `Option(Option(T, Null), Undefined)` (and `Both` over
+  `Null`) `Option(T, Both)`, so a generic `U | undefined` at `U = T | null` is that type and
+  its `WrapSome` / `Lit::Null` mean the outer option's. Sema converts a `T | undefined` to a
+  `T | null | undefined` with a `Match` (the two keep `undefined` in different places).
 - `T | undefined` has the layout of `T | null` (the nothing is the null marker: flag `0`, the
   null pointer, `false`); only what observes the nothing differs: `console.log`, template
   strings and `String(x)` write `undefined`, `typeof` gives `"undefined"`, and `JSON.stringify`
@@ -654,14 +665,15 @@ entry is an `ICE:`.
 - `hir::Lit::Null` is the nothing of its option type: `undefined` when that type is
   `T | undefined`. `void e` is a `Block` of `StmtKind::Expr(e)` and that literal; as a
   statement, `void e;` is `StmtKind::Expr(e)`.
-- An option of an option keeps the inner option's `Nothing`: generic code's `U | null` with
+- An option of an option otherwise keeps the inner option's `Nothing`: generic code's `U | null` with
   `U = T | undefined` is `T | undefined`, so its nothing is JavaScript's `undefined` (`pop`,
   `?.`). Generic code that keeps a `U | null` of a parameter given a `T | undefined` could not
-  tell its own `null` from the value's `undefined` (and the reverse); sema reports such
+  tell its own `null` from the value's `undefined`; sema reports such
   instantiations (`undefined_args`, following calls, closures, methods and the generic types a
-  definition uses to a fixpoint) until the three-state encoding lands. As a backstop,
+  definition uses to a fixpoint); the reverse (`U | undefined` at `U = T | null`) is
+  `T | null | undefined` above. As a backstop,
   `velt_vir::lower_checked` reports an error (not an ICE) for an instance whose substitution
-  makes an option of an option with another `Nothing`; `lower_with` and `lower` panic (`ICE:`)
+  makes a `U | null` of a `U` that allows `undefined`; `lower_with` and `lower` panic (`ICE:`)
   there instead.
 - AST (additive): `ast::BinaryOp::StrictEq` / `StrictNotEq` are `===` / `!==`; `Eq` / `NotEq`
   are `==` / `!=` (before #930 both spellings were `Eq` / `NotEq`). `BinaryOp::loose()` maps the

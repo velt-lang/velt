@@ -1,0 +1,26 @@
+// check: no leaks
+// Narrowing after a branch that assigns meets one that tests (issue #930).
+function fill(x: string | null | undefined): string {
+  let y = x;
+  if (y === undefined) {
+    y = "filled";
+  }
+  if (y === null) {
+    return "N";
+  }
+  return y;
+}
+
+function chain(p: { f: string } | null | undefined): string {
+  if (p === undefined) {
+    return "U";
+  } else if (p === null) {
+    return "N";
+  }
+  return p.f;
+}
+
+function main(): void {
+  console.log(fill(null), fill(undefined), fill("k"));
+  console.log(chain(undefined), chain(null), chain({ f: "F" }));
+}

@@ -65,6 +65,18 @@ impl FnCx<'_, '_> {
             }
         };
         let elem = match exp_elem {
+            // `[undefined, 1]`: the elements' union (`number | undefined`), as in TypeScript.
+            None if self.cx.ty.core(elem) == Some(self.cx.ty.never) => {
+                let mut tys = vec![];
+                for (i, e) in elems.iter().enumerate() {
+                    if out[i].is_none() {
+                        out[i] = Some(self.expr(e, None, Want::Move));
+                    }
+                    let t = out[i].as_ref().map_or(elem, |h| self.cx.widened(h.ty));
+                    tys.push(t);
+                }
+                self.cx.union_of(&tys, false, span)
+            }
             None if self.cx.class_of(elem).is_some() => self.common_base(elems, &mut out, elem),
             None if self.cx.ty.promise_payload(elem).is_some() => {
                 self.common_rejection(elems, &mut out, elem)
