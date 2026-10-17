@@ -354,6 +354,9 @@ impl FnCx<'_, '_> {
         };
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
+                if let Some(tmp) = self.method_source(fields, e, init.clone(), out) {
+                    return self.decl_with_defaults(v.kind, &v.pattern, tmp, out);
+                }
                 return self.property_decls(v.kind, fields, init, out);
             }
         }

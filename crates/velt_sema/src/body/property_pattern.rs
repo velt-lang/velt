@@ -30,6 +30,41 @@ impl FnCx<'_, '_> {
             .any(|(key, _)| self.field_of(ty, &key.name).is_none())
     }
 
+    /// When the object pattern `fields` takes a method out of `init` (checked from `e`; `const
+    /// { insert } = options;`), the value to take it apart from by member expressions
+    /// (`pattern_defaults.rs`), so that a method is read as a function value (`method_value.rs`):
+    /// `e` itself when it is a variable or a path of fields, else a hidden temporary holding
+    /// `init`.
+    pub(super) fn method_source(
+        &mut self,
+        fields: &[(ast::Ident, ast::Pattern)],
+        e: &ast::Expr,
+        init: hir::Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) -> Option<ast::Expr> {
+        let ty = init.ty;
+        if !fields
+            .iter()
+            .any(|(key, _)| self.is_method_value(ty, &key.name))
+        {
+            return None;
+        }
+        if is_path(&init) {
+            return Some(e.clone());
+        }
+        let span = init.span;
+        let name = ast::Ident {
+            name: format!("#d{}", self.f.locals.len()),
+            span,
+        };
+        self.hidden_local(name.clone(), init, false, out);
+        Some(ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Ident(name),
+            span,
+        })
+    }
+
     /// `kind { k1: p1, k2: p2 } = init;` as `kind p1 = init.k1; kind p2 = init.k2;`.
     pub(super) fn property_decls(
         &mut self,

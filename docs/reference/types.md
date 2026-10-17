@@ -1348,7 +1348,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
   (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
-  is called (`const { area } = rect;`).
+  is called (`const { area } = rect;`). A method or function-typed member destructured out of
+  an object or interface value is a function value (`const { insert, remove } = options;`),
+  bound to the object it was read from (in JS it is unbound, so the two differ only where JS
+  would throw a `TypeError` for a method that uses `this`).
 - **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
   next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
   other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
