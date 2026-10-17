@@ -59,6 +59,7 @@ mod method;
 mod method_call;
 mod method_value;
 mod names;
+mod never_null;
 mod namespaces;
 mod numbers;
 mod object;

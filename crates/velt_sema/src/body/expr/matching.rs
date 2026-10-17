@@ -56,15 +56,9 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
-        if self.cx.ty.opt_payload(s.ty).is_none() && !self.cx.ty.is_bottom(s.ty) {
-            let tn = self.cx.display(s.ty);
-            self.cx.error(
-                Diagnostic::error(
-                    format!("comparison with `{word}`, but `{tn}` is never {word}"),
-                    span,
-                )
-                .with_note(format!("only `T | {word}` values can be {word}")),
-            );
+        if self.never_nullish(s.ty) {
+            // TS accepts a test of a value that is never nullish (a defensive check).
+            return self.never_null_compare(other, s, is_eq, span);
         }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
             // A `T | undefined` is never `null`: still evaluated, then constant.
@@ -116,7 +110,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `s`, evaluated, then `value`.
-    fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
+    pub(super) fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
         let sty = s.ty;
         let arms = vec![hir::Arm {
             pat: self.pat(P::Wildcard, sty, span),
@@ -240,6 +234,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(lhs, None, Want::Borrow);
+        if self.never_nullish(s.ty) {
+            // TS accepts `??` on a value that is never nullish: the value itself.
+            return self.never_null_nullish(lhs, s, rhs, span);
+        }
         self.nullish_checked(s, rhs, exp, span)
     }
 

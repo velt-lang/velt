@@ -159,13 +159,8 @@ fn nullish_and_optional_chaining() {
         .filter(|e| matches!(e.kind, E::Match { .. }))
         .count();
     assert!(matches >= 6, "{matches}");
-    let r = err_src("function main() { const x = 5; console.log(x ?? 1); }");
-    assert!(
-        r.contains("`??` needs a `T | null` value on the left"),
-        "{r}"
-    );
-    let r = err_src("function main() { const x = 5; console.log(x == null); }");
-    assert!(r.contains("is never null"), "{r}");
+    // On a value that is never null, as in TS: the value itself, and `false` (#1203).
+    ok_src("function main() { const x = 5; console.log(x ?? 1, x == null, x != undefined); }");
 }
 
 #[test]

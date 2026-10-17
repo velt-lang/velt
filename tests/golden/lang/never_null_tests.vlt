@@ -1,0 +1,55 @@
+// check: no leaks
+// `== null`, `!= null`, `=== undefined` and `??` on a value whose type has neither (a
+// defensive check, which TypeScript accepts) are not errors (#1203). The value is still
+// evaluated, the test is constant and the default never runs, except for an array element
+// read: past the end JavaScript reads `undefined`, so the test checks the index.
+interface VNode {
+  type: string;
+}
+
+function isEmpty(vnode: VNode): boolean {
+  return vnode == null;
+}
+
+function present(vnode: VNode): boolean {
+  return vnode != null && vnode !== undefined;
+}
+
+function strict(n: number): boolean {
+  return n === null || n === undefined;
+}
+
+let calls = 0;
+function make(n: number): string[] {
+  calls++;
+  const r: string[] = [];
+  for (let i = 0; i < n; i++) {
+    r.push("s" + i);
+  }
+  return r;
+}
+
+function first(xs: VNode[]): VNode {
+  return xs[0] ?? { type: "comment" };
+}
+
+function at(xs: string[], i: number): string {
+  return xs[i] ?? "none";
+}
+
+function hole(xs: string[], i: number): boolean {
+  return xs[i] == null;
+}
+
+function label(s: string): string {
+  return s ?? "unnamed";
+}
+
+function main() {
+  console.log(isEmpty({ type: "div" }), present({ type: "div" }), strict(3));
+  console.log(first([]).type, first([{ type: "a" }]).type);
+  console.log(at(["a", "b"], 1), at(["a", "b"], 2), at(["a"], -1));
+  console.log(make(0)[0] ?? "empty", make(2)[1] ?? "x", make(3)[calls] ?? "y", calls);
+  console.log(hole(["a"], 0), hole(["a"], 1), make(1)[0] != null, calls);
+  console.log(label("n"), make(1) == null, calls);
+}
