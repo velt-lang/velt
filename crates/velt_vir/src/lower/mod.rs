@@ -298,10 +298,8 @@ struct Cx<'h> {
     queue: VecDeque<(FuncId, Work)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: HashSet<FuncId>,
-    /// Functions whose calls may reach module state (receiver.rs), and whether the program has
-    /// glue hooks, computed when first asked.
-    reaches_slots: receiver::ReachesSlots,
-    has_hooks: Option<bool>,
+    /// Which functions and `new`s may reach module state (receiver.rs), found when asked.
+    reach: receiver::Reach,
     /// Layout facts of every async function instance whose poll function has been built.
     asyncs: HashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`

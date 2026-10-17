@@ -172,3 +172,24 @@ fn programs_without_weak_collections_have_no_weak_capable_types() {
     );
     assert!(w.is_empty(), "{w:?}");
 }
+
+/// A method on a module `let` that only changes its own fields cannot replace the `let`, so its
+/// receiver is borrowed in place and the class stays uncounted; one whose method reassigns the
+/// `let` (through a function it calls) gets a share for the call, which counts the class (#1188).
+#[test]
+fn a_module_let_receiver_is_held_only_when_the_method_may_replace_it() {
+    let plain = counted(
+        "class P { n = 1; plain(): number { this.n++; return this.n; } }
+         let cur = new P();
+         function touch(): void { cur = new P(); }
+         function main() { touch(); console.log(cur.plain()); }",
+    );
+    assert!(!plain.iter().any(|t| t == "class P"), "{plain:?}");
+    let swaps = counted(
+        "class P { n = 1; bump(): number { touch(); return this.n; } }
+         let cur = new P();
+         function touch(): void { cur = new P(); }
+         function main() { console.log(cur.bump()); }",
+    );
+    assert!(swaps.iter().any(|t| t == "class P"), "{swaps:?}");
+}

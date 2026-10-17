@@ -75,12 +75,7 @@ impl FnLower<'_, '_> {
     /// `transfer` (the call starts a spawned task): the receiver is a deep copy for the task
     /// (through the vtable's clone glue when the static type is a base class or an interface),
     /// which the caller releases before the task starts, as for the arguments (transfer.rs).
-    /// A receiver read from a place the method may replace gets a reference of its own for the
-    /// call (receiver.rs): the method is only known at run time.
     fn receiver(&mut self, recv: &hir::Expr, transfer: bool) -> Operand {
-        if !transfer && self.replaceable_receiver(recv) {
-            return self.held_receiver(recv);
-        }
         let v = if super::call::is_moved(recv) {
             let v = self.consume(recv);
             let ty = self.sub(recv.ty);
@@ -168,7 +163,12 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv, transfer);
+        // A receiver read from a place the method may replace gets a reference of its own for
+        // the call (receiver.rs): the method is only known at run time.
+        let rv = match !transfer && self.replaceable_receiver(recv) {
+            true => self.held_receiver(recv),
+            false => self.receiver(recv, transfer),
+        };
         let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(

@@ -1,0 +1,19 @@
+// check: no leaks
+// A method on a module `let` whose body creates classes whose field initializers create the
+// class itself, or each other (#1188): deciding whether the method may reach module state
+// terminates, and the method runs as in Node.
+class Link { next: Link | null = "a".length > 5 ? new Link() : null; }
+class A { b: B | null = "a".length > 5 ? new B() : null; }
+class B { a: A | null = "b".length > 5 ? new A() : null; }
+class Box {
+  n = 1;
+  make(): number { const l = new Link(); return l.next === null ? this.n : 0; }
+  pair(): number { const a = new A(); const b = new B(); return a.b === null && b.a === null ? this.n + 1 : 0; }
+}
+let cur: Box = new Box();
+function touch(): void { cur = new Box(); }
+
+function main(): void {
+  touch();
+  console.log(cur.make(), cur.pair());
+}

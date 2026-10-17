@@ -6,12 +6,14 @@
 //! own for the call (a share: the class or the interface value's data is counted), dropped after
 //! the statement.
 //!
-//! - Virtual and interface calls: the method is chosen at run time, so the receiver is held
-//!   whenever it is read from such a place (`FnLower::callee_replaceable`).
-//! - Direct calls (class methods, accessors) already stabilize a receiver reached through a
-//!   counted object or a shared cell (`stable_borrow`). A receiver rooted in a module state slot
-//!   is held when the method may run code that reaches module state ([`Cx::may_reach_slots`]),
-//!   or when another argument is read from module state (`cur.child.m(cur)`).
+//! - Interface calls: the method is chosen at run time, so the receiver is held whenever it is
+//!   read from such a place (`FnLower::callee_replaceable`). Virtual calls stabilize theirs like
+//!   an argument (`stable_borrow`, dispatch.rs).
+//! - Direct calls (class methods, accessors) stabilize the receiver with the arguments
+//!   (`stable_borrow`), which shares one rooted in module state. A receiver whose only route to
+//!   other code is its module state slot (no counted object, no cell on the way) stays borrowed
+//!   in place when the method cannot reach module state ([`Cx::may_reach_slots`]) and no other
+//!   argument can change it: `rng.next()` on a module `let rng` costs nothing.
 //!
 //! A receiver held in a local, a parameter or `this` is reached by no other reference while the
 //! call runs, and is passed as before.
@@ -22,6 +24,7 @@ use velt_sema::effects::runs_user_code;
 use velt_sema::hir::{self, Callee, DefId, ExprKind as E, StmtKind as S, TyKind};
 
 use super::frame_envs::children;
+use super::sequence::later_each;
 use super::{Cx, FnLower};
 use crate::vir::Operand;
 
@@ -34,18 +37,6 @@ impl FnLower<'_, '_> {
         shareable && !super::call::is_moved(recv) && self.callee_replaceable(recv)
     }
 
-    /// Should the receiver `args[0]` of the direct method call of `def` be held: rooted in a
-    /// module state slot, and the method may reach module state or another argument is read
-    /// from it?
-    pub(super) fn holds_direct_receiver(&mut self, def: DefId, args: &[hir::Expr]) -> bool {
-        let Some((recv, rest)) = args.split_first() else {
-            return false;
-        };
-        self.receiver_in_slot(recv)
-            && self.replaceable_receiver(recv)
-            && (rest.iter().any(|a| self.receiver_in_slot(a)) || self.cx.may_reach_slots(def))
-    }
-
     /// The receiver `recv` with a reference of its own for the call, dropped after the
     /// statement.
     pub(super) fn held_receiver(&mut self, recv: &hir::Expr) -> Operand {
@@ -55,17 +46,38 @@ impl FnLower<'_, '_> {
         self.own_value(s, ty)
     }
 
-    /// Is the place `e` a module state slot, or rooted in one?
-    fn receiver_in_slot(&self, e: &hir::Expr) -> bool {
-        match &e.kind {
-            E::Global(d) => self.slot_of(*d).is_some(),
-            E::Field { base, .. } | E::Index { base, .. } => self.receiver_in_slot(base),
-            E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } | E::Downcast(base) => {
-                self.receiver_in_slot(base)
-            }
-            _ => false,
+    /// Can the class receiver `args[0]` of the direct method call of `def` be borrowed in place:
+    /// rooted in a module state slot through no counted object, the method cannot reach module
+    /// state, and the other arguments neither change memory nor are read from module state?
+    pub(super) fn receiver_in_place(&mut self, def: DefId, args: &[hir::Expr]) -> bool {
+        let Some((recv, rest)) = args.split_first() else {
+            return false;
+        };
+        let ty = self.sub(recv.ty);
+        if !self.cx.is_class(ty)
+            || super::call::is_moved(recv)
+            || !self.rooted_in_slot(recv)
+            || later_each(args)[0].any()
+            || rest.iter().any(|a| self.rooted_in_slot(a))
+            || self.through_counted(recv, ty)
+        {
+            return false;
         }
+        !self.cx.may_reach_slots(def)
     }
+}
+
+/// What [`Cx::may_reach_slots`] has found so far.
+#[derive(Default)]
+pub(super) struct Reach {
+    /// Per function; a function still being walked counts as reaching module state.
+    fns: HashMap<DefId, bool>,
+    /// Per class, for `new` (its constructor and field initializers); a class still being walked
+    /// counts as reaching module state.
+    news: HashMap<DefId, bool>,
+    /// Whether some glue hook (`toString`, `toJSON`, `__inspect`, `[Symbol.dispose]`) may reach
+    /// module state, once known.
+    hooks: Option<bool>,
 }
 
 impl Cx<'_> {
@@ -73,39 +85,54 @@ impl Cx<'_> {
     /// what a receiver read from one holds? It can when its body (or a function it calls
     /// directly, transitively) names a slot, calls through a function value, a vtable or an
     /// interface, awaits, iterates something other than an array or a string, or hands a
-    /// function value, an interface value or `any` to an intrinsic, which may call it. In a
-    /// program with `toString`, `toJSON`, `__inspect` or dispose hooks, an intrinsic handed any
-    /// object may run one. Constructors and field initializers of `new` count as calls.
+    /// function value, an interface value or `any` to an intrinsic, which may call it. When a
+    /// glue hook (`toString`, `toJSON`, `__inspect`, dispose) may reach module state itself, an
+    /// intrinsic handed any object may run it. Constructors and field initializers of `new`
+    /// count as calls.
     pub(super) fn may_reach_slots(&mut self, def: DefId) -> bool {
-        if let Some(&r) = self.reaches_slots.get(&def) {
+        self.hooks();
+        self.fn_reaches(def)
+    }
+
+    fn fn_reaches(&mut self, def: DefId) -> bool {
+        if let Some(&r) = self.reach.fns.get(&def) {
             return r;
         }
         // A recursive call is assumed to reach module state while its result is unknown.
-        self.reaches_slots.insert(def, true);
+        self.reach.fns.insert(def, true);
         let hir = self.hir;
         let r = match hir.def(def) {
-            hir::Def::Fn(f) => {
-                f.is_async || f.is_generator || self.hooks() || self.block_reaches(&f.body.block)
-            }
+            hir::Def::Fn(f) => f.is_async || f.is_generator || self.block_reaches(&f.body.block),
             _ => true,
         };
-        self.reaches_slots.insert(def, r);
+        self.reach.fns.insert(def, r);
         r
     }
 
-    /// Does the program declare a hook that glue runs on an object (`toString`, `toJSON`,
-    /// `__inspect`, `[Symbol.dispose]`)? Dropping or printing a value may then run user code.
+    /// May a glue hook of the program reach module state? Found once, with hooks assumed not to
+    /// while their own bodies are walked (a hook another hook's glue runs is one of those
+    /// walked); what that walk learned about other functions is then forgotten, since it
+    /// assumed no hook reaches module state.
     fn hooks(&mut self) -> bool {
-        if let Some(h) = self.has_hooks {
+        if let Some(h) = self.reach.hooks {
             return h;
         }
-        let h = self.hir.defs.iter().any(|d| {
-            matches!(d, hir::Def::Adt(a) if a.dispose.is_some()
-                || a.to_string.is_some()
-                || a.to_json.is_some()
-                || a.inspect.is_some())
-        });
-        self.has_hooks = Some(h);
+        self.reach.hooks = Some(false);
+        let hir = self.hir;
+        let hooks: Vec<DefId> = hir
+            .defs
+            .iter()
+            .filter_map(|d| match d {
+                hir::Def::Adt(a) => Some([a.dispose, a.to_string, a.to_json, a.inspect]),
+                _ => None,
+            })
+            .flatten()
+            .flatten()
+            .collect();
+        let h = hooks.into_iter().any(|d| self.fn_reaches(d));
+        self.reach.fns.clear();
+        self.reach.news.clear();
+        self.reach.hooks = Some(h);
         h
     }
 
@@ -159,7 +186,7 @@ impl Cx<'_> {
             E::Block(b) => return self.block_reaches(b),
             E::Call { callee, args } => match callee {
                 Callee::Def(d, _) => match self.hir.def(*d) {
-                    hir::Def::Fn(_) => self.may_reach_slots(*d),
+                    hir::Def::Fn(_) => self.fn_reaches(*d),
                     _ => true,
                 },
                 Callee::Intrinsic(i) => {
@@ -182,24 +209,35 @@ impl Cx<'_> {
     }
 
     /// Can an intrinsic handed a value of type `t` run user code with it: a function value, an
-    /// interface value or `any` (or a generic type that may be one), or, in a program with
-    /// hooks, any value that is not a number, a boolean or a string?
+    /// interface value or `any` (or a generic type that may be one), or, when a glue hook may
+    /// reach module state, any value that is not a number, a boolean or a string?
     fn may_call(&mut self, t: hir::TyId) -> bool {
         match self.types.kind(t) {
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) | TyKind::Param(_) => true,
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Unit => false,
-            _ => self.hooks(),
+            _ => self.reach.hooks.unwrap_or(true),
         }
     }
 
     /// Does `new` of class `def` run code that reaches module state (its constructor, its
-    /// fields' initializers)?
+    /// fields' initializers, its base class's)? Memoized per class: field initializers may
+    /// create the class itself (`next: Link | null = c ? new Link() : null`) or each other.
     fn new_reaches(&mut self, def: DefId) -> bool {
+        if let Some(&r) = self.reach.news.get(&def) {
+            return r;
+        }
+        self.reach.news.insert(def, true);
+        let r = self.new_walk(def);
+        self.reach.news.insert(def, r);
+        r
+    }
+
+    fn new_walk(&mut self, def: DefId) -> bool {
         let hir = self.hir;
         let hir::Def::Adt(a) = hir.def(def) else {
             return true;
         };
-        if a.ctor.is_some_and(|c| self.may_reach_slots(c)) {
+        if a.ctor.is_some_and(|c| self.fn_reaches(c)) {
             return true;
         }
         // A base class's constructor runs too when this class declares none.
@@ -214,6 +252,3 @@ impl Cx<'_> {
         inits.into_iter().any(|e| self.expr_reaches(e))
     }
 }
-
-/// Memo of [`Cx::may_reach_slots`].
-pub(super) type ReachesSlots = HashMap<DefId, bool>;

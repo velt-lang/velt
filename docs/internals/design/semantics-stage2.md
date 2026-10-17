@@ -141,15 +141,22 @@ reachable only through unique owners.
 A method's receiver (`this`) is kept alive for the call the same way when the method may
 replace the place it is read from (receiver.rs, #1188): `cur.bump()` where `bump` calls a
 function that assigns `cur = new State()`, `holder.shape.area()` where an override replaces
-`holder.shape`. A virtual or interface call holds a class or interface receiver read from a
-field or element reached through a counted object, a variable in a shared cell or a module
-state slot (the rule of the function value above): the method is only known at run time. A
-direct method call already stabilizes a receiver reached through a counted object or a cell; a
-receiver rooted in a module state slot is held when the method, or a function it calls
-directly, may reach module state: it names a slot, calls through a function value, a vtable or
-an interface, awaits, or hands a function or `any` value to an intrinsic (`Cx::may_reach_slots`,
-one walk per function). The held receiver is a share (its class counted), dropped after the
-statement. A receiver in a variable, a parameter or `this` is passed as before.
+`holder.shape`. Virtual calls and direct method calls stabilize the receiver like an argument
+(`stable_borrow`, with the module state rules above). An interface call holds a receiver read
+from a field or element reached through a counted object, a variable in a shared cell or a
+module state slot (the rule of the function value above): the method is only known at run time.
+The held receiver is a share (its class counted), dropped after the statement. One exception
+keeps hot calls on module state free: a direct method call whose class receiver reaches other
+code only through its module state slot (no counted object, no cell on the way) borrows it in
+place when no other argument can change it and the method, or a function it calls directly,
+cannot reach module state. It reaches module state when it names a slot, calls through a
+function value, a vtable or an interface, awaits, iterates something other than an array or a
+string, hands a function or `any` value to an intrinsic, or creates an object whose constructor
+or field initializers do; when a glue hook (`toString`, `toJSON`, `__inspect`, dispose) can
+itself reach module state, handing any object to an intrinsic counts too (`Cx::may_reach_slots`,
+one walk per function and per class). `rng.next()` on a module `let rng` whose method only
+updates its own fields is a plain call. A receiver in a variable, a parameter or `this` is passed
+as before.
 
 ### 3.4 `noalias`, `readonly` and exclusivity
 `noalias` (and, for borrowed params, `readonly`) is set only when `Cx::unique_refs` holds: the
