@@ -83,6 +83,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         .zip(&promise)
         .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
         .collect();
+    let hidden = cx.hidden_keys();
     let setters = match cx.iface_written(d) {
         true => cx.writable_fields(d),
         false => vec![],
@@ -101,6 +102,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 optional: f.optional,
                 private: false,
                 presence: false,
+                hidden: hidden.contains(&f.name),
             })
             .collect(),
         methods: i
@@ -219,6 +221,7 @@ fn adt_def(
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
     let inherited_inits = inherited_inits(cx, d).0;
+    let hidden = cx.hidden_keys();
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
     let private_fields = a
@@ -240,6 +243,7 @@ fn adt_def(
             optional: f.optional,
             private: f.private_to.is_some(),
             presence: crate::anon::has_presence(&cx.ty, a.kind, f),
+            hidden: hidden.contains(&f.name),
         })
         .collect();
     let (name, kind, base, ctor, vtable, span) = (

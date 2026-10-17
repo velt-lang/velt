@@ -194,10 +194,13 @@ impl FnCx<'_, '_> {
             .map(|a| (a.fields.clone(), a.kind))
             .unwrap_or((vec![], crate::hir::AdtKind::Struct));
         let mut out = vec![];
+        let hidden = self.cx.hidden_keys();
         for (i, f) in fields.iter().enumerate() {
-            // ES private fields (`#x`) are never copied, as in JavaScript.
+            // ES private fields (`#x`) are never copied, as in JavaScript, and neither are
+            // non-enumerable brands (`crate::defined_props`).
             if f.name.starts_with(ast::PRIVATE_NAME_PREFIX)
                 || f.private_to.is_some_and(|o| !self.private_allowed(o))
+                || hidden.contains(&f.name)
             {
                 continue;
             }

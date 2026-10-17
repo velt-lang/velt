@@ -38,6 +38,7 @@ mod call_sigs;
 mod collect;
 mod creation_notes;
 mod ctx;
+mod defined_props;
 mod defs;
 mod discriminants;
 mod dispatch;
@@ -234,6 +235,8 @@ fn check_on_current_thread(
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let (brands, branded) = defined_props::rewrite(modules);
+    let modules = branded.as_deref().unwrap_or(modules);
     let closures = nested_closures::rewrite(modules);
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
@@ -257,6 +260,7 @@ fn check_on_current_thread(
             cx.overloaded_methods = o.methods.clone();
         }
         cx.objects.null_proto_records = null_proto;
+        cx.objects.brands = brands.clone();
         cx.recovered = (recovered.iter())
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();

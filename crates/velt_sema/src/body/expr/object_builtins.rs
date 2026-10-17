@@ -41,8 +41,7 @@ use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind};
 
 /// The functions of JavaScript's `Object` that Velt doesn't have yet (`keys`, `values`,
 /// `entries` and the ones here are handled).
-const NOT_YET: [&str; 15] = [
-    "defineProperty",
+const NOT_YET: [&str; 14] = [
     "defineProperties",
     "getOwnPropertyNames",
     "getOwnPropertyDescriptor",
@@ -95,7 +94,13 @@ impl FnCx<'_, '_> {
         let name = prop.name.as_str();
         let known = matches!(
             name,
-            "is" | "assign" | "freeze" | "fromEntries" | "hasOwn" | "getPrototypeOf" | "create"
+            "is" | "assign"
+                | "freeze"
+                | "fromEntries"
+                | "hasOwn"
+                | "getPrototypeOf"
+                | "create"
+                | "defineProperty"
         );
         if !known && !NOT_YET.contains(&name) {
             return None;
@@ -115,10 +120,11 @@ impl FnCx<'_, '_> {
             "hasOwn" => self.has_own(args, "Object.hasOwn", span),
             "getPrototypeOf" => self.get_prototype_of(args, span),
             "create" => self.object_create(args, exp, span),
+            "defineProperty" => self.object_define_property(args, span),
             _ => {
                 let mut d =
                     Diagnostic::error(format!("`Object.{name}` is not supported yet"), prop.span);
-                if name == "defineProperty" || name == "defineProperties" {
+                if name == "defineProperties" {
                     d = d.with_note("Velt objects have the fields their type declares (#922)");
                 }
                 self.cx.error(d);
