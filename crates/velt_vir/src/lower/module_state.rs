@@ -152,7 +152,10 @@ impl FnLower<'_, '_> {
                 super::ice("module state slot is not a global")
             };
             lw.push_scope(ScopeKind::Block);
-            let v = lw.consume(&g.init);
+            let v = match lw.throwing_script(&g.init) {
+                true => super::unit(),
+                false => lw.consume(&g.init),
+            };
             let v = lw.detach(v, g.ty);
             if !lw.dead() {
                 let p = lw.slot_in(Operand::Copy(Place::local(state)), i as u32);
@@ -179,6 +182,36 @@ impl FnLower<'_, '_> {
         lw.pop_scope();
         lw.terminate(Terminator::Return(super::unit()));
         lw.finish("_Gmodule_init".to_string(), vec![Ty::Ptr], Ty::Unit)
+    }
+
+    /// `f()` where `f` may throw: an imported module's top-level statements (sema
+    /// `module_scripts`). An error escaping it prints `Uncaught …` and ends the process with 1,
+    /// as Node stops at an error thrown while it evaluates a module. False (nothing lowered) for
+    /// any other initializer.
+    fn throwing_script(&mut self, init: &hir::Expr) -> bool {
+        let E::Call {
+            callee: hir::Callee::Def(f, targs),
+            args,
+        } = &init.kind
+        else {
+            return false;
+        };
+        let fd = self.cx.fn_def(*f);
+        let (ret, Some(err)) = (fd.ret, fd.throws) else {
+            return false;
+        };
+        if !args.is_empty() {
+            return false;
+        }
+        let fid = self.cx.func_for(*f, targs.clone());
+        let Some(out) = self.cx.ret_abi(ret, Some(err)).out else {
+            super::ice("throwing function without an out-parameter result");
+        };
+        let tmp = self.temp(out);
+        let a = self.addr(Place::local(tmp));
+        self.call(vir::Callee::Func(fid), vec![a], None, false);
+        self.uncaught_check(tmp, ret, err, true);
+        true
     }
 
     /// Initialize the module state before `main` runs, as Node evaluates the modules first.

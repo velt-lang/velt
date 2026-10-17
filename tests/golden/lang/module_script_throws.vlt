@@ -1,0 +1,5 @@
+// An error that an imported module's top-level statements throw and don't catch stops the
+// program before the importing module's statements run (Node exits with code 1 too).
+import { check } from "./_module_script_throws_lib";
+
+console.log("never printed", check());

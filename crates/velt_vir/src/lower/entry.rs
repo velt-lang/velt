@@ -50,7 +50,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let tmp = lw.temp(out);
                 let a = lw.addr(Place::local(tmp));
                 lw.call(callee, vec![a], None, false);
-                lw.uncaught_check(tmp, ret, err)
+                lw.uncaught_check(tmp, ret, err, false)
             }
             (_, _) if abi.ret == Ty::I32 => {
                 let d = lw.temp(Ty::I32);
@@ -83,7 +83,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         match f.throws {
             Some(err) => {
                 let t = self.copy_to_temp(Operand::Copy(res), info.result);
-                self.uncaught_check(t, ret, err)
+                self.uncaught_check(t, ret, err, false)
             }
             None if info.result == Ty::I32 => Operand::Copy(res),
             None => cint(0, Ty::I32),
@@ -133,7 +133,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Handle the `Result` of a throwing `main`; yields the exit code for the Ok case.
-    fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
+    pub(super) fn uncaught_check(
+        &mut self,
+        res: vir::Local,
+        ret: TyId,
+        err: TyId,
+        exit: bool,
+    ) -> Operand {
         let rty = self.cx.intern(TyKind::Result(ret, err));
         let rp = Place::local(res);
         let tag = Operand::Copy(proj(&rp, Proj::Field(0)));
@@ -145,7 +151,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ep = proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1));
         self.report_uncaught(&ep, err);
         self.drop_glue(ep, err);
-        self.terminate(Terminator::Return(cint(1, Ty::I32)));
+        match exit {
+            // Not in `velt_main` (an imported module's top-level statements): end the process.
+            true => self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None),
+            false => self.terminate(Terminator::Return(cint(1, Ty::I32))),
+        }
         self.switch_to(ok_bb);
         match self.cx.ty(ret) {
             Ty::I32 => {

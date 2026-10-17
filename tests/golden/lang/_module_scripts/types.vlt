@@ -1,0 +1,11 @@
+export interface Shape {
+  n: number;
+}
+
+function loaded(): number {
+  console.log("types initializer");
+  return 1;
+}
+
+export let count = loaded();
+console.log("types loaded");
