@@ -169,6 +169,11 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.narrowing_note(t) {
             d = d.with_note(note);
         }
+        if matches!(self.cx.ty.kind(t), hir::TyKind::Op(hir::TyOp::Intersect, _)) {
+            d = d.with_note(
+                "in generic code, the members of an intersection with a type parameter part are not available yet (#350); callers see them once the type arguments are known",
+            );
+        }
         if let Some(note) = self.unnarrowed_note(obj) {
             d = d.with_note(note);
         }

@@ -1,5 +1,7 @@
 // Intersections Velt rejects, each with its fix: parts with no value in common, classes,
-// arrays, function types and type parameters as parts, and extra or missing fields in a literal.
+// arrays and function types as parts, a class as a type parameter part's argument, members of an
+// intersection with a type parameter part in generic code (#350), and extra or missing fields in
+// a literal.
 type Conflict = { k: string } & { k: number };
 type Kinds = { kind: "a"; x: number } & { kind: "b" };
 
@@ -10,8 +12,10 @@ type Located = Point & { label: string };
 type Listed = string[] & { label: string };
 type Overloads = ((x: string) => void) & ((x: number) => void);
 
-function merge<T, U>(t: T, u: U): T & U {
-  return merge(t, u);
+type Tagged<T> = T & { tag: string };
+
+function label<T>(v: Tagged<T>): string {
+  return v.tag;
 }
 
 type A = { a: number };
@@ -20,6 +24,7 @@ type AB = A & { b: number };
 function main() {
   const missing: AB = { a: 1 };
   const extra: AB = { a: 1, b: 2, c: 3 };
+  const point: Tagged<Point> = new Point();
 }
 
 // An alias can refer to itself through `&` only when its parts are object types written out.
