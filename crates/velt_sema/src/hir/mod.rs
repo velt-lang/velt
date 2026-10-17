@@ -34,7 +34,7 @@ mod nothing;
 mod numeric;
 mod table;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
@@ -171,6 +171,10 @@ pub struct Program {
     /// representation and tables as `any`.
     pub object: Option<DefId>,
     pub function: Option<DefId>,
+    /// The spans of the `super.m(args)` calls (hir_encodings.md "Classes"): each is a
+    /// `Callee::Def` call of the base implementation with `this` as `args[0]`, which JavaScript
+    /// makes without reading `m` from `this` (so no proxy trap runs, typed proxies, #823).
+    pub super_calls: HashSet<Span>,
     /// The methods and accessors of each struct / class / object type by name, own ones before
     /// inherited ones, when the program reads or calls a member of an `any`
     /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
@@ -513,6 +517,21 @@ pub struct Expr {
     pub span: Span,
 }
 
+/// Whether an `AdtLit` converts an object to another object type (hir_encodings.md "Object
+/// conversions"): its fields are then each absent or a read of one source place, and a
+/// source holding a typed proxy gives that proxy instead of the literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Conversion {
+    /// An ordinary literal.
+    No,
+    /// A conversion: a plain source is copied.
+    Copy,
+    /// A conversion whose copy the program could tell from the original (a later write, `===`,
+    /// ...), allowed only because the program creates proxies: a plain source throws a
+    /// `TypeError` instead of being copied.
+    ProxyOnly,
+}
+
 /// How a place is used by the expression that reads it (sema's ownership analysis).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UseMode {
@@ -673,6 +692,9 @@ pub enum ExprKind {
         def: DefId,
         type_args: Vec<TyId>,
         fields: Vec<Expr>,
+        /// Whether the literal converts an object to another object type by copying its
+        /// fields (hir_encodings.md "Object conversions").
+        converted: Conversion,
     },
     Variant {
         def: DefId,

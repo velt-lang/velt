@@ -84,7 +84,9 @@ pub(super) fn global_info<'m>(
             is_private: false,
         },
         mutable: v.kind == ast::VarKind::Let,
-        stored: v.kind == ast::VarKind::Let,
+        // A `const` moved out of an imported module's statements is kept as they would keep it
+        // (`module_chunks`).
+        stored: v.kind == ast::VarKind::Let || cx.promoted_consts.contains(&v.span),
     };
     Some((name, DefInfo::Global(Box::new(info))))
 }

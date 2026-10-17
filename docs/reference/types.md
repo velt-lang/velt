@@ -711,6 +711,30 @@ the nullable type; `void` cannot be a member.
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
+- A union alias may name itself behind an indirection: as an array's element, an index
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
+  give such a type a nominal member, such as an interface or a class.
+
+```ts
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+type Tree = number | Tree[];
+
+function depth(t: Tree): number {
+  if (typeof t === "number") {
+    return 0;
+  }
+  let max = 0;
+  for (const k of t) {
+    max = Math.max(max, depth(k));
+  }
+  return max + 1;
+}
+
+const v: Json = { a: [1, "x", { b: null }] };
+console.log(JSON.stringify(v)); // {"a":[1,"x",{"b":null}]}
+console.log(depth([1, [2, [3]]])); // 3
+```
 
 ```ts
 class NotFound {
@@ -781,9 +805,9 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
-- Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
-  to itself.
+- A discriminated union may name itself behind an indirection
+  (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
+  [Union types](#union-types)).
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
@@ -1947,7 +1971,19 @@ converting it back to `any` see one object, and `console.log(s)` prints the targ
 read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
 on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
 target whose `get` trap answers every key). A method called through a typed proxy runs with
-`this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
+`this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
+`get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
+trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
+the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
+stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
+(Where a copy of a plain object could be told from the original, such a conversion is a compile
+error in a program without proxies; in one that creates proxies, a plain object there throws a
+`TypeError` naming #823 instead of being copied.)
+Calling a function-typed field of a typed proxy (`s.$set(v)`) reads it through the `get` trap
+before the arguments, then calls the function the trap answered, whatever its own parameter
+types (a closure taking `any`), and checks its result against the field's result type.
+`s.count++` used as a
 value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
 in JavaScript. A field read through a typed proxy runs after the operands before it, as any
 call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
@@ -1991,11 +2027,12 @@ function main(): void {
 
 **Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
 `defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
-as an array or a `Record`, and `in` on a typed proxy; a typed proxy passed where an object type
-with other fields is expected (it is copied there); a function the `get` trap returns, called
-as a method of a typed proxy; `Array.isArray` of an array proxy; proxies of functions (`apply`,
-`construct`); a method call through a proxy whose handler has a `get` trap (`p.m()`, where
-JavaScript reads `m` through the trap first); `Reflect.get` / `Reflect.set` with a receiver
+as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
+as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
+of a class; an async method called through a proxy with a `get` trap; a method call through an
+interface value holding a proxy whose handler has a `get` trap; a method read as a value through
+`any` and called on its own; `Array.isArray` of an array proxy; proxies of functions (`apply`,
+`construct`); `Reflect.get` / `Reflect.set` with a receiver
 that is neither the target nor a proxy; destructuring a typed proxy
 (`const { n, label } = s`) and `JSON.stringify` of one. Until then each is a compile error or a `TypeError`
 naming #823. A method call through an `any` proxy whose handler has no traps is the call on

@@ -1,0 +1,13 @@
+import { register } from "./registry";
+import { a } from "./a";
+
+export function b(): string {
+  return "b";
+}
+
+export function viaA(): string {
+  return a();
+}
+
+console.log("b loaded");
+register("b");

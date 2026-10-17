@@ -1,0 +1,43 @@
+// check: no leaks
+// A typed proxy passed where another object type with fewer fields is expected keeps its
+// identity (#823, decision 2): `Signal` (`State & { $set }`) passed as `State` is the same
+// proxy, so reads and writes through the `State` still run the traps and reach the target.
+type State = { count: number; label: string };
+type Signal = State & { $set(v: State): void };
+type Labeled = { label: string };
+
+function reactive(target: any): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      console.log("get", String(key));
+      return Reflect.get(t, key, receiver);
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+function render(st: State): string {
+  return `${st.label}: ${st.count}`;
+}
+
+function bump(st: State): void {
+  st.count = st.count + 1;
+}
+
+function rename(l: Labeled, to: string): void {
+  l.label = to;
+}
+
+const raw: State = { count: 1, label: "a" };
+const s = reactive(raw) as Signal;
+console.log(render(s));
+bump(s);
+rename(s, "b");
+console.log(raw.count, raw.label);
+const t: State = s;
+console.log((t as any) === (s as any));
+const states: State[] = [s, raw];
+for (const x of states) console.log(render(x));

@@ -1,0 +1,8 @@
+// A union alias may name itself only behind an indirection (an array, an index signature, a
+// `Map` or a function type): a value of `L` or `U` would contain itself.
+type L = number | { next: L };
+type U = string | [U, U];
+
+const a: L = 1;
+const c: U = "x";
+console.log(a, c);

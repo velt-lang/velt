@@ -70,6 +70,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             stable_binds: false,
             transfer_args: false,
             transfer_call: false,
+            proxy_recv: None,
+            super_call: false,
             same_mode: false,
             key_mode: false,
             ctor_self: None,
