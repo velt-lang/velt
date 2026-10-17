@@ -1,0 +1,3 @@
+optional_fn_member_call.vlt:8:10: error: cannot call `onError`: it may be null
+optional_fn_member_call.vlt:14:12: error: cannot call `onError`: it may be null
+optional_fn_member_call.vlt:23:10: error: cannot call `onError`: it may be null

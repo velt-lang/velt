@@ -422,6 +422,10 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        let recv = match self.optional_fn_member_call(object, recv, prop, args, span) {
+            Ok(call) => return call,
+            Err(recv) => recv,
+        };
         let r = self.in_place_receiver(object, recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
         self.after_receiver(r.before, call)
