@@ -17,3 +17,5 @@ b { c: [ 1, 2 ], d: true } { a: 1 }
 2 { a: 1, b: 4 }
 { a: 1, b: 4, c: 5 }
 people { names: [ 'ann', 'bo' ], count: 2 }
+2 { a: 1 }
+{ shown: 2 } 1

@@ -29,6 +29,24 @@ class Point {
   }
 }
 
+class Self {
+  a = 1;
+  private b = 2;
+  taken(): void {
+    // The pattern takes the `private` field, so the rest has none (see errors/object_rest_private).
+    const { b, ...r } = this;
+    console.log(b, r);
+  }
+}
+
+class Open {
+  #hidden = 1;
+  shown = 2;
+  peek(): number {
+    return this.#hidden;
+  }
+}
+
 function split(props: { children: string; id: number; title: string }): void {
   const { children, ...rest } = props;
   console.log(children, rest.id, rest.title);
@@ -88,4 +106,9 @@ function main() {
   const holder = { names, count: names.length, title: "people" };
   const { title, ...data } = holder;
   console.log(title, data);
+
+  // `#private` fields are not copied, as in JS.
+  new Self().taken();
+  const { ...open } = new Open();
+  console.log(open, new Open().peek());
 }

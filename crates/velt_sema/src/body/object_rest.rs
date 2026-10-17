@@ -12,7 +12,9 @@
 //!   (`const rest = { ...#d }; delete rest["children"];`), also a `Record<string, V>`.
 //!
 //! Any other type (a type parameter, an interface with methods, a record with a closed key
-//! type) is an error saying it is not supported yet.
+//! type) is an error saying it is not supported yet, and so is a class instance with a
+//! TypeScript `private` field the pattern doesn't take: JS copies it into the rest, while the
+//! rest's type has no such field.
 
 use velt_common::Diagnostic;
 use velt_syntax::ast::{self, Expr, ExprKind as E, Pattern, PatternKind as P, VarKind};
@@ -112,6 +114,20 @@ impl FnCx<'_, '_> {
             );
             return self.declare_rest(kind, rest, err, None, out);
         }
+        if let Some(name) = self.ts_private_field(ty, taken) {
+            let tn = self.cx.display(ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`...rest` of a class instance with `private` fields (`{tn}`) is not supported yet"),
+                    span,
+                )
+                .with_note(format!(
+                    "JavaScript copies `{name}` into the rest, but TypeScript leaves it out of the rest's type, which Velt cannot express yet"
+                ))
+                .with_note("take the fields you need by name, or make them public"),
+            );
+            return self.declare_rest(kind, rest, err, None, out);
+        }
         let Some(mut fields) = self.cx.object_fields("...rest", ty, None, span) else {
             return self.declare_rest(kind, rest, err, None, out);
         };
@@ -120,6 +136,23 @@ impl FnCx<'_, '_> {
         let copy = mk(E::Object(vec![ast::ObjectProp::Spread(tmp.clone())]), span);
         let init = self.expr_coerce(&copy, rest_ty, Want::Move);
         self.declare_rest(kind, rest, rest_ty, Some(init), out);
+    }
+
+    /// A TypeScript `private` field of class instance type `ty` that the pattern doesn't take
+    /// (`#private` fields are not own properties in the JS sense the rest copies: they stay
+    /// out, as in JS).
+    fn ts_private_field(&self, ty: hir::TyId, taken: &[String]) -> Option<String> {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(ty) else {
+            return None;
+        };
+        self.cx
+            .adt(*d)?
+            .fields
+            .iter()
+            .find(|f| {
+                f.private_to.is_some() && !f.name.starts_with('#') && !taken.contains(&f.name)
+            })
+            .map(|f| f.name.clone())
     }
 
     /// `kind rest = init;` with `rest` of type `ty` (`init` absent after an error).

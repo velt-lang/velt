@@ -1361,11 +1361,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
   type or an interface of fields, the object type of the other fields (`Omit<P, "children">`;
   an optional field is copied only while present); on a class instance, the other fields (its
-  methods and getters live on the prototype, so the rest has none); on a `Record<string, V>`,
+  methods and getters live on the prototype, so the rest has none, nor `#private` fields); on a `Record<string, V>`,
   a `Record<string, V>` of the other keys. The rest is a new object: its fields are copied
   (a nested object or array is shared, as in JS). Not supported yet (each is an error): the rest of a value
-  whose type is a type parameter, an interface with methods, or a record with a closed key
-  type, and `...rest` in `for...of` patterns.
+  whose type is a type parameter, an interface with methods, a record with a closed key
+  type, or a class with a TypeScript `private` field the pattern doesn't take (JS copies it,
+  but the rest's type leaves it out), and `...rest` in `for...of` patterns.
 
   ```ts
   interface Props { id: number; title: string; hidden?: boolean }
