@@ -761,7 +761,7 @@ entry is an `ICE:`.
 - Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
   any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
-  (`ToDyn`), and reports one converted straight to a typed value. The member slots of the
+  (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
@@ -771,6 +771,22 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of
+  a `Proxy`, the class hierarchies and object types that `AnyTo` in the program's own code
+  converts to, and what values of those types are upcast to (`Upcast`), are *proxiable*
+  (`VELT_DEBUG_PROXY=1` lists them). A value of a proxiable type is the object's address, or the
+  `Proxy` object's address with bit 0 set: `AnyTo` of an `any` holding a `Proxy` sets the bit,
+  boxing clears it again. Field reads, writes and compound assignments on a proxiable type test
+  the bit and call the `get` / `set` traps (glue `ProxyGet` / `ProxySet` per field type), counts
+  clear the bit, and drop and format glue handle the `Proxy` object. Transfer, many-threads
+  check and clone glue of a proxiable type (and of interface values, which may hold one) handle
+  the `Proxy` object as an `any` holding it, then set the bit again; `instanceof` reads the
+  target's class; weak map keys are the untagged `Proxy` object (values of a proxiable type are
+  boxed), and a `WeakRef` keeps the tagged word (rt_abi.md). Sema's update-as-value blocks
+  (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
+  with one read, and assignment-as-value blocks (`{ s.f = v; s.f }`) with none (the value is
+  `v`); a field read on a proxiable type counts as running user code when lowering orders
+  operands (`sequence.rs`). Without proxiable types nothing changes. No HIR form was added.
 - Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
   an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
   or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the

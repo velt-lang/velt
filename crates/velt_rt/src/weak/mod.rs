@@ -164,10 +164,11 @@ pub fn weakmap_len(map: MapId) -> u64 {
     table::with(|s| s.map_len(map)) as u64
 }
 
-/// `new WeakRef(obj)`: does not count `obj`.
+/// `new WeakRef(obj)`: does not count `obj`. Bit 0 of `obj` may be set (a typed proxy: the
+/// counted object is `obj` with the bit clear); `deref` returns the word as given.
 ///
 /// # Safety
-/// `obj` is a live counted object.
+/// `obj` is a live counted object, maybe with bit 0 set.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakref_new(obj: *mut u8) -> RefId {
     table::with(|s| s.new_ref(obj, 0))
@@ -231,6 +232,7 @@ pub unsafe extern "C" fn velt_rt_weak_release(obj: *mut u8) -> u8 {
 /// As for [`velt_rt_weak_release`].
 #[inline]
 pub(crate) unsafe fn weak_release(obj: *mut u8) -> bool {
+    table::untagged(obj);
     let rc = rc_word(obj);
     debug_assert!(
         *rc & RC_COUNT >= 1,

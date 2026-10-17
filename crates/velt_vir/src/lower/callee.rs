@@ -282,7 +282,7 @@ impl FnLower<'_, '_> {
     /// counted object (a field, an element), or rooted in a variable held in a shared cell or a
     /// module `let`'s slot? A variable of this function or a parameter, and anything inside them
     /// stored inline, is reached by no other reference, so the callee cannot replace it.
-    fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(l, _) => self.info[l.0 as usize].in_cell,

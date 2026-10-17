@@ -180,6 +180,12 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         generics.defaults = defaults;
     }
     let kind = cx.fn_info(d).kind;
+    // `function f(this: T, ...)`: `this` is a leading parameter (`body::expr::this_param`).
+    if let (Some(t), FnKind::Free | FnKind::Closure) = (&sig.this_param, kind) {
+        let ty = cx.resolve_type(t, &env);
+        let resumable = sig.is_async || sig.is_generator;
+        cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
+    }
     let mut ps = params(cx, &sig.params, &env);
     if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
         f.1.clone_from(&sig.name.name);

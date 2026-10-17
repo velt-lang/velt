@@ -1,0 +1,18 @@
+// The per-type microbenchmark (#823), inside the proxiable set: proxy_tick_plain.vlt plus one
+// proxy converted to `State`, so every `State` access tests for a proxy. The loop itself runs
+// on plain objects.
+type State = { count: number; step: number; total: number };
+
+function tick(s: State): void {
+  s.count = s.count + s.step;
+  s.total = s.total + s.count;
+}
+
+const a: State = { count: 0, step: 1, total: 0 };
+const holders: State[] = [a, a];
+for (let i = 0; i < 10000000; i++) {
+  tick(holders[i & 1]);
+}
+const p = new Proxy({ count: 1, step: 2, total: 3 }, {}) as State;
+tick(p);
+console.log(a.count, a.total, p.total);

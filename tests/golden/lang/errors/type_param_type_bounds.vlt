@@ -19,6 +19,14 @@ function pick<T>(x: T): string | number {
   return 1;
 }
 
+function optional<T extends "a" | "b">(t?: T): number {
+  return 1;
+}
+
+function list<T extends "a" | "b">(t: T[]): number {
+  return 1;
+}
+
 function open<T>(x: T): T {
   return id(x);
 }
@@ -29,4 +37,6 @@ function main() {
   id(true);
   id<boolean>(false);
   pick(true);
+  optional("c");
+  list(["a", "z"]);
 }

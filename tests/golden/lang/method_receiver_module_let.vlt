@@ -1,0 +1,29 @@
+// check: no leaks
+// A method (and an accessor) called on an object held by a module-level `let`, whose body calls
+// a function that reassigns the `let` (#1188): the method keeps running on the object it was
+// called on, which is freed after the call. Identical to Node.
+class State {
+  n: number = 1;
+  label: string = "lbl" + String(1);
+  bump(): string { reset(); this.n = this.n + 1; return this.label + this.n; }
+  get twice(): string { reset(); return this.label + this.label; }
+  set count(v: number) { reset(); this.n = v; console.log("set", this.label, this.n); }
+  deep(): string { return this.inner(); }
+  inner(): string { reset(); return this.label + "/deep"; }
+  plain(): number { this.n = this.n * 2; return this.n; }
+}
+let cur = new State();
+function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
+class Other { label: string = "o" + String(1); swap(): string { other = new Other(); return this.label + " swapped"; } }
+let other = new Other();
+
+function main(): void {
+  console.log(cur.bump());
+  console.log(cur.label, cur.n);
+  console.log(cur.twice);
+  cur.count = 5;
+  console.log(cur.label, cur.n);
+  console.log(cur.deep());
+  console.log(cur.plain(), cur.plain());
+  console.log(other.swap(), other.label);
+}

@@ -1,0 +1,43 @@
+// check: no leaks
+// `x.f++` / `++x.f` used as a value on a typed proxy (#823) reached through an element, a
+// narrowed `| null` and a nested field: the `get` trap runs once per update, as in JavaScript.
+let gets = 0;
+function counted(target: any): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      gets++;
+      return Reflect.get(t, key, receiver);
+    },
+  });
+}
+
+class S {
+  n: number = 0;
+}
+class Box {
+  s: S;
+  constructor(s: S) {
+    this.s = s;
+  }
+}
+
+const arr: S[] = [counted(new S()) as S, counted(new S()) as S];
+console.log(gets);
+const a = arr[0].n++;
+console.log(gets, a);
+const b = ++arr[0].n;
+console.log(gets, b);
+let i = 1;
+const c = arr[i].n--;
+const d = --arr[i].n;
+console.log(gets, c, d);
+const boxes = [new Box(counted(new S()) as S)];
+const e = boxes[0].s.n++;
+const f = ++boxes[0].s.n;
+console.log(gets, e, f);
+const maybe: S | null = arr[0];
+if (maybe !== null) {
+  const g = maybe.n++;
+  console.log(gets, g);
+}
+console.log(arr[0].n, arr[1].n, gets);

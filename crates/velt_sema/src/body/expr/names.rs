@@ -282,6 +282,9 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                 }
+                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                    return h;
+                }
                 self.fn_ref(d, id, exp)
             }
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
@@ -374,6 +377,10 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if let Some(h) = self.generator_value(d, None, exp, span) {
+            return h;
+        }
+        let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
@@ -419,7 +426,13 @@ impl FnCx<'_, '_> {
 
     /// The function type of named function `d` used as a value, with what it is known to throw
     /// (an async function's promise rejects with it).
-    fn fn_value_type(&mut self, d: DefId, params: Vec<TyId>, ret: TyId, is_async: bool) -> TyId {
+    pub(super) fn fn_value_type(
+        &mut self,
+        d: DefId,
+        params: Vec<TyId>,
+        ret: TyId,
+        is_async: bool,
+    ) -> TyId {
         if is_async {
             let ret = self.async_call_ret(d, ret);
             return self.cx.ty.fn_ptr(params, ret);
@@ -442,7 +455,7 @@ impl FnCx<'_, '_> {
     /// A synchronous function value takes the error type the context expects when it throws
     /// less (lowering's function-value thunk converts its errors); the final error type of `d`
     /// is checked against the one used here.
-    fn fn_value_errors(
+    pub(super) fn fn_value_errors(
         &mut self,
         d: DefId,
         args: &[TyId],

@@ -273,6 +273,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.takes_this(d) {
+            return self.this_fn_call(d, name, None, type_args, args, exp, span);
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];

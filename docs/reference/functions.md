@@ -142,8 +142,9 @@ function main() {
 
 - A call takes the first signature, in order, that accepts its arguments (after inferring its
   type arguments, which must satisfy their bounds) and has that signature's result type. When
-  none does, the error lists why each one didn't (TypeScript's TS2769). The implementation's own signature is not one of the
-  forms: `describe(v)` with `v: string | number` is an error, as in TypeScript.
+  none does, the error lists why each one didn't (TypeScript's TS2769). The implementation's
+  own signature is not one of the forms: `describe(v)` with `v: string | number` is an error,
+  as in TypeScript.
 - Signatures may be generic and have optional and rest parameters. The implementation takes
   every signature's arguments: a signature it can't take is an error at the signature (TS2394).
   A signature with fewer parameters, or an optional one left out of a call, leaves the
@@ -261,8 +262,9 @@ against it.
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
 separately, so there is no boxing and bounds resolve to direct calls. Type arguments are
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
-([Generics](classes.md#generics)) or, as in TypeScript, other types (see below). A `const` type parameter (`function tag<const K>(k: K)`,
-TypeScript 5.0) is accepted and treated as an ordinary type parameter.
+([Generics](classes.md#generics)) or, as in TypeScript, other types (see below). A `const` type
+parameter (`function tag<const K>(k: K)`, TypeScript 5.0) is accepted and treated as an ordinary
+type parameter.
 
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
@@ -311,9 +313,10 @@ function type. The type argument is related to it as `tsc` relates types (struct
 types); one that is not assignable is an error (``the type `boolean` does not satisfy the
 constraint `string | number` ``, TypeScript's TS2345 and TS2344). A literal argument for a type
 parameter whose bound has literal types keeps its literal type (`same("a")` of
-`same<T extends "a" | "b">` is `same<"a">`). An overloaded call takes the first signature whose
-bounds its arguments satisfy ([Overloads](#overloads)), so the bounds choose the form as they do
-in TypeScript:
+`same<T extends "a" | "b">` is `same<"a">`), also where the parameter's type contains the type
+parameter (`t?: T`, `t: T | null`, `t: T[]`, `o: { k: T }`). An overloaded call takes the first
+signature whose bounds its arguments satisfy ([Overloads](#overloads)), so the bounds choose the
+form as they do in TypeScript:
 
 ```ts
 type Primitive = string | number | boolean | null;
@@ -419,7 +422,8 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `static *name()` or `*[Symbol.iterator]()`. Calling one creates a `Generator<T, E>`
   ([prelude](../std/prelude.md#iteration)) without running the body. Each `next()` runs the
   body up to its next `yield v` and returns `{ value: v, done: false }`; when the body ends it
-  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
+  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`; `undefined` in a
+  `Generator<any>` or `Generator<unknown>`, as in JS). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
 - The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
@@ -452,6 +456,10 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   Because closing runs `finally` blocks where the generator can neither pause, report an
   error, nor go on with its body, a `finally` block in a generator cannot `yield`, throw, or
   `break` / `continue` to a loop outside it (TS allows all three).
+- A generator's parameter defaults are evaluated when it is called, before the body runs, as
+  in JS; a default of a parameter of a dynamic type (`x: any = "g"`) also applies to a passed
+  `undefined`, whether the generator is called directly or through a function value
+  (`const gv = gen; gv(undefined)`).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Calling `next()` or `return()` on a generator from inside its
@@ -669,14 +677,15 @@ async function main() {
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
   annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet: take the object as an ordinary parameter,
-  or write a class method. In a function expression that is the value of an object-literal
-  property (`{ v: 1, get: function () { return this.v; } }`), where TS types `this` as the
-  literal, `this` is not supported yet either.
+  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
+  receiver): declare the function and call it with `call` or `apply` (below), take the object as
+  an ordinary parameter, or write a class method. In a function expression that is the value of
+  an object-literal property (`{ v: 1, get: function () { return this.v; } }`), where TS types
+  `this` as the literal, `this` is not supported yet either.
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
-  `this` and is no parameter: callers don't pass it. `this: void` says the function doesn't
-  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet, so it leaves
-  a file with one as written and reports it.
+  `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
+  have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written
+  and reports it. See [`this` parameters](#this-parameters) for function declarations.
 - The name of a named expression inside its own body (recursion) is not supported yet: declare
   the function with `function name(…) { … }`.
 
@@ -821,6 +830,37 @@ async function main() {
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
   now; leaving the optional one out (`install(app)`) is not supported yet.
 
+### `this` parameters
+
+A function declaration whose body uses `this` may declare its type with a `this` parameter,
+`function f(this: T, a: A)`, as in TypeScript. The caller passes `this`:
+`f.call(obj, a)` and `f.apply(obj, [a])` run the body with `this` = `obj`, which must be a `T`
+(TypeScript's TS2345 otherwise). A plain call `f(a)` passes `undefined`, which only `this: any`
+and `this: unknown` accept; for another `T` it is TypeScript's TS2684 ("The 'this' context of
+type 'void' is not assignable to method's 'this' of type 'T'"), also for `T | undefined`.
+
+```ts
+interface Counter {
+  n: number;
+}
+function bump(this: Counter, by: number): number {
+  this.n += by;
+  return this.n;
+}
+const c: Counter = { n: 1 };
+console.log(bump.call(c, 2), bump.apply(c, [3])); // 3 6
+function kind(this: unknown): string {
+  return typeof this;
+}
+console.log(kind(), kind.call("s")); // undefined string
+```
+
+A function with a `this` parameter that its body doesn't use is called like any other function.
+Not supported yet: using a function whose body uses its `this` parameter as a value (`const g =
+f`, `{ m: f }`, `xs.map(f)`), a function expression whose body uses one, one with overloads, a
+generator with one, and `this` in a function type (`(this: T, a: A) => R` is `(a: A) => R` for
+now).
+
 ### `call` and `apply`
 
 `f.call(thisArg, a, b)` and `f.apply(thisArg, [a, b])` call a function value as JavaScript's
@@ -830,7 +870,8 @@ parameters one by one, and an array of unknown length only a rest parameter
 (`String.fromCharCode.apply(null, codes)`, `Math.max.apply(null, xs)`), as TypeScript's
 `strictBindCallApply` checks it.
 
-`this` matters only to a function that reads it. Function declarations, arrow functions and the
+`this` matters only to a function that reads it. A function declaration with a [`this`
+parameter](#this-parameters) runs on the `thisArg`. Other function declarations, arrow functions and the
 static functions of built-in namespaces read none, so any `thisArg` works for them
 (`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or

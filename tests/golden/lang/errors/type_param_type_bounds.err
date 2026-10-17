@@ -1,18 +1,24 @@
-type_param_type_bounds.vlt:23:10: error: the type `T` does not satisfy the constraint `string | f64`
+type_param_type_bounds.vlt:31:10: error: the type `T` does not satisfy the constraint `string | f64`
   = note: required by `T extends string | f64` of function `id`
 
-type_param_type_bounds.vlt:27:3: error: the type `"c"` does not satisfy the constraint `"a" | "b"`
+type_param_type_bounds.vlt:35:3: error: the type `"c"` does not satisfy the constraint `"a" | "b"`
   = note: required by `T extends "a" | "b"` of function `same`
 
-type_param_type_bounds.vlt:28:3: error: the type `{ a: string }` does not satisfy the constraint `Record<string, f64>`
+type_param_type_bounds.vlt:36:3: error: the type `{ a: string }` does not satisfy the constraint `Record<string, f64>`
   = note: required by `T extends Record<string, f64>` of function `total`
 
-type_param_type_bounds.vlt:29:3: error: the type `boolean` does not satisfy the constraint `string | f64`
+type_param_type_bounds.vlt:37:3: error: the type `boolean` does not satisfy the constraint `string | f64`
   = note: required by `T extends string | f64` of function `id`
 
-type_param_type_bounds.vlt:30:3: error: the type `boolean` does not satisfy the constraint `string | f64`
+type_param_type_bounds.vlt:38:3: error: the type `boolean` does not satisfy the constraint `string | f64`
   = note: required by `T extends string | f64` of function `id`
 
-type_param_type_bounds.vlt:31:3: error: no overload of `pick` matches this call
+type_param_type_bounds.vlt:39:3: error: no overload of `pick` matches this call
   = note: overload 1 of 2: the type `boolean` does not satisfy the constraint `string` (required by `T extends string` of function `pick`)
   = note: overload 2 of 2: the type `boolean` does not satisfy the constraint `f64[]` (required by `T extends f64[]` of function `pick`)
+
+type_param_type_bounds.vlt:40:3: error: the type `"c"` does not satisfy the constraint `"a" | "b"`
+  = note: required by `T extends "a" | "b"` of function `optional`
+
+type_param_type_bounds.vlt:41:14: error: mismatched types
+  = note: expected "a" | "b", found "z"

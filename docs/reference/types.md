@@ -1902,11 +1902,30 @@ and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)
 target, without running traps, as Node does.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
-TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). In Velt a proxy is an `any`
-for now: TypeScript gives `new Proxy(target, handler)` the target's type, and converting a proxy
-straight to a typed value is a compile error (``a proxy cannot be used as a `State` yet``). Its
-members are read and written through `any` as above, so a program without proxies pays nothing
-for them.
+TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). `new Proxy(target, handler)`
+is an `any`, which converts to the class or object type the context expects (`as State`, an
+annotation, a return type, an argument). The typed value is the same proxy: reading `s.count`,
+writing `s.count = 1`, `s.count += 1` and passing it on run the traps as before, `s === t` and
+converting it back to `any` see one object, and `console.log(s)` prints the target. A field
+read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
+on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
+target whose `get` trap answers every key). A method called through a typed proxy runs with
+`this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
+value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
+in JavaScript. A field read through a typed proxy runs after the operands before it, as any
+call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
+
+`s instanceof C` answers for the proxy's target, as JavaScript does when the handler has no
+`getPrototypeOf` trap. A typed proxy as a `WeakMap` or `WeakSet` key, or a `WeakRef` target, is
+the proxy itself, not its target, and `deref()` gives the proxy back. An entry that refers back
+to its key through a typed proxy (a `raw -> proxy` cache, or a value holding its proxy key) goes
+away with the key, as other such entries do. A typed proxy that goes to
+another task (`spawn`, a `shared` value or `Mutex`, a channel) is copied like any other value
+there: the proxy object together with its target and handler, so it is still a proxy on that
+task, and changes there don't reach the original.
+
+Only the types a proxy is converted to (and the classes related to them) check for one, and only
+in a program that creates a proxy, so other programs and other types pay nothing.
 
 ```ts
 let reads = 0;
@@ -1933,16 +1952,19 @@ function main(): void {
 }
 ```
 
-**Planned** (#823): typed proxies (`new Proxy<T>` used as a `T`, the tagged pointer of #823's
-design); the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and `defineProperty` traps
-and their `Reflect` functions; symbol keys through a proxy; `Array.isArray` of an array proxy;
-proxies of functions (`apply`, `construct`); a method call through a proxy over a class
-instance whose handler has traps (`p.m()`, where JavaScript runs `m` with `this` the proxy);
-`Reflect.get` / `Reflect.set` with a receiver that is neither the target nor a proxy. Until
-then each is a compile error or a `TypeError` naming #823. A method call through a proxy whose
-handler has no traps is the call on the target. When the receiver is a proxy, a getter of a
-plain target read by `Reflect.get(t, k, receiver)` runs with `this` the target, and so does a
-setter written by `Reflect.set(t, k, v, receiver)` (Node: the receiver).
+**Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
+`defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
+as an array or a `Record`, and `in` on a typed proxy; a typed proxy passed where an object type
+with other fields is expected (it is copied there); a function the `get` trap returns, called
+as a method of a typed proxy; `Array.isArray` of an array proxy; proxies of functions (`apply`,
+`construct`); a method call through a proxy whose handler has a `get` trap (`p.m()`, where
+JavaScript reads `m` through the trap first); `Reflect.get` / `Reflect.set` with a receiver
+that is neither the target nor a proxy; destructuring a typed proxy
+(`const { n, label } = s`) and `JSON.stringify` of one. Until then each is a compile error or a `TypeError`
+naming #823. A method call through an `any` proxy whose handler has no traps is the call on
+the target. When the receiver is a proxy, a getter of a plain target read by
+`Reflect.get(t, k, receiver)` runs with `this` the target, and so does a setter written by
+`Reflect.set(t, k, v, receiver)` (Node: the receiver).
 
 ## object and Function
 

@@ -403,7 +403,7 @@ impl FnCx<'_, '_> {
                 known[k] = slots[k];
             }
             let expected = self.cx.subst_known(p.ty, &known);
-            let expected = self.constraint_expected(c, &args[i], p.ty, expected, slots);
+            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
@@ -432,7 +432,13 @@ impl FnCx<'_, '_> {
                 {
                     self.arrow_arg(a, expected, owned)
                 }
-                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                _ => match &super::method_value::strip_parens(&args[i]).kind {
+                    // `f(k!)` for a borrowed parameter: `k` stays (`non_null_arg`).
+                    ast::ExprKind::NonNull(inner) if want_of(p.mode) == Want::Borrow => {
+                        self.non_null_arg(inner, Some(expected), args[i].span)
+                    }
+                    _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                },
             };
             // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
             let h = match self.cx.ty.array_elem(expected).is_some()
