@@ -119,6 +119,126 @@ impl FnCx<'_, '_> {
         self.mk(H::UnwrapSome(Box::new(base), mode), core, span)
     }
 
+    /// `l == r` (`negate`: `!=`) where either side is a `T | null | undefined`: the other side
+    /// converts to that type, then both nothings are equal (`null == undefined`), and present
+    /// values compare as `===` does. `Err` gives the operands back when neither side is one.
+    pub(crate) fn loose_three_state_eq(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+        negate: bool,
+        span: Span,
+    ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
+        let (l, r) = match (self.is_three_state(l.ty), self.is_three_state(r.ty)) {
+            (false, false) => return Err(Box::new((l, r))),
+            (true, false) if self.cx.ty.nothing_of(r.ty).is_some() => {
+                let to = l.ty;
+                match self.try_coerce(r, to) {
+                    Ok(r) => (l, r),
+                    Err(r) => return Err(Box::new((l, r))),
+                }
+            }
+            (false, true) if self.cx.ty.nothing_of(l.ty).is_some() => {
+                let to = r.ty;
+                match self.try_coerce(l, to) {
+                    Ok(l) => (l, r),
+                    Err(l) => return Err(Box::new((l, r))),
+                }
+            }
+            _ => (l, r),
+        };
+        if l.ty != r.ty {
+            return Err(Box::new((l, r)));
+        }
+        let ty = l.ty;
+        let mut stmts = vec![];
+        let mut read = |s: &mut Self, mut h: hir::Expr, name: &str| {
+            s.force_move(&mut h);
+            let t = s.new_local(name, ty, false, h.span, crate::body::LocalKind::Temp);
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: t,
+                    init: Some(h),
+                },
+                span,
+            });
+            t
+        };
+        let a = read(self, l, "<loose_l>");
+        let b = read(self, r, "<loose_r>");
+        let mode = if self.cx.is_copy(ty) {
+            hir::UseMode::Copy
+        } else {
+            hir::UseMode::Borrow
+        };
+        let get = |s: &Self, t| s.mk(H::Local(t, mode), ty, span);
+        let a_nothing = self.null_test(get(self, a), true, span);
+        let b_nothing = self.null_test(get(self, b), true, span);
+        let same = self.binary_checked(
+            velt_syntax::ast::BinaryOp::Eq,
+            get(self, a),
+            get(self, b),
+            span,
+        );
+        let bool_ = self.cx.ty.bool_;
+        let kind = H::If {
+            cond: Box::new(a_nothing),
+            then: Box::new(b_nothing),
+            els: Box::new(same),
+        };
+        let e = self.mk(kind, bool_, span);
+        let e = self.negated(e, negate, span);
+        Ok(self.with_temps_value(stmts, e))
+    }
+
+    /// A destructuring default, `value` or `default` where `value` is `undefined`
+    /// (`pattern_defaults::UNDEFINED_OR`): `value ?? default`, except that on a
+    /// `T | null | undefined` a `null` stays (the default replaces only `undefined`).
+    pub(crate) fn undefined_or(
+        &mut self,
+        value: &velt_syntax::ast::Expr,
+        default: &velt_syntax::ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let mut s = self.expr(value, None, crate::body::Want::Borrow);
+        if !self.is_three_state(s.ty) {
+            return self.nullish_checked(s, default, exp, span);
+        }
+        let mid = self
+            .cx
+            .ty
+            .opt_payload(s.ty)
+            .expect("ICE: three-state option without a payload");
+        let (l, mode) = self.option_binding(&s, mid, "<default>", true);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let hint = exp.unwrap_or(mid);
+        let d = self.expr(default, Some(hint), crate::body::Want::Move);
+        let v = self.mk(H::Local(l, mode), mid, span);
+        let (v, d, ty) = self.nullish_join(v, d, mid);
+        let sty = s.ty;
+        let bind = self.pat(P::Binding(l, mode), mid, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.pat(P::Some(Box::new(bind)), sty, span),
+                guard: None,
+                body: v,
+            },
+            hir::Arm {
+                pat: self.pat(P::None, sty, span),
+                guard: None,
+                body: d,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, ty, span)
+    }
+
     /// A `T | undefined` value `h` as the `T | null | undefined` `exp` (same `T`): a match,
     /// since the two keep `undefined` in different places.
     pub(crate) fn undefined_to_three_state(&mut self, mut h: hir::Expr, exp: TyId) -> hir::Expr {

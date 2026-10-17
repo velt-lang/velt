@@ -47,7 +47,7 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         want: Want,
     ) -> hir::Expr {
-        let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
+        let Some(payload) = self.present_payload(h.ty) else {
             return h;
         };
         let Some((root, path)) = self.member_path(object, prop) else {
@@ -56,7 +56,19 @@ impl FnCx<'_, '_> {
         match self.find_token(root, &path) {
             Some(t) if self.is_narrowed(t) => {
                 let span = h.span;
-                self.checked_unwrap(h, payload, want, span)
+                let mode = self.use_mode(payload, want);
+                // Each `UnwrapSome` of a field place checks it again (`checked_unwrap`).
+                self.unwrap_present(h, mode, span)
+            }
+            // `x.f !== undefined` on a `T | null | undefined` field: its `T | null`.
+            Some(t) if self.is_three_state(h.ty) && self.excludes(t, hir::Nothing::Undefined) => {
+                let span = h.span;
+                let mid = self
+                    .cx
+                    .ty
+                    .opt_payload(h.ty)
+                    .expect("ICE: option without a payload");
+                self.checked_unwrap(h, mid, want, span)
             }
             _ => h,
         }

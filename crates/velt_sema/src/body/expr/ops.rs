@@ -304,6 +304,26 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        // `a == b` on `T | null | undefined` values: `null == undefined`, as in JavaScript.
+        if !strict && matches!(op, B::Eq | B::NotEq) {
+            let (l, r) = match self.loose_three_state_eq(l, r, op == B::NotEq, span) {
+                Ok(h) => return h,
+                Err(lr) => *lr,
+            };
+            return self.binary_checked(op, l, r, span);
+        }
+        self.binary_checked(op, l, r, span)
+    }
+
+    /// The rest of [`binary`](Self::binary) once the operands are checked and converted.
+    pub(crate) fn binary_checked(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        use ast::BinaryOp as B;
         // Literal types take part in operators as their base type (`c.kind + "!"`).
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))

@@ -325,7 +325,11 @@ impl FnCx<'_, '_> {
                 } else {
                     Nothing::Undefined
                 };
-                return match self.nullable_local(other) {
+                let token = match self.nullable_local(other) {
+                    Some(l) => Some(l),
+                    None => self.field_token(other),
+                };
+                return match token {
                     Some(l) => (vec![], vec![Fact::Excludes(l, which)]),
                     None => (vec![], vec![]),
                 };
@@ -462,6 +466,19 @@ impl FnCx<'_, '_> {
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
         let nothing = self.cx.ty.nothing_of(self.local_ty(l));
+        // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
+        // its `undefined`; the false branch rules that nothing out.
+        if nothing == Some(Nothing::Both) {
+            return match tag {
+                "undefined" => (vec![], vec![Fact::Excludes(l, Nothing::Undefined)]),
+                "object" => {
+                    let (t, mut f) = self.split_facts(l, false, u, &pred, false);
+                    f.push(Fact::Excludes(l, Nothing::Null));
+                    (t, f)
+                }
+                _ => self.split_facts(l, nullable, u, &pred, false),
+            };
+        }
         let none_matches = match tag {
             "object" => nothing.is_none_or(|n| n.has_null()),
             "undefined" => nothing.is_some_and(|n| n.has_undefined()),
@@ -491,7 +508,7 @@ impl FnCx<'_, '_> {
             Some(x) => Some(x),
             None => self
                 .readonly_field_path(e)
-                .map(|(token, t)| match self.cx.ty.opt_payload(t) {
+                .map(|(token, t)| match self.cx.ty.core(t) {
                     Some(p) => (token, true, p),
                     None => (token, false, t),
                 }),
@@ -575,7 +592,7 @@ impl FnCx<'_, '_> {
     pub(super) fn local_with_members(&mut self, e: &ast::Expr) -> Option<(LocalId, bool, TyId)> {
         let l = self.named_local(e)?;
         let ty = self.local_ty(l);
-        Some(match self.cx.ty.opt_payload(ty) {
+        Some(match self.cx.ty.core(ty) {
             Some(p) => (l, true, p),
             None => (l, false, ty),
         })

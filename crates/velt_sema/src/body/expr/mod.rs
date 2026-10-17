@@ -183,6 +183,13 @@ impl FnCx<'_, '_> {
             } if !*optional && args.iter().any(|a| matches!(a.kind, A::Spread(_))) => {
                 self.call_spreading(callee, type_args, args, exp, span)
             }
+            // A destructuring default (`pattern_defaults::undefined_or`): applies on `undefined`.
+            A::Call { callee, args, .. }
+                if args.len() == 2
+                    && matches!(&callee.kind, A::Ident(i) if i.name == super::pattern_defaults::UNDEFINED_OR) =>
+            {
+                self.undefined_or(&args[0], &args[1], exp, span)
+            }
             A::Call {
                 callee,
                 type_args,

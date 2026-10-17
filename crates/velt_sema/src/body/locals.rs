@@ -435,10 +435,23 @@ impl FnCx<'_, '_> {
     /// end of the other branch) still has.
     pub fn meet_narrowing(&mut self, other: &NarrowState) {
         for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(other) {
+            // A nothing is ruled out after both branches when each rules it out, by a strict
+            // test or by narrowing the local to its value (`NonNull` rules out both).
+            let mut excluded: Vec<_> = s
+                .excluded
+                .iter()
+                .filter(|f| x.contains(f) || n.contains(&f.0))
+                .copied()
+                .collect();
+            for f in x {
+                if s.narrowed.contains(&f.0) && !excluded.contains(f) {
+                    excluded.push(*f);
+                }
+            }
+            s.excluded = excluded;
             s.narrowed.retain(|l| n.contains(l));
             s.members.retain(|f| m.contains(f));
             s.classes.retain(|f| c.contains(f));
-            s.excluded.retain(|f| x.contains(f));
         }
     }
 

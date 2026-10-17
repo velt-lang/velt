@@ -318,7 +318,7 @@ impl FnCx<'_, '_> {
     /// The type of `s ?? d` with `v` the non-null payload of `s`: the payload's type when `d`
     /// converts to it, else `d`'s when the payload converts to that, else their union, as in
     /// TypeScript (`n ?? "none"` with `n: number | null` is a `number | string`).
-    fn nullish_join(
+    pub(crate) fn nullish_join(
         &mut self,
         v: hir::Expr,
         d: hir::Expr,
