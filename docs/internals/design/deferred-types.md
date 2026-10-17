@@ -417,7 +417,10 @@ these answers:
    standard `pick` compiles unchanged, at one presence test per field at the conversion.
 6. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
    #350, is a deferred operator, `TyOp::Intersect`, reduced by `crate::intersections` at
-   instantiation, in step 4; the spread is a `DeferredObject` like `update`'s.
+   instantiation, in step 4; the spread is a `DeferredObject` like `update`'s. Landed first, ahead
+   of step 4: `TyOp::Intersect`, its reduction at every instantiation (`type_level::instances`,
+   `Program::type_ops`) and inference through it. Member access by name, conversion to a part
+   and the `DeferredObject` spread in generic bodies still wait for step 4.
 7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
    error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
    parameters); types.md lists it as a difference from TypeScript.

@@ -1,0 +1,74 @@
+// check: no leaks
+// Identity of nested objects read through `Reflect.get` and `any` member access in a program
+// whose object types and classes are proxiable and whose `object` is a weak key (#1223): the
+// value read is the stored object, so `===`, `WeakMap`, `Map` and `Set` lookups hit, writes
+// through it are visible, and a weak cache of proxies of those objects (an ephemeron cycle
+// through each proxy's target) keeps its entries while the objects live.
+type Inner = { n: number };
+class Box {
+  v: number = 1;
+}
+type Outer = { inner: Inner; box: Box; items: Inner[] };
+
+const proxies: WeakMap<object, any> = new WeakMap();
+function wrap(o: any): any {
+  const hit = proxies.get(o);
+  if (hit != null) return hit;
+  const p = new Proxy(o, {
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      return Reflect.set(t, key, value);
+    },
+  });
+  proxies.set(o, p);
+  return p;
+}
+
+function check(label: string, read: (t: any) => any, t: any, direct: any): void {
+  const a = read(t);
+  const pa = wrap(a);
+  const b = read(t);
+  const pb = wrap(b);
+  const seen: Set<any> = new Set();
+  seen.add(a);
+  const named: Map<any, string> = new Map();
+  named.set(a, label);
+  const weak: WeakMap<object, string> = new WeakMap();
+  weak.set(a, label);
+  console.log(
+    label,
+    a === b,
+    a === direct,
+    pa === pb,
+    seen.has(b),
+    named.get(b),
+    weak.get(b),
+    proxies.has(b),
+  );
+}
+
+function run(): void {
+  const items: Inner[] = [{ n: 10 }, { n: 20 }];
+  const o: Outer = { inner: { n: 1 }, box: new Box(), items: items };
+  const t: any = o;
+  check("reflect", (x: any) => Reflect.get(x, "inner"), t, o.inner);
+  check("receiver", (x: any) => Reflect.get(x, "inner", x), t, o.inner);
+  check("member", (x: any) => x.inner, t, o.inner);
+  check("index", (x: any) => x["inner"], t, o.inner);
+  check("class", (x: any) => Reflect.get(x, "box"), t, o.box);
+  check("array", (x: any) => Reflect.get(x, "items"), t, o.items);
+  check("element", (x: any) => Reflect.get(x, "items")[1], t, o.items[1]);
+  const asObject: object = Reflect.get(t, "inner");
+  const asUnknown: unknown = asObject;
+  const back = asUnknown as Inner;
+  console.log("object/unknown:", asObject === o.inner, back === o.inner, proxies.has(asObject));
+  // Writes through each path reach the stored objects.
+  const w = Reflect.get(t, "inner");
+  w.n = 2;
+  wrap(Reflect.get(t, "inner")).n = 3;
+  back.n = back.n + 1;
+  Reflect.get(t, "box").v = 5;
+  Reflect.get(t, "items")[0].n = 11;
+  Reflect.set(t, "inner", { n: 7 });
+  console.log(o.inner.n, w.n, o.box.v, items[0].n, proxies.has(w), proxies.has(o.inner));
+}
+run();
