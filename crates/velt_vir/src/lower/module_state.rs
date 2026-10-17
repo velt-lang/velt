@@ -3,7 +3,9 @@
 //! `init` on the first access (rt_abi.md "Module state"). A program without module
 //! state gets none of this.
 
-use velt_sema::hir;
+use std::collections::HashSet;
+
+use velt_sema::hir::{self, ExprKind as E, StmtKind as S};
 
 use super::cint;
 use super::operand::proj;
@@ -106,6 +108,33 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Is the place `e` a module state slot (a module-level `let`, or a module `const` that is
+    /// not a constant), or a place rooted in one?
+    pub(super) fn rooted_in_slot(&self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            E::Global(d) => self.slot_of(*d).is_some(),
+            E::Field { base, .. } | E::Index { base, .. } => self.rooted_in_slot(base),
+            E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } | E::Downcast(base) => {
+                self.rooted_in_slot(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does any code assign global `d`'s slot as a whole (`d = v`, `d += v`, `d++`)? A slot
+    /// nothing reassigns (a module `const`, or a `let` only changed in place) keeps its value
+    /// while any call runs: only what lies inside it may be replaced.
+    pub(super) fn slot_reassigned(&mut self, d: hir::DefId) -> bool {
+        if self.slot_of(d).is_none() {
+            return false;
+        }
+        let hir = self.cx.hir;
+        self.cx
+            .reassigned_slots
+            .get_or_insert_with(|| reassigned_slots(hir))
+            .contains(&d)
+    }
+
     /// `(state: ptr)`: evaluate every initializer in order into its slot (the block is zeroed:
     /// nothing old to drop).
     pub(super) fn build_module_init(cx: &mut Cx<'_>) -> Function {
@@ -158,4 +187,72 @@ impl FnLower<'_, '_> {
             self.module_block(0);
         }
     }
+}
+
+/// The globals some function body or global initializer assigns as a whole (one walk over the
+/// program, only for a program with module state).
+fn reassigned_slots(hir: &hir::Program) -> HashSet<hir::DefId> {
+    let mut out = HashSet::new();
+    if hir.module_state.is_none() {
+        return out;
+    }
+    for def in &hir.defs {
+        match def {
+            hir::Def::Fn(f) => block(&f.body.block, &mut out),
+            hir::Def::Global(g) => expr(&g.init, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn block(b: &hir::Block, out: &mut HashSet<hir::DefId>) {
+    for s in &b.stmts {
+        match &s.kind {
+            S::Let { init, .. } => init.iter().for_each(|e| expr(e, out)),
+            S::LetPat { init, .. } | S::Expr(init) | S::Return(Some(init)) => expr(init, out),
+            S::Return(None) | S::Break(_) | S::Continue(_) => {}
+            S::If { cond, then, els } => {
+                expr(cond, out);
+                block(then, out);
+                els.iter().for_each(|b| block(b, out));
+            }
+            S::While {
+                cond, body, step, ..
+            } => {
+                expr(cond, out);
+                block(body, out);
+                step.iter().for_each(|e| expr(e, out));
+            }
+            S::ForOf { iter, body, .. } => {
+                expr(iter, out);
+                block(body, out);
+            }
+            S::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                block(body, out);
+                catch.iter().for_each(|(_, b)| block(b, out));
+                finally.iter().for_each(|b| block(b, out));
+            }
+            S::Block(b) => block(b, out),
+        }
+    }
+    b.value.iter().for_each(|e| expr(e, out));
+}
+
+fn expr(e: &hir::Expr, out: &mut HashSet<hir::DefId>) {
+    match &e.kind {
+        E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
+            if let E::Global(d) = place.kind {
+                out.insert(d);
+            }
+        }
+        // A closure's body is a function of its own, walked with the others.
+        E::Block(b) => return block(b, out),
+        _ => {}
+    }
+    super::frame_envs::children(e, &mut |x| expr(x, out));
 }
