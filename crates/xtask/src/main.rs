@@ -144,13 +144,13 @@ fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
         return Ok(Plan::for_paths(&graph, paths));
     }
     let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
-        return Ok(Plan::everything(
+        return Ok(Plan::unknown_changes(
             "no base revision (origin/main or main) to compare with",
         ));
     };
     match changes::changes(root, &base) {
         Ok(c) => Ok(Plan::for_changes(&graph, &c.paths, &c.comment_only)),
-        Err(e) => Ok(Plan::everything(e)),
+        Err(e) => Ok(Plan::unknown_changes(e)),
     }
 }
 

@@ -554,3 +554,29 @@ fn comment_only_parser_changes_and_many_goldens() {
         Sweep::Sampled(files) if files.len() == MAX_SWEPT_GOLDENS
     ));
 }
+
+#[test]
+fn the_toolchain_and_the_root_manifest_sweep_in_full() {
+    for path in ["rust-toolchain.toml", "Cargo.toml"] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Full, "{path}");
+    }
+    // A crate's manifest other than the parser's keeps the sample.
+    assert_eq!(
+        plan(&["crates/velt_sema/Cargo.toml"]).sweep,
+        Sweep::Sampled(set(&[]))
+    );
+}
+
+#[test]
+fn unknown_changes_sweep_in_full_but_explicit_full_leaves_it_to_the_environment() {
+    let unknown = Plan::unknown_changes("no base revision");
+    assert!(unknown.full);
+    assert_eq!(unknown.sweep, Sweep::Full);
+    assert_eq!(
+        unknown.sweep_env(),
+        [("VELT_ROBUSTNESS", "full".to_string())]
+    );
+    let full = Plan::everything("--full");
+    assert_eq!(full.sweep, Sweep::Sampled(set(&[])));
+    assert!(full.sweep_env().is_empty());
+}

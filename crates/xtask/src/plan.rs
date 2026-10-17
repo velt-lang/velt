@@ -183,18 +183,26 @@ pub enum Sweep {
     Full,
 }
 
+/// Files outside the parser's crates that change what it compiles to: the toolchain, and the
+/// root manifest's profiles (`overflow-checks`, `debug-assertions` decide what panics).
+const PARSER_BUILD: &[&str] = &["rust-toolchain.toml", "Cargo.toml"];
+
 /// More changed goldens than this sweep every golden in full, which keeps the list of files out
 /// of a long environment variable.
 const MAX_SWEPT_GOLDENS: usize = 200;
 
 impl Sweep {
     /// The sweep for a change touching `paths` (only comments changed in `comment_only`): full
-    /// when code of velt_syntax or of a crate it depends on changed, every character of the
+    /// when code of velt_syntax or of a crate it depends on changed, or how it is compiled
+    /// ([`PARSER_BUILD`]), every character of the
     /// changed goldens otherwise.
     fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Sweep {
         let parser = BTreeSet::from(["velt_syntax".to_string()]);
         let mut goldens = BTreeSet::new();
         for path in paths.iter().filter(|p| !comment_only.contains(*p)) {
+            if PARSER_BUILD.contains(&path.as_str()) {
+                return Sweep::Full;
+            }
             if let Some(rest) = path.strip_prefix("crates/") {
                 let dir = rest.split('/').next().unwrap_or(rest);
                 let affects_parser = graph.dirs.get(dir).is_some_and(|name| {
@@ -261,6 +269,15 @@ impl Plan {
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
             // (`VELT_ROBUSTNESS`, as `cargo xtask affected` sets it for the queue).
             sweep: Sweep::Sampled(BTreeSet::new()),
+        }
+    }
+
+    /// Everything, for a change that can't be told (no base revision, or git failed): the
+    /// robustness test sweeps in full too, since the change may be the parser's.
+    pub fn unknown_changes(reason: impl Into<String>) -> Plan {
+        Plan {
+            sweep: Sweep::Full,
+            ..Plan::everything(reason)
         }
     }
 

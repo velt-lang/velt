@@ -57,8 +57,9 @@ before and after each cut, which must never panic. It cuts the kitchen sink and 
 `tests/golden/lang/foo.vlt`; `cargo xtask check` sets it to the goldens you changed), and the
 other goldens where each token starts or ends plus a fixed sample of characters.
 `VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
-nightly gate sets it, and so does `cargo xtask check` (and the merge queue) when velt_syntax or a
-crate it depends on changed.
+nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
+when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
+or when the changes can't be told.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 

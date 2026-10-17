@@ -3,8 +3,9 @@
 # unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
 # (crates/xtask/src/os.rs) is also linted on Windows and macOS, where `cfg(windows)` and
 # `cfg(unix)` code compiles differently: clippy's findings there otherwise surface only in the
-# merge queue. The label `ci:full` makes them check everything (add it before pushing, or close
-# and reopen the pull request).
+# merge queue. The label `ci:full` makes them check everything, the parser's robustness test
+# cutting every golden at every character too (add it before pushing, or close and reopen the
+# pull request).
 #
 # The merge queue checks everything against the pull request merged with the latest main, as two
 # jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
@@ -51,6 +52,10 @@ jobs:
         with:
           tools: ${{ matrix.part != 'lint' }}
       - name: cargo xtask check --part ${{ matrix.part }}
+        env:
+          # `--full` knows no changes, so it leaves the robustness sweep to the environment.
+          VELT_ROBUSTNESS: >-
+            ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
         run: >-
           cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}

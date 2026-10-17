@@ -120,7 +120,9 @@ thread_local! {
 
 /// Runs `f` on a thread with the parser's stack, where the parse functions run directly instead
 /// of each spawning a thread of its own: for callers that parse many sources in a row (the
-/// parser's robustness sweep parses millions).
+/// parser's robustness sweep parses millions). Parses inside `f` get only the stack `f` has left,
+/// so `f` must not recurse deeply before parsing. Hidden: only that test uses it.
+#[doc(hidden)]
 pub fn with_parser_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
     on_parser_thread(f)
 }
