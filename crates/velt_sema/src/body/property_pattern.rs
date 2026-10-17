@@ -32,9 +32,9 @@ impl FnCx<'_, '_> {
 
     /// When the object pattern `fields` takes a method out of `init` (checked from `e`; `const
     /// { insert } = options;`), the value to take it apart from by member expressions
-    /// (`pattern_defaults.rs`), so that a method is read as a function value (`method_value.rs`):
-    /// `e` itself when it is a variable or a path of fields, else a hidden temporary holding
-    /// `init`.
+    /// (`pattern_defaults.rs` `object_decls`), so that a method is read as a function value
+    /// (`method_value.rs`): `e` itself when it is a variable or a path of fields (read in place,
+    /// and named so in notes), else a hidden temporary holding `init`.
     pub(super) fn method_source(
         &mut self,
         fields: &[(ast::Ident, ast::Pattern)],

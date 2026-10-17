@@ -38,22 +38,7 @@ impl FnCx<'_, '_> {
         match &pattern.kind {
             P::Object { fields, rest } => {
                 let tmp = self.temp_decl(init, out);
-                for (key, sub) in fields {
-                    let field = member(&tmp, key.clone());
-                    let (sub, value) = match self.split_default(sub, &tmp, key) {
-                        Some((inner, Applies::WhenNothing(d))) => (inner, nullish(field, d)),
-                        Some((inner, Applies::WhenAbsent(d))) => {
-                            (inner, cond_expr(has_key(key, &tmp), field, d))
-                        }
-                        Some((inner, Applies::Never)) => (inner, field),
-                        None => (sub, field),
-                    };
-                    self.decl_with_defaults(kind, sub, value, out);
-                }
-                if let Some(r) = rest {
-                    let taken: Vec<String> = fields.iter().map(|(k, _)| k.name.clone()).collect();
-                    self.object_rest_decl(kind, r, &taken, &tmp, out);
-                }
+                self.object_decls(kind, fields, rest.as_ref(), &tmp, out);
             }
             P::Array { elems, rest } => {
                 let tmp = self.temp_decl(init, out);
@@ -111,6 +96,36 @@ impl FnCx<'_, '_> {
                 };
                 self.var_decl(&v, span, out);
             }
+        }
+    }
+
+    /// `kind { k1: p1, k2 = d, ...rest } = tmp;` key by key, each binding declared from
+    /// `tmp.k` (with its default), then the rest. `tmp` is a variable or a path of fields: the
+    /// hidden temporary of a pattern with defaults or a rest, or the value a method pattern
+    /// takes apart (`property_pattern.rs`).
+    pub(super) fn object_decls(
+        &mut self,
+        kind: VarKind,
+        fields: &[(ast::Ident, Pattern)],
+        rest: Option<&ast::Ident>,
+        tmp: &Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        for (key, sub) in fields {
+            let field = member(tmp, key.clone());
+            let (sub, value) = match self.split_default(sub, tmp, key) {
+                Some((inner, Applies::WhenNothing(d))) => (inner, nullish(field, d)),
+                Some((inner, Applies::WhenAbsent(d))) => {
+                    (inner, cond_expr(has_key(key, tmp), field, d))
+                }
+                Some((inner, Applies::Never)) => (inner, field),
+                None => (sub, field),
+            };
+            self.decl_with_defaults(kind, sub, value, out);
+        }
+        if let Some(r) = rest {
+            let taken: Vec<String> = fields.iter().map(|(k, _)| k.name.clone()).collect();
+            self.object_rest_decl(kind, r, &taken, tmp, out);
         }
     }
 

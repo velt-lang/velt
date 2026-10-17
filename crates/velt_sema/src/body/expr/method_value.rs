@@ -381,7 +381,10 @@ impl FnCx<'_, '_> {
 
     /// `(x) => recv.prop(x)` with the parameter names of `object`'s method, for notes.
     fn arrow_fix(&mut self, object: &ast::Expr, recv: &ast::Expr, prop: &ast::Ident) -> String {
-        let recv = path_text(recv).unwrap_or_else(|| "obj".into());
+        // A hidden temporary (`#d1`, a destructured value) has no name the source knows.
+        let recv = path_text(recv)
+            .filter(|t| !t.starts_with('#'))
+            .unwrap_or_else(|| "obj".into());
         let names = self.param_names(object, prop).join(", ");
         format!("({names}) => {recv}.{}({names})", prop.name)
     }
