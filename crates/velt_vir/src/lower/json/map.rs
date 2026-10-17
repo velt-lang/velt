@@ -397,8 +397,18 @@ impl FnLower<'_, '_> {
         };
         let vt = self.cx.ty(arr_ty);
         let arr = self.temp(vt);
-        let recv = vec![Operand::Copy(place.clone())];
-        self.call(vir::Callee::Func(f), recv, Some(Place::local(arr)), false);
+        let mut args = vec![Operand::Copy(place.clone())];
+        // The array is an aggregate or a box, as the program uses arrays; an aggregate comes back
+        // through an out pointer.
+        let dest = match self.cx.ret_abi(arr_ty, None).out {
+            Some(_) => {
+                let a = self.addr(Place::local(arr));
+                args.push(a);
+                None
+            }
+            None => Some(Place::local(arr)),
+        };
+        self.call(vir::Callee::Func(f), args, dest, false);
         let content = self.content(&Place::local(arr), arr_ty);
         RecordOrder {
             arr,

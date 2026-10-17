@@ -1,0 +1,1 @@
+TypeError: the value is not a Record<string, number> (it is an object): only a Record converts to a Record (an object of a fixed shape does not yet, #1219)
