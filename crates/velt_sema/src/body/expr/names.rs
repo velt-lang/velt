@@ -22,7 +22,22 @@ impl FnCx<'_, '_> {
             let never = self.cx.ty.never;
             return self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
         }
-        let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
+        // A narrowed `T | null | undefined` reads as its `T` (both nothings ruled out).
+        let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
+        if payload.is_none()
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Undefined)
+        {
+            // `x !== undefined` on a `T | null | undefined`: its `T | null`.
+            let mid = self
+                .cx
+                .ty
+                .opt_payload(ty)
+                .expect("ICE: option without a payload");
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let mode = self.use_mode(mid, want);
+            return self.mk(H::UnwrapSome(Box::new(base), mode), mid, span);
+        }
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
@@ -45,7 +60,7 @@ impl FnCx<'_, '_> {
                 Some(_) => base_mode,
                 None => self.use_mode(p, want),
             };
-            e = self.mk(H::UnwrapSome(Box::new(e), mode), p, span);
+            e = self.unwrap_present(e, mode, span);
         }
         if let Some((variant, m)) = member {
             let mode = self.use_mode(m, want);
@@ -81,7 +96,7 @@ impl FnCx<'_, '_> {
         if let Some(p) = payload {
             let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
             let inner = self.use_mode(p, want);
-            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+            e = self.unwrap_present(base, inner, span);
         }
         self.union_downcast(e, target).ok()
     }

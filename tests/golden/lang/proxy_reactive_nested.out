@@ -1,0 +1,11 @@
+effect: write false 0
+effect: test false 0
+effect: test true 0
+effect: test true 1
+same proxy: true proxies built: 2
+raw sees writes: test true 1
+list effect: a
+list effect: b
+same element proxy: true proxies built: 4
+effect: new false 1
+after replace: new proxies built: 5

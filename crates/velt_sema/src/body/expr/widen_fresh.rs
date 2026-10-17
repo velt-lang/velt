@@ -35,7 +35,7 @@ impl FnCx<'_, '_> {
             return true;
         }
         if let Some(p) = self.cx.ty.opt_payload(to) {
-            let from = self.cx.ty.opt_payload(from).unwrap_or(from);
+            let from = self.cx.ty.core(from).unwrap_or(from);
             return self.converts_to(from, p);
         }
         if let Some(fs) = self.cx.union_members(from) {

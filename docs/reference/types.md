@@ -445,8 +445,9 @@ one that stops early, or a sum of floats, whose order it must keep.
 ## Null and undefined
 
 `null` and `undefined` are two values, as in JavaScript. A value that may be absent has type
-`T | null` or `T | undefined` (`A | B | undefined` for a union), stored without an extra
-allocation where possible; the two types take the same space. `undefined` behaves as in Node:
+`T | null`, `T | undefined` or `T | null | undefined` (`A | B | undefined` for a union), stored
+without an extra allocation where possible; `T | null` and `T | undefined` take the same space,
+and `T | null | undefined` holds a `T | null` with one more flag. `undefined` behaves as in Node:
 
 ```ts
 function find(xs: string[], s: string): string | undefined {
@@ -460,10 +461,33 @@ console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [nu
 const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
 ```
 
+A `T | null | undefined` keeps the two apart: `x === null` and `x === undefined` each test
+one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one it holds.
+`x !== undefined` narrows it to `T | null`, and both tests (or `x != null`, or truthiness)
+narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
+`undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
+`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`undefined`.
+
+```ts
+function show(x: string | null | undefined): string {
+  if (x === undefined) return "undefined";
+  if (x === null) return "null";
+  return x.toUpperCase();
+}
+
+const xs: (string | null | undefined)[] = ["a", null, undefined];
+console.log(xs.map(show), xs.map((x) => typeof x)); // [ 'A', 'null', 'undefined' ] [ 'string', 'object', 'undefined' ]
+console.log(JSON.stringify({ a: xs[1], b: xs[2] }), xs[2] ?? "d"); // {"a":null} d
+let later: number | undefined;
+console.log(later, [1, undefined]); // undefined [ 1, undefined ]
+```
+
 `x == null` and `x == undefined` match either nothing; `x === undefined` tests a
 `T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
 and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
-narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
+narrows, `?.` on a value that may be `undefined` gives `undefined` (a `T | null` result
+becomes `T | null | undefined`), and `JSON.stringify` leaves out a field
 holding `undefined` and writes an array element as `null`. A destructuring default applies where
 the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
@@ -479,7 +503,7 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
@@ -487,9 +511,10 @@ the nothing the type lacks; `as` between `T | undefined` and `T | null`; a param
 other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
 a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
 of it, directly or through what it calls (a `T | undefined` for `Map.set`,
-`Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
-a `T | undefined`), which includes a generic alias applied that way (`type Nullable<T> = T | null`
-as `Nullable<number | undefined>`). Also not supported yet, although TypeScript accepts them:
+`Array.prototype.find` or a generic function holding a `T | null`), which includes a generic
+alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
+other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
+`T | null | undefined`. Also not supported yet, although TypeScript accepts them:
 
 - `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
   parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
@@ -580,9 +605,13 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
   never evaluated). Parentheses end a chain: `(x?.a).b` needs `x?.a` to be non-null.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
-  so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed.
+  TypeScript; assigning a non-null value narrows too. After an `if`, what holds is what each
+  branch that does not leave ends with: the facts of the condition it started from unless it
+  reassigned the variable, and what its own statements established (`if (x == null) { x = d; }`
+  narrows `x` after it; `if (x == null) return; else x = null;` does not). A narrowed field
+  is re-checked when read, so a call that set it to `null` in between panics instead of
+  reading `null`. Inside a closure, a variable narrowed where the closure is created stays
+  narrowed.
 - A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
   `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
   may run the closure, and then the variable no longer holds what was checked. Test a `const`
@@ -896,6 +925,42 @@ const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
 console.log(t.kids[0].v); // 2
 ```
 
+A part may be a **type parameter** (`T & { $set: (v: T) => void }`, `TMain & TSub`), in a
+generic alias or written in a generic signature: the intersection is worked out where the type
+arguments are known, so a caller sees the object type with both parts' fields, and a type
+argument that can't be a part (a class, say) is reported there. A type argument inferred
+through such a parameter comes from the fields the object part names (`T = { n: number }` for a
+`Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
+for a value declared `A & { id: string }`), else from the whole argument
+(`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
+TypeScript. `any`, `unknown` and
+`object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
+`object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+function stamp<T>(x: T & { id: string }): T & { id: string } {
+  return x;
+}
+
+let last = 0;
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v.n;
+  },
+};
+const r = relay(s); // Signal<{ n: number }>: `n` and `$set`
+r.$set({ n: r.n + 1 });
+const t = stamp({ a: 1, id: "x" });
+console.log(last, t.a, t.id); // 2 1 x
+```
+
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
@@ -904,8 +969,14 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
   `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
-- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
-  yet (#350). A generic alias works, since each use has concrete type arguments.
+- In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
+  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
+  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+- An intersection is the same type as the object type with its fields written out, so where a
+  program has both forms, inference through `T & { id: string }` treats them alike: an object
+  literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type
+  `A & { id: string }` (TypeScript: `{ a: number; id: string }`). It differs only where code
+  depends on `T` itself, such as `JSON.parse(s)` returned as a `T`.
 - Interface declarations merge as in TypeScript
   ([declaration merging](classes.md#declaration-merging)).
 

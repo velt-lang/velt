@@ -185,7 +185,7 @@ impl FnCx<'_, '_> {
         let arg = resolved.as_ref().unwrap_or(arg);
         // `f?: (s: string) => void` is `((s: string) => void) | null`: adapt to the function type.
         let exp = expected;
-        let expected = self.cx.ty.opt_payload(expected).unwrap_or(expected);
+        let expected = self.cx.ty.core(expected).unwrap_or(expected);
         let TyKind::FnPtr {
             params: want,
             ret: want_ret,
@@ -221,7 +221,7 @@ impl FnCx<'_, '_> {
         let to_void = want_ret == self.cx.ty.unit;
         // The result matters only for `void` (dropped), union results (widened) and tasks.
         let widening = {
-            let inner = self.cx.ty.opt_payload(want_ret).unwrap_or(want_ret);
+            let inner = self.cx.ty.core(want_ret).unwrap_or(want_ret);
             inner != want_ret || self.cx.union_def(inner).is_some()
         };
         let sig = self.named_fn_sig(arg, to_void || widening || task)?;
@@ -472,7 +472,7 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let inner = self.cx.ty.opt_payload(want).unwrap_or(want);
+        let inner = self.cx.ty.core(want).unwrap_or(want);
         if inner == want && self.cx.union_def(inner).is_none() {
             return None;
         }
@@ -627,7 +627,7 @@ impl FnCx<'_, '_> {
         let TyKind::FnPtr { params, throws, .. } = self.cx.ty.kind(fn_ty).clone() else {
             return fn_ty;
         };
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         let members: Vec<TyId> = match self.cx.union_members(inner) {
             Some(ms) => ms
                 .into_iter()
@@ -654,7 +654,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.promise_payload(ret).is_some() || ret == self.cx.ty.error {
             return None;
         }
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         if self.cx.ty.promise_payload(inner).is_some() {
             return Some(inner);
         }

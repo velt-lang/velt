@@ -17,18 +17,31 @@ impl FnCx<'_, '_> {
 
     /// A block whose scope starts with the `narrow` facts assumed.
     pub fn block_narrowed(&mut self, b: &ast::Block, narrow: &[Fact]) -> hir::Block {
+        self.block_narrowed_ending(b, narrow).0
+    }
+
+    /// [`block_narrowed`](Self::block_narrowed), and the facts that still hold at the end of
+    /// the block: those assumed at its start that its statements did not undo, and those its
+    /// own statements established (`y = "filled";`, `if (y == null) return;`).
+    fn block_narrowed_ending(
+        &mut self,
+        b: &ast::Block,
+        narrow: &[Fact],
+    ) -> (hir::Block, Vec<Fact>) {
         self.push_scope_until(b.span.hi);
         for fact in narrow {
             self.narrow(fact);
         }
         let mut stmts = vec![];
         self.stmts_into(&b.stmts, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: b.span,
-        }
+        };
+        (block, facts)
     }
 
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
@@ -150,10 +163,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `else` branch / braceless body: a one-statement block with its own scope.
-    pub fn stmt_as_block(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> hir::Block {
+    /// `else` branch / braceless body: a one-statement block with its own scope, and the facts
+    /// that still hold where it falls through (see [`block_narrowed_ending`]).
+    ///
+    /// [`block_narrowed_ending`]: Self::block_narrowed_ending
+    fn stmt_as_block_ending(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> (hir::Block, Vec<Fact>) {
         if let ast::StmtKind::Block(b) = &s.kind {
-            return self.block_narrowed(b, narrow);
+            return self.block_narrowed_ending(b, narrow);
         }
         self.push_scope_until(s.span.hi);
         for fact in narrow {
@@ -161,12 +177,14 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         self.stmt(s, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: s.span,
-        }
+        };
+        (block, facts)
     }
 
     /// Expression in statement position (value discarded).
@@ -214,20 +232,33 @@ impl FnCx<'_, '_> {
         let exhausted_before = self.exhausted_union_local();
         let before = self.narrow_state();
         let super_before = (self.f.super_called, self.f.before_super);
-        let t = self.block_narrowed(then, &when_true);
+        // Each branch starts from the state before the `if` with the condition's facts assumed,
+        // and ends with what still holds there: a branch's own assignments win over the facts it
+        // started from (#1226). Those end states are joined below.
+        let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        then_facts.iter().for_each(|f| self.narrow(f));
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
         // Each branch starts from the state before the `if`: `super(...)` once in each.
         let super_then = (self.f.super_called, self.f.before_super);
         (self.f.super_called, self.f.before_super) = super_before;
-        let e = els.map(|s| self.stmt_as_block(s, &when_false));
+        let (e, els_facts) = match els {
+            Some(s) => {
+                let (b, facts) = self.stmt_as_block_ending(s, &when_false);
+                (Some(b), facts)
+            }
+            // No `else`: the false facts hold where the `if` is skipped.
+            None => (None, when_false),
+        };
+        els_facts.iter().for_each(|f| self.narrow(f));
         self.f.super_called |= super_then.0;
         self.f.before_super &= super_then.1;
         let then_div = crate::flow::block_diverges(&t, &self.cx.ty);
         let els_div = e
             .as_ref()
             .is_some_and(|b| crate::flow::block_diverges(b, &self.cx.ty));
-        // Only the branches that fall through decide what still holds after the `if`.
+        // Only the branches that fall through decide what still holds after the `if`
+        // (`if (x == null) return;` narrows `x` for the rest of the block).
         match (then_div, els_div) {
             (false, false) => self.meet_narrowing(&after_then),
             (false, true) => self.restore_narrowing(&after_then),
@@ -242,13 +273,6 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        // `if (x == null) return;` narrows `x` for the rest of the block (also union tests).
-        if then_div && !els_div {
-            when_false.iter().for_each(|f| self.narrow(f));
-        }
-        if els_div && !then_div {
-            when_true.iter().for_each(|f| self.narrow(f));
-        }
         if !exhausted_before && self.exhausted_union_local() {
             // Every member of a union local was handled by a branch that left: the rest of
             // the block is unreachable (an `instanceof` / `typeof` chain is exhaustive).
@@ -354,6 +378,16 @@ impl FnCx<'_, '_> {
                 Some(t) => self.expr_coerce(e, t, Want::Move),
                 None => self.expr(e, None, Want::Move),
             }),
+        };
+        // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
+        let init = match (init, ann) {
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) =>
+            {
+                Some(self.nothing_value(hir::Nothing::Undefined, t, name.span))
+            }
+            (init, _) => init,
         };
         let ty = match (ann, &init) {
             (Some(t), _) => t,
