@@ -27,8 +27,8 @@ The differences come from three rules:
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
-  statements run in a generated `main`; only the root file may have them
-  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+  statements run in a generated `main`; an imported module's run once when it is evaluated,
+  in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
 - A module-level `let` works as in Node: one per process, which every task (spawned tasks,
   HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
   Node's single thread between `await`s, so updates are never lost
@@ -334,7 +334,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
-| top-level statements | run in a generated `main` (root file only) | — |
+| top-level statements | the root file's run in a generated `main`; an imported module's run once when it is evaluated, in Node's order (no top-level `await` there) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted), but a chained access reads the changed array as in TypeScript (`xs.sort().join(",")`); other uses of the result are an error with the fix; `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |

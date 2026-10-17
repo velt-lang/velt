@@ -101,10 +101,13 @@ pub(crate) struct Ctx<'m> {
     /// (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
+    pub promoted_consts: HashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
+    pub recursive_unions: HashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: HashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -303,8 +306,11 @@ impl<'m> Ctx<'m> {
             canon_memo: HashMap::new(),
             counted_objects: Vec::new(),
             module_slots: Vec::new(),
+            module_scripts: Vec::new(),
+            promoted_consts: HashSet::new(),
             global_cycles: 0,
             unions: HashMap::new(),
+            recursive_unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
             display_params: vec![],
