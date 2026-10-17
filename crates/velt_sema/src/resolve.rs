@@ -655,7 +655,7 @@ impl Ctx<'_> {
         }
         if self.mixes_nothings(body, &args) {
             self.err(
-                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                "this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)",
                 span,
             );
             return self.ty.error;

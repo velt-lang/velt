@@ -211,7 +211,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
                 span,
             )
             .with_note(format!(
-                "`{name}` keeps a `T | {other}` of that type parameter, and a type that holds both `null` and `undefined` is not supported yet"
+                "`{name}` keeps a `T | {other}` of that type parameter, whose `{other}` it could not tell from the value's `undefined` yet"
             )),
         );
     }

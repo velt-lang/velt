@@ -105,7 +105,12 @@ impl FnCx<'_, '_> {
         }
         if let Some(payload) = self.cx.ty.opt_payload(h.ty) {
             if !matches!(h.kind, H::Lit(hir::Lit::Null)) {
-                let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
+                // A `T | null | undefined`'s own nothing is `undefined` (its payload is the
+                // `T | null`, boxed in turn).
+                let nothing = match self.cx.ty.nothing_of(h.ty) {
+                    Some(Nothing::Both) => Nothing::Undefined,
+                    n => n.unwrap_or(Nothing::Null),
+                };
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
