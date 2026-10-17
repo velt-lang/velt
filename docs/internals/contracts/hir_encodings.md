@@ -792,7 +792,10 @@ entry is an `ICE:`.
   a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call
-  then runs with `this` the proxy. A call of a function-typed field of a proxiable object
+  then runs with `this` the proxy. A direct call of a method its receiver's class overrides
+  (`super.m()`, `this` passed upcast) does not read through the proxy, as in JavaScript. An
+  async method, or one that owns its receiver, cannot be read as a value yet: a call of one
+  through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
   type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
   `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
   arguments boxed, its result converted to the field's result type (velt_vir
@@ -801,15 +804,16 @@ entry is an `ICE:`.
   source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
 - Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
   another object type whose fields it has (in another order, or only some of them) is an
-  `AdtLit` of the expected type with `converted: true`, whose fields each read the source place
-  (`Field` of it, possibly under `Share`) or are absent (`null` for an optional field the source
-  lacks); a source that is not a place is bound to a `let` first. Every other `AdtLit` has
-  `converted: false`. Lowering builds the literal, except that when the source's type is
-  proxiable (typed proxies, above) and the source holds a proxy, the value is that proxy (a new
-  reference, the bit kept): decision 2 of #823. In a program whose own code constructs a `Proxy`,
-  sema does not report a conversion whose source type no `AdtLit` in the program builds
-  (`object_copies.rs`): its values all come from conversions of `any` values (the proxies such
-  a program converts to its types).
+  `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the
+  source place (`Field` of it, possibly under `Share`) or are absent (`null` for an optional
+  field the source lacks); a source that is not a place is bound to a `let` first. Every other
+  `AdtLit` has `Conversion::No`. Lowering builds the literal, except that when the source's type
+  is proxiable (typed proxies, above) and the source holds a proxy, the value is that proxy (a
+  new reference, the bit kept): decision 2 of #823. A conversion whose copy the program could
+  tell from the original (`object_copies.rs`: a later write, `===`, ...) is a compile error,
+  except in a program whose own code constructs a `Proxy` when no `AdtLit` in the program builds
+  the source type: then it is `Conversion::ProxyOnly`, and a plain source throws a `TypeError`
+  naming #823 instead of being copied (a proxy is still shared).
 - Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
   an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
   or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the

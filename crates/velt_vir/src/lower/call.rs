@@ -70,7 +70,13 @@ impl FnLower<'_, '_> {
         };
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() {
             let rty = self.sub(args[0].ty);
-            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
+            // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
+            // (Sema passes `this` upcast to the base class there.)
+            let own = match &args[0].kind {
+                hir::ExprKind::Upcast(inner) => self.sub(inner.ty),
+                _ => rty,
+            };
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) && !self.overridden_in(def, own) {
                 self.proxy_recv = Some((def, targs.clone()));
             }
         }

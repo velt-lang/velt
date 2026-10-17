@@ -118,6 +118,9 @@ impl FnLower<'_, '_> {
     /// In `lower_args`, once the receiver `recv` of a direct call of the method `def<targs>`
     /// on a proxiable class is lowered (`proxy_recv`): the `get` trap's read of the method.
     pub(super) fn proxy_recv_lowered(&mut self, (def, targs): (DefId, Vec<TyId>), recv: &Operand) {
+        if !self.method_readable(def, &targs) {
+            return self.proxy_method_check(recv);
+        }
         let name = self.method_name(def);
         self.proxy_method_get(recv, &name, &[(def, targs)], None);
     }
@@ -135,9 +138,55 @@ impl FnLower<'_, '_> {
             return;
         };
         let m = self.cx.adt_def(d).vtable[slot as usize];
+        let targs = self.cx.method_targs(m, cls);
+        if !self.method_readable(m, &targs) {
+            return self.proxy_method_check(recv);
+        }
         let name = self.method_name(m);
         let cands = self.cx.proxy_slot_cands(cls, slot);
         self.proxy_method_get(recv, &name, &cands, Some(entry));
+    }
+
+    /// Can the method `def<targs>` be read as a value (so a `get` trap's answer can be checked
+    /// against it)? Not an async method or one that owns its receiver: a call of one through
+    /// a proxy with a `get` trap is a `TypeError` naming #823 (`proxy_method_check`).
+    fn method_readable(&mut self, def: DefId, targs: &[TyId]) -> bool {
+        let f = self.cx.fn_def(def);
+        let owned = f
+            .params
+            .first()
+            .is_some_and(|p| p.mode == hir::PassMode::Owned);
+        !f.is_async && !owned && self.cx.method_value_ty(def, targs).is_some()
+    }
+
+    /// Is `args[0]` of a call of the method `def` a receiver of a proxiable class?
+    pub(super) fn proxiable_receiver(&mut self, def: DefId, args: &[hir::Expr]) -> bool {
+        if self.cx.fn_def(def).self_ty.is_none() || args.is_empty() {
+            return false;
+        }
+        let rty = self.sub(args[0].ty);
+        self.cx.is_class(rty) && self.cx.proxiable(rty)
+    }
+
+    /// Is the method `def` overridden in the class `cls` (so a direct call of it on a `cls`
+    /// receiver is `super.m()`, which JavaScript does not read through the receiver)?
+    pub(super) fn overridden_in(&mut self, def: DefId, cls: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(cls) else {
+            return false;
+        };
+        // A virtual method has the same slot in every class of the hierarchy.
+        let mut cur = Some(d);
+        while let Some(c) = cur {
+            if let Some(slot) = self.cx.adt_def(c).vtable.iter().position(|&m| m == def) {
+                let own = self.cx.adt_def(d).vtable.get(slot).copied();
+                return own.is_some_and(|m| m != def);
+            }
+            cur = self.cx.adt_def(c).base.and_then(|b| match self.cx.kind(b) {
+                TyKind::Adt(bd, _) => Some(bd),
+                _ => None,
+            });
+        }
+        false
     }
 
     /// The property name of the method `def` (its name after the class's).
@@ -263,15 +312,29 @@ impl FnLower<'_, '_> {
     /// An object converted to the object type `ty` by copying its fields (`AdtLit` with
     /// `converted`): when the source is of a proxiable type and holds a typed proxy, the result
     /// is that proxy (decision 2 of #823: a proxy passed where another object type is expected
-    /// keeps its identity, and its traps still run); otherwise the copy.
-    pub(super) fn converted_lit(&mut self, ty: TyId, fields: &[hir::Expr]) -> Operand {
+    /// keeps its identity, and its traps still run); otherwise the copy. `strict`
+    /// (`Conversion::ProxyOnly`): a copy the program could tell from the original, which a
+    /// plain source refuses with a `TypeError` instead.
+    pub(super) fn converted_lit(
+        &mut self,
+        ty: TyId,
+        fields: &[hir::Expr],
+        strict: bool,
+    ) -> Operand {
         let Some(base) = fields.iter().find_map(copied_source) else {
             return self.adt_lit(ty, fields);
         };
         let (from, to) = (self.sub(base.ty), self.sub(ty));
         self.cx.note_proxy_cast(from, to);
-        if !(self.cx.proxiable(from) && self.cx.proxiable(to)) || self.dead() {
+        if self.dead() {
             return self.adt_lit(ty, fields);
+        }
+        if !(self.cx.proxiable(from) && self.cx.proxiable(to)) {
+            if !strict {
+                return self.adt_lit(ty, fields);
+            }
+            self.refuse_copy();
+            return self.zero_value(Ty::Ptr);
         }
         let v = self.expr(base);
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(v));
@@ -284,21 +347,32 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(s));
         self.goto(join);
         self.switch_to(hot);
-        self.push_scope(ScopeKind::Block);
-        // The copy is registered as a temporary, as `adt_lit` leaves it: moved into `out`,
-        // which is registered instead once both paths meet.
-        let c = self.adt_lit(ty, fields);
-        if let Operand::Copy(p) = &c {
-            self.take_temp(&p.clone());
-        }
-        self.assign(out.clone(), Rvalue::Use(c));
-        self.pop_scope();
-        if !self.dead() {
-            self.goto(join);
+        if strict {
+            self.refuse_copy();
+        } else {
+            self.push_scope(ScopeKind::Block);
+            // The copy is registered as a temporary, as `adt_lit` leaves it: moved into `out`,
+            // which is registered instead once both paths meet.
+            let c = self.adt_lit(ty, fields);
+            if let Operand::Copy(p) = &c {
+                self.take_temp(&p.clone());
+            }
+            self.assign(out.clone(), Rvalue::Use(c));
+            self.pop_scope();
+            if !self.dead() {
+                self.goto(join);
+            }
         }
         self.switch_to(join);
         self.own_place(out.clone(), to);
         Operand::Copy(out)
+    }
+
+    /// A conversion that would copy a plain object where the program could tell the
+    /// copy from the original (`Conversion::ProxyOnly`): a `TypeError`.
+    fn refuse_copy(&mut self) {
+        self.panic_msg("TypeError: converting this object to another object type would copy it, and this program could tell the copy from the original; only a proxy keeps its identity through this conversion yet (#823)");
+        self.terminate(Terminator::Unreachable);
     }
 }
 

@@ -256,7 +256,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: values,
-            converted: false,
+            converted: hir::Conversion::No,
         };
         let lit = self.mk(lit, exp, span);
         self.with_lets(lets, lit)

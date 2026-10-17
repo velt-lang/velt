@@ -143,7 +143,7 @@ pub(super) fn adt_lit(def: DefId, fields: Vec<Expr>, ty: TyId) -> Expr {
             def,
             type_args: vec![],
             fields,
-            converted: false,
+            converted: hir::Conversion::No,
         },
         ty,
     )

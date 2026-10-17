@@ -1,0 +1,22 @@
+// An async method called through a typed proxy whose handler has a `get` trap (#823): Node
+// runs the trap for `m` first; reading an async method as a value is not supported yet, so
+// this is the #823 `TypeError` rather than a call that skips the trap.
+class Svc {
+  n = 2;
+  async m(x: number): Promise<number> {
+    return this.n * x;
+  }
+}
+function wrap(o: any): any {
+  return new Proxy(o, {
+    get(t: any, k: string | symbol, r: any): any {
+      console.log("get", String(k));
+      return Reflect.get(t, k, r);
+    },
+  });
+}
+async function run(): Promise<void> {
+  const p = wrap(new Svc()) as Svc;
+  console.log(await p.m(3));
+}
+await run();

@@ -499,7 +499,7 @@ impl FnCx<'_, '_> {
                 def: d,
                 type_args,
                 fields,
-                converted: false,
+                converted: hir::Conversion::No,
             },
             ty,
             span,
