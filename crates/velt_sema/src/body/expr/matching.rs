@@ -289,6 +289,10 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_nullish(s, rhs, span);
         }
+        s = match self.nullish_into_chain(s, rhs, span) {
+            Ok(h) => return h,
+            Err(s) => s,
+        };
         let Some(payload) = self.present_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);

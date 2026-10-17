@@ -1,9 +1,10 @@
-// A value that may be `null` prints `null` in Velt; in JavaScript it may be `undefined`.
+// A value the standard library gives as `null` prints `null` in Velt; in JavaScript it may be
+// `undefined`. An optional field left out is `undefined` in both (#930).
 
 export type User = { name: string; nickname?: string };
 
 export function label(u: User, scores: Map<string, number>): string {
-  const a = `${u.nickname}`; //~ nullable-in-template
+  const a = `${u.nickname}`;
   const b = `${scores.get(u.name)}`; //~ nullable-in-template
   const c = `${u.nickname ?? u.name}`;
   const v = scores.get(u.name);

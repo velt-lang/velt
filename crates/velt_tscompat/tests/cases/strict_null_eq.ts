@@ -1,10 +1,11 @@
-// `=== null` misses JavaScript's `undefined`: optional fields and parameters left out,
-// `Map.get` of a missing key, `find` without a match, `pop` of an empty array, `?.`.
+// `=== null` misses JavaScript's `undefined` where Velt's standard library still gives `null`:
+// `Map.get` of a missing key, `find` without a match, `pop` of an empty array. Optional fields
+// and parameters and `?.` are `undefined` in Velt too (#930), so their tests agree.
 
 export type User = { name: string; email?: string; manager: string | null };
 
 export function hasEmail(u: User): boolean {
-  return u.email !== null; //~ strict-null-eq
+  return u.email !== undefined;
 }
 
 export function hasManager(u: User): boolean {
@@ -12,7 +13,7 @@ export function hasManager(u: User): boolean {
 }
 
 export function greet(name: string, greeting?: string): string {
-  if (greeting === null) { //~ strict-null-eq
+  if (greeting === undefined) {
     return name;
   }
   return `${greeting} ${name}`;
@@ -35,5 +36,5 @@ export function last(xs: string[]): boolean {
 }
 
 export function managerLength(u: User | null): boolean {
-  return u?.manager === null; //~ strict-null-eq
+  return u?.manager == null;
 }

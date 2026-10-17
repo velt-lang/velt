@@ -5,7 +5,7 @@
 //! - [`numbers`] for `int-division`, `default-sort`;
 //! - [`nulls`] for `strict-null-eq` and `undefined-into-null` (and which expressions are
 //!   `undefined` in JavaScript);
-//! - [`slots`] for `null-into-optional` and `undefined-into-null` in arguments and fields;
+//! - [`slots`] for `undefined-into-null` in arguments and fields;
 //! - [`templates`] for `object-in-template`, `nullable-in-template`, `json-map`;
 //! - [`strings`] for `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in

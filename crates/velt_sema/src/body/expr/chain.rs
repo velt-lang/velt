@@ -76,6 +76,79 @@ impl FnCx<'_, '_> {
             }
         })
     }
+
+    /// `chain ?? lit` where `chain` is an optional chain whose rest gives a `T | null`, so the
+    /// chain is a `T | null | undefined` (`item.get("id")?.asNumber() ?? 0`): `??` treats both
+    /// nothings alike, so the default goes into each arm of the chain's short-circuit instead of
+    /// building the three-state value and testing it again. `Err` gives `s` back when it is not
+    /// such a chain or the default is not a literal (it is checked once per arm, and only one
+    /// arm runs).
+    pub(super) fn nullish_into_chain(
+        &mut self,
+        s: hir::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !self.is_three_state(s.ty) || !is_plain_literal(rhs) {
+            return Err(s);
+        }
+        let mid = self.cx.ty.opt_payload(s.ty);
+        let fits = match &s.kind {
+            H::Match { arms, .. } => {
+                arms.len() == 2
+                    && arms.iter().all(|a| a.guard.is_none())
+                    && matches!(&arms[0].body.kind, H::WrapSome(inner) if Some(inner.ty) == mid)
+                    && matches!(arms[1].body.kind, H::Lit(hir::Lit::Null))
+            }
+            _ => false,
+        };
+        if !fits {
+            return Err(s);
+        }
+        let H::Match {
+            scrutinee,
+            mut arms,
+        } = s.kind
+        else {
+            return Err(s);
+        };
+        let (Some(mut none_arm), Some(mut some_arm)) = (arms.pop(), arms.pop()) else {
+            unreachable!("ICE: a chain's match has two arms");
+        };
+        let H::WrapSome(inner) = some_arm.body.kind else {
+            unreachable!("ICE: a chain's present arm wraps its rest");
+        };
+        let payload = self
+            .present_payload(inner.ty)
+            .expect("ICE: a chain's `T | null` rest has a payload");
+        let d = self.expr(rhs, Some(payload), Want::Move);
+        let v = self.nullish_exprs(*inner, d, span);
+        let d = self.expr(rhs, Some(v.ty), Want::Move);
+        let d = self.coerce(d, v.ty);
+        let ty = v.ty;
+        some_arm.body = v;
+        none_arm.body = d;
+        let kind = H::Match {
+            scrutinee,
+            arms: vec![some_arm, none_arm],
+        };
+        Ok(self.mk(kind, ty, span))
+    }
+}
+
+/// Is `e` a literal of a value type (`0`, `"x"`, `true`), possibly negated or parenthesized?
+fn is_plain_literal(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(
+            ast::Lit::Int { .. } | ast::Lit::Float { .. } | ast::Lit::Str(_) | ast::Lit::Bool(_),
+        ) => true,
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        } => is_plain_literal(expr),
+        ast::ExprKind::Paren(inner) => is_plain_literal(inner),
+        _ => false,
+    }
 }
 
 /// Is `e` itself an optional link (`a?.b`, `a?.[i]`, `f?.()`)?
