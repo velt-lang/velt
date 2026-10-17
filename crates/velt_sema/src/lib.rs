@@ -72,6 +72,7 @@ pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
+mod recursive_unions;
 mod replaced_holders;
 mod resolve;
 mod suggest;

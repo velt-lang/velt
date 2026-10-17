@@ -106,6 +106,7 @@ pub(crate) struct Ctx<'m> {
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
+    pub recursive_unions: HashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: HashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -307,6 +308,7 @@ impl<'m> Ctx<'m> {
             module_scripts: Vec::new(),
             global_cycles: 0,
             unions: HashMap::new(),
+            recursive_unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
             display_params: vec![],

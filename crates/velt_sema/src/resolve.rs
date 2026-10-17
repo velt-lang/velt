@@ -598,11 +598,14 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         if info.expanding {
+            if let Some(own) = self.recursive_union_ref(a) {
+                return own;
+            }
             let d = velt_common::Diagnostic::error(
                 format!("type alias `{}` refers to itself", decl.name.name),
                 t.span,
             )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class");
+            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
             self.error(d);
             return self.ty.error;
         }
@@ -610,6 +613,9 @@ impl Ctx<'_> {
         if args.len() != decl.generics.len() {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
+        }
+        if let Some(own) = self.recursive_union(a, t.span) {
+            return own;
         }
         self.alias_body(a, args, t.span)
     }

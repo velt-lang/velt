@@ -77,8 +77,9 @@ impl Cx<'_> {
                 format!("{{ {} }}", fs.join("; "))
             }
             // Unions likewise: their members, sorted (a generic union's instance and the written
-            // union are one type, Cx::canon).
-            TyKind::Adt(d, args) if self.is_union_def(*d) => {
+            // union are one type, Cx::canon). A recursive union (`type Json = … | Json[]`) names
+            // itself inside.
+            TyKind::Adt(d, args) if self.is_union_def(*d) && !stack.contains(d) => {
                 let env: Vec<String> = args
                     .iter()
                     .map(|a| self.type_key_in(*a, env, stack))
@@ -86,11 +87,13 @@ impl Cx<'_> {
                 let velt_sema::hir::Def::Enum(e) = self.hir.def(*d) else {
                     unreachable!("union def")
                 };
+                stack.push(*d);
                 let mut ms: Vec<String> = e
                     .variants
                     .iter()
                     .map(|v| self.type_key_in(v.payload[0], &env, stack))
                     .collect();
+                stack.pop();
                 ms.sort();
                 ms.join(" | ")
             }

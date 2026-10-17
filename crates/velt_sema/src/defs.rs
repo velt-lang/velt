@@ -355,6 +355,7 @@ pub(crate) struct AdtInfo<'m> {
     pub decl: Option<&'m ast::TypeDecl>,
 }
 
+#[derive(Clone)]
 pub(crate) struct VariantInfo {
     pub name: String,
     pub payload: Vec<TyId>,
