@@ -285,13 +285,19 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(hot);
         self.push_scope(ScopeKind::Block);
+        // The copy is registered as a temporary, as `adt_lit` leaves it: moved into `out`,
+        // which is registered instead once both paths meet.
         let c = self.adt_lit(ty, fields);
+        if let Operand::Copy(p) = &c {
+            self.take_temp(&p.clone());
+        }
         self.assign(out.clone(), Rvalue::Use(c));
         self.pop_scope();
         if !self.dead() {
             self.goto(join);
         }
         self.switch_to(join);
+        self.own_place(out.clone(), to);
         Operand::Copy(out)
     }
 }
