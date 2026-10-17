@@ -214,9 +214,9 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         let mut partial = false;
         for (k, (pat, member)) in self.member_patterns(s.ty, s.span).into_iter().enumerate() {
-            let has_null = self.cx.ty.opt_payload(s.ty).is_some();
+            let nothings = self.nothing_arms(s.ty).len();
             let variant = match (member, is_union) {
-                (Some(_), true) => Some((k - usize::from(has_null)) as u32),
+                (Some(_), true) => Some((k - nothings) as u32),
                 _ => None,
             };
             if variant.is_some_and(|v| live.as_ref().is_some_and(|l| !l.contains(&v))) {

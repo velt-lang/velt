@@ -134,6 +134,9 @@ impl FnCx<'_, '_> {
             Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
                 self.nothing_mismatch("null", t, span)
             }
+            Some(t) if self.is_three_state(t) && !self.cx.ty.has_error(t) => {
+                self.nothing_value(Nothing::Null, t, span)
+            }
             Some(t)
                 if self
                     .cx
@@ -175,15 +178,10 @@ impl FnCx<'_, '_> {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
             Some(t) => self.nothing_mismatch("undefined", t, span),
+            // With no type to take, its type is `undefined` alone.
             None => {
-                self.cx.error(
-                    Diagnostic::error(
-                        "`undefined` with no type to take here is not supported yet (its type would be `undefined` alone)",
-                        span,
-                    )
-                    .with_note("add a type annotation like `let x: T | undefined = undefined`"),
-                );
-                self.error_expr(span)
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
             }
         }
     }

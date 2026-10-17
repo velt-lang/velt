@@ -50,7 +50,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut s = self.expr(other, None, Want::Borrow);
         // A narrowed value may be tested again (TS allows it): compare the value itself.
-        if let H::UnwrapSome(base, _) = s.kind {
+        while let H::UnwrapSome(base, _) = s.kind {
             s = *base;
         }
         if self.cx.dynamic(s.ty).is_some() {
@@ -85,6 +85,32 @@ impl FnCx<'_, '_> {
                 );
                 self.error_expr(span)
             }
+            // One nothing of a `T | null | undefined`.
+            (true, _, Some(Nothing::Both)) => {
+                let which = if word == "null" {
+                    Nothing::Null
+                } else {
+                    Nothing::Undefined
+                };
+                let sty = s.ty;
+                let arms = vec![
+                    hir::Arm {
+                        pat: self.one_nothing_pat(which, sty, span),
+                        guard: None,
+                        body: self.bool_lit(is_eq, span),
+                    },
+                    hir::Arm {
+                        pat: self.pat(P::Wildcard, sty, span),
+                        guard: None,
+                        body: self.bool_lit(!is_eq, span),
+                    },
+                ];
+                let kind = H::Match {
+                    scrutinee: Box::new(s),
+                    arms,
+                };
+                self.mk(kind, self.cx.ty.bool_, span)
+            }
             _ => self.null_test(s, is_eq, span),
         }
     }
@@ -107,18 +133,34 @@ impl FnCx<'_, '_> {
     /// `s == null` / `s != null` of a checked `T | null` value.
     pub(crate) fn null_test(&mut self, s: hir::Expr, is_eq: bool, span: Span) -> hir::Expr {
         let sty = s.ty;
-        let arms = vec![
-            hir::Arm {
-                pat: self.pat(P::None, sty, span),
-                guard: None,
-                body: self.bool_lit(is_eq, span),
-            },
-            hir::Arm {
-                pat: self.pat(P::Wildcard, sty, span),
-                guard: None,
-                body: self.bool_lit(!is_eq, span),
-            },
-        ];
+        let arms = if self.is_three_state(sty) {
+            let any = self.pat(P::Wildcard, self.present_payload(sty).unwrap_or(sty), span);
+            vec![
+                hir::Arm {
+                    pat: self.present_pat(any, sty, span),
+                    guard: None,
+                    body: self.bool_lit(!is_eq, span),
+                },
+                hir::Arm {
+                    pat: self.pat(P::Wildcard, sty, span),
+                    guard: None,
+                    body: self.bool_lit(is_eq, span),
+                },
+            ]
+        } else {
+            vec![
+                hir::Arm {
+                    pat: self.pat(P::None, sty, span),
+                    guard: None,
+                    body: self.bool_lit(is_eq, span),
+                },
+                hir::Arm {
+                    pat: self.pat(P::Wildcard, sty, span),
+                    guard: None,
+                    body: self.bool_lit(!is_eq, span),
+                },
+            ]
+        };
         let kind = H::Match {
             scrutinee: Box::new(s),
             arms,
@@ -187,7 +229,7 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_nullish(s, rhs, span);
         }
-        let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
+        let Some(payload) = self.present_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);
                 self.cx.error(
@@ -223,9 +265,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let payload = self
-            .cx
-            .ty
-            .opt_payload(s.ty)
+            .present_payload(s.ty)
             .expect("ICE: `??` of a non-option");
         let (l, mode) = self.option_binding(&s, payload, "<spread>", true);
         if mode == UseMode::Move {
@@ -258,12 +298,12 @@ impl FnCx<'_, '_> {
         let some = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![
             hir::Arm {
-                pat: self.pat(P::Some(Box::new(some)), sty, span),
+                pat: self.present_pat(some, sty, span),
                 guard: None,
                 body: v,
             },
             hir::Arm {
-                pat: self.pat(P::None, sty, span),
+                pat: self.nothing_pat(sty, span),
                 guard: None,
                 body: d,
             },
@@ -326,7 +366,7 @@ impl FnCx<'_, '_> {
             let r = f(self, v);
             return self.dynamic_chain_match(s, l, mode, r, span);
         }
-        let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
+        let Some(payload) = self.present_payload(s.ty) else {
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
@@ -361,24 +401,19 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
-        // On a `T | undefined` object, the short-circuit gives `undefined`, as in JavaScript
-        // (issue #930; on a `T | null` one it is still `null` in this phase).
+        // On an object that may be `undefined`, the short-circuit gives `undefined`, as in
+        // JavaScript (issue #930; on a `T | null` one it is still `null` in this phase).
         let nothing = match self.cx.ty.nothing_of(s.ty) {
-            Some(Nothing::Undefined) => Nothing::Undefined,
-            _ => Nothing::Null,
+            Some(Nothing::Null) | None => Nothing::Null,
+            _ => Nothing::Undefined,
         };
-        if nothing == Nothing::Undefined && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null) {
-            let tn = self.cx.display(r.ty);
-            self.cx.error(
-                Diagnostic::error(
-                    format!("`?.` on a value that may be `undefined`, giving a `{tn}`, is not supported yet"),
-                    span,
-                )
-                .with_note("its type would hold both `null` and `undefined`, which is not supported yet"),
-            );
-            return self.error_expr(span);
-        }
-        let (ty, body) = if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
+        let (ty, body) = if nothing == Nothing::Undefined
+            && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null)
+        {
+            // A `T | null` rest: the chain gives `T | null | undefined`.
+            let t = self.cx.ty.option_of(r.ty, Nothing::Undefined);
+            (t, self.mk(H::WrapSome(Box::new(r)), t, span))
+        } else if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
             (r.ty, r)
         } else {
             let t = self.cx.ty.option_of(r.ty, nothing);
@@ -393,12 +428,12 @@ impl FnCx<'_, '_> {
         let some = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![
             hir::Arm {
-                pat: self.pat(P::Some(Box::new(some)), sty, span),
+                pat: self.present_pat(some, sty, span),
                 guard: None,
                 body,
             },
             hir::Arm {
-                pat: self.pat(P::None, sty, span),
+                pat: self.nothing_pat(sty, span),
                 guard: None,
                 body: none_body,
             },

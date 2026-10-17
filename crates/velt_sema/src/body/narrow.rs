@@ -11,13 +11,16 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{DefId, LocalId, TyId};
+use crate::hir::{DefId, LocalId, Nothing, TyId};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Fact {
     /// The `T | null` local is not null.
     NonNull(LocalId),
+    /// The `T | null | undefined` local is not this nothing (`x !== undefined`, `x !== null`);
+    /// with both excluded it is narrowed as by `NonNull`.
+    Excludes(LocalId, Nothing),
     /// The union local (or, for `U | null`, its payload when not null) is one of these variants.
     Members(LocalId, Vec<u32>),
     /// The class or interface local (or the union member it is narrowed to) holds an instance
@@ -136,9 +139,9 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for fa in a {
             match fa {
-                Fact::NonNull(l) => {
+                Fact::NonNull(_) | Fact::Excludes(..) => {
                     if b.contains(fa) && !out.contains(fa) {
-                        out.push(Fact::NonNull(*l));
+                        out.push(fa.clone());
                     }
                 }
                 Fact::Members(l, va) => {
@@ -248,7 +251,10 @@ impl FnCx<'_, '_> {
         }
         facts.retain(|f| {
             let l = match f {
-                Fact::NonNull(l) | Fact::Members(l, _) | Fact::Class(l, _) => l,
+                Fact::NonNull(l)
+                | Fact::Members(l, _)
+                | Fact::Class(l, _)
+                | Fact::Excludes(l, _) => l,
             };
             !gone.contains(l)
         });
@@ -310,6 +316,19 @@ impl FnCx<'_, '_> {
             // `x === null` on a `T | undefined` is constant: it narrows nothing.
             if strict && self.lacks_nothing(other, word) {
                 return (vec![], vec![]);
+            }
+            // `x === null` / `x === undefined` on a `T | null | undefined` rules out one
+            // nothing when false; both ruled out narrow the local to its value.
+            if strict && self.three_state_operand(other) {
+                let which = if word == "null" {
+                    Nothing::Null
+                } else {
+                    Nothing::Undefined
+                };
+                return match self.nullable_local(other) {
+                    Some(l) => (vec![], vec![Fact::Excludes(l, which)]),
+                    None => (vec![], vec![]),
+                };
             }
             return match self.nullable_local(other) {
                 Some(l) => (vec![], vec![Fact::NonNull(l)]),
@@ -581,6 +600,14 @@ impl FnCx<'_, '_> {
                 "undefined" => !n.has_undefined(),
                 _ => !n.has_null(),
             })
+    }
+
+    fn three_state_operand(&mut self, e: &ast::Expr) -> bool {
+        let ty = match self.named_local(e) {
+            Some(l) => Some(self.local_ty(l)),
+            None => self.peek_ty(e),
+        };
+        ty.is_some_and(|t| self.is_three_state(t))
     }
 
     fn nullable_local(&mut self, e: &ast::Expr) -> Option<LocalId> {

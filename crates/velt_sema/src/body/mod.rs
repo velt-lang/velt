@@ -141,6 +141,8 @@ pub(crate) struct Scope {
     pub names: HashMap<String, LocalId>,
     /// Option locals narrowed to their payload inside this scope.
     pub narrowed: Vec<LocalId>,
+    /// `T | null | undefined` locals known not to hold this nothing inside this scope.
+    pub excluded: Vec<(LocalId, crate::hir::Nothing)>,
     /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.

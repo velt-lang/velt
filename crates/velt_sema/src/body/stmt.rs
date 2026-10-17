@@ -355,6 +355,16 @@ impl FnCx<'_, '_> {
                 None => self.expr(e, None, Want::Move),
             }),
         };
+        // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
+        let init = match (init, ann) {
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) =>
+            {
+                Some(self.nothing_value(hir::Nothing::Undefined, t, name.span))
+            }
+            (init, _) => init,
+        };
         let ty = match (ann, &init) {
             (Some(t), _) => t,
             (None, Some(h)) if h.ty == self.cx.ty.never => h.ty,

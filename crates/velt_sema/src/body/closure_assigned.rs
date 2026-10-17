@@ -52,7 +52,7 @@ impl FnCx<'_, '_> {
     /// field path of one): then it is not assumed, and the reads in its scope are noted.
     pub(crate) fn refuse_fact(&mut self, fact: &Fact) -> bool {
         let (l, class) = match fact {
-            Fact::NonNull(l) | Fact::Members(l, _) => (*l, None),
+            Fact::NonNull(l) | Fact::Members(l, _) | Fact::Excludes(l, _) => (*l, None),
             Fact::Class(l, t) => (*l, Some(*t)),
         };
         let (root, path) = match self.token_path(l) {
@@ -78,7 +78,7 @@ impl FnCx<'_, '_> {
     fn refusal_note(&mut self, fact: &Fact, name: &str, what: &str) -> String {
         let target = match fact {
             Fact::Class(_, t) => Some(*t),
-            Fact::NonNull(l) => self.cx.ty.opt_payload(self.local_ty(*l)),
+            Fact::NonNull(l) | Fact::Excludes(l, _) => self.cx.ty.opt_payload(self.local_ty(*l)),
             Fact::Members(l, vs) => match vs.as_slice() {
                 [v] => {
                     let ty = self.local_ty(*l);
