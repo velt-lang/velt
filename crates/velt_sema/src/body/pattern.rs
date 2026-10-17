@@ -61,8 +61,11 @@ impl FnCx<'_, '_> {
             ast::PatternKind::Ident(name) => self.binding(name, ty, ctx),
             ast::PatternKind::Object { fields, rest } => {
                 if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
+                    // Declarations and parameters take the rest (`object_rest.rs`).
+                    self.cx.err(
+                        "`...rest` in this object pattern is not supported yet (only in `const` and `let` declarations and parameters)",
+                        r.span,
+                    );
                 }
                 self.object_pattern(fields, ty, ctx)
             }

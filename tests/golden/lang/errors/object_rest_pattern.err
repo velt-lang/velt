@@ -1,0 +1,8 @@
+object_rest_pattern.vlt:17:15
+error: no field `kind` on type `{ size: f64 }`
+object_rest_pattern.vlt:21:20
+error: `...rest` of a value of type `T` is not supported yet
+object_rest_pattern.vlt:26:20
+error: `...rest` of a value of type `Named` is not supported yet
+object_rest_pattern.vlt:31:17
+error: `...rest` of a record with a closed key type (`Record<"a" | "b", f64>`) is not supported yet

@@ -37,10 +37,6 @@ impl FnCx<'_, '_> {
     ) {
         match &pattern.kind {
             P::Object { fields, rest } => {
-                if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
-                }
                 let tmp = self.temp_decl(init, out);
                 for (key, sub) in fields {
                     let field = member(&tmp, key.clone());
@@ -53,6 +49,10 @@ impl FnCx<'_, '_> {
                         None => (sub, field),
                     };
                     self.decl_with_defaults(kind, sub, value, out);
+                }
+                if let Some(r) = rest {
+                    let taken: Vec<String> = fields.iter().map(|(k, _)| k.name.clone()).collect();
+                    self.object_rest_decl(kind, r, &taken, &tmp, out);
                 }
             }
             P::Array { elems, rest } => {
@@ -291,7 +291,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type of a temporary declared by `temp_decl`.
-    fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
+    pub(super) fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
         let E::Ident(name) = &tmp.kind else {
             return None;
         };
@@ -331,7 +331,7 @@ fn without_defaults(p: &Pattern) -> Pattern {
     pat(kind, p.span)
 }
 
-fn mk(kind: E, span: Span) -> Expr {
+pub(super) fn mk(kind: E, span: Span) -> Expr {
     Expr {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -339,7 +339,7 @@ fn mk(kind: E, span: Span) -> Expr {
     }
 }
 
-fn pat(kind: P, span: Span) -> Pattern {
+pub(super) fn pat(kind: P, span: Span) -> Pattern {
     Pattern {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -347,7 +347,7 @@ fn pat(kind: P, span: Span) -> Pattern {
     }
 }
 
-fn ident(name: &str, span: Span) -> ast::Ident {
+pub(super) fn ident(name: &str, span: Span) -> ast::Ident {
     ast::Ident {
         name: name.to_string(),
         span,

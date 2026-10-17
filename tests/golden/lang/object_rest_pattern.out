@@ -1,0 +1,19 @@
+c 1 t
+{ id: 1, title: 't' }
+{ children: 'c', id: 1, title: 't' }
+80 { host: 'h', secure: true } h true
+h { port: 80, secure: true }
+a { port: 1, tag: 't' }
+p { x: 3, y: 4 } 7
+5 6
+4 { y: 10, label: 'p' } 4
+{ host: 'h', port: 80, secure: true }
+{}
+b { c: [ 1, 2 ], d: true } { a: 1 }
+[ 1, 2, 3 ]
+1 { inner: { b: 'b', c: [ 1, 2, 3 ], d: true } }
+2 { one: 1, three: 3 } { one: 1, two: 2, three: 3 }
+2
+2 { a: 1, b: 4 }
+{ a: 1, b: 4, c: 5 }
+people { names: [ 'ann', 'bo' ], count: 2 }

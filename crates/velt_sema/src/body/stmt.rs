@@ -338,7 +338,9 @@ impl FnCx<'_, '_> {
             );
             return;
         };
-        if super::pattern_defaults::has_default(&v.pattern) {
+        if super::pattern_defaults::has_default(&v.pattern)
+            || super::object_rest::has_object_rest(&v.pattern)
+        {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
                 Some(t) => self.typed_temp(e, t, out),

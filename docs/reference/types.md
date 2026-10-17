@@ -1349,6 +1349,25 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
   is called (`const { area } = rect;`).
+- **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
+  next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
+  other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
+  type or an interface of fields, the object type of the other fields (`Omit<P, "children">`;
+  an optional field is copied only while present); on a class instance, the other fields (its
+  methods and getters live on the prototype, so the rest has none); on a `Record<string, V>`,
+  a `Record<string, V>` of the other keys. The rest is a new object: its fields are copied
+  (a nested object or array is shared, as in JS). Not supported yet (each is an error): the rest of a value
+  whose type is a type parameter, an interface with methods, or a record with a closed key
+  type, and `...rest` in `for...of` patterns.
+
+  ```ts
+  interface Props { id: number; title: string; hidden?: boolean }
+  function main() {
+    const props: Props = { id: 1, title: "t" };
+    const { id, ...rest } = props;
+    console.log(id, rest); // 1 { title: 't' }
+  }
+  ```
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
