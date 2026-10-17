@@ -254,7 +254,7 @@ fn void_fields_are_zero_sized() {
                 def: rd,
                 type_args: vec![t.unit],
                 fields: vec![int(0, t.i32), s(msg, t), unit()],
-                converted: hir::Conversion::No,
+                converted: velt_sema::hir::Conversion::No,
             },
             rv,
         )
