@@ -384,6 +384,7 @@ impl FnCx<'_, '_> {
         prop: &ast::Ident,
         exp: Option<TyId>,
         span: Span,
+        class: Option<&ast::Ident>,
     ) -> Option<hir::Expr> {
         self.cx.adt(d)?;
         let (m, owner_generics, owner_args) = self.find_static(d, &prop.name).ok()?;
@@ -405,6 +406,19 @@ impl FnCx<'_, '_> {
         }
         let def = self.static_def_for(m.def, this_class);
         crate::body::defaults::param_defaults(self.cx, def);
+        if let Some(class) = class {
+            // `Class.gen` of a generator with a dynamic default (`gen_value.rs`).
+            let object = super::setters::synth(ast::ExprKind::Ident(class.clone()), class.span);
+            let member = ast::ExprKind::Member {
+                object: Box::new(object),
+                prop: prop.clone(),
+                optional: false,
+            };
+            let callee = super::setters::synth(member, span);
+            if let Some(h) = self.generator_value(def, &callee, exp, span) {
+                return Some(h);
+            }
+        }
         let ret = crate::body::returns::ret_of(self.cx, def, span);
         let f = self.cx.fn_info(def);
         let tys: Vec<TyId> = f.params.iter().map(|p| p.ty).chain([ret]).collect();

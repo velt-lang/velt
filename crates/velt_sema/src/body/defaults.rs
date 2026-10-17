@@ -97,7 +97,7 @@ fn undefined_default(cx: &mut Ctx, e: &ast::Expr, ty: TyId) {
     );
 }
 
-fn is_undefined(e: &ast::Expr) -> bool {
+pub(crate) fn is_undefined(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Undefined) => true,
         ast::ExprKind::Paren(inner) => is_undefined(inner),

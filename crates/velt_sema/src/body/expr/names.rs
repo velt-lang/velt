@@ -374,6 +374,11 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        let callee = super::setters::synth(ast::ExprKind::Ident(id.clone()), span);
+        if let Some(h) = self.generator_value(d, &callee, exp, span) {
+            return h;
+        }
+        let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
@@ -419,7 +424,13 @@ impl FnCx<'_, '_> {
 
     /// The function type of named function `d` used as a value, with what it is known to throw
     /// (an async function's promise rejects with it).
-    fn fn_value_type(&mut self, d: DefId, params: Vec<TyId>, ret: TyId, is_async: bool) -> TyId {
+    pub(super) fn fn_value_type(
+        &mut self,
+        d: DefId,
+        params: Vec<TyId>,
+        ret: TyId,
+        is_async: bool,
+    ) -> TyId {
         if is_async {
             let ret = self.async_call_ret(d, ret);
             return self.cx.ty.fn_ptr(params, ret);
@@ -442,7 +453,7 @@ impl FnCx<'_, '_> {
     /// A synchronous function value takes the error type the context expects when it throws
     /// less (lowering's function-value thunk converts its errors); the final error type of `d`
     /// is checked against the one used here.
-    fn fn_value_errors(
+    pub(super) fn fn_value_errors(
         &mut self,
         d: DefId,
         args: &[TyId],
