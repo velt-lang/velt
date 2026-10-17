@@ -178,14 +178,26 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   only creates the generator; lowering builds a `Generator` object and, for an interface
   `ret`, the interface value of it. Params are `Owned` or `Copy` (methods: `this` too), as for
   async functions.
-- In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
-  `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
-  own (a `Block` expression holding the desugared `for...of` that yields each value). No
+- `Generator<T, E, N>`: `N` (`never`: none) is the type `next(value)` passes in. In the body:
+  `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`; in a generator
+  with an `N` whose value is used, the call has type `N` and may have a second argument (owned,
+  evaluated only when resumed by a `next()` without a value: `undefined` as an `N`; without
+  it such a resume panics). `Return(None)` ends the generator (no `Return(Some)` occurs);
+  `yield* src` has no form of its own: a `Block` expression holding the desugared `for...of`
+  that yields each value or, in a generator with an `N` or a program with
+  `Program::generator_throw`, for a `src` of type `Generator<T, E2, N | never>`, `Block { Let
+  <yield-gen@N> = src (or GeneratorEmbed(src)); If { cond: GeneratorResume(<yield-gen@N>),
+  then: [While { cond: YieldDelegate(<yield-gen@N>), body: [] }] } }`. With
+  `Program::generator_throw`, a `Yield` or `yield*` inside a `try` with a `catch` may throw an
+  `any` (what `throw()` passes in), and the catch types include it. No
   `finally` block of a generator contains a `Yield`, can throw, or contains a `Break` /
   `Continue` whose target loop is outside it (sema).
 - The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
-  `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
-  `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
+  `E`), `GeneratorResumeWith` (`next(value)`; the value `Borrow`), `GeneratorThrow` (`u32`
+  code, the error an `any`, `Borrow`), `GeneratorValue` (`T`, moved out; only after a resume
+  returned true) and `GeneratorReturn` (close), each taking the `Generator<T, E, N>` operand
+  `BorrowMut`. `Program::generator_throw` says whether a user module calls a `throw()`
+  method; without it lowering emits no code for errors thrown in.
 - `for...of` over a direct generator call (`gen(a)`, or the generator `[Symbol.iterator]()`
   method it would call) is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
   [call] } : Generator<T, E>; While { cond: GeneratorResume(<generator@N>), body: [LetPat

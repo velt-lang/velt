@@ -340,6 +340,18 @@ impl Ctx<'_> {
         }
     }
 
+    /// Are `a` and `b` `Generator<T, E, N>` types that differ only in `N`, one of them `never`?
+    pub(crate) fn generator_next_differs(&self, a: TyId, b: TyId) -> bool {
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Adt(da, x), TyKind::Adt(db, y))
+                if da == db && Some(*da) == self.generator_class() && x.len() == 3 =>
+            {
+                x[..2] == y[..2] && (x[2] == self.ty.never || y[2] == self.ty.never)
+            }
+            _ => false,
+        }
+    }
+
     /// The `next(value)` type `N` of a `Generator<T, E, N>` value type (`never`: none, also
     /// for any other type).
     pub fn generator_next_ty(&self, t: TyId) -> TyId {

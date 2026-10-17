@@ -53,7 +53,7 @@ impl FnCx<'_, '_> {
                 None => self.yield_star(a, span),
             },
             (true, None) => self.error_expr(span),
-            (false, arg) => self.yield_one(arg, t, span),
+            (false, arg) => self.yield_one(arg, t, used, span),
         };
         if !used || next.is_some() {
             return h;
@@ -70,8 +70,9 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), self.cx.ty.error, span)
     }
 
-    /// `yield arg` (`arg` checked against the yield type `t`).
-    fn yield_one(&mut self, arg: Option<&ast::Expr>, t: TyId, span: Span) -> hir::Expr {
+    /// `yield arg` (`arg` checked against the yield type `t`); `used`: its value is used (it
+    /// is the value `next(value)` passes in, when the generator takes one).
+    fn yield_one(&mut self, arg: Option<&ast::Expr>, t: TyId, used: bool, span: Span) -> hir::Expr {
         let v = match arg {
             Some(a) if self.f.is_async => self.yielded_awaiting(a, t),
             Some(a) => self.expr_coerce(a, t, Want::Move),
@@ -94,7 +95,7 @@ impl FnCx<'_, '_> {
             }
         }
         let mut args = vec![v];
-        let ty = match self.f.next_ty {
+        let ty = match self.f.next_ty.filter(|_| used) {
             // `Generator<T, E, N>`: the `yield` is the value `next(value)` passes in, or what
             // `next()` without one means (`undefined`, when `N` holds it).
             Some(n) => {
@@ -155,7 +156,7 @@ impl FnCx<'_, '_> {
         let (what, why) = match delegate {
             false => (
                 "`yield`",
-                "`yield` evaluates to the argument of the next `next(value)` call); Velt doesn't because `next()` takes no argument, so `yield` has no value; write the `yield` as a statement of its own, and pass values into the generator through its parameters or an object both sides share",
+                "`yield` evaluates to the argument of the next `next(value)` call, of the generator's `TNext` type); Velt doesn't when the type is not given (Velt does not default it to `any`); declare the generator's result as `Generator<T, void, N>`, with `N` the type of the values `next` passes, or write the `yield` as a statement of its own",
             ),
             true => (
                 "`yield*`",
