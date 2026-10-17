@@ -149,6 +149,16 @@ impl Cx<'_> {
     /// collide with other names).
     pub(super) fn instance_symbol(&self, name: &str, targs: &[TyId]) -> String {
         let mut s = mangle(name);
+        // A method of `Generator<T, E, never>` is spelled as `Generator<T, E>`'s, as before `N`.
+        let targs = match targs {
+            [_, _, n]
+                if name.starts_with("std/prelude/iter::Generator.")
+                    && matches!(self.types.kind(*n), TyKind::Never) =>
+            {
+                &targs[..2]
+            }
+            _ => targs,
+        };
         if !targs.is_empty() {
             s.push_str("_T");
             s.push_str(&segment(&self.type_args_key(targs)));

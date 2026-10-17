@@ -88,7 +88,7 @@ impl FnCx<'_, '_> {
         };
         // In a program that calls `throw()`, a `yield` in a `try` with a `catch` may throw
         // what `throw()` passes in, as an `any` (`ts_protocol::calls_throw`).
-        if self.cx.gen_throw && self.f.catch_depth > 0 {
+        if self.cx.gen_throw && self.f.catch_depth > 0 && !self.f.is_async {
             if let Some(any) = self.any_ty() {
                 self.cx.any_impl();
                 self.throw_src(ThrowSrc::Direct(any, span));
@@ -225,7 +225,7 @@ impl FnCx<'_, '_> {
         }
         // Like a `yield`, it may throw what `throw()` passes in when it is in a `try` with a
         // `catch` (the inner generator did not catch it).
-        if self.cx.gen_throw && self.f.catch_depth > 0 {
+        if self.cx.gen_throw && self.f.catch_depth > 0 && !self.f.is_async {
             if let Some(any) = self.any_ty() {
                 self.cx.any_impl();
                 self.throw_src(ThrowSrc::Direct(any, span));

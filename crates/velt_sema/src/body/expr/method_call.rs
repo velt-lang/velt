@@ -98,6 +98,27 @@ impl FnCx<'_, '_> {
             }
             return self.no_method(recv, prop, args, span);
         };
+        // `g.throw(e)` with `e: never` (from the `catch` of a `try` that cannot throw) cannot
+        // run: the call is its argument, so it adds no `any` to what the caller throws.
+        if prop.name == "throw" && args.len() == 1 && self.cx.generator_result(recv.ty).is_some() {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = self.trial_frames();
+            let never = self.expr(&args[0], None, Want::Move).ty == self.cx.ty.never;
+            mark.rollback(self.cx);
+            self.restore_trial_frames(frames);
+            if never {
+                let arg = self.expr(&args[0], None, Want::Move);
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(recv),
+                        span,
+                    }],
+                    value: Some(Box::new(arg)),
+                    span,
+                };
+                return self.mk(H::Block(block), self.cx.ty.never, span);
+            }
+        }
         if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {
             // `next(value)` on a `Generator<T, E, N>`: the prelude's `nextWith(value)`.
             let n = self.cx.generator_next_ty(recv.ty);
