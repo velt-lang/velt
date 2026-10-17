@@ -1358,7 +1358,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
   may spread another record (`{ ...r, x: 1 }`) and have computed keys (`{ [k]: v, [a + b]: w }`,
   in order with the other keys); an object literal with a computed key that is not a module
-  constant is a `Record<string, V>` also where no record is expected. A string or integer
+  constant, or one that spreads a variable `r` of type `Record<string, V>`, is a
+  `Record<string, V>` also where no record is expected (spreading a record into an object of a
+  fixed shape is an error: its keys are known only at run time). A string or integer
   literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
   property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
   is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
@@ -1632,7 +1634,9 @@ function main(): void {
 
 What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
 `T | null`, unions and class instances, checked against the class and its subclasses, and an
-instance of a generic class against that very instantiation (`Box<number>`); into a
+instance of a generic class against that very instantiation (`Box<number>`, so a
+`Record<string, number>` converts only from a record of that type: an object of a fixed shape
+stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
 `typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
 literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,

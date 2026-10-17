@@ -335,6 +335,12 @@ impl FnCx<'_, '_> {
             }
         }
         if super::spread::has_spread(props) {
+            if let Some((d, v)) = self.spread_string_record(props) {
+                // `{ ...r, z: 1 }` of a `Record<string, V>`: TypeScript's type has a string
+                // index signature (`{ [x: string]: V; z: number }`), a `Record<string, V>`.
+                let k = self.cx.ty.str_;
+                return self.record_literal(d, k, v, props, span);
+            }
             return self.spread_object(props, None, None, span);
         }
         let ps = self.props(props);
