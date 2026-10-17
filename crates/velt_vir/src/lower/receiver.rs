@@ -18,7 +18,7 @@
 //! A receiver held in a local, a parameter or `this` is reached by no other reference while the
 //! call runs, and is passed as before.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_sema::effects::runs_user_code;
 use velt_sema::hir::{self, Callee, DefId, ExprKind as E, StmtKind as S, TyKind};
@@ -63,7 +63,8 @@ impl FnLower<'_, '_> {
         {
             return false;
         }
-        !self.cx.may_reach_slots(def)
+        // An argument the method drops may run a dispose hook (`cur.f(d)` with `d` moved in).
+        !self.cx.may_reach_slots(def) && !rest.iter().any(|a| self.cx.drop_reaches(a.ty))
     }
 }
 
@@ -78,6 +79,11 @@ pub(super) struct Reach {
     /// Whether some glue hook (`toString`, `toJSON`, `__inspect`, `[Symbol.dispose]`) may reach
     /// module state, once known.
     hooks: Option<bool>,
+    /// The classes, structs and enums whose drop may run a `[Symbol.dispose]` hook that reaches
+    /// module state (their own, a part's, or a subclass's), known with `hooks`.
+    drops: HashSet<DefId>,
+    /// Per type: may dropping a value of it run such a hook?
+    drop_tys: HashMap<hir::TyId, bool>,
 }
 
 impl Cx<'_> {
@@ -87,8 +93,9 @@ impl Cx<'_> {
     /// interface, awaits, iterates something other than an array or a string, or hands a
     /// function value, an interface value or `any` to an intrinsic, which may call it. When a
     /// glue hook (`toString`, `toJSON`, `__inspect`, dispose) may reach module state itself, an
-    /// intrinsic handed any object may run it. Constructors and field initializers of `new`
-    /// count as calls.
+    /// intrinsic handed any object may run it. A value whose drop may run a dispose hook that
+    /// reaches module state counts wherever it appears (`drop_reaches`). Constructors and field
+    /// initializers of `new` count as calls.
     pub(super) fn may_reach_slots(&mut self, def: DefId) -> bool {
         self.hooks();
         self.fn_reaches(def)
@@ -102,7 +109,15 @@ impl Cx<'_> {
         self.reach.fns.insert(def, true);
         let hir = self.hir;
         let r = match hir.def(def) {
-            hir::Def::Fn(f) => f.is_async || f.is_generator || self.block_reaches(&f.body.block),
+            // Drops run dispose hooks where the walk sees no call (`using` at a block's end, a
+            // field or variable overwritten, a parameter dropped at the end): a function with a
+            // variable or parameter whose drop may run one that reaches module state may too.
+            hir::Def::Fn(f) => {
+                f.is_async
+                    || f.is_generator
+                    || f.body.locals.iter().any(|l| self.drop_reaches(l.ty))
+                    || self.block_reaches(&f.body.block)
+            }
             _ => true,
         };
         self.reach.fns.insert(def, r);
@@ -119,17 +134,21 @@ impl Cx<'_> {
         }
         self.reach.hooks = Some(false);
         let hir = self.hir;
-        let hooks: Vec<DefId> = hir
-            .defs
-            .iter()
-            .filter_map(|d| match d {
-                hir::Def::Adt(a) => Some([a.dispose, a.to_string, a.to_json, a.inspect]),
-                _ => None,
-            })
-            .flatten()
-            .flatten()
+        let mut glue = vec![];
+        let mut dispose = vec![];
+        for (i, d) in hir.defs.iter().enumerate() {
+            if let hir::Def::Adt(a) = d {
+                dispose.extend(a.dispose.map(|h| (DefId(i as u32), h)));
+                glue.extend([a.to_string, a.to_json, a.inspect].into_iter().flatten());
+            }
+        }
+        let disposing: Vec<DefId> = dispose
+            .into_iter()
+            .filter(|&(_, hook)| self.fn_reaches(hook))
+            .map(|(owner, _)| owner)
             .collect();
-        let h = hooks.into_iter().any(|d| self.fn_reaches(d));
+        let h = !disposing.is_empty() || glue.into_iter().any(|d| self.fn_reaches(d));
+        self.reach.drops = drop_closure(hir, disposing);
         self.reach.fns.clear();
         self.reach.news.clear();
         self.reach.hooks = Some(h);
@@ -180,6 +199,11 @@ impl Cx<'_> {
     }
 
     fn expr_reaches(&mut self, e: &hir::Expr) -> bool {
+        // A value whose drop may run a dispose hook that reaches module state: it may be dropped
+        // here (a temporary, the old value of an assigned place, a value moved into a callee).
+        if self.drop_reaches(e.ty) {
+            return true;
+        }
         let here = match &e.kind {
             E::Global(d) => matches!(self.hir.def(*d), hir::Def::Global(g) if g.slot.is_some()),
             E::Await(_) => true,
@@ -219,6 +243,36 @@ impl Cx<'_> {
         }
     }
 
+    /// May dropping a value of type `t` run a dispose hook that reaches module state? A value
+    /// of an unknown type (a type parameter, an interface or function value) may hold one when
+    /// any such hook exists.
+    pub(super) fn drop_reaches(&mut self, t: hir::TyId) -> bool {
+        if self.reach.drops.is_empty() {
+            return false;
+        }
+        if let Some(&r) = self.reach.drop_tys.get(&t) {
+            return r;
+        }
+        let r = match self.types.kind(t).clone() {
+            TyKind::Adt(d, args) => {
+                self.reach.drops.contains(&d) || args.into_iter().any(|a| self.drop_reaches(a))
+            }
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => self.drop_reaches(x),
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                self.drop_reaches(a) || self.drop_reaches(b)
+            }
+            TyKind::Tuple(xs) => xs.into_iter().any(|x| self.drop_reaches(x)),
+            TyKind::Param(_)
+            | TyKind::Dyn(..)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_)
+            | TyKind::Op(..) => true,
+            _ => false,
+        };
+        self.reach.drop_tys.insert(t, r);
+        r
+    }
+
     /// Does `new` of class `def` run code that reaches module state (its constructor, its
     /// fields' initializers, its base class's)? Memoized per class: field initializers may
     /// create the class itself (`next: Link | null = c ? new Link() : null`) or each other.
@@ -250,5 +304,59 @@ impl Cx<'_> {
         let inherited = a.inherited_inits.iter().map(|i| &i.init);
         let inits: Vec<&hir::Expr> = defaults.chain(inherited).collect();
         inits.into_iter().any(|e| self.expr_reaches(e))
+    }
+}
+
+/// The types whose drop may run one of the dispose hooks of `disposing` (the types declaring
+/// them): those types, the types with a field or variant payload of such a type (a type
+/// parameter in a declaration stands for an argument, checked where the type is used), and the
+/// base classes of such classes (a base-class value may be the subclass). Found by iterating to
+/// a fixed point over the program's types.
+fn drop_closure(hir: &hir::Program, disposing: Vec<DefId>) -> HashSet<DefId> {
+    let mut set: HashSet<DefId> = disposing.into_iter().collect();
+    if set.is_empty() {
+        return set;
+    }
+    loop {
+        let before = set.len();
+        for (i, d) in hir.defs.iter().enumerate() {
+            let id = DefId(i as u32);
+            match d {
+                hir::Def::Adt(a) => {
+                    let mine = set.contains(&id) || a.fields.iter().any(|f| holds(hir, f.ty, &set));
+                    if mine {
+                        set.insert(id);
+                        if let Some(TyKind::Adt(b, _)) = a.base.map(|b| hir.types.kind(b)) {
+                            set.insert(*b);
+                        }
+                    }
+                }
+                hir::Def::Enum(e) => {
+                    let parts = e.variants.iter().flat_map(|v| v.payload.iter());
+                    if parts.into_iter().any(|&p| holds(hir, p, &set)) {
+                        set.insert(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if set.len() == before {
+            return set;
+        }
+    }
+}
+
+/// Does the declared type `t` hold a value of a type in `set` (a type parameter stands for an
+/// argument, checked where the type is used)?
+fn holds(hir: &hir::Program, t: hir::TyId, set: &HashSet<DefId>) -> bool {
+    match hir.types.kind(t) {
+        TyKind::Adt(d, args) => set.contains(d) || args.iter().any(|&a| holds(hir, a, set)),
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => holds(hir, *x, set),
+        TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+            holds(hir, *a, set) || holds(hir, *b, set)
+        }
+        TyKind::Tuple(xs) => xs.iter().any(|&x| holds(hir, x, set)),
+        TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+        _ => false,
     }
 }

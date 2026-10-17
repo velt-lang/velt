@@ -153,8 +153,13 @@ cannot reach module state. It reaches module state when it names a slot, calls t
 function value, a vtable or an interface, awaits, iterates something other than an array or a
 string, hands a function or `any` value to an intrinsic, or creates an object whose constructor
 or field initializers do; when a glue hook (`toString`, `toJSON`, `__inspect`, dispose) can
-itself reach module state, handing any object to an intrinsic counts too (`Cx::may_reach_slots`,
-one walk per function and per class). `rng.next()` on a module `let rng` whose method only
+itself reach module state, handing any object to an intrinsic counts too. Drops run dispose
+hooks where no call is written (`using` at a block's end, an overwritten field or variable, a
+parameter dropped in a callee), so a method counts when one of its expressions, variables or
+parameters, or another argument of the call, has a type whose drop may run a dispose hook that
+reaches module state: the type declaring it, a type with a part of such a type, a base class of
+one, or a type parameter, interface or function value when any such hook exists
+(`Cx::may_reach_slots`, one walk per function and per class). `rng.next()` on a module `let rng` whose method only
 updates its own fields is a plain call. A receiver in a variable, a parameter or `this` is passed
 as before.
 
