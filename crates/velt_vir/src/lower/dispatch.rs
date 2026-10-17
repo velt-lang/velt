@@ -168,7 +168,12 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv, transfer);
+        // A receiver read from a place the method may replace gets a reference of its own for
+        // the call (receiver.rs): the method is only known at run time.
+        let rv = match !transfer && self.replaceable_receiver(recv) {
+            true => self.held_receiver(recv),
+            false => self.receiver(recv, transfer),
+        };
         let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(

@@ -74,6 +74,7 @@ mod program;
 mod proxy_typed;
 mod proxy_write;
 mod rc;
+mod receiver;
 mod rt;
 mod same;
 mod sequence;
