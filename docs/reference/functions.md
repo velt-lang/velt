@@ -346,7 +346,7 @@ function main() {
 
 Not yet: in the body, a value of such a type parameter has none of its bound's members
 (`Object.keys(o)` on a `T extends Record<string, V>`, `xs[0]` on a `T extends X[]`; take the
-bound's type as the parameter's where the body needs them, #1198), and a parameter has at most
+bound's type as the parameter's where the body needs them, #1212), and a parameter has at most
 one such bound (`T extends A & B` with both no interfaces).
 
 A type parameter may have a **default** (`<T = string>`), as in TypeScript: a type parameter
