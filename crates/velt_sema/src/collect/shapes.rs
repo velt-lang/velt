@@ -216,13 +216,14 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
     let declared = ty;
-    // `q?: any`: an `any` holds the `undefined` of a left-out field itself.
+    // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an
+    // `any` holds the `undefined` of a left-out field itself.
     if f.optional
-        && cx.ty.opt_payload(ty).is_none()
+        && !cx.ty.nothing_of(ty).is_some_and(|n| n.has_undefined())
         && ty != cx.ty.error
         && cx.dynamic(ty).is_none()
     {
-        ty = cx.ty.option(ty);
+        ty = cx.ty.option_of(ty, crate::hir::Nothing::Undefined);
     }
     if ty == cx.ty.unit {
         cx.err(

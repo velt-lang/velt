@@ -382,7 +382,8 @@ impl FnCx<'_, '_> {
         (v, d, union)
     }
 
-    /// `object?.<rest>`: apply `f` to the non-null payload; null short-circuits to `null`.
+    /// `object?.<rest>`: apply `f` to the present payload; `null` or `undefined` short-circuits
+    /// to `undefined`.
     pub(crate) fn optional_chain(
         &mut self,
         object: &ast::Expr,
@@ -426,7 +427,7 @@ impl FnCx<'_, '_> {
         self.chain_match(s, l, mode, payload, r, span)
     }
 
-    /// `match (s) { l => r (wrapped as `T | null`), null => null }`: the null short-circuit of
+    /// `match (s) { l => r (wrapped as `T | undefined`), nothing => undefined }`: the short-circuit of
     /// an optional chain whose rest `r` was checked on the payload bound to `l`.
     pub(super) fn chain_match(
         &mut self,
@@ -440,12 +441,9 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
-        // On an object that may be `undefined`, the short-circuit gives `undefined`, as in
-        // JavaScript (issue #930; on a `T | null` one it is still `null` in this phase).
-        let nothing = match self.cx.ty.nothing_of(s.ty) {
-            Some(Nothing::Null) | None => Nothing::Null,
-            _ => Nothing::Undefined,
-        };
+        // The short-circuit gives `undefined`, on a `T | null` object too, as in JavaScript
+        // (issue #930).
+        let nothing = Nothing::Undefined;
         let (ty, body) = if nothing == Nothing::Undefined
             && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null)
         {

@@ -426,7 +426,7 @@ impl<'a> Parser<'a> {
             self.expect_member_end()?;
             decl.fields.push(Field {
                 name,
-                ty: super::types::or_null(ty),
+                ty: super::types::or_undefined(ty),
                 default: None,
                 readonly: false,
                 optional: true,

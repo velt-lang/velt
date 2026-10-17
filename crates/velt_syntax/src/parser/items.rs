@@ -519,14 +519,9 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`, and `name?: T | undefined` is
-            // `name: T | undefined = undefined`.
+            // `name?: T` is `name: T | undefined = undefined`, as in TypeScript.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            let nothing = match super::types::has_undefined(&ty) {
-                true => Lit::Undefined,
-                false => Lit::Null,
-            };
-            default = Some(self.mk_expr(ExprKind::Lit(nothing), span));
+            default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
             ty = super::types::optional_param(ty);
         }
         if rest {
