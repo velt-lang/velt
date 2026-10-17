@@ -18,6 +18,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   an interface use the interface's defaults. A default is evaluated where the function is
   called, so it cannot use an earlier parameter yet (`q: number = p + 1` is an error saying so;
   take `q?: number` and write `const r = q ?? p + 1;` in the body).
+- The default of a parameter of a dynamic type (`x: any = "d"`, `x: unknown = 0`) also applies to
+  a passed `undefined`, as in JavaScript. The function applies it itself when the call starts,
+  so it is the function's own default whichever way it is called: through an interface whose
+  method takes `x?: any`, through a base class whose method the class overrides, through a
+  function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
 - An optional parameter `q?: T` is `q: T | null = null`. Left out, it is `undefined`: for
   `q?: any` or `q?: unknown`, `q === undefined` is true and `typeof q` is `"undefined"`, as in
   JavaScript.

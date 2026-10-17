@@ -81,7 +81,7 @@ enum Wrap {
 const TIMERS: [&str; 3] = ["setTimeout", "setInterval", "setImmediate"];
 
 /// An expression with `span` and no node of its own.
-fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
+pub(super) fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
     ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -99,7 +99,7 @@ fn arg_name(k: usize, span: velt_common::Span) -> ast::Ident {
 
 /// `(#arg0, …, #arg{n-1}) => callee(#arg0, …, #arg{passed-1})`, or with `discard` a block body
 /// that keeps the call's value in a hidden `const` (a started promise runs to completion).
-fn wrapper(
+pub(super) fn wrapper(
     callee: ast::Expr,
     n: usize,
     passed: usize,

@@ -240,9 +240,8 @@ fn add_entry_edges(s: &State, g: &mut Graph, i: u32) {
         }
     }
     for &(m, k) in &node.member_of {
-        // The key's own record knows its trace when its map's keys have none for all of them
-        // (a typed proxy key is a `Proxy` object, not one of the key type: velt_vir's
-        // lower/weak.rs leaves such a map's key trace null).
+        // A key's own trace glue (the keys of a dynamic key type differ, and so do a proxiable
+        // key type's typed proxies, which are `Proxy` objects), else the map's.
         let trace = s.nodes.get(&k).and_then(|n| n.trace);
         g.add(k, trace.or(s.map(m).key_trace));
     }

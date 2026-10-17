@@ -97,6 +97,22 @@ pub unsafe extern "C" fn velt_rt_weakmap_set(map: MapId, key: *mut u8, value: u6
     table::release_values(old);
 }
 
+/// [`velt_rt_weakmap_set`] with the key's own trace glue instead of the map's (a map whose key
+/// type is dynamic, `WeakMap<object, V>`: each key's type is known only from its value).
+///
+/// # Safety
+/// As for [`velt_rt_weakmap_set`]; `key_trace` is the key's trace glue.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_weakmap_set_traced(
+    map: MapId,
+    key: *mut u8,
+    value: u64,
+    key_trace: Option<TraceFn>,
+) {
+    let old = table::with(|s| s.set_traced(map, key, value, key_trace));
+    table::release_values(old);
+}
+
 /// `map.get(key)`: the value, counted (retained with the map's `value_retain`, like
 /// [`velt_rt_weakref_deref`]; the caller releases it), and whether there was one in `*found`.
 /// Counted because any later release of a weakly held object may run a trial that deletes the
@@ -155,7 +171,23 @@ pub fn weakmap_len(map: MapId) -> u64 {
 /// `obj` is a live counted object, maybe with bit 0 set.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakref_new(obj: *mut u8) -> RefId {
-    table::with(|s| s.new_ref(obj))
+    table::with(|s| s.new_ref(obj, 0))
+}
+
+/// `new WeakRef(obj)` keeping `word` with the slot ([`velt_rt_weakref_word`]): the descriptor
+/// of an `object` target, from which `deref()` rebuilds the dynamic value.
+///
+/// # Safety
+/// `obj` is a live counted object.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_weakref_new_with(obj: *mut u8, word: u64) -> RefId {
+    table::with(|s| s.new_ref(obj, word))
+}
+
+/// The word given to [`velt_rt_weakref_new_with`] for `r` (0 for [`velt_rt_weakref_new`]).
+#[no_mangle]
+pub extern "C" fn velt_rt_weakref_word(r: RefId) -> u64 {
+    table::with(|s| s.ref_word(r))
 }
 
 /// `ref.deref()`: the target with its count raised by one, or null once it was freed.

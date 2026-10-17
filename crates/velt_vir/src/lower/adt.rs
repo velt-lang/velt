@@ -194,6 +194,15 @@ impl FnLower<'_, '_> {
             // `object` / `Function` key collections by identity (issue #926).
             self.cx.note_identity(ty);
         }
+        if self.is_object_ty(ty) {
+            // What may be a weak `object` key (boxing/weak.rs): unpacked options and unions
+            // note their members (`object_leaf`).
+            match self.cx.kind(cty) {
+                TyKind::Dyn(..) => self.cx.note_to_object(None),
+                _ if !self.object_unpacks(cty) => self.cx.note_to_object(Some(cty)),
+                _ => {}
+            }
+        }
         self.cx.note_dyn_identity(ty, cty);
         let v = self.consume(e);
         if self.dead() {
@@ -203,6 +212,16 @@ impl FnLower<'_, '_> {
         // dynamic type: the same value, never a box in a box. It is returned as an owned
         // temporary: a moved parameter's place would read as borrowed to `consume`, which
         // would share it and leave the parameter undropped.
+        // `x as object` of an unbounded `T` (issue #926): an option or a union is unpacked, a
+        // primitive is a `TypeError`.
+        // A weak key's `any` (sema's `weak_key_coerce`, written `any`) enters unchecked.
+        if self.cx.is_any_impl(impl_index)
+            && self.is_object_ty(ty)
+            && !self.cx.is_dynamic(e.ty)
+            && self.object_unpacks(cty)
+        {
+            return self.object_unpack(v, cty, ty);
+        }
         if self.cx.is_any_impl(impl_index) && self.cx.is_dynamic(cty) {
             return self.own_value(v, ty);
         }

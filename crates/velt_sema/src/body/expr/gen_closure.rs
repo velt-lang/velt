@@ -167,7 +167,7 @@ impl FnCx<'_, '_> {
             span,
         });
         let aparams: Vec<ast::ArrowParam> = sig.params.iter().map(arrow_param).collect();
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams, false);
         self.mk(H::Closure(def), fn_ty, span)
     }
 }

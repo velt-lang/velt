@@ -90,6 +90,7 @@ mod transfer;
 mod truthy;
 mod types;
 mod weak;
+mod weak_object;
 mod widen;
 
 use std::collections::{HashMap, HashSet, VecDeque};

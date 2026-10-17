@@ -206,6 +206,7 @@ impl FnCx<'_, '_> {
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.weak_key_args = self.weak_method(def);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
         let this_recv = self.this_recv(&recv);
@@ -373,5 +374,20 @@ impl FnCx<'_, '_> {
                 self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is `def` a method of the prelude's `WeakMap` or `WeakSet` taking a key first (`set`,
+    /// `get`, `has`, `delete`, `add`)?
+    fn weak_method(&self, def: DefId) -> bool {
+        let Some(owner) = self.cx.fn_info(def).owner else {
+            return false;
+        };
+        let weak = ["WeakMap", "WeakSet"]
+            .iter()
+            .any(|n| self.cx.prelude_adt(n) == Some(owner));
+        let name = self.cx.fn_info(def).name.rsplit('.').next().unwrap_or("");
+        weak && matches!(name, "set" | "get" | "has" | "delete" | "add")
     }
 }

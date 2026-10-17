@@ -640,7 +640,11 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
-        match self.try_coerce(inner, target) {
+        // `x as object` of an unbounded `T` (issue #926): checked at run time.
+        let coerced = self
+            .try_coerce(inner, target)
+            .or_else(|h| self.param_as_object(h, target));
+        match coerced {
             Ok(h) => h,
             Err(h) => {
                 let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));

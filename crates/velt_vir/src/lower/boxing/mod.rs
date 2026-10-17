@@ -52,6 +52,12 @@ pub(super) struct Boxing {
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
     weak_roots: HashSet<DefId>,
     weak: HashSet<TyId>,
+    /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types that reach
+    /// `object` (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
+    /// and the trace glue looks into dynamic values (weak_object.rs). False in every other
+    /// program, which compiles as before.
+    pub(super) weak_object: bool,
+    pub(super) dyn_types: HashSet<TyId>,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: HashSet<DefId>,
@@ -154,6 +160,15 @@ pub(super) struct Facts {
     vtable_types: HashSet<TyId>,
     /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
     weak_seeds: HashSet<TyId>,
+    /// `object` is a weak key or a `WeakRef` target.
+    pub(super) weak_object: bool,
+    /// Concrete types an `any` table was built for: the types dynamic values hold.
+    pub(super) dyn_types: HashSet<TyId>,
+    /// Concrete types converted to `object` straight from a typed value.
+    pub(super) object_types: HashSet<TyId>,
+    /// An `any`, `unknown` or interface value is converted to `object`: it may hold any type
+    /// dynamic values hold.
+    pub(super) object_from_dyn: bool,
     /// Interfaces whose values are converted to `any` / `unknown`.
     dyn_to_any: HashSet<DefId>,
     /// The program creates a `Proxy` (proxy_typed.rs).
@@ -282,6 +297,19 @@ impl Cx<'_> {
             .extend(self.facts.identity_borrows.iter().copied());
         self.close_proxies(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
+        // A weak key of type `object` (issue #926) is any dynamic value's object: each type
+        // dynamic values hold is counted, so its data pointer is the object itself.
+        next.weak_object |= self.facts.weak_object;
+        if next.weak_object {
+            // Only the types that reach `object` pay (all a dynamic value holds when an `any`,
+            // `unknown` or interface value converts to `object`).
+            let reach = match self.facts.object_from_dyn {
+                true => &self.facts.dyn_types,
+                false => &self.facts.object_types,
+            };
+            next.dyn_types.extend(reach.iter().copied());
+            work.extend(next.dyn_types.iter().copied());
+        }
         let mut seen = HashSet::new();
         loop {
             while let Some(t) = work.pop() {
