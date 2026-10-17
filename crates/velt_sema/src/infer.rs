@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
-use crate::hir::{DefId, ImplDef, TyId, TyKind};
+use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 
 impl Ctx<'_> {
     /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
@@ -81,6 +81,14 @@ impl Ctx<'_> {
                 self.match_ty(p2, a2, slots) && x
             }
             (TyKind::Tuple(ps), TyKind::Tuple(as_)) => self.match_all(&ps, &as_, slots),
+            (TyKind::Op(TyOp::Intersect, ps), TyKind::Op(TyOp::Intersect, as_))
+                if ps.len() == as_.len() =>
+            {
+                self.match_all(&ps, &as_, slots)
+            }
+            (TyKind::Op(TyOp::Intersect, parts), _) => {
+                self.match_intersection(&parts, actual, slots)
+            }
             (
                 TyKind::FnPtr {
                     params: pp,
@@ -99,6 +107,44 @@ impl Ctx<'_> {
             }
             _ => pat == actual,
         }
+    }
+
+    /// A deferred intersection `T & { … }` against an object type (#350). The object parts' fields
+    /// match the argument's fields of the same names first (`$set: (v: T) => void` of
+    /// `Signal<T>` against a `Signal<{ n: number }>` binds `T = { n: number }`); a type parameter
+    /// part still unbound then takes the whole argument, as TypeScript infers it from an object
+    /// literal (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against
+    /// `T & { id: string }`).
+    fn match_intersection(
+        &mut self,
+        parts: &[TyId],
+        actual: TyId,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        if !self.is_object_type(actual) {
+            return false;
+        }
+        let fields = self.public_fields(actual);
+        let mut ok = true;
+        for &p in parts {
+            if !self.is_object_type(p) {
+                continue;
+            }
+            for f in self.public_fields(p) {
+                if let Some(a) = fields.iter().find(|a| a.name == f.name) {
+                    ok &= self.match_ty(f.ty, a.ty, slots);
+                }
+            }
+        }
+        for &p in parts {
+            if let TyKind::Param(i) = self.ty.kind(p) {
+                let i = *i as usize;
+                if i < slots.len() && slots[i].is_none() && !self.ty.has_error(actual) {
+                    slots[i] = Some(actual);
+                }
+            }
+        }
+        ok
     }
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other

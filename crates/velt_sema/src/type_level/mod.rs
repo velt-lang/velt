@@ -60,6 +60,8 @@ pub(crate) struct State {
     pub(crate) stuck: bool,
     /// Where each deferred type was first written (reductions report there).
     pub(crate) op_sites: std::collections::HashMap<TyId, Span>,
+    /// The module each deferred intersection was written in (its object type is made there).
+    pub(crate) op_modules: std::collections::HashMap<TyId, usize>,
     /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
     pub(crate) reduced: std::collections::HashMap<TyId, TyId>,
 }
@@ -113,8 +115,10 @@ impl Ctx<'_> {
 
     /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
-        let TyOp::Alias(a) = o;
         let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
+        let TyOp::Alias(a) = o else {
+            return args.join(" & ");
+        };
         format!(
             "{}<{}>",
             self.aliases[a as usize].decl.name.name,
@@ -155,12 +159,22 @@ impl Ctx<'_> {
         if let Some(&r) = self.type_level.reduced.get(&t) {
             return r;
         }
-        let TyKind::Op(TyOp::Alias(a), args) = self.ty.kind(t).clone() else {
+        let TyKind::Op(o, args) = self.ty.kind(t).clone() else {
             return t;
         };
         if args.iter().any(|x| self.ty.has_error(*x)) {
             return self.ty.error;
         }
+        let TyOp::Alias(a) = o else {
+            let span = self
+                .type_level
+                .alias_site
+                .or_else(|| self.type_level.op_sites.get(&t).copied())
+                .unwrap_or(Span::DUMMY);
+            let r = self.reduce_intersection(t, args, span);
+            self.type_level.reduced.insert(t, r);
+            return r;
+        };
         let span = self
             .type_level
             .alias_site

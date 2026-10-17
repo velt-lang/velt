@@ -1,0 +1,65 @@
+// check: no leaks
+// Intersections with a type parameter part (#350): `T & { … }` in a generic signature is reduced
+// to the object type with both parts' fields once `T` is known, so callers see every member.
+// `any`, `unknown` and `object` parts intersect as in TypeScript. Expected output: Node's.
+type Signal<T> = T & {
+  $set: (newValue: T) => void;
+};
+type WithId<T> = T & { id: string };
+
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+function stamp<T>(x: T & { id: string }, log: string[]): T & { id: string } {
+  log.push("stamped");
+  return x;
+}
+
+function pick<T>(xs: WithId<T>[], i: number): WithId<T> {
+  return xs[i];
+}
+
+function both<A, B>(ab: A & B, n: number): (A & B)[] {
+  const out: (A & B)[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(ab);
+  }
+  return out;
+}
+
+type Loose = unknown & { a: number };
+type Obj = object & { b: string };
+
+function main() {
+  let current = { st: "idle", n: 1 };
+  const s: Signal<{ st: string; n: number }> = {
+    st: "idle",
+    n: 1,
+    $set: (v) => {
+      current = v;
+    },
+  };
+  const r = relay(s);
+  r.st = "busy";
+  r.$set({ st: "done", n: 2 });
+  console.log(r.st, r.n, current.st, current.n);
+
+  const log: string[] = [];
+  const t = stamp({ a: 1, id: "x" }, log);
+  console.log(t.a, t.id, log.length);
+
+  const users: WithId<{ name: string }>[] = [
+    { name: "Ada", id: "u1" },
+    { name: "Grace", id: "u2" },
+  ];
+  const u = pick(users, 1);
+  console.log(u.name, u.id, JSON.stringify(u));
+
+  const pair = both<{ x: number }, { y: string }>({ x: 1, y: "b" }, 2);
+  console.log(pair.length, pair[1].x, pair[1].y);
+
+  const l: Loose = { a: 7 };
+  const o: Obj = { b: "o" };
+  console.log(l.a, o.b);
+}

@@ -12,15 +12,17 @@
 //!
 //! Operands are object types: anonymous ones, field-only interfaces, utility type results,
 //! other intersections, and unions of these (with `null`). Classes, structs, interfaces with
-//! methods, arrays, function types and type parameters are errors; a primitive with object
-//! types is a branded type (`crate::brands`).
+//! methods, arrays and function types are errors; a primitive with object types is a branded
+//! type (`crate::brands`). `any`, `unknown` and `object` parts intersect as in TypeScript.
+//! A part that is a type parameter makes the deferred `TyOp::Intersect` (#350), reduced here
+//! once the type arguments are known (`Ctx::reduce_op`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
-use crate::hir::{AdtKind, TyId, TyKind};
+use crate::hir::{AdtKind, TyId, TyKind, TyOp};
 use crate::resolve::TyEnv;
 
 /// How deep field types may nest before an intersection gives up (recursive object types).
@@ -43,7 +45,81 @@ impl Ctx<'_> {
             }
             operands.push((ty, p.span));
         }
-        if let Some(t) = self.literal_meet(&operands, t.span) {
+        // A part written as an alias's type parameter (`T` in `type Tagged<T> = T & { … }`)
+        // is shown as its argument.
+        let names: Vec<Option<String>> = parts
+            .iter()
+            .map(|p| written_name(p).filter(|n| !env.params.iter().any(|q| q == n)))
+            .map(|n| n.map(str::to_string))
+            .collect();
+        if operands.iter().any(|&(o, _)| self.deferred_part(o)) {
+            return self.deferred_intersection(operands, &names, env.module, t.span);
+        }
+        self.intersect(operands, names, env.module, t.span)
+    }
+
+    /// Is `t` an intersection's part that defers it (#350): a type parameter or a deferred type,
+    /// also with `null` (`T | null`).
+    fn deferred_part(&self, t: TyId) -> bool {
+        let t = self.ty.opt_payload(t).unwrap_or(t);
+        matches!(self.ty.kind(t), TyKind::Param(_) | TyKind::Op(..))
+    }
+
+    /// `T & { … }` with a part that is a type parameter: the deferred `TyOp::Intersect`, reduced
+    /// by [`intersect`](Self::intersect) once its parts are known (`Ctx::reduce_op`). The parts
+    /// known now are checked here, so `T & C` with a class `C` is reported where it is written.
+    fn deferred_intersection(
+        &mut self,
+        operands: Vec<(TyId, Span)>,
+        names: &[Option<String>],
+        module: usize,
+        span: Span,
+    ) -> TyId {
+        for (&(ty, at), name) in operands.iter().zip(names) {
+            if self.deferred_part(ty)
+                || self.brandable(ty)
+                || self.dynamic(ty).is_some()
+                || self.has_type_params_at_head(ty)
+            {
+                continue;
+            }
+            if !self.intersectable(ty, at, name.as_deref()) {
+                return self.ty.error;
+            }
+        }
+        let args: Vec<TyId> = operands.iter().map(|&(o, _)| o).collect();
+        let op = self.ty.intern(TyKind::Op(TyOp::Intersect, args));
+        self.type_level.op_sites.entry(op).or_insert(span);
+        self.type_level.op_modules.entry(op).or_insert(module);
+        op
+    }
+
+    /// Is `t` a union with a member that is a type parameter (`T | string`)?
+    fn has_type_params_at_head(&mut self, t: TyId) -> bool {
+        self.union_members(t)
+            .is_some_and(|ms| ms.iter().any(|&m| self.deferred_part(m)))
+    }
+
+    /// The deferred intersection `op` (`TyOp::Intersect`) with known parts `args`, reduced.
+    pub(crate) fn reduce_intersection(&mut self, op: TyId, args: Vec<TyId>, span: Span) -> TyId {
+        let module = self.type_level.op_modules.get(&op).copied().unwrap_or(0);
+        let operands: Vec<(TyId, Span)> = args.into_iter().map(|a| (a, span)).collect();
+        let names = vec![None; operands.len()];
+        self.intersect(operands, names, module, span)
+    }
+
+    /// The intersection of `operands` (written as `names`, where they are names), at `span`.
+    fn intersect(
+        &mut self,
+        mut operands: Vec<(TyId, Span)>,
+        mut names: Vec<Option<String>>,
+        module: usize,
+        span: Span,
+    ) -> TyId {
+        if let Some(t) = self.literal_meet(&operands, span) {
+            return t;
+        }
+        if let Some(t) = self.dynamic_meet(&mut operands, &mut names) {
             return t;
         }
         // A primitive with object types is a branded type.
@@ -51,15 +127,11 @@ impl Ctx<'_> {
             .filter(|&i| self.brandable(operands[i].0))
             .collect();
         let brand = match bases.as_slice() {
-            [i] if operands.len() > 1 => Some(operands.remove(*i).0),
+            [i] if operands.len() > 1 => {
+                names.remove(*i);
+                Some(operands.remove(*i).0)
+            }
             _ => None,
-        };
-        let parts: Vec<&ast::TypeExpr> = match brand {
-            Some(_) => parts
-                .iter()
-                .filter(|p| !operands_has_base(p, &bases, parts))
-                .collect(),
-            None => parts.iter().collect(),
         };
         // A function with properties: an interface or object type with call signatures and
         // members (`{ (): T; stop(): void }`, which the parser writes as this intersection).
@@ -71,20 +143,20 @@ impl Ctx<'_> {
             self.error(
                 Diagnostic::error(
                     "a function with properties (call signatures next to members) is not supported yet (#921)",
-                    t.span,
+                    span,
                 )
                 .with_note("pass the function and the members separately, or an object with the function as a method"),
             );
             return self.ty.error;
         }
-        for (&(ty, span), p) in operands.iter().zip(&parts) {
-            if !self.intersectable(ty, span, written_name(p)) {
+        for (&(ty, at), name) in operands.iter().zip(&names) {
+            if !self.intersectable(ty, at, name.as_deref()) {
                 return self.ty.error;
             }
         }
         let mut acc = operands[0].0;
         for &(b, _) in &operands[1..] {
-            match self.meet(acc, b, env.module, 0) {
+            match self.meet(acc, b, module, 0) {
                 Ok(m) => acc = m,
                 Err(why) => {
                     let shown: Vec<String> =
@@ -92,7 +164,7 @@ impl Ctx<'_> {
                     self.error(
                         Diagnostic::error(
                             format!("no value has type `{}`: {why}", shown.join(" & ")),
-                            t.span,
+                            span,
                         )
                         .with_note("a value of an intersection has every part's fields at once"),
                     );
@@ -102,9 +174,48 @@ impl Ctx<'_> {
         }
         self.declare_intersection_fields(acc, &operands);
         match brand {
-            Some(base) => self.brand_type(base, acc, env.module, t.span),
+            Some(base) => self.brand_type(base, acc, module, span),
             None => acc,
         }
+    }
+
+    /// The dynamic parts, as TypeScript intersects them: `any & X` is `any`, `unknown & X` is
+    /// `X`, and `object & X` is `X` for an `X` whose values are objects (`T & object` at an
+    /// object type `T` is `T`). Those parts are removed from `operands`; `Some` when the result is
+    /// known already.
+    fn dynamic_meet(
+        &mut self,
+        operands: &mut Vec<(TyId, Span)>,
+        names: &mut Vec<Option<String>>,
+    ) -> Option<TyId> {
+        use crate::any::Dynamic;
+        if let Some(&(any, _)) = operands
+            .iter()
+            .find(|(o, _)| matches!(self.dynamic(*o), Some(Dynamic::Any)))
+        {
+            return Some(any);
+        }
+        let others_are_objects = |cx: &Self, ops: &[(TyId, Span)]| {
+            ops.iter().any(|&(o, _)| cx.dynamic(o).is_none())
+                && ops
+                    .iter()
+                    .all(|&(o, _)| cx.dynamic(o).is_some() || cx.is_object_ty(o))
+        };
+        let droppable = |cx: &Self, t: TyId, ops: &[(TyId, Span)]| match cx.dynamic(t) {
+            Some(Dynamic::Unknown) => true,
+            Some(Dynamic::Object) => others_are_objects(cx, ops),
+            _ => false,
+        };
+        let mut i = 0;
+        while i < operands.len() && operands.len() > 1 {
+            if droppable(self, operands[i].0, operands) {
+                operands.remove(i);
+                names.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        (operands.len() == 1).then(|| operands[0].0)
     }
 
     /// Record where each field of the intersection `t` is written (for editors: go to
@@ -314,7 +425,7 @@ impl Ctx<'_> {
     }
 
     /// The fields of object type `t`, its type arguments substituted.
-    fn public_fields(&mut self, t: TyId) -> Vec<ShapeField> {
+    pub(crate) fn public_fields(&mut self, t: TyId) -> Vec<ShapeField> {
         let TyKind::Adt(d, args) = self.ty.kind(t).clone() else {
             return vec![];
         };
@@ -338,9 +449,4 @@ fn written_name(t: &ast::TypeExpr) -> Option<&str> {
         ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(&path[0].name),
         _ => None,
     }
-}
-
-/// Is `p` the operand at the one index of `bases` (the primitive of a branded type)?
-fn operands_has_base(p: &ast::TypeExpr, bases: &[usize], parts: &[ast::TypeExpr]) -> bool {
-    bases.first().is_some_and(|&i| std::ptr::eq(p, &parts[i]))
 }

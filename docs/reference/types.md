@@ -896,6 +896,40 @@ const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
 console.log(t.kids[0].v); // 2
 ```
 
+A part may be a **type parameter** (`T & { $set: (v: T) => void }`, `TMain & TSub`), in a
+generic alias or written in a generic signature: the intersection is worked out where the type
+arguments are known, so a caller sees the object type with both parts' fields, and a type
+argument that can't be a part (a class, say) is reported there. A type argument inferred
+through such a parameter comes from the fields the object part names (`T = { n: number }` for a
+`Signal<{ n: number }>`), else from the whole argument (`T = { a: number; id: string }` for
+`{ a: 1, id: "x" }` against `T & { id: string }`), as in TypeScript. `any`, `unknown` and
+`object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
+`object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+function stamp<T>(x: T & { id: string }): T & { id: string } {
+  return x;
+}
+
+let last = 0;
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v.n;
+  },
+};
+const r = relay(s); // Signal<{ n: number }>: `n` and `$set`
+r.$set({ n: r.n + 1 });
+const t = stamp({ a: 1, id: "x" });
+console.log(last, t.a, t.id); // 2 1 x
+```
+
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
@@ -904,8 +938,12 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
   `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
-- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
-  yet (#350). A generic alias works, since each use has concrete type arguments.
+- In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
+  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
+  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+  TypeScript infers `T` from a value whose type was written as an intersection without the
+  other parts (`T = A` for an `A & { id: string }`); Velt infers the whole object type there,
+  as TypeScript does for an object literal.
 - Interface declarations merge as in TypeScript
   ([declaration merging](classes.md#declaration-merging)).
 

@@ -138,8 +138,8 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
             "interface with methods",
         ),
         (
-            "function g<T>(x: T & { y: f64 }) {}",
-            "`T` is a type parameter",
+            "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
+            "`K` is a class",
         ),
     ] {
         let e = err_src(&format!("{src} function main() {{}}"));
@@ -338,4 +338,34 @@ fn an_alias_may_refer_to_itself_through_written_object_types() {
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
     let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
     assert!(e.contains("an alias may refer to itself when"), "{e}");
+}
+
+#[test]
+fn a_type_parameter_part_is_reduced_where_its_argument_is_known() {
+    // #350: callers see the merged object type; the type argument is inferred from the fields
+    // the object part names, else from the whole argument.
+    ok_src(
+        "type Signal<T> = T & { $set: (v: T) => void };
+         function relay<T extends object>(s: Signal<T>): Signal<T> { return s; }
+         function stamp<T>(x: T & { id: string }): T & { id: string } { return x; }
+         function main() {
+           const s: Signal<{ n: number }> = { n: 1, $set: (v) => { console.log(v.n); } };
+           const r = relay(s);
+           r.$set({ n: r.n + 1 });
+           const t = stamp({ a: 1, id: \"x\" });
+           console.log(t.a, t.id);
+         }",
+    );
+    // `any`, `unknown` and `object` parts, as TypeScript intersects them.
+    let p = param("function f(x: unknown & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+    let p = param("function f(x: object & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+}
+
+#[test]
+fn members_of_a_deferred_intersection_are_not_available_in_generic_code_yet() {
+    let e =
+        err_src("function f<T>(x: T & { id: string }): string { return x.id; } function main() {}");
+    assert!(e.contains("not available yet (#350)"), "{e}");
 }

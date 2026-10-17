@@ -93,6 +93,9 @@ impl Ctx<'_> {
                     if let Some(&s) = self.type_level.op_sites.get(&t) {
                         self.type_level.op_sites.entry(op).or_insert(s);
                     }
+                    if let Some(&m) = self.type_level.op_modules.get(&t) {
+                        self.type_level.op_modules.entry(op).or_insert(m);
+                    }
                 }
                 self.canon_memo.insert(t, out);
                 return out;
