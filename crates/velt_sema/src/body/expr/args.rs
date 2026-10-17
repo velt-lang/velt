@@ -403,7 +403,7 @@ impl FnCx<'_, '_> {
                 known[k] = slots[k];
             }
             let expected = self.cx.subst_known(p.ty, &known);
-            let expected = self.constraint_expected(c, &args[i], p.ty, expected, slots);
+            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));

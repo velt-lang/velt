@@ -142,8 +142,9 @@ function main() {
 
 - A call takes the first signature, in order, that accepts its arguments (after inferring its
   type arguments, which must satisfy their bounds) and has that signature's result type. When
-  none does, the error lists why each one didn't (TypeScript's TS2769). The implementation's own signature is not one of the
-  forms: `describe(v)` with `v: string | number` is an error, as in TypeScript.
+  none does, the error lists why each one didn't (TypeScript's TS2769). The implementation's
+  own signature is not one of the forms: `describe(v)` with `v: string | number` is an error,
+  as in TypeScript.
 - Signatures may be generic and have optional and rest parameters. The implementation takes
   every signature's arguments: a signature it can't take is an error at the signature (TS2394).
   A signature with fewer parameters, or an optional one left out of a call, leaves the
@@ -261,8 +262,9 @@ against it.
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
 separately, so there is no boxing and bounds resolve to direct calls. Type arguments are
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
-([Generics](classes.md#generics)) or, as in TypeScript, other types (see below). A `const` type parameter (`function tag<const K>(k: K)`,
-TypeScript 5.0) is accepted and treated as an ordinary type parameter.
+([Generics](classes.md#generics)) or, as in TypeScript, other types (see below). A `const` type
+parameter (`function tag<const K>(k: K)`, TypeScript 5.0) is accepted and treated as an ordinary
+type parameter.
 
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
@@ -311,9 +313,10 @@ function type. The type argument is related to it as `tsc` relates types (struct
 types); one that is not assignable is an error (``the type `boolean` does not satisfy the
 constraint `string | number` ``, TypeScript's TS2345 and TS2344). A literal argument for a type
 parameter whose bound has literal types keeps its literal type (`same("a")` of
-`same<T extends "a" | "b">` is `same<"a">`). An overloaded call takes the first signature whose
-bounds its arguments satisfy ([Overloads](#overloads)), so the bounds choose the form as they do
-in TypeScript:
+`same<T extends "a" | "b">` is `same<"a">`), also where the parameter's type contains the type
+parameter (`t?: T`, `t: T | null`, `t: T[]`, `o: { k: T }`). An overloaded call takes the first
+signature whose bounds its arguments satisfy ([Overloads](#overloads)), so the bounds choose the
+form as they do in TypeScript:
 
 ```ts
 type Primitive = string | number | boolean | null;

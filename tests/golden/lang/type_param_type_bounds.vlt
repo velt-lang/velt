@@ -41,6 +41,27 @@ function same<T extends "a" | "b">(t: T): T {
   return t;
 }
 
+// A literal keeps its literal type wherever the slot appears in the parameter's type.
+type Key = "a" | "b";
+function optional<T extends "a" | "b">(t?: T): number {
+  return t == null ? 0 : 1;
+}
+function nullable<T extends "a" | "b">(t: T | null): number {
+  return t == null ? 0 : 2;
+}
+function arr<T extends "a" | "b">(t: T[]): number {
+  return t.length;
+}
+function obj<T extends "a" | "b">(o: { k: T }): number {
+  return 4;
+}
+function withDefault<T extends Key = "a">(t?: T): string {
+  return t == null ? "none" : "some";
+}
+function nums<T extends 1 | 2 | 3>(xs: T[]): number {
+  return xs.length;
+}
+
 // A type parameter of the caller satisfies a bound through its own.
 function label<T extends string | number>(x: T): string {
   return describe(x);
@@ -57,4 +78,6 @@ function main() {
   console.log(count({ a: 1, b: 2 }, ["a", "b"]));
   console.log(run((x: number) => x + 1), same("a"), same("b"));
   console.log(label(7), label("q"));
+  console.log(optional("b"), nullable("a"), arr(["a", "b"]), obj({ k: "a" }));
+  console.log(withDefault("b"), withDefault(), nums([1, 3]));
 }

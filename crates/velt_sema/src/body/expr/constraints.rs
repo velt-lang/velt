@@ -13,32 +13,37 @@ use crate::body::FnCx;
 use crate::hir::{TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// The type a literal argument for a parameter of type `pty` is checked against when `pty`
-    /// is a slot no argument fixed yet whose type bound has literal types: the bound, so the
-    /// argument keeps its literal type (`same("a")` of `same<T extends "a" | "b">` infers `"a"`,
-    /// as `tsc` does). `expected` otherwise.
+    /// The type an argument holding literals is checked against for a parameter of type `pty`
+    /// that mentions slots no argument fixed yet whose type bounds have literal types: `pty`
+    /// with those slots replaced by their bounds, so the literals keep their literal types
+    /// (`same("a")` of `same<T extends "a" | "b">` infers `"a"`, and so do `t?: T`,
+    /// `t: T | null`, `t: T[]` and `o: { k: T }`, as `tsc` does). `expected` otherwise.
     pub(super) fn constraint_expected(
         &mut self,
         c: &Callable,
         arg: &ast::Expr,
         pty: TyId,
         expected: TyId,
-        slots: &[Option<TyId>],
+        (known, slots): (&[Option<TyId>], &[Option<TyId>]),
     ) -> TyId {
-        let TyKind::Param(k) = *self.cx.ty.kind(pty) else {
-            return expected;
-        };
-        let Some(b) = c.constraints.get(k as usize).copied().flatten() else {
-            return expected;
-        };
-        if slots.get(k as usize).is_none_or(Option::is_some)
-            || crate::body::narrow::literal_of(arg).is_none()
-        {
+        if c.constraints.iter().all(Option::is_none) || !has_literal(arg) {
             return expected;
         }
-        let b = self.cx.subst_known(b, slots);
-        match self.cx.has_literal_member(b) {
-            true => b,
+        let mut with_bounds = known.to_vec();
+        let mut changed = false;
+        for (k, b) in c.constraints.iter().enumerate() {
+            let Some(b) = *b else { continue };
+            if slots.get(k).is_none_or(Option::is_some) {
+                continue;
+            }
+            let b = self.cx.subst_known(b, slots);
+            if self.cx.has_literal_member(b) {
+                with_bounds[k] = Some(b);
+                changed = true;
+            }
+        }
+        match changed {
+            true => self.cx.subst_known(pty, &with_bounds),
             false => expected,
         }
     }
@@ -94,5 +99,18 @@ impl FnCx<'_, '_> {
             }
         }
         self.cx.satisfies_constraint(t, bound)
+    }
+}
+
+/// Does `e` hold a literal (`"a"`, `["a"]`, `{ k: "a" }`)?
+fn has_literal(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Array(xs) => xs.iter().any(has_literal),
+        ast::ExprKind::Object(ps) => ps.iter().any(|p| match p {
+            ast::ObjectProp::KeyValue(_, v) => has_literal(v),
+            _ => false,
+        }),
+        ast::ExprKind::Paren(inner) => has_literal(inner),
+        _ => crate::body::narrow::literal_of(e).is_some(),
     }
 }
