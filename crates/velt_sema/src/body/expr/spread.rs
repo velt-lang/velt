@@ -167,7 +167,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The accessible fields of spread source `e`, each read per the module docs, with whether
-    /// the field is optional (`a?: T`: absent when null).
+    /// the field is optional (`a?: T`: absent when it holds its nothing; an `a?: T | null` is
+    /// absent when it holds `undefined` and passes a present `null`).
     pub(super) fn spread_source(
         &mut self,
         e: &ast::Expr,
@@ -175,7 +176,10 @@ impl FnCx<'_, '_> {
     ) -> Vec<(String, hir::Expr, bool)> {
         self.spread_fields(e, lets, true)
             .into_iter()
-            .map(|(n, h, src)| (n, h, src.optional && !src.presence))
+            .map(|(n, h, src)| {
+                let optional = src.optional && !(src.presence && self.is_three_state(h.ty));
+                (n, h, optional)
+            })
             .collect()
     }
 
@@ -556,10 +560,49 @@ impl FnCx<'_, '_> {
                         };
                         self.mk(kind, ty, span)
                     }
+                    // `nick?: T | null` into a `nick: T | null`: its `undefined` keeps the
+                    // earlier value, its `null` overrides.
+                    _ if !keeps_undefined && self.is_three_state(h.ty) => {
+                        self.undefined_keeps(h, prev, span)
+                    }
                     _ => self.nullish_exprs(h, prev, span),
                 }
             }
         }
+    }
+
+    /// `h` (a `T | null | undefined`) as its `T | null`, or `prev` where it is `undefined`.
+    fn undefined_keeps(&mut self, mut h: hir::Expr, prev: hir::Expr, span: Span) -> hir::Expr {
+        let mid = self
+            .cx
+            .ty
+            .opt_payload(h.ty)
+            .expect("ICE: three-state option without a payload");
+        let (l, mode) = self.option_binding(&h, mid, "<spread>", true);
+        if mode == UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let v = self.mk(H::Local(l, mode), mid, span);
+        let prev = self.coerce(prev, mid);
+        let hty = h.ty;
+        let bind = self.pat(hir::PatKind::Binding(l, mode), mid, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.pat(hir::PatKind::Some(Box::new(bind)), hty, span),
+                guard: None,
+                body: v,
+            },
+            hir::Arm {
+                pat: self.pat(hir::PatKind::None, hty, span),
+                guard: None,
+                body: prev,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, mid, span)
     }
 }
 

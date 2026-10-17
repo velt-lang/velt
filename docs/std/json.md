@@ -194,15 +194,15 @@ console.log(text, m.cents); // {"cents":250} 250
   In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
   (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
   the byte offset still points at the exact place.
-- `JSON.parse<T>` lets a `T | null` field (including `a?: T`) be missing, and then it is `null`;
-  every other field is required. `JSON.stringify` omits an optional field (`a?: T`) of a class,
-  object type or interface while it is absent, as JavaScript omits a missing property, and
-  writes other `null`s (a `b: T | null` field, a `null` array element). An `a?: T` field
-  without `null` in its type is absent exactly when it is `null` (TypeScript doesn't let it hold
-  `null`). A field of an object type declared `a?: T | null` keeps the two apart, as JavaScript
-  does: `JSON.parse` records whether the key was there, and `JSON.stringify` writes a present
-  `null` (`"a":null`) and leaves out an absent field. In a class, such a field is still left out
-  while it is `null`.
+- `JSON.parse<T>` lets an optional field (`a?: T`) be missing, and then it is absent
+  (`undefined`), and a field declared `a: T | null` be missing, and then it is `null`; every
+  other field is required. An explicit JSON `null` for an `a?: T` field, whose type has no
+  `null`, leaves it absent too (a Velt rule: the type cannot hold the `null`); for an
+  `a?: T | null` field it is a present `null`.
+- `JSON.stringify` leaves out an optional field (`a?: T`) of a class, object type or interface
+  while it is absent or holds `undefined`, as JavaScript leaves out a missing property and one
+  holding `undefined`, and writes a `null` (a present `null` of an `a?: T | null` field, a
+  `b: T | null` field, a `null` array element).
 - `Value`:
   - navigation: `get(key)`, `at(i)`, both returning `Value | null`; `has(key)` (the key is
     present, even with a `null` value: absent vs explicit `null` is only visible here, as

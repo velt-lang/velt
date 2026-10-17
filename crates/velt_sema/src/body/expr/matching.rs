@@ -307,9 +307,12 @@ impl FnCx<'_, '_> {
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }
-        // An untyped default (`n ?? 0`) takes the payload's type.
-        let hint = match exp {
-            Some(e) if !super::ops::untyped(rhs) => e,
+        // An untyped default (`n ?? 0`) takes the payload's type; `x ?? null` and
+        // `x ?? undefined` give the payload's option with that nothing (`string | undefined`
+        // `?? null` is a `string | null`, as in TypeScript).
+        let hint = match (nothing_lit(rhs), exp) {
+            (Some(n), _) if !self.is_three_state(s.ty) => self.cx.ty.option_of(payload, n),
+            (_, Some(e)) if !super::ops::untyped(rhs) => e,
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
@@ -346,9 +349,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
         let mut v = self.mk(H::Local(l, mode), payload, span);
-        let (ty, d) = if d.ty == opt {
-            v = self.mk(H::WrapSome(Box::new(v)), opt, span);
-            (opt, d)
+        let two_state = |cx: &crate::ctx::Ctx, t: TyId| {
+            cx.ty.core(t) == Some(payload) && cx.ty.nothing_of(t) != Some(Nothing::Both)
+        };
+        let (ty, d) = if d.ty == opt || two_state(self.cx, d.ty) {
+            let dty = d.ty;
+            v = self.mk(H::WrapSome(Box::new(v)), dty, span);
+            (dty, d)
         } else {
             let (value, d, ty) = self.nullish_join(v, d, payload);
             v = value;
@@ -513,5 +520,15 @@ fn moves_out(e: &hir::Expr) -> bool {
         H::UnwrapVariant { mode, .. } => *mode == UseMode::Move,
         H::Downcast(x) => moves_out(x),
         _ => false,
+    }
+}
+
+/// The nothing `e` is written as (`null`, `undefined`), if it is one of those literals.
+fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),
+        ast::ExprKind::Paren(inner) => nothing_lit(inner),
+        _ => None,
     }
 }

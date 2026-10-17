@@ -105,7 +105,7 @@ function stdioBits(mode: string | null | undefined, shift: u32): u32 {
   panic(`child_process: stdio must be "pipe", "inherit" or "ignore", got "${mode}"`);
 }
 
-function envPairs(env: Map<string, string> | null): string[] {
+function envPairs(env: Map<string, string> | null | undefined): string[] {
   const flat: string[] = [];
   if (env != null) {
     for (const [name, value] of env) {

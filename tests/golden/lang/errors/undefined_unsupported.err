@@ -22,16 +22,7 @@ undefined_unsupported.vlt:125:18: error: `JSON.stringify` of a value whose `toJS
 undefined_unsupported.vlt:126:19: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
 undefined_unsupported.vlt:127:15: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
 undefined_unsupported.vlt:128:20: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:138:15: error: a default for `b`, an optional class field declared `T | null`, is not supported yet (#930)
-undefined_unsupported.vlt:152:23: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:153:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:154:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:155:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:156:45: error: `undefined` as the value of an optional field is not supported yet (#930)
-undefined_unsupported.vlt:157:45: error: `undefined` as the value of an optional field is not supported yet (#930)
+undefined_unsupported.vlt:152:23: error: `undefined` passed for a parameter with a default is not supported yet (#930)
 undefined_unsupported.vlt:166:21: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
 undefined_unsupported.vlt:167:12: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
-undefined_unsupported.vlt:182:47: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:183:30: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:184:53: error: `undefined` as the value of an optional field is not supported yet (#930)
 undefined_unsupported.vlt:189:10: error: a `f64 | null` from the standard library where a `f64 | undefined` is expected is not supported yet (#930)

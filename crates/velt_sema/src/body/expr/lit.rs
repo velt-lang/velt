@@ -226,17 +226,17 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An `undefined` (a literal, or a value that may be one) at `span`, given for an optional
-    /// parameter, a parameter with a default or an optional field: TypeScript accepts it, and
-    /// this phase of #930 cannot pass it on (`true`: reported). Such a parameter or field is
-    /// still a `T | null` whose `null` stands for "left out".
+    /// An `undefined` (a literal, or a value that may be one) at `span`, given for a parameter
+    /// with a default whose type does not allow `undefined`: JavaScript applies the default,
+    /// which calls do not do yet (`true`: reported, issue #930). An optional parameter or field
+    /// is a `T | undefined` and takes it as is.
     pub(crate) fn optional_slot_error(&mut self, span: Span) -> bool {
         let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
             return false;
         };
         let (what, note) = match slot {
             crate::body::OptionalSlot::Param => (
-                "`undefined` passed for an optional parameter or one with a default",
+                "`undefined` passed for a parameter with a default",
                 "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
             ),
             crate::body::OptionalSlot::Field => (

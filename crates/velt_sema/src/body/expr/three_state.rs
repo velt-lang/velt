@@ -276,19 +276,19 @@ impl FnCx<'_, '_> {
         self.mk(kind, exp, span)
     }
 
-    /// A `T | undefined` value `h` as a `T | null` (same `T`): its `undefined` becomes `null`.
-    /// For places where both mean "no value" and the target keeps only `null`, such as a JSX
-    /// attribute (`title={props.title}` with `title?: string` leaves the attribute out either
-    /// way).
-    pub(crate) fn undefined_as_null(&mut self, mut h: hir::Expr) -> hir::Expr {
+    /// A two-state option value `h` (`T | undefined` or `T | null`) as the option of the same
+    /// `T` with nothing `to`: its nothing becomes the other one. For places where both mean "no
+    /// value" and the target keeps only one, such as a JSX attribute (`title={props.title}`
+    /// with `title?: string` leaves the attribute out either way).
+    pub(crate) fn with_nothing(&mut self, mut h: hir::Expr, to: Nothing) -> hir::Expr {
         let span = h.span;
         let core = self
             .cx
             .ty
             .core(h.ty)
-            .expect("ICE: `T | undefined` without a payload");
-        let exp = self.cx.ty.option_of(core, Nothing::Null);
-        let (l, mode) = self.option_binding(&h, core, "<undefined>", true);
+            .expect("ICE: an option without a payload");
+        let exp = self.cx.ty.option_of(core, to);
+        let (l, mode) = self.option_binding(&h, core, "<nothing>", true);
         if mode == hir::UseMode::Move {
             self.force_move(&mut h);
         }

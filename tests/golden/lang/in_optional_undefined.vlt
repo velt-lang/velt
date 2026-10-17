@@ -1,8 +1,9 @@
-// `"b" in o` on an optional field answers whether the field holds a value. Node also finds a
-// key that holds `undefined`, so a program that tests the field with `in` and stores a value
-// that may be `undefined` in it (a shorthand, an assignment, a spread of a field that is not
-// optional, a generic helper, a call's result, another object's optional field written out) is
-// an error rather than a silent `false` (#930).
+// check: no leaks
+// `"b" in o` on an optional field answers whether the key is there, as in Node: a key that
+// holds `undefined` is there too (a shorthand, an assignment, a spread of a field that is not
+// optional, a generic helper, a call's result, another object's optional field written out),
+// an absent one is not (#930 phase 2; this was an error while an optional field was `T | null`).
+// Expected output from Node 22.
 type B = { kind: string; b?: string };
 type C = { kind: string; c?: string };
 type D = { kind: string; d?: number };
@@ -28,7 +29,7 @@ function box<T>(v: T): { kind: string; d?: T } {
 }
 
 function first(xs: number[]): E {
-  return { kind: "e", e: xs.pop() };
+  return { kind: "e", e: xs.pop() ?? undefined };
 }
 
 type F = { kind: string; f?: string };

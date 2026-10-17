@@ -1,0 +1,137 @@
+// check: no leaks
+// Optional parameters and fields (`p?: T`, `a?: T`) are `T | undefined`, as in TypeScript
+// (#930 phase 2, #1182): a left-out argument or field is `undefined`, `?.` gives `undefined`,
+// and `p?: T | null` holds three states. Expected output from Node 22.
+
+function u(z?: string, n?: number) {
+  console.log(z, n);
+  console.log(typeof z, typeof n, `${z}`, String(n));
+  console.log([z], z === undefined, z == null);
+}
+
+function three(p?: string | null): string {
+  if (p === undefined) return "undef";
+  if (p === null) return "null";
+  return p;
+}
+
+function gen<T>(x?: T): string {
+  return typeof x;
+}
+
+function greet(name: string, greeting?: string): string {
+  return `${greeting ?? "Hello"}, ${name}`;
+}
+
+function prodError(code: number, detail?: string): string {
+  return `${code}:${detail ?? "-"}`;
+}
+
+class User {
+  name: string = "ann";
+  nickname?: string;
+}
+
+class Box {
+  label?: string;
+  count?: number | null;
+}
+
+interface Opts {
+  port: number;
+  host?: string;
+  note?: string | null;
+}
+
+type O = { a?: number; b?: string | null };
+type U = { name: string; nick?: string; deletedAt?: string | null };
+
+function update(base: U, patch: Partial<U>): U {
+  return { ...base, ...patch };
+}
+
+function pick(nick: string | undefined): U {
+  return { name: "d", nick };
+}
+
+interface Greeter {
+  greet(name: string, greeting?: string): string;
+}
+
+class G implements Greeter {
+  greet(name: string, greeting?: string): string {
+    return `${greeting} ${name}`;
+  }
+}
+
+class Item {
+  n: number = 1;
+}
+
+function chain(p: Item | null) {
+  const v = p?.n;
+  console.log(v, typeof v);
+}
+
+function nested(p: Item | null | undefined) {
+  if (p !== undefined) console.log(p?.n);
+}
+
+function maybeLen(s?: string): number | undefined {
+  return s?.length;
+}
+
+function main() {
+  u();
+  u("a", 1);
+  u(undefined, 2);
+  console.log(three(), three(null), three("x"), three(undefined));
+  console.log(gen<number>(), greet("ann"), greet("bo", "Hi"));
+  const name = "";
+  console.log(prodError(1, name ? `"${name}"` : undefined), prodError(2, "d"));
+
+  const usr = new User();
+  console.log(usr, usr.nickname, typeof usr.nickname, JSON.stringify(usr));
+  usr.nickname = "a";
+  console.log(usr, JSON.stringify(usr));
+  const b = new Box();
+  console.log(b, JSON.stringify(b), b.count === undefined);
+  b.count = null;
+  console.log(b, JSON.stringify(b));
+  const { count = 7 } = new Box();
+  const { count: kept = 7 } = b;
+  console.log(count, kept);
+
+  const o: Opts = { port: 80 };
+  const o2: Opts = { port: 81, host: "h", note: null };
+  console.log(o, o2, JSON.stringify(o), JSON.stringify(o2));
+  console.log(o.host, typeof o.host, o.note, o2.note);
+  const x: O = {};
+  const y: O = { a: 1, b: null };
+  console.log(x, y, JSON.stringify(x), JSON.stringify(y), x.a, x.b, y.b, { ...y, ...x });
+
+  const base: U = { name: "ann", nick: "a", deletedAt: "2026" };
+  const cleared = update(base, { nick: undefined });
+  console.log(cleared, JSON.stringify(cleared), "nick" in cleared);
+  const same = update(base, {});
+  console.log(same, "nick" in same);
+  const v: U = { name: "bo" };
+  console.log(v, "nick" in v, v.nick, v.deletedAt);
+  const w: U = { name: "cy", nick: undefined, deletedAt: null };
+  console.log(w, "nick" in w, JSON.stringify(w));
+  console.log(pick(undefined), pick("x"));
+  const { nick = "dflt", deletedAt = "dd" } = v;
+  const { deletedAt: dz = "dd" } = w;
+  console.log(nick, deletedAt, dz);
+
+  const g: Greeter = new G();
+  console.log(g.greet("a"), g.greet("b", "hi"));
+  const fv: (a: number, b?: string) => string = (a, s) => `${a}:${s}`;
+  const arrow = (a: number, s?: number) => `${a} ${s}`;
+  console.log(fv(1, "x"), fv(2, undefined), arrow(1), arrow(1, 2));
+
+  chain(null);
+  chain(new Item());
+  nested(null);
+  console.log(maybeLen(), maybeLen("abc"));
+}
