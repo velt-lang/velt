@@ -401,15 +401,17 @@ fn call(callee: Expr, args: Vec<Expr>) -> Expr {
     )
 }
 
+/// The callee of `#undefined_or(value, default)`: `value`, or `default` where it is
+/// `undefined` (not `null`, which a default never replaces). The name can't be written in
+/// source; sema checks the call as `FnCx::undefined_or`.
+pub(super) const UNDEFINED_OR: &str = "#undefined_or";
+
+/// A destructuring default: `#undefined_or(lhs, rhs)`.
 fn nullish(lhs: Expr, rhs: Expr) -> Expr {
     let span = lhs.span;
-    mk(
-        E::Binary {
-            op: ast::BinaryOp::Nullish,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        },
-        span,
+    call(
+        mk(E::Ident(ident(UNDEFINED_OR, span)), span),
+        vec![lhs, rhs],
     )
 }
 

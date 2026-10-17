@@ -445,8 +445,9 @@ one that stops early, or a sum of floats, whose order it must keep.
 ## Null and undefined
 
 `null` and `undefined` are two values, as in JavaScript. A value that may be absent has type
-`T | null` or `T | undefined` (`A | B | undefined` for a union), stored without an extra
-allocation where possible; the two types take the same space. `undefined` behaves as in Node:
+`T | null`, `T | undefined` or `T | null | undefined` (`A | B | undefined` for a union), stored
+without an extra allocation where possible; `T | null` and `T | undefined` take the same space,
+and `T | null | undefined` holds a `T | null` with one more flag. `undefined` behaves as in Node:
 
 ```ts
 function find(xs: string[], s: string): string | undefined {
@@ -460,10 +461,33 @@ console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [nu
 const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
 ```
 
+A `T | null | undefined` keeps the two apart: `x === null` and `x === undefined` each test
+one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one it holds.
+`x !== undefined` narrows it to `T | null`, and both tests (or `x != null`, or truthiness)
+narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
+`undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
+`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`undefined`.
+
+```ts
+function show(x: string | null | undefined): string {
+  if (x === undefined) return "undefined";
+  if (x === null) return "null";
+  return x.toUpperCase();
+}
+
+const xs: (string | null | undefined)[] = ["a", null, undefined];
+console.log(xs.map(show), xs.map((x) => typeof x)); // [ 'A', 'null', 'undefined' ] [ 'string', 'object', 'undefined' ]
+console.log(JSON.stringify({ a: xs[1], b: xs[2] }), xs[2] ?? "d"); // {"a":null} d
+let later: number | undefined;
+console.log(later, [1, undefined]); // undefined [ 1, undefined ]
+```
+
 `x == null` and `x == undefined` match either nothing; `x === undefined` tests a
 `T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
 and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
-narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
+narrows, `?.` on a value that may be `undefined` gives `undefined` (a `T | null` result
+becomes `T | null | undefined`), and `JSON.stringify` leaves out a field
 holding `undefined` and writes an array element as `null`. A destructuring default applies where
 the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
@@ -479,7 +503,7 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
@@ -487,9 +511,10 @@ the nothing the type lacks; `as` between `T | undefined` and `T | null`; a param
 other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
 a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
 of it, directly or through what it calls (a `T | undefined` for `Map.set`,
-`Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
-a `T | undefined`), which includes a generic alias applied that way (`type Nullable<T> = T | null`
-as `Nullable<number | undefined>`). Also not supported yet, although TypeScript accepts them:
+`Array.prototype.find` or a generic function holding a `T | null`), which includes a generic
+alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
+other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
+`T | null | undefined`. Also not supported yet, although TypeScript accepts them:
 
 - `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
   parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):

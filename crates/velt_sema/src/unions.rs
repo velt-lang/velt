@@ -111,9 +111,10 @@ impl Ctx<'_> {
                 self.err("`null` alone is not a type; write `T | null`", span);
                 return self.ty.error;
             }
+            0 if nothing == Some(Nothing::Undefined) => return self.ty.undefined(),
             0 if nothing.is_some() => {
                 self.err(
-                    "`undefined` alone (or `null | undefined`) as a type is not supported yet",
+                    "`null | undefined` alone as a type is not supported yet",
                     span,
                 );
                 return self.ty.error;
@@ -123,13 +124,6 @@ impl Ctx<'_> {
             _ => self.union_enum(&members),
         };
         match nothing {
-            Some(Nothing::Both) => {
-                self.err(
-                    "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
-                    span,
-                );
-                self.ty.error
-            }
             Some(n) => self.ty.option_of(core, n),
             None => core,
         }

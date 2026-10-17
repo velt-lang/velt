@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
             .union_members(target)
             .unwrap_or_else(|| vec![target])
             .into_iter()
-            .map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+            .map(|t| self.cx.ty.core(t).unwrap_or(t))
             .collect();
         let parts = self.cx.union_members(u).unwrap_or_else(|| vec![u]);
         let mut holds: Vec<TyId> = vec![];

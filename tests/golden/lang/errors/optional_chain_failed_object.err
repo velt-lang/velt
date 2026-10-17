@@ -1,2 +1,2 @@
-optional_chain_failed_object.vlt:5:35: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
+optional_chain_failed_object.vlt:6:10: error: a cast from `T | null | undefined` to `T | undefined` is not supported yet (#930)
 optional_chain_failed_object.vlt:9:18: error: cannot find type `Missing` in this scope

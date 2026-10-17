@@ -6,7 +6,12 @@ use super::narrow::Fact;
 
 /// Per open scope: its non-null locals, union member facts and subclass facts (see
 /// `FnCx::narrow_state`).
-pub(crate) type NarrowState = Vec<(Vec<LocalId>, Vec<(LocalId, Vec<u32>)>, Vec<(LocalId, TyId)>)>;
+pub(crate) type NarrowState = Vec<(
+    Vec<LocalId>,
+    Vec<(LocalId, Vec<u32>)>,
+    Vec<(LocalId, TyId)>,
+    Vec<(LocalId, crate::hir::Nothing)>,
+)>;
 
 /// What a local is narrowed to: non-null, union members, a subclass.
 type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
@@ -324,6 +329,11 @@ impl FnCx<'_, '_> {
         self.f.scopes.iter().any(|s| s.narrowed.contains(&l))
     }
 
+    /// Is `T | null | undefined` local `l` known not to hold nothing `n` here?
+    pub fn excludes(&self, l: LocalId, n: crate::hir::Nothing) -> bool {
+        self.f.scopes.iter().any(|s| s.excluded.contains(&(l, n)))
+    }
+
     /// Assume `fact` in the innermost scope (member sets intersect with what is known).
     pub fn narrow(&mut self, fact: &Fact) {
         if self.refuse_fact(fact) {
@@ -331,6 +341,18 @@ impl FnCx<'_, '_> {
         }
         match fact {
             Fact::NonNull(l) => self.innermost_scope().narrowed.push(*l),
+            Fact::Excludes(l, n) => {
+                let other = match n {
+                    crate::hir::Nothing::Null => crate::hir::Nothing::Undefined,
+                    _ => crate::hir::Nothing::Null,
+                };
+                let both = self.excludes(*l, other);
+                let scope = self.innermost_scope();
+                scope.excluded.push((*l, *n));
+                if both {
+                    scope.narrowed.push(*l);
+                }
+            }
             Fact::Members(l, vs) => {
                 let vs = match self.allowed_members(*l) {
                     Some(cur) => vs.iter().copied().filter(|v| cur.contains(v)).collect(),
@@ -389,22 +411,44 @@ impl FnCx<'_, '_> {
         self.f
             .scopes
             .iter()
-            .map(|s| (s.narrowed.clone(), s.members.clone(), s.classes.clone()))
+            .map(|s| {
+                (
+                    s.narrowed.clone(),
+                    s.members.clone(),
+                    s.classes.clone(),
+                    s.excluded.clone(),
+                )
+            })
             .collect()
     }
 
     pub fn restore_narrowing(&mut self, st: &NarrowState) {
-        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(st) {
+        for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(st) {
             s.narrowed = n.clone();
             s.members = m.clone();
             s.classes = c.clone();
+            s.excluded = x.clone();
         }
     }
 
     /// After sibling branches that both continue: keep only the facts `other` (the state at the
     /// end of the other branch) still has.
     pub fn meet_narrowing(&mut self, other: &NarrowState) {
-        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(other) {
+        for (s, (n, m, c, x)) in self.f.scopes.iter_mut().zip(other) {
+            // A nothing is ruled out after both branches when each rules it out, by a strict
+            // test or by narrowing the local to its value (`NonNull` rules out both).
+            let mut excluded: Vec<_> = s
+                .excluded
+                .iter()
+                .filter(|f| x.contains(f) || n.contains(&f.0))
+                .copied()
+                .collect();
+            for f in x {
+                if s.narrowed.contains(&f.0) && !excluded.contains(f) {
+                    excluded.push(*f);
+                }
+            }
+            s.excluded = excluded;
             s.narrowed.retain(|l| n.contains(l));
             s.members.retain(|f| m.contains(f));
             s.classes.retain(|f| c.contains(f));
@@ -419,6 +463,7 @@ impl FnCx<'_, '_> {
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
             s.members.retain(|(x, _)| *x != l && !fields.contains(x));
             s.classes.retain(|(x, _)| *x != l && !fields.contains(x));
+            s.excluded.retain(|(x, _)| *x != l && !fields.contains(x));
         }
     }
 

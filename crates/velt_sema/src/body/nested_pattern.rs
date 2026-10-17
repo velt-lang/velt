@@ -92,7 +92,7 @@ impl FnCx<'_, '_> {
         tag: &str,
         out: &mut Vec<(String, ast::Pattern)>,
     ) -> ast::Pattern {
-        let ty = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let ty = self.cx.ty.core(ty).unwrap_or(ty);
         if matches!(p.kind, ast::PatternKind::Array { .. }) && self.is_consumable(ty) {
             let name = format!("<nested#{tag}.{}>", out.len());
             out.push((name.clone(), p.clone()));
