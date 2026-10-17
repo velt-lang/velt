@@ -29,7 +29,7 @@ use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 use crate::SourceModule;
 
 mod graph;
-mod scan;
+pub(crate) mod scan;
 
 use graph::{cycle, sccs, topo};
 use scan::{scan_fn, scan_stmt, Scan};

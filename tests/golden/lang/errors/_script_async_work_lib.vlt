@@ -1,0 +1,7 @@
+export function ready(): boolean {
+  return true;
+}
+
+setTimeout(() => console.log("m timeout"), 0);
+Promise.resolve(1).then(() => console.log("m microtask"));
+console.log("m sync end");

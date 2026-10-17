@@ -1,0 +1,8 @@
+export function check(): boolean {
+  return true;
+}
+
+console.log("lib starts");
+if (check()) {
+  throw new Error("two copies loaded");
+}
