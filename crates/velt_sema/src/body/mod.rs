@@ -39,7 +39,7 @@ pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
-mod defaults;
+pub(crate) mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
@@ -423,6 +423,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
+    /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
+    pub weak_key_args: bool,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
@@ -444,6 +447,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The member of a recursive closure group whose arrow is about to be checked: group,
     /// member and its definition.
     pub pending_member: Option<(usize, usize, DefId)>,
+    /// Checking the body of an interface adapter's method (`expr/iface_adapt.rs`): an `unknown`
+    /// converts to a typed value checked at run time, and a function value to another function
+    /// type through an adapting arrow.
+    pub adapting: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -476,6 +483,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,
+            weak_key_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
             literal: Default::default(),
@@ -484,6 +492,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_trial: false,
             this_calls: Default::default(),
             pending_member: None,
+            adapting: false,
         }
     }
 

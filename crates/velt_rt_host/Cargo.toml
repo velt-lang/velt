@@ -11,8 +11,11 @@ build = "../velt_rt/build.rs"
 
 [lib]
 path = "../velt_rt/src/lib.rs"
-# velt_rt runs the runtime's unit tests; here they would only run twice.
+# velt_rt runs the runtime's unit tests; here they would only run twice. `bench` must be off too:
+# with it on, `--all-targets` (check.sh, CI, clippy) still builds the lib's unit tests as a bench
+# target, a second runtime-sized compile and link.
 test = false
+bench = false
 doctest = false
 
 [dependencies]
@@ -63,5 +66,6 @@ default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 
 [dev-dependencies]
-# velt_rt's unit tests compare the SDK's layouts (clippy --all-targets builds them here too).
+# velt_rt's unit tests compare the SDK's layouts; needed only when they are built here explicitly
+# (`cargo test -p <this crate> --lib`), since the lib has test = false and bench = false.
 velt_native = { path = "../velt_native" }

@@ -1,10 +1,10 @@
-// `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target (issue #926): TypeScript
-// accepts these; Velt does not support them yet (each type an `object` holds would have to be
-// weak-capable).
-function register(target: object): void {
-  const ws = new WeakSet<object>();
-  const wm = new WeakMap<object, number>();
+// `Function` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target (issue #926):
+// TypeScript accepts these; Velt does not support them yet (function values are not counted
+// objects). `object` keys are supported (std/weakmap_object.vlt).
+function register(target: Function): void {
+  const ws = new WeakSet<Function>();
+  const wm = new WeakMap<Function, number>();
   const ref = new WeakRef(target);
   console.log(ws.has(target), wm.has(target), ref.deref() === target);
 }
-register([1]);
+register(() => 1);

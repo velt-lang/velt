@@ -1,0 +1,82 @@
+// Prelude: the containers of interface adapters (issue #1153; docs/reference/types.md "Generic
+// interfaces with `unknown` arguments").
+//
+// A `Handler<Map<unknown, unknown>, E>` converted to `Handler<unknown, unknown>` receives an
+// `unknown` that may hold a map of any type (`Map<string, number>`), whose elements are stored
+// unboxed. The adapter passes the method a copy holding the elements boxed (`…In`), and when the
+// method returns writes the copy back into the map it was made from (`…Out`), so the caller's
+// map sees every change. Each element written back converts to the map's own element types,
+// checked as a conversion out of `any` is. The helpers for `Set<unknown>` are in
+// std/collections/set.vlt, which a program naming `Set` loads.
+//
+// The file name sorts last, so the prelude modules before it keep their indexes. Its bodies
+// use dynamic operations without making the program pay for them: sema counts a program as
+// using `any` members only when it converts such a value (`body/expr/iface_adapt.rs`).
+
+/** Stops with the `TypeError` of an argument `v` that is not the `want` a method expects. */
+export function __adaptMismatch(v: unknown, want: string): never {
+  let found = "an object";
+  if (v === undefined) {
+    found = "undefined";
+  } else if (v === null) {
+    found = "null";
+  } else if (Array.isArray(v)) {
+    found = "an array";
+  } else if (typeof v !== "object") {
+    found = `a ${typeof v}`;
+  }
+  panic(`TypeError: the value is not ${want} (it is ${found})`);
+}
+
+/** An array of any type held by `v`, as an `unknown[]` of its elements. */
+export function __unknownArrayIn(v: unknown): unknown[] {
+  if (!Array.isArray(v)) {
+    __adaptMismatch(v, "an unknown[]");
+  }
+  const a = v as any;
+  const out: unknown[] = [];
+  const n = a.length as number;
+  for (let i = 0; i < n; i++) {
+    out.push(a[i]);
+  }
+  return out;
+}
+
+/** Writes the elements of `xs` back into the array `v` holds (`__unknownArrayIn`). */
+export function __unknownArrayOut(v: unknown, xs: unknown[]): void {
+  const a = v as any;
+  const n = a.length as number;
+  if (xs.length != n) {
+    panic(
+      "TypeError: changing the length of an array passed as `unknown[]` through an interface adapter is not supported yet (#1185)",
+    );
+  }
+  for (let i = 0; i < n; i++) {
+    a[i] = xs[i];
+  }
+}
+
+/** A map of any type held by `v`, as a `Map<unknown, unknown>` of its entries. */
+export function __unknownMapIn(v: unknown): Map<unknown, unknown> {
+  if (!(v instanceof Map)) {
+    __adaptMismatch(v, "a Map<unknown, unknown>");
+  }
+  const a = v as any;
+  const ks = a.keys();
+  const vs = a.values();
+  const n = ks.length as number;
+  const out = new Map<unknown, unknown>();
+  for (let i = 0; i < n; i++) {
+    out.set(ks[i], vs[i]);
+  }
+  return out;
+}
+
+/** Writes the entries of `m` back into the map `v` holds (`__unknownMapIn`). */
+export function __unknownMapOut(v: unknown, m: Map<unknown, unknown>): void {
+  const a = v as any;
+  a.clear();
+  for (const [k, x] of m) {
+    a.set(k, x);
+  }
+}

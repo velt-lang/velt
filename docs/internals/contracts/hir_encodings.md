@@ -715,7 +715,7 @@ entry is an `ICE:`.
   `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
   of one object, such as a class and its base, compare the data pointers; `==` of an object
   and a primitive stops with a `TypeError`).
-- A dynamic value is never boxed again: `ToDyn` never has a dynamic operand (an `any | null`
+- A dynamic value is never boxed again: `ToDyn` has no dynamic operand but a weak key (below; an `any | null`
   unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
   interface value; lowering keeps its data pointer and takes the `any` table of the concrete
   type from the interface table. Into a union or literal type, `AnyTo` is applied per member
@@ -770,6 +770,22 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
+  an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
+  or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the
+  original interface value (moved in; dropping the adapter drops it), through an `ImplDef` of
+  `I<B>` for that struct. Sema makes one struct and impl per `(I, A, B)` the program converts
+  (`Ctx::iface_adapters`). Each impl method (`<I> adapter.<m>`, `this` borrowed) calls the same
+  slot of the field (`Callee::Dyn`), its arguments converted with `AnyTo` (or, for a function,
+  an arrow adapting each call) and its result boxed with `ToDyn` of `Program::any_impl` (or
+  adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
+  value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
+  `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
+  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
+  `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
+  `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
+  Lowering sees only these ordinary forms.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
@@ -778,7 +794,13 @@ entry is an `ICE:`.
   values) into `object` and functions into `Function`; `find_impl` of either interface answers
   for the type, so `T extends object` is a bound that primitives fail. A `ToDyn` operand may then
   be a type parameter bound by `object` / `Function`; when its instantiation is itself dynamic,
-  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`).
+  lowering keeps the value as it is. `x as object` of a type parameter without that bound (or
+  of one `| null`) is such a `ToDyn` too; lowering unpacks an option or union instantiation and
+  stops with a `TypeError` on a primitive. The one `ToDyn` with a dynamic operand is a weak
+  operation's key (`WeakMap.set(k, v)` and the others, `new WeakRef(k)`) written `any` and
+  converted to `object` unchecked: a primitive reaches the operation, which behaves as in
+  JavaScript. A variable passed there as the key is shared (`Intrinsic::Share`), not moved.
+  A call of a `Function` is `AnyApply` (result `any`).
   `AnyTo` from `any` / `unknown` to `object` checks the tag: a boolean, number, string or
   symbol is a `TypeError`. `typeof x === "function"` narrows an `unknown` local with
   `Fact::Class(l, Function)`. Once

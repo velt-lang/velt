@@ -1,0 +1,11 @@
+// `x as object` of a type parameter instantiated with a primitive stops with a `TypeError`
+// (issue #926): Velt checks the value where it enters `object`, which holds no primitive.
+function asObject<T>(value: T): object {
+  return value as object;
+}
+
+function main(): void {
+  console.log(typeof asObject([1]));
+  console.log(asObject(5));
+}
+

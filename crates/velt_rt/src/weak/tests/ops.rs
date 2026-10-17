@@ -157,3 +157,77 @@ fn handles_are_reused() {
         finish(&[b]);
     });
 }
+
+#[test]
+fn a_weak_ref_keeps_its_word() {
+    no_leak(|| {
+        let o = new_obj(&[]);
+        // SAFETY: `o` is live; each ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new_with(o, 0xdead_beef) };
+        let plain = unsafe { velt_rt_weakref_new(o) };
+        assert_eq!(velt_rt_weakref_word(r), 0xdead_beef);
+        assert_eq!(velt_rt_weakref_word(plain), 0);
+        release(o);
+        assert!(velt_rt_weakref_deref(r).is_null());
+        assert_eq!(
+            velt_rt_weakref_word(r),
+            0xdead_beef,
+            "kept after the target goes"
+        );
+        unsafe { velt_rt_weakref_drop(r) };
+        unsafe { velt_rt_weakref_drop(plain) };
+        // Reused slots take the new word: both freed slots come back, one made with another
+        // word, one with none.
+        let o = new_obj(&[]);
+        let a = unsafe { velt_rt_weakref_new_with(o, 7) };
+        let b = unsafe { velt_rt_weakref_new(o) };
+        let mut ids = [a, b];
+        ids.sort_unstable();
+        let mut old = [r, plain];
+        old.sort_unstable();
+        assert_eq!(ids, old, "the freed slots are reused");
+        assert_eq!(velt_rt_weakref_word(a), 7);
+        assert_eq!(velt_rt_weakref_word(b), 0);
+        assert_eq!(velt_rt_weakref_deref(a), o);
+        release(o);
+        unsafe { velt_rt_weakref_drop(a) };
+        unsafe { velt_rt_weakref_drop(b) };
+        release(o);
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+fn keys_traced_one_by_one_free_their_cycle() {
+    // A map whose key type is dynamic (`WeakMap<object, object>`) has no key trace of its
+    // own: each key brings its trace glue to `set`, and the trial uses it.
+    in_any_order_traced();
+}
+
+fn in_any_order_traced() {
+    for first_raw in [true, false] {
+        no_leak(|| {
+            let m = velt_rt_weakmap_new(
+                None,
+                Some(retain_value),
+                Some(release_value),
+                Some(TraceFn(trace_obj)),
+            );
+            let raw = new_obj(&[]);
+            let p = new_obj(&[retain(raw)]);
+            // SAFETY: live objects; the map takes the reference to `p` given here.
+            unsafe {
+                velt_rt_weakmap_set_traced(m, raw, retain(p) as u64, Some(TraceFn(trace_obj)))
+            };
+            if first_raw {
+                release(raw);
+                release(p);
+            } else {
+                release(p);
+                release(raw);
+            }
+            assert_eq!(weakmap_len(m), 0, "first_raw {first_raw}");
+            finish(&[m]);
+        });
+    }
+}
