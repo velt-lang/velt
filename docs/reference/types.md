@@ -609,7 +609,8 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
   facts of the condition a branch started from unless it reassigned the variable, and what its
   own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
-  null) return; else x = null;` does not; a `case` passes on what holds at its `break`). A
+  null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
+  `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
   narrowed field is re-checked when read, so a call that set it to `null` in between panics
   instead of reading `null`. An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside

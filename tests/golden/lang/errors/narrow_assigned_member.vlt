@@ -69,7 +69,16 @@ function noBreakState(k: number): number {
   return x.length;
 }
 
+function whileBreak(x: string | null, c: boolean): number {
+  let y = x;
+  while (y === null) {
+    if (c) break;
+    y = "w";
+  }
+  return y.length;
+}
+
 function main() {
   console.log(reassigned(), joined(true), otherMember(true), caseNull(1), breakNull(1, true));
-  console.log(finallyNull(1), noBreakState(2));
+  console.log(finallyNull(1), noBreakState(2), whileBreak(null, true));
 }

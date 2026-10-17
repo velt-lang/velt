@@ -78,9 +78,19 @@ function breakInIf(k: number, c: boolean): number {
   return x.length;
 }
 
+// A `while` loop without `break` ends only where its condition is false (#1227).
+function untilSet(x: string | null): number {
+  let y = x;
+  while (y === null) {
+    y = "set";
+  }
+  return y.length;
+}
+
 function main() {
   console.log(elseAssigns(new B()), elseAssigns(new A()), thenAssigns(new B()), thenAssigns(new A()));
   console.log(typeofNumber(4), typeofNumber("s"), typeofString("q"), typeofString(1));
   console.log(declared(), bothBranches(true), bothBranches(false), nullable(true), nullable(false));
   console.log(cases(1), cases(2), cases(3), breakInIf(1, true), breakInIf(1, false), breakInIf(2, true));
+  console.log(untilSet(null), untilSet("ab"));
 }

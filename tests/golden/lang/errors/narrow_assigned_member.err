@@ -5,3 +5,4 @@ narrow_assigned_member.vlt:31:10: error: value of type `string | null` may be nu
 narrow_assigned_member.vlt:44:10: error: value of type `string | null` may be null
 narrow_assigned_member.vlt:57:10: error: value of type `string | null` may be null
 narrow_assigned_member.vlt:69:10: error: value of type `string | null` may be null
+narrow_assigned_member.vlt:78:10: error: value of type `string | null` may be null
