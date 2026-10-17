@@ -100,9 +100,16 @@ impl Cx<'_> {
             return;
         };
         let targets: Vec<TyId> = self.facts.proxy_targets.iter().copied().collect();
-        for t in targets {
+        for &t in &targets {
             self.add_proxiable(next, t, proxy);
         }
+        let traced = targets.into_iter().filter(|&t| match self.types.kind(t) {
+            TyKind::Adt(_, args) if self.is_class(t) => args.is_empty(),
+            _ => next.proxy_types.contains(&t),
+        });
+        next.proxy_traced.extend(traced.collect::<Vec<_>>());
+        let pty = self.intern(TyKind::Adt(proxy, vec![]));
+        next.proxy_traced.insert(pty);
         // Rule 2, to a fixed point: what a proxiable value is upcast to.
         let casts: Vec<(TyId, TyId)> = self.facts.proxy_casts.iter().copied().collect();
         let mut seen = HashSet::new();
@@ -143,7 +150,7 @@ impl Cx<'_> {
         }
     }
 
-    fn proxiable_in(&self, b: &Boxing, t: TyId) -> bool {
+    pub(super) fn proxiable_in(&self, b: &Boxing, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.proxy_roots.contains(&self.class_root(*d)),
             _ => b.proxy_types.contains(&t),
@@ -834,8 +841,9 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// Do `a` and `b` name the same place (locals, globals and fields of them), so reading one
-/// reads the other? Conservative: `false` for anything else.
+/// Do `a` and `b` name the same place (locals, globals, and fields, elements and narrowed
+/// payloads of them, with indices that are locals or literals, as sema hoists them for an
+/// update), so reading one reads the other? Conservative: `false` for anything else.
 fn same_place(a: &hir::Expr, b: &hir::Expr) -> bool {
     use hir::ExprKind as K;
     match (&a.kind, &b.kind) {
@@ -849,6 +857,39 @@ fn same_place(a: &hir::Expr, b: &hir::Expr) -> bool {
                 base: y, index: j, ..
             },
         ) => i == j && same_place(x, y),
+        (
+            K::Index {
+                base: x, index: i, ..
+            },
+            K::Index {
+                base: y, index: j, ..
+            },
+        ) => same_index(i, j) && same_place(x, y),
+        (K::UnwrapSome(x, _), K::UnwrapSome(y, _)) | (K::Downcast(x), K::Downcast(y)) => {
+            same_place(x, y)
+        }
+        (
+            K::UnwrapVariant {
+                expr: x,
+                variant: i,
+                ..
+            },
+            K::UnwrapVariant {
+                expr: y,
+                variant: j,
+                ..
+            },
+        ) => i == j && same_place(x, y),
+        _ => false,
+    }
+}
+
+/// Are `a` and `b` the same index: one local, or equal literals?
+fn same_index(a: &hir::Expr, b: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match (&a.kind, &b.kind) {
+        (K::Local(x, _), K::Local(y, _)) => x == y,
+        (K::Lit(x), K::Lit(y)) => x == y && a.ty == b.ty,
         _ => false,
     }
 }
