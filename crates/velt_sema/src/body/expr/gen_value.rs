@@ -9,10 +9,11 @@
 //! (#g0, …, #gn) => gen(#g0, …, #gn)
 //! ```
 //!
-//! (`Class.gen` for a static generator method),
-//!
-//! checked against the generator's function type: its calls apply the defaults exactly as a
-//! direct call does, at the call.
+//! (`Class.gen` for a static generator method), checked against the generator's function type:
+//! its calls apply the defaults exactly as a direct call does, at the call. The arrow captures
+//! nothing, so it is checked once per generator, in the scope of the module that declares the
+//! generator (or the class), and every read is that one function (`FnRef` of the arrow's
+//! closure, like a named function): `gen === gen` and a `Set` holds it once, as in JS.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -22,25 +23,61 @@ use crate::body::FnCx;
 use crate::hir::{self, DefId, TyId};
 
 impl FnCx<'_, '_> {
-    /// Generator `d` (named by `callee` here: `gen`, `Class.gen`) used as a value at `span`,
-    /// when one of its parameters has a default a passed `undefined` takes (module docs);
-    /// `None` otherwise.
+    /// Generator `d` (a static method of `class` when given) used as a value at `span`, when
+    /// one of its parameters has a default a passed `undefined` takes (module docs); `None`
+    /// otherwise.
     pub(super) fn generator_value(
         &mut self,
         d: DefId,
-        callee: &ast::Expr,
+        class: Option<DefId>,
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
         let n = self.generator_value_params(d)?;
+        if let Some(&(c, ty)) = self.cx.generator_values.get(&d) {
+            return Some(self.mk(hir::ExprKind::FnRef(c, vec![]), ty, span));
+        }
         let f = self.cx.fn_info(d);
         let params: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
-        let is_async = f.is_async;
+        let (is_async, fn_module) = (f.is_async, f.module);
+        let name = crate::body::defaults::fn_sig_ast(f.source?).name.clone();
         let ret = crate::body::returns::ret_of(self.cx, d, span);
         let ty = self.fn_value_type(d, params, ret, is_async);
         let ty = self.fn_value_errors(d, &[], ty, exp, span);
-        let arrow = generator_arrow(callee, n, span);
-        Some(self.closure(&arrow, Some(ty), true))
+        // The wrapper is checked in the scope of the module that names the generator, outside
+        // any function: it is the same function wherever the generator is read.
+        let (module, callee) = match class.and_then(|c| self.cx.adt(c)) {
+            Some(a) => {
+                let object = ast::Ident {
+                    name: a.name.clone(),
+                    span,
+                };
+                let member = ast::ExprKind::Member {
+                    object: Box::new(synth(ast::ExprKind::Ident(object), span)),
+                    prop: name,
+                    optional: false,
+                };
+                (a.module, synth(member, span))
+            }
+            None => (fn_module, synth(ast::ExprKind::Ident(name), span)),
+        };
+        let arrow = generator_arrow(&callee, n, span);
+        let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
+        let h = fcx.closure(&arrow, Some(ty), true);
+        // The arrow captures nothing: one function per generator, named by every read as a
+        // function is (`gen === gen`, one `Set` member), not a new closure each time.
+        match h.kind {
+            hir::ExprKind::Closure(c) if self.closure_captures_nothing(c) => {
+                self.cx.generator_values.insert(d, (c, h.ty));
+                Some(self.mk(hir::ExprKind::FnRef(c, vec![]), h.ty, span))
+            }
+            _ => Some(h),
+        }
+    }
+
+    /// Did closure `c` (checked) capture nothing?
+    fn closure_captures_nothing(&self, c: DefId) -> bool {
+        matches!(&self.cx.defs[c.0 as usize], Some(crate::hir::Def::Fn(f)) if f.captures.is_empty())
     }
 
     /// The number of parameters of generator `d` when a call through a function value must

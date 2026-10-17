@@ -374,8 +374,7 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let callee = super::setters::synth(ast::ExprKind::Ident(id.clone()), span);
-        if let Some(h) = self.generator_value(d, &callee, exp, span) {
+        if let Some(h) = self.generator_value(d, None, exp, span) {
             return h;
         }
         let f = self.cx.fn_info(d);

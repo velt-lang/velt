@@ -18,6 +18,16 @@ class Box {
   }
 }
 const kept: ((x: any) => Generator<string>)[] = [];
+function* pair(x: any = "g", y: number = 1): Generator<any> {
+  yield x;
+  yield y;
+}
+function* plain(x: number): Generator<number> {
+  yield x;
+}
+function pick<T>(t: T): (x: any, y: unknown) => Generator<string> {
+  return gen;
+}
 function run(f: (x: any, y: unknown) => Generator<string>): string[] {
   return [...f(undefined, undefined)];
 }
@@ -43,4 +53,16 @@ function main(): void {
   console.log(ge(undefined).next().value);
   kept.push(gen);
   console.log(kept[0](undefined).next().value);
+  // Such a generator is one function value, as in JS: every read of it is the same value.
+  const pv = pair;
+  const p1 = plain;
+  console.log(pv === pair, pair === pair, p1 === plain);
+  const fs = new Set<(x: any, y: number) => Generator<any>>();
+  fs.add(pair);
+  fs.add(pair);
+  console.log(fs.size, [...pv(undefined, 2)].join(","));
+  const sv = Box.all;
+  console.log(sv === Box.all, gv === gen);
+  const picked = pick(1);
+  console.log(picked === gen, picked(undefined, 2).next().value);
 }

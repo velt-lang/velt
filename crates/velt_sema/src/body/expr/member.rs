@@ -213,7 +213,7 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
                 return h;
             }
-            if let Some(h) = self.static_method_value(this, this, prop, exp, span, None) {
+            if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
                 return h;
             }
             let cname = self
@@ -265,7 +265,7 @@ impl FnCx<'_, '_> {
                     if let Some(h) = self.static_field(d, prop, want, span) {
                         return h;
                     }
-                    if let Some(h) = self.static_method_value(d, d, prop, exp, span, Some(id)) {
+                    if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {
