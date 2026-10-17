@@ -152,7 +152,9 @@ impl FnCx<'_, '_> {
         let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
+            let outer = self.cx.type_level.use_site.replace(h.span);
             let target = self.cx.subst(p.ty, &type_args);
+            self.cx.type_level.use_site = outer;
             // Only a parameter the library declares an integer (`slice(start: i64)`), not a
             // type argument the program chose (`push` on an `i64[]`).
             let declared_int = self.cx.ty.is_int(p.ty);
@@ -402,7 +404,9 @@ impl FnCx<'_, '_> {
             if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
+            let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
+            self.cx.type_level.use_site = outer;
             let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);

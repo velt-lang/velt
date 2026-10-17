@@ -124,7 +124,14 @@ fn at(cx: &mut Ctx, k: TyId, args: &[TyId]) -> TyId {
         return cx.subst(k, args);
     };
     let ks = ks.iter().map(|x| cx.subst(*x, args)).collect();
-    cx.ty.intern(TyKind::Op(o, ks))
+    let op = cx.ty.intern(TyKind::Op(o, ks));
+    if let Some(&site) = cx.type_level.op_sites.get(&k) {
+        cx.type_level.op_sites.entry(op).or_insert(site);
+    }
+    if let Some(&m) = cx.type_level.op_modules.get(&k) {
+        cx.type_level.op_modules.entry(op).or_insert(m);
+    }
+    op
 }
 
 /// Adds to `out` every deferred type `t` holds, through the fields of structs, classes and
