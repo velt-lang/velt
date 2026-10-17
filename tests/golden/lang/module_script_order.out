@@ -1,0 +1,7 @@
+f a
+s1 10
+f bb
+s2 20
+local 2
+c 2 1
+main 1 1 10 20 2

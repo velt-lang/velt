@@ -1,0 +1,18 @@
+export const handlers = new Map<string, number>();
+handlers.set("a", 1);
+export const extra = new Map<string, number>();
+extra.set("b", 2);
+
+function f(s: string): number {
+  console.log("f", s);
+  return s.length * 10;
+}
+
+export let a = f("a");
+console.log("s1", a);
+export let b = f("bb");
+console.log("s2", b);
+const local = [1, 2];
+console.log("local", local.length);
+export let c = local.length;
+console.log("c", c, local[0]);

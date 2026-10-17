@@ -66,10 +66,13 @@ the modules are evaluated before the root file's statements run, each after the 
 imports (in the order of its `import`s, depth first) and before the module that imports it. A
 circular import finds the module that is still being evaluated and goes on without it. A
 module imported only for its types (`import type { … }`, or an import whose every name is
-`type`) is not evaluated, so its statements don't run. They run with the module's
-[module state](variables.md#module-state), in source order with its module-level `let`s and
-kept constants; an error they throw and don't catch prints `Uncaught …` and ends the program
-with exit code 1. Top-level `await` is only allowed in the root file.
+`type`) is not evaluated: neither its statements nor its variables' initializers run. A
+module's statements run in source order with its module-level variables
+([module state](variables.md#module-state)): each after the initializers above it and before
+those below it. An error they throw and don't catch prints `Uncaught …` and ends the program
+with exit code 1. Top-level `await` is only allowed in the root file, and an imported module's
+statements can't start asynchronous work yet (a timer, a promise chain, `queueMicrotask`,
+`spawn`): they run before the scheduler starts (#846).
 
 ```ts
 // registry.ts

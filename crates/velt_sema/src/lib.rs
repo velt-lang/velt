@@ -59,6 +59,7 @@ mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_chunks;
 mod module_scripts;
 mod module_state;
 mod moves;
@@ -219,6 +220,8 @@ fn check_on_current_thread(
     recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    let chunks = module_chunks::split(modules, root);
+    let modules = chunks.as_deref().unwrap_or(modules);
     let mut merge_diags = call_sigs::check(modules);
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);

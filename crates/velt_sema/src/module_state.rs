@@ -28,12 +28,24 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     if lets.is_empty() {
         return Vec::new();
     }
-    let (modules, evaluated) = module_order(cx);
+    let (modules, evaluated, reached) = module_order(cx);
     let rank: HashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
-    // A module no value import reaches is never evaluated: its top-level statements don't run.
+    // A module no value import reaches is never evaluated: its top-level statements don't run,
+    // and neither do the initializers of a module imported only for its types. (A module no
+    // import reaches, such as the standard library's, keeps its slots: code may use them.)
+    let skipped: HashSet<DefId> = lets
+        .iter()
+        .filter(|(m, _, d)| {
+            !evaluated[*m]
+                && (crate::module_scripts::is_script(cx, *d)
+                    || (reached[*m] && !cx.modules[*m].is_std))
+        })
+        .map(|(_, _, d)| *d)
+        .collect();
+    let skipped = unread_elsewhere(cx, skipped);
     let mut sorted: Vec<_> = lets
         .into_iter()
-        .filter(|(m, _, d)| evaluated[*m] || !crate::module_scripts::is_script(cx, *d))
+        .filter(|(_, _, d)| !skipped.contains(d))
         .collect();
     sorted.sort_by_key(|(m, start, _)| (rank.get(m).copied().unwrap_or(usize::MAX), *start));
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
@@ -68,9 +80,9 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
 }
 
 /// Module indices in evaluation order: those reachable from the root by a post-order walk over
-/// value imports, then any others (which have no code that runs first); and per module, whether
-/// the walk reached it (whether Node evaluates it).
-fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>) {
+/// value imports, then any others (which have no code that runs first); per module, whether
+/// the walk reached it (whether Node evaluates it); and whether any import reaches it.
+fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>, Vec<bool>) {
     let by_path: HashMap<&str, usize> = cx
         .modules
         .iter()
@@ -103,7 +115,59 @@ fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>) {
         }
     }
     out.extend(root);
-    (out, seen)
+    let mut reached = vec![false; cx.modules.len()];
+    reached[cx.root] = true;
+    let mut todo = vec![cx.root];
+    while let Some(m) = todo.pop() {
+        for (_, path) in &cx.modules[m].imports {
+            if let Some(&dep) = by_path.get(path.as_str()) {
+                if !reached[dep] {
+                    reached[dep] = true;
+                    todo.push(dep);
+                }
+            }
+        }
+    }
+    (out, seen, reached)
+}
+
+/// The slots of `skipped` that no code that may run reads: none of another module's code,
+/// and no interface's default method (which an object of another module may run).
+fn unread_elsewhere(cx: &mut Ctx, mut skipped: HashSet<DefId>) -> HashSet<DefId> {
+    if skipped.is_empty() {
+        return skipped;
+    }
+    let module_of = |cx: &Ctx, d: DefId| cx.global(d).map(|g| g.module);
+    let mut read: Vec<(DefId, usize, bool)> = vec![];
+    for i in 0..cx.info.len() {
+        let (module, iface_default, e) = match (&cx.info[i], cx.defs.get(i)) {
+            (DefInfo::Fn(f), Some(Some(hir::Def::Fn(def)))) => (
+                f.module,
+                f.kind == crate::defs::FnKind::IfaceDefault,
+                hir::Expr {
+                    kind: E::Block(def.body.block.clone()),
+                    ty: cx.ty.unit,
+                    span: velt_common::Span::DUMMY,
+                },
+            ),
+            (DefInfo::Global(g), _) => match &g.init {
+                Some(init) => (g.module, false, init.clone()),
+                None => continue,
+            },
+            _ => continue,
+        };
+        reads(&e, &mut |r, _| {
+            if skipped.contains(&r) {
+                read.push((r, module, iface_default));
+            }
+        });
+    }
+    for (r, module, iface_default) in read {
+        if iface_default || module_of(cx, r) != Some(module) {
+            skipped.remove(&r);
+        }
+    }
+    skipped
 }
 
 /// Does `module` import `spec` for more than its types: an import or re-export of `spec` that
