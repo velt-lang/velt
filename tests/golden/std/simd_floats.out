@@ -26,6 +26,10 @@ toU32x4 0 2 3000000000 0
 NaN toI32x4 0 0
 Infinity 2147483647 -2147483648 4294967295 0
 ties 16777220 4294967296 16777220 16777220
+index 0 1 2 3
+loadPartial -8 16 0 0
+loadPartial past the end 0 0 0 0
+storePartial 7 1.5 -2
 store 0 1.5 9 0
 add 1 0
 sub 2 -2e+300
@@ -41,6 +45,8 @@ lt 2 le 3 count 1
 select 1.5 1e+300
 zipLow 1.5 -0.5
 zipHigh -1e+300 1e+300
+index 0 1
+loadPartial -1e+300 0
 NaN eq 2 any true all false
 bits 4607182418800017408 -4611686018427387904
 from bits 3.141592653589793 3.141592653589793
