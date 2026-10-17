@@ -56,8 +56,10 @@ Prompt template for an agent batch:
 Clone https://github.com/velt-lang/velt (or work in your worktree), create a branch named after
 the batch, read CLAUDE.md and CONTRIBUTING.md, then work through issues <list> in order (design
 issues: post a short design as a comment first). Keep changes focused on your issues and merge
-origin/main often. Run scripts/check.sh (the checks your changes need) while iterating and before
-each pull request; the merge queue runs the whole gate. One
+origin/main often. Run `cargo xtask install-hooks` once (a pre-push hook that runs
+`cargo xtask precheck`: fmt, velt fmt, file sizes and clippy on the changed files), and run
+scripts/check.sh (the checks your changes need) while iterating and before each pull request;
+the merge queue runs the whole gate. Never push with --no-verify to get past a failing precheck. One
 pull request per issue or a few related ones ("Closes #N") with tests and docs; a pull request
 that builds on another of yours joins it in a stack (gh stack). Follow-ups outside scope become
 focused issues. Never stop processes you didn't start.
