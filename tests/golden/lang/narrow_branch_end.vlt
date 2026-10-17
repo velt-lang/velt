@@ -81,6 +81,16 @@ function sw(x: string | null): number {
   return p.length;
 }
 
+function fallthrough(k: number, y: string | null): number {
+  let x = y;
+  if (x == null) return -1;
+  switch (k) {
+    case 1: x = "four";
+    case 2: return x.length;
+  }
+  return x.length + 10;
+}
+
 function main() {
   console.log(early("ab"), early(null));
   console.log(mirror("ab"), mirror(null));
@@ -93,4 +103,5 @@ function main() {
   console.log(loops(["a", null, "bc"]), loops([null, "a"]));
   console.log(logical("ab", false), logical(null, false), logical("ab", true));
   console.log(sw(null), sw("ab"));
+  console.log(fallthrough(1, "ab"), fallthrough(2, "ab"), fallthrough(3, "ab"), fallthrough(1, null));
 }

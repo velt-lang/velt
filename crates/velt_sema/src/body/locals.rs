@@ -425,8 +425,7 @@ impl FnCx<'_, '_> {
     /// The facts the innermost scope holds now about locals declared outside it: what a branch
     /// that ends here passes on to the code after it (assumed at its start and not undone by an
     /// assignment since, or established by its own statements).
-    pub fn scope_end_facts(&self) -> Vec<super::narrow::Fact> {
-        use super::narrow::Fact;
+    pub fn scope_end_facts(&self) -> Vec<Fact> {
         let Some(s) = self.f.scopes.last() else {
             return vec![];
         };

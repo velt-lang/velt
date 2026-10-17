@@ -140,6 +140,26 @@ function f18(x: string | null, k: number, c: boolean): number {
   return p.length;
 }
 
+function f19(k: number, y: string | null): number {
+  let x = y;
+  if (x == null) return -1;
+  switch (k) {
+    case 1: x = null;
+    case 2: return x.length;
+  }
+  return 0;
+}
+
+function f20(k: number, y: string | null): number {
+  let x = y;
+  if (x == null) return -1;
+  switch (k) {
+    case 1: x = null;
+    default: k = 3;
+  }
+  return x.length;
+}
+
 function main() {
   console.log(f1("ab"));
   console.log(f2("ab"));
@@ -157,4 +177,5 @@ function main() {
   console.log(f14("ab", true));
   console.log(f15(new O()), f16("x"), f17(new O()));
   console.log(f18("x", 1, true));
+  console.log(f19(1, "ab"), f20(1, "ab"));
 }

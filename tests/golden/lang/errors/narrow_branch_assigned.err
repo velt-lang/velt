@@ -16,3 +16,5 @@ narrow_branch_assigned.vlt:116:10: error: value of type `string | null` may be n
 narrow_branch_assigned.vlt:123:10: error: value of type `string | null | undefined` may be null
 narrow_branch_assigned.vlt:128:10: error: value of type `string | null | undefined` may be null
 narrow_branch_assigned.vlt:140:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:148:20: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:160:10: error: value of type `string | null` may be null
