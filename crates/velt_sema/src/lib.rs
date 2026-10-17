@@ -295,6 +295,7 @@ fn check_on_current_thread(
         impls,
         counted_objects,
         any,
+        super_calls,
         ..
     } = cx;
     let defs = defs
@@ -316,6 +317,7 @@ fn check_on_current_thread(
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members,
+        super_calls,
     };
     (Some(program), diags)
 }

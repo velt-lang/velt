@@ -205,8 +205,7 @@ pub(crate) struct Ctx<'m> {
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
-    /// Function bodies being checked, outermost first (a return type inferred from a body that
-    /// is on this stack refers to itself: `body::returns`).
+    /// Bodies being checked, outermost first (inferring one on it is recursion: `body::returns`).
     pub checking: Vec<DefId>,
     /// Signature comparisons waiting for inferred result types (`body::returns`).
     pub ret_checks: Vec<crate::defs::RetCheck>,
@@ -233,12 +232,13 @@ pub(crate) struct Ctx<'m> {
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Where `Object.keys` of an `any` is called (`crate::any_keys`).
     pub any_keys: Vec<velt_common::Span>,
-    /// Object values converted by copying their fields, and the field assignments that could
-    /// tell the copy from the original (`crate::object_copies`).
+    /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
+    pub super_calls: std::collections::HashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
-    /// Second arguments of protocol types written before base classes were known (`ts_protocol`).
+    /// Protocol types' second arguments written before base classes were known (`ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
@@ -367,6 +367,7 @@ impl<'m> Ctx<'m> {
             fresh_checks: vec![],
             any_keys: vec![],
             object_copies: Default::default(),
+            super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

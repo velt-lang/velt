@@ -133,7 +133,14 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
             } => self.source_location(e.span),
-            K::Call { callee, args } => self.call_value(callee, args, e.ty),
+            K::Call { callee, args } => {
+                // `super.m(args)` (`Program::super_calls`), taken by `call_def`.
+                let sup = self.cx.hir.super_calls.contains(&e.span);
+                let prev = std::mem::replace(&mut self.super_call, sup);
+                let v = self.call_value(callee, args, e.ty);
+                self.super_call = prev;
+                v
+            }
             K::Cast(inner) => {
                 let v = self.expr(inner);
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
@@ -153,6 +160,11 @@ impl FnLower<'_, '_> {
             K::FnRef(d, targs) => self.fn_ref(*d, targs, e.ty),
             K::Field { base, index, mode } => self.field_expr(base, *index, *mode),
             K::Index { base, index, .. } => self.index_expr(base, index),
+            K::AdtLit {
+                fields,
+                converted: c @ (hir::Conversion::Copy | hir::Conversion::ProxyOnly),
+                ..
+            } => self.converted_lit(e.ty, fields, *c == hir::Conversion::ProxyOnly),
             K::AdtLit { fields, .. } => self.adt_lit(e.ty, fields),
             K::Variant { variant, args, .. } => self.variant(e.ty, *variant, args),
             K::ArrayLit(es) => self.array_lit(es, e.ty),
