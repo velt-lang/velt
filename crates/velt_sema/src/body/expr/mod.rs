@@ -106,7 +106,7 @@ impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
+        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
         let adapted = match self.cx.ty.kind(fn_ty) {
             TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
@@ -128,7 +128,7 @@ impl FnCx<'_, '_> {
 
     /// `exp` with a surrounding `| null` removed (the value is wrapped after checking).
     pub fn hint(&self, exp: Option<TyId>) -> Option<TyId> {
-        exp.map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+        exp.map(|t| self.cx.ty.core(t).unwrap_or(t))
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {

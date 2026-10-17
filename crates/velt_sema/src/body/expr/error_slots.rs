@@ -40,7 +40,7 @@ impl FnCx<'_, '_> {
         if self.thread_task == Some(arg.span) || self.thread_callback == Some(arg.span) {
             return None;
         }
-        let fn_ty = self.cx.ty.opt_payload(pty).unwrap_or(pty);
+        let fn_ty = self.cx.ty.core(pty).unwrap_or(pty);
         let TyKind::FnPtr {
             params,
             ret,
@@ -49,7 +49,7 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         let members = self.cx.union_members(inner)?;
         let (promises, values): (Vec<TyId>, Vec<TyId>) = members
             .iter()

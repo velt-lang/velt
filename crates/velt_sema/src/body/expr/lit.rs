@@ -267,7 +267,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let tn = self.cx.display(t);
-        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.ty.core(t).unwrap_or(t);
         let core = self.cx.display(core);
         self.cx.error(
             Diagnostic::error(
@@ -324,7 +324,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
-        let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         // An object with a `toString()` (an error, an error union): what it returns, as in JS.
         if self.writes_by_to_string(t) {
             return self.js_text(h, "a string concatenation");

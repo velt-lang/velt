@@ -342,7 +342,7 @@ fn report(cx: &mut Ctx, span: Span, t: TyId, callee: DefId, iterating: bool) {
     let method = name.rsplit('.').next().unwrap_or("");
     let iterating = iterating || matches!(method, "__keyAt" | "__valueAt" | "__entryAt");
     // `T | null` from a read that may miss: name the value.
-    let t = cx.ty.opt_payload(t).unwrap_or(t);
+    let t = cx.ty.core(t).unwrap_or(t);
     let tn = cx.display(t);
     let msg = if iterating {
         let what = from.trim_start_matches(" out of ");

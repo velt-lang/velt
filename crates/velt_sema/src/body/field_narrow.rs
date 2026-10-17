@@ -124,7 +124,7 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        let u = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let u = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.union_def(u).is_some() {
             return None;
         }

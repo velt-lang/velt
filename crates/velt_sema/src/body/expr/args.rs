@@ -388,7 +388,7 @@ impl FnCx<'_, '_> {
             // An arrow (or a function's adapter) passed to the JS API (also where `cmp | null` is
             // expected): what its parameters and result are in user code (`closure`,
             // `returns::returned`).
-            let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
+            let declared = self.cx.ty.core(p.ty).unwrap_or(p.ty);
             self.std_callback = match self.cx.ty.kind(declared) {
                 TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
                     Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
@@ -479,7 +479,7 @@ impl FnCx<'_, '_> {
     /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
     /// JS number argument converts)?
     fn float_core(&self, t: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let t = self.cx.ty.core(t).unwrap_or(t);
         self.cx.ty.is_float(t)
     }
 

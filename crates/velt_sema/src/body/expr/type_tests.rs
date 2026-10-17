@@ -45,7 +45,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
             }
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
             if is_place(&s) {
@@ -265,7 +265,7 @@ impl FnCx<'_, '_> {
     /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
     /// union with class members)?
     fn testable_instance(&mut self, t: TyId) -> bool {
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let inner = self.cx.ty.core(t).unwrap_or(t);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         candidates.iter().any(|t| {
             self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
@@ -290,7 +290,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let testable = |t: &TyId| {
             self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
@@ -327,7 +327,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
-        let inner = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
         // A value of one type that is not a promise (`5 instanceof Promise`).
         let single = (self.cx.union_def(inner).is_none() && !pred(self.cx, inner))
             .then(|| self.cx.display(s.ty));
@@ -422,7 +422,7 @@ impl FnCx<'_, '_> {
             Err(Some(other)) => other,
             Err(None) => self.expr(other_e, None, Want::Borrow),
         };
-        let inner = self.cx.ty.opt_payload(other.ty).unwrap_or(other.ty);
+        let inner = self.cx.ty.core(other.ty).unwrap_or(other.ty);
         if let Some(done) = self.impossible_literal(other_e, inner, &lit, span) {
             return Some(LitEq::Done(done));
         }
@@ -516,7 +516,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if s.ty != inner {
-            p = self.pat(P::Some(Box::new(p)), s.ty, span);
+            p = self.present_pat(p, s.ty, span);
         }
         self.bool_match(s, Some(p), span)
     }
@@ -588,7 +588,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> TypeTest {
         let sty = s.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let is_union = self.cx.union_def(inner).is_some();
         let mut alts = vec![];
         let mut nothings = self.nothing_arms(sty).into_iter();
@@ -726,7 +726,7 @@ impl FnCx<'_, '_> {
 
     /// Hint for using a member of a union (or nullable union) value without narrowing it.
     pub(crate) fn narrowing_note(&self, t: TyId) -> Option<String> {
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let inner = self.cx.ty.core(t).unwrap_or(t);
         self.cx.union_def(inner)?;
         Some(format!(
             "`{}` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`",

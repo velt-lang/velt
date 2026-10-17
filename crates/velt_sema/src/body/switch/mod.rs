@@ -164,7 +164,7 @@ impl FnCx<'_, '_> {
         }
         let mut facts = vec![];
         let local_ty = self.local_ty(l);
-        let inner = self.cx.ty.opt_payload(local_ty).unwrap_or(local_ty);
+        let inner = self.cx.ty.core(local_ty).unwrap_or(local_ty);
         if inner != local_ty && reach.iter().all(|&k| s.slots[k].member.is_some()) {
             facts.push(Fact::NonNull(l));
         }

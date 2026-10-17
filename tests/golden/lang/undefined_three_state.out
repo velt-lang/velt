@@ -49,3 +49,7 @@ undefined undefined undefined undefined 1 undefined number undefined undefined n
 a string false false
 null object false true
 undefined undefined true false
+false false false false
+true true true false
+false false false false
+null undefined in other

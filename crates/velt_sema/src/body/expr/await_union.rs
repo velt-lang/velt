@@ -27,7 +27,10 @@ impl FnCx<'_, '_> {
         on_promise: &mut dyn FnMut(&mut Self, hir::Expr, hir::TyId) -> hir::Expr,
     ) -> Result<hir::Expr, hir::Expr> {
         let sty = h.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        if self.is_three_state(sty) {
+            return Err(h);
+        }
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         // `Promise<T> | null` is an optional promise, not a union: one member, no variant.
         let (def, members) = match self.cx.union_def(inner) {
             Some((def, _)) => match self.cx.union_members(inner) {

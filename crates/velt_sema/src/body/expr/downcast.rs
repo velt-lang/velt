@@ -172,7 +172,7 @@ impl FnCx<'_, '_> {
     /// "this `instanceof` test is always false".
     fn never_instance(&mut self, sty: TyId, class: DefId, span: Span) {
         let cn = self.class_def_name(class);
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let tn = self.cx.display(inner);
         let (msg, note) = if self.cx.union_def(inner).is_some() {
             (

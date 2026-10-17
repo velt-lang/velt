@@ -221,7 +221,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let ty = self.local_ty(l);
-        let ty = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let ty = self.cx.ty.core(ty).unwrap_or(ty);
         let declared = self.cx.union_members(ty).unwrap_or_else(|| vec![ty]);
         let is_declared = declared
             .iter()
@@ -378,7 +378,7 @@ impl FnCx<'_, '_> {
         let l = self.named_local(object)?;
         let ty = self.local_ty(l);
         let nullable = self.cx.ty.opt_payload(ty).is_some();
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         let values = self.cx.discriminant_values(u, &prop.name)?;
         let (yes, no): (Vec<u32>, Vec<u32>) = (0..values.len() as u32)
             .partition(|v| crate::literals::lit_matches(&values[*v as usize], lit));
@@ -399,7 +399,7 @@ impl FnCx<'_, '_> {
             return false;
         };
         let ty = self.local_ty(l);
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         self.cx
             .discriminant_values(u, &prop.name)
             .is_some_and(|vs| {

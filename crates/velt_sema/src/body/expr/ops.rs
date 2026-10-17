@@ -449,7 +449,7 @@ impl FnCx<'_, '_> {
     /// does (an interface value points at the object itself), so the two compare by identity.
     fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
         let object = |s: &Self, t: TyId| {
-            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            let t = s.cx.ty.core(t).unwrap_or(t);
             s.cx.union_def(t).is_none()
                 && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
         };

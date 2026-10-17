@@ -172,8 +172,35 @@ function optionals(): void {
   }
 }
 
+type F = "inline" | "end";
+interface B {
+  flush: F | null;
+}
+function flushes(b: B | undefined, c: F | null | undefined, d: F | null): string {
+  return `${b?.flush === "inline"} ${c === "inline"} ${d === "inline"} ${c === "end"}`;
+}
+function flushName(x: F | null | undefined): string {
+  switch (x) {
+    case null:
+      return "null";
+    case undefined:
+      return "undefined";
+    case "inline":
+      return "in";
+    default:
+      return "other";
+  }
+}
+function literals(): void {
+  console.log(flushes(undefined, undefined, null));
+  console.log(flushes({ flush: "inline" }, "inline", "inline"));
+  console.log(flushes({ flush: null }, null, "end"));
+  console.log(flushName(null), flushName(undefined), flushName("inline"), flushName("end"));
+}
+
 function main(): void {
   basics();
   conversions();
   optionals();
+  literals();
 }

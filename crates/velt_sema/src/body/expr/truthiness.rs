@@ -321,7 +321,7 @@ impl FnCx<'_, '_> {
     /// "an expression of type `T` cannot be tested for truthiness", with what to write instead.
     fn report_condition(&mut self, h: &hir::Expr) {
         let found = self.cx.display(h.ty);
-        let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let note = match self.cx.ty.kind(t) {
             TyKind::Unit => "a `void` value is never a condition",
             TyKind::Simd(_) => "test a mask with `.any()` or `.all()`: `a.eq(b).all()`",

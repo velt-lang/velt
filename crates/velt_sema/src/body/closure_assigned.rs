@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
             Fact::Members(l, vs) => match vs.as_slice() {
                 [v] => {
                     let ty = self.local_ty(*l);
-                    let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+                    let u = self.cx.ty.core(ty).unwrap_or(ty);
                     self.cx
                         .union_members(u)
                         .and_then(|ms| ms.get(*v as usize).copied())
