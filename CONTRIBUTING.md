@@ -88,14 +88,18 @@ compilation on (CI turns it off).
 
 **Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
 files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
-`cargo fmt --check` of the changed crates, `velt fmt --check` on the changed `.vlt` files under
-`std/` and `examples/`, the file-size rule (below) on the changed Rust files, and clippy with
+`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
+anything under `std/` or `examples/` changed, the file-size rule (below) on the changed Rust files, and clippy with
 `-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
 it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
 well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
 before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
 replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as
-`pre-push.orig`), and `git push --no-verify` skips it.
+`pre-push.orig`), and `git push --no-verify` skips it. The hook checks the **working tree**, not
+the commits being pushed: uncommitted and untracked files count, so commit or stash your work in
+progress first, or a scratch file can block an unrelated push and an uncommitted fix can hide a
+bad commit. (With a relative `core.hooksPath`, git looks for hooks in each worktree, so install
+them in each.)
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is

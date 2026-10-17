@@ -54,7 +54,8 @@ pub enum Installed {
 }
 
 /// Writes the `pre-push` hook. A `pre-push` hook that isn't ours is left alone unless `force`,
-/// which keeps it as `pre-push.orig`.
+/// which keeps it as `pre-push.orig` (or `pre-push.orig.<n>` when that is taken: an earlier
+/// saved hook is never overwritten).
 pub fn install(root: &Path, force: bool) -> Result<Installed, String> {
     let dir = hooks_dir(root)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -67,12 +68,12 @@ pub fn install(root: &Path, force: bool) -> Result<Installed, String> {
             return Err(format!(
                 "{} already exists and was not installed by `cargo xtask install-hooks`; it was \
                  left alone.\nAdd `cargo xtask precheck` to it yourself, or rerun with --force to \
-                 replace it (the old hook is kept as pre-push.orig).",
+                 replace it (the old hook is kept as pre-push.orig, or pre-push.orig.<n>).",
                 hook.display()
             ))
         }
         Ok(_) => {
-            let orig = dir.join("pre-push.orig");
+            let orig = free_backup_name(&dir);
             std::fs::rename(&hook, &orig).map_err(|e| format!("{}: {e}", hook.display()))?;
             Installed::Replaced(hook.clone(), orig)
         }
@@ -87,6 +88,18 @@ pub fn install(root: &Path, force: bool) -> Result<Installed, String> {
     std::fs::write(&hook, want).map_err(|e| format!("{}: {e}", hook.display()))?;
     make_executable(&hook)?;
     Ok(result)
+}
+
+/// `pre-push.orig`, else the first free `pre-push.orig.<n>`.
+fn free_backup_name(dir: &Path) -> PathBuf {
+    let first = dir.join("pre-push.orig");
+    if !first.exists() {
+        return first;
+    }
+    (1..)
+        .map(|n| dir.join(format!("pre-push.orig.{n}")))
+        .find(|p| !p.exists())
+        .expect("ICE: an unbounded range always yields a free name")
 }
 
 #[cfg(unix)]
@@ -220,6 +233,21 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(hooks.join("pre-push.orig")).unwrap(),
             theirs
+        );
+        // Forcing again over another foreign hook keeps both saved hooks.
+        let second = "#!/bin/sh\necho second\n";
+        std::fs::write(hooks.join("pre-push"), second).unwrap();
+        assert!(matches!(
+            install(&main, true).unwrap(),
+            Installed::Replaced(_, orig) if orig.ends_with("pre-push.orig.1")
+        ));
+        assert_eq!(
+            std::fs::read_to_string(hooks.join("pre-push.orig")).unwrap(),
+            theirs
+        );
+        assert_eq!(
+            std::fs::read_to_string(hooks.join("pre-push.orig.1")).unwrap(),
+            second
         );
         let _ = std::fs::remove_dir_all(&base);
     }
