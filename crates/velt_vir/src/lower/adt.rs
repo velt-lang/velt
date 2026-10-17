@@ -208,6 +208,18 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
+        self.value_to_dyn(v, cty, ty, impl_index)
+    }
+
+    /// The owned value `v` of type `cty` as interface value `ty` through implementation
+    /// `impl_index` ([`make_dyn`](Self::make_dyn) after the operand is evaluated).
+    pub(super) fn value_to_dyn(
+        &mut self,
+        v: Operand,
+        cty: TyId,
+        ty: TyId,
+        impl_index: u32,
+    ) -> Operand {
         // A type parameter bound by `object` / `Function` (issue #926) instantiated with a
         // dynamic type: the same value, never a box in a box. It is returned as an owned
         // temporary: a moved parameter's place would read as borrowed to `consume`, which
@@ -217,7 +229,7 @@ impl FnLower<'_, '_> {
         // A weak key's `any` (sema's `weak_key_coerce`, written `any`) enters unchecked.
         if self.cx.is_any_impl(impl_index)
             && self.is_object_ty(ty)
-            && !self.cx.is_dynamic(e.ty)
+            && !self.cx.is_dynamic(cty)
             && self.object_unpacks(cty)
         {
             return self.object_unpack(v, cty, ty);
