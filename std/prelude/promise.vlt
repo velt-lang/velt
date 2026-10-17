@@ -236,7 +236,7 @@ export function promiseNew<T, E>(
 // task is the awaiter's same object (JS identity), and one settled from another task was
 // transferred when it was settled.
 function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlement<T, E> {
-  const probe: Settlement<T, E> = { status: "pending" };
+  const probe = { status: "pending" } as Settlement<T, E>; // the whole type, not `pending`
   if (!__intrinsic_needs_transfer(probe)) {
     return slot.with((s) => s.takeOutcome());
   }

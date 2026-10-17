@@ -192,7 +192,7 @@ fn identity_through_a_union_tells_the_copy_apart() {
     // `===` on unions with no conversion anywhere, or on a union of other object types only.
     ok_src(&format!(
         "{src} function main() {{ const a: A = {{ a: 1 }}; const x: A | null = a;
-           const y: A | null = null; const u: A | string = a; const v: A | string = \"s\";
+           const y: A | null = null; const u = a as A | string; const v = \"s\" as A | string;
            console.log(x === a, a === x, x === y, u === v, [x, y].includes(a), [x, y].indexOf(null)); }}"
     ));
     ok_src(&format!(

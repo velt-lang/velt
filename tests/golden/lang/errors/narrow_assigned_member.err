@@ -1,0 +1,7 @@
+narrow_assigned_member.vlt:6:12: error: no field `length` on type `f64`
+narrow_assigned_member.vlt:12:12: error: no field `length` on type `string | f64`
+narrow_assigned_member.vlt:18:12: error: no field `length` on type `string | f64`
+narrow_assigned_member.vlt:31:10: error: value of type `string | null` may be null
+narrow_assigned_member.vlt:44:10: error: value of type `string | null` may be null
+narrow_assigned_member.vlt:57:10: error: value of type `string | null` may be null
+narrow_assigned_member.vlt:69:10: error: value of type `string | null` may be null

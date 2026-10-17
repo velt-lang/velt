@@ -1,1 +1,1 @@
-instanceof_promise_never.vlt:4:7: error: this `instanceof` test is always false: no member of `string | i64` is a `Promise`
+instanceof_promise_never.vlt:4:7: error: this `instanceof` test is always false: `string` is not a `Promise`

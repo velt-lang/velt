@@ -33,6 +33,8 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod assign_ends;
+mod assign_narrow;
 pub(crate) mod assigned;
 mod closure_assigned;
 pub(crate) mod closure_group;
@@ -123,6 +125,11 @@ pub(crate) struct LoopCx {
     pub needs_label: bool,
     /// Label given to the HIR loop when the source has none but one is needed.
     pub synth_label: String,
+    /// The number of scopes open where the entry starts.
+    pub depth: usize,
+    /// For a `switch`: the narrowing state at each `break` that leaves it, folded into the
+    /// scopes open at the `switch` (`switch::case_bodies` joins them).
+    pub break_states: Vec<locals::NarrowState>,
 }
 
 impl LoopCx {
@@ -268,6 +275,9 @@ pub(crate) struct Frame {
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: HashMap<String, Span>,
+    /// Where this function's own code last assigns each variable (`assign_ends`): closures
+    /// created before that do not see the variable's narrowing.
+    pub assign_ends: HashMap<String, u32>,
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
@@ -338,6 +348,7 @@ impl Frame {
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
+            assign_ends: HashMap::new(),
             int_returns_number: false,
             checked_predicates: HashMap::new(),
             truthy_returns: false,

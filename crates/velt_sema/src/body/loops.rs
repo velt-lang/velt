@@ -39,6 +39,8 @@ impl FnCx<'_, '_> {
             has_break: false,
             needs_label: false,
             synth_label: format!("<{kind}#{}>", self.f.loop_count),
+            depth: self.f.scopes.len(),
+            break_states: vec![],
         });
     }
 

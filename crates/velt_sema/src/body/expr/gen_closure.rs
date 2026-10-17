@@ -129,6 +129,8 @@ impl FnCx<'_, '_> {
         frame.yield_ty = Some(t);
         frame.fn_expr_name = Some(sig.name.name.clone()).filter(|n| !n.is_empty());
         let defaults = sig.params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends =
+            crate::body::assign_ends::assignment_ends(&d.body.stmts, defaults.clone());
         let assigned = crate::body::assigned::assigned_by_closures(&d.body.stmts, defaults);
         frame.closure_assigned = crate::body::closure_assigned::owned(assigned);
         let saved = std::mem::replace(&mut self.f, frame);

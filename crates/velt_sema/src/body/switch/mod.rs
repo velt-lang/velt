@@ -99,6 +99,8 @@ impl FnCx<'_, '_> {
         let name = s.local.map(|l| self.f.locals[l.0 as usize].name.clone());
         // The state where the previous body fell through into this one.
         let mut fell: Option<super::locals::NarrowState> = None;
+        // The state at each `break` is exact unless a `finally` runs between it and the exit.
+        let exact = !cases.iter().any(|c| c.body.iter().any(has_finally));
         for (i, (c, (sel, _))) in cases.iter().zip(sels).enumerate() {
             self.restore_narrowing(&before);
             // Reached from the `switch` or by falling through: what holds on both ways in
@@ -139,12 +141,14 @@ impl FnCx<'_, '_> {
             let breaks_here = breaks_out(&body);
             breaks |= breaks_here;
             // A body that runs to its end passes on what still holds there (its own assignments
-            // win over the case's facts). One with a `break` anywhere (also a labelled one in a
-            // nested loop) may leave earlier and passes on none of them.
-            if !c.body.iter().any(has_break) {
+            // win over the case's facts). Each `break` passes on the state where it is
+            // (`LoopCx::break_states`), except across a `finally`, which may change it after
+            // the `break`: then only what held before the `switch` and still holds at the end
+            // of the breaking body is kept.
+            if exact || !c.body.iter().any(has_break) {
                 end_facts.iter().for_each(|f| self.narrow(f));
             }
-            if breaks_here || (falls && i == last) {
+            if (breaks_here && !exact) || (falls && i == last) {
                 exits.push(self.narrow_state());
             }
             if falls {
@@ -159,7 +163,13 @@ impl FnCx<'_, '_> {
             }
             exits.push(self.narrow_state());
         }
-        if breaks {
+        let break_states = match self.f.loops.last_mut() {
+            Some(lp) if lp.is_switch => std::mem::take(&mut lp.break_states),
+            _ => vec![],
+        };
+        if exact {
+            exits.extend(break_states);
+        } else if breaks {
             exits.push(before.clone());
         }
         // With no way out, what follows is unreachable: the state before is as good as any.
@@ -477,6 +487,27 @@ fn has_break(s: &ast::Stmt) -> bool {
                     .as_ref()
                     .is_some_and(|b| b.stmts.iter().any(has_break))
         }
+        _ => false,
+    }
+}
+
+/// Does `s` contain a `try` with a `finally` block at any depth (within this function)?
+fn has_finally(s: &ast::Stmt) -> bool {
+    use ast::StmtKind as A;
+    let any = |b: &ast::Block| b.stmts.iter().any(has_finally);
+    match &s.kind {
+        A::Try {
+            finally: Some(_), ..
+        } => true,
+        A::Try { body, catch, .. } => any(body) || catch.as_ref().is_some_and(|(_, b)| any(b)),
+        A::If { then, els, .. } => any(then) || els.as_deref().is_some_and(has_finally),
+        A::While { body, .. }
+        | A::DoWhile { body, .. }
+        | A::For { body, .. }
+        | A::ForOf { body, .. } => any(body),
+        A::Block(b) => any(b),
+        A::Labeled { body, .. } => has_finally(body),
+        A::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(has_finally)),
         _ => false,
     }
 }

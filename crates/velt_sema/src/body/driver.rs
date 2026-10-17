@@ -398,6 +398,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
             .collect(),
         FnSource::Default(..) => vec![],
     };
+    frame.assign_ends = super::assign_ends::assignment_ends(&body.stmts, defaults.clone());
     let assigned = super::assigned::assigned_by_closures(&body.stmts, defaults);
     frame.closure_assigned = super::closure_assigned::owned(assigned);
     let decided = cx.literal_types.get(&def).cloned().unwrap_or_default();
