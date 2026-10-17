@@ -269,7 +269,10 @@ object, a weak map value of a proxiable type is boxed, and a `WeakRef` slot keep
 given (the record and the count are the untagged object's), so `deref` gives the proxy back.
 Trace glue visits a typed proxy as its `Proxy` object, whose own trace glue visits its target
 when the target's `any` table is that of a type the program converts proxies to (others are
-opaque). A map whose key type is proxiable has no key trace, since a key may be a `Proxy`
+opaque). When `object` is also a weak key, the field walk already visits the target through its
+weak word, so the `Proxy` glue's own visit runs only for a target whose weak word is 0: a target
+visited twice counted one reference too many, and a trial deleted a live key's entry (#1223). A
+map whose key type is proxiable has no key trace, since a key may be a `Proxy`
 object or a key-type object; each key's record gets its trace when the value graph reaches it,
 and the trial uses the record's trace for such keys.
 
