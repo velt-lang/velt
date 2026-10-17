@@ -111,7 +111,7 @@ s.count++;
 s.todo.title = "test";
 s.todo.done = true;
 console.log("same nested proxy:", (s.todo as any) === (s.todo as any));
-(s as any).$set({ count: 10, todo: { title: "ship", done: false } });
+s.$set({ count: 10, todo: { title: "ship", done: false } });
 s.todo.done = true;
 console.log(describe(s), label());
 
