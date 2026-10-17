@@ -144,9 +144,10 @@ fn holds_dynamic(cx: &Ctx, t: TyId) -> bool {
         return false;
     };
     let mut found = false;
-    cx.ty.visit(t, &mut |k| {
-        found |= matches!(k, TyKind::Dyn(d, _) if *d == defs.any || *d == defs.unknown)
-    });
+    cx.ty.visit(
+        t,
+        &mut |k| found |= matches!(k, TyKind::Dyn(d, _) if *d == defs.any || *d == defs.unknown),
+    );
     found
 }
 
@@ -189,9 +190,7 @@ fn adaptable(
         || !from
             .iter()
             .zip(to)
-            .all(|(a, b)| {
-                a == b || matches!(cx.dynamic(*b), Some(Dynamic::Any | Dynamic::Unknown))
-            })
+            .all(|(a, b)| a == b || matches!(cx.dynamic(*b), Some(Dynamic::Any | Dynamic::Unknown)))
     {
         return false;
     }
@@ -271,7 +270,8 @@ fn value_ok(
         return true;
     }
     if let (Some(a), Some(b)) = (cx.ty.opt_payload(from), cx.ty.opt_payload(to)) {
-        return cx.ty.nothing_of(from) == cx.ty.nothing_of(to) && value_ok(cx, a, b, false, seen, why);
+        return cx.ty.nothing_of(from) == cx.ty.nothing_of(to)
+            && value_ok(cx, a, b, false, seen, why);
     }
     match (cx.ty.kind(from).clone(), cx.ty.kind(to).clone()) {
         (
@@ -288,8 +288,7 @@ fn value_ok(
         ) => {
             p.len() == q.len()
                 && t == u
-                && q
-                    .iter()
+                && q.iter()
                     .zip(&p)
                     .all(|(x, y)| value_ok(cx, *x, *y, false, seen, why))
                 && value_ok(cx, r, s, false, seen, why)
@@ -529,13 +528,15 @@ impl FnCx<'_, '_> {
                 if let Some(scope) = g.f.scopes.last_mut() {
                     scope.names.insert(pname.clone(), l);
                 }
-                let ident = |n: &str| synth(
-                    ast::ExprKind::Ident(ast::Ident {
-                        name: n.to_string(),
+                let ident = |n: &str| {
+                    synth(
+                        ast::ExprKind::Ident(ast::Ident {
+                            name: n.to_string(),
+                            span,
+                        }),
                         span,
-                    }),
-                    span,
-                );
+                    )
+                };
                 let call_of = |f: &str, args: Vec<ast::Expr>| {
                     synth(
                         ast::ExprKind::Call {
@@ -557,7 +558,11 @@ impl FnCx<'_, '_> {
                     _ => g.module,
                 };
                 let own_module = std::mem::replace(&mut g.module, helpers_module);
-                let init = g.expr(&call_of(copy_in, vec![ident(&pname)]), Some(*from), Want::Move);
+                let init = g.expr(
+                    &call_of(copy_in, vec![ident(&pname)]),
+                    Some(*from),
+                    Want::Move,
+                );
                 g.module = own_module;
                 let ci = ast::Ident {
                     name: cname.clone(),

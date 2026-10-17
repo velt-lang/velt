@@ -554,15 +554,15 @@ impl FnLower<'_, '_> {
         // A value of the expected generic class (or an array) with other type arguments is
         // named as one: "it is a Map", "it is an array".
         let (same_id, same_name) = match self.cx.kind(ty) {
-            TyKind::Array(_) => (
-                Some(super::any_set_site::ARRAY_ID),
-                "an array".to_string(),
-            ),
+            TyKind::Array(_) => (Some(super::any_set_site::ARRAY_ID), "an array".to_string()),
             TyKind::Adt(d, args)
                 if self.cx.is_class(ty) && !args.is_empty() && !self.cx.has_header(d) =>
             {
                 let name = self.cx.type_name(ty);
-                (Some(self.cx.class_range(d).0), format!("{} {name}", article(&name)))
+                (
+                    Some(self.cx.class_range(d).0),
+                    format!("{} {name}", article(&name)),
+                )
             }
             _ => (None, String::new()),
         };
