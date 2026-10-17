@@ -1,6 +1,7 @@
 # Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
-# (they are skipped without their URLs) and then the differential tests against Node
-# (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
+# (they are skipped without their URLs) and the parser's robustness test cuts every golden at
+# every character (pull requests and the queue cut a sample), and then the differential tests
+# against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), and the benchmarks' instruction counts against the last accepted ones
 # (bench/nightly.sh). A manual run can pick one of them: `gh workflow run nightly -f only=stress`.
@@ -52,6 +53,9 @@ jobs:
     env:
       VELT_TEST_PG_URL: postgres://postgres:velt@127.0.0.1:5432/velt_test
       VELT_TEST_REDIS_URL: redis://127.0.0.1:6379
+      # The parser's robustness test cuts every golden at every character, not a sample
+      # (crates/velt_syntax/tests/robustness.rs).
+      VELT_ROBUSTNESS: full
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup

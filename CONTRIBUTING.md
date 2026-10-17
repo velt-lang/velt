@@ -51,6 +51,16 @@ pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`
 variable's cell used by two tasks (a closure assigning it reached another task or HTTP request
 without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects").
 
+velt_syntax's robustness test (`prefixes_never_panic_*`) cuts the goldens and parses what comes
+before and after each cut, which must never panic. It cuts the kitchen sink and the goldens in
+`VELT_ROBUSTNESS_FILES` at every character (comma-separated paths such as
+`tests/golden/lang/foo.vlt`; `cargo xtask check` sets it to the goldens you changed), and the
+other goldens where each token starts or ends plus a fixed sample of characters.
+`VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
+nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
+when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
+or when the changes can't be told.
+
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
 - **The checks your changes need**, while iterating and before you push: `scripts/check.sh` (macOS,

@@ -96,10 +96,12 @@ review.
 - Before queueing, strip any generated footer from the description: it becomes the commit message.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
-- A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
-  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
-  and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
-  against the `typescript` pinned in `tests/tscompat-oracle`), and the benchmark guard
+- A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
+  test cutting every golden at every character, `VELT_ROBUSTNESS=full`), the Cranelift memory
+  stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
+  Windows, and the `tsc` oracle for `velt check --ts-compat`
+  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
+  `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
