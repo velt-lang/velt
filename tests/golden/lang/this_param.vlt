@@ -24,6 +24,9 @@ function noThis(this: Counter, x: number): number {
 function maybe(this: Counter | undefined): string {
   return this === undefined ? "no receiver" : this.label;
 }
+function at<T>(this: T[], i: number): T {
+  return this[i];
+}
 async function later(this: Counter, by: number): Promise<number> {
   await Promise.resolve();
   return this.n + by;
@@ -36,5 +39,6 @@ async function main(): Promise<void> {
   console.log(tag.call(c, "<", ">"), tag.apply(c, ["[", "]"]));
   console.log(noThis.call(c, 1), [1, 2].map(noThis));
   console.log(maybe.call(c), maybe.call(undefined));
+  console.log(at.call([5, 6], 1), at.apply(["a", "b"], [0]));
   console.log(await later.call(c, 10));
 }

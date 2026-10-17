@@ -13,6 +13,7 @@ use velt_syntax::ast;
 use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
+use crate::defs::ParamSig;
 use crate::hir::{self, Callee, DefId, ExprKind as H, TyId};
 
 impl FnCx<'_, '_> {
@@ -34,17 +35,40 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let c = self.fn_callable(d, format!("function `{name}`"), span);
+        let mut c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
-        let ck = self.check_call(&c, slots, args, exp, span);
         let this = self
             .cx
             .fn_info(d)
             .this
             .clone()
             .expect("ICE: this parameter");
+        // A generic function infers its type arguments from the receiver too
+        // (`function at<T>(this: T[], i: number): T`): it is checked as the first argument.
+        if let (Some(t), false) = (this_arg, c.slot_names.is_empty()) {
+            c.params.insert(
+                0,
+                ParamSig {
+                    name: "this".into(),
+                    span,
+                    ty: this.ty,
+                    mode: this.mode,
+                    default: None,
+                },
+            );
+            let all: Vec<ast::Expr> = std::iter::once(t).chain(args).cloned().collect();
+            let ck = self.check_call(&c, slots, &all, exp, span);
+            self.note_async_args(d, &ck.args);
+            self.call_throws(d, &ck.type_args, ck.ret, span);
+            let kind = H::Call {
+                callee: Callee::Def(d, ck.type_args),
+                args: ck.args,
+            };
+            return self.mk(kind, ck.ret, span);
+        }
+        let ck = self.check_call(&c, slots, args, exp, span);
         let this_ty = self.cx.subst(this.ty, &ck.type_args);
         let recv = match this_arg {
             Some(t) => {

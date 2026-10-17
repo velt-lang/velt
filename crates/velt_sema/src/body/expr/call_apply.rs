@@ -4,7 +4,9 @@
 //! `strictBindCallApply` requires). `thisArg` is evaluated, after `f` and before the arguments,
 //! as JavaScript does (a class or namespace name has no effect to evaluate).
 //!
-//! The `this` a call passes matters only to a function that reads it. Velt's functions,
+//! A function declared with a `this` parameter that its body uses runs on `thisArg`
+//! (`this_param.rs`). Otherwise the `this` a call passes matters only to a function that reads
+//! it. Velt's functions,
 //! arrow functions and static functions of the built-in namespaces other than `Promise` read
 //! none, so any `thisArg` works for them; `Promise`'s statics take `Promise`. A method read as a
 //! value (`o.m`, `C.m`) keeps the object or class it was read from, so its `thisArg` must be
