@@ -13,8 +13,11 @@ impl FnLower<'_, '_> {
     pub(super) fn intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         use Intrinsic as I;
         match (i, args) {
-            (I::Yield, [a]) => self.yield_value(a),
+            (I::Yield, [a, rest @ ..]) => self.yield_value(a, rest.first(), ty),
             (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
+            (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
+            (I::YieldDelegate, [g]) => self.yield_delegate(g),
             (I::GeneratorValue, [g]) => self.gen_value(g),
             (I::GeneratorReturn, [g]) => self.gen_return(g),
             (I::AsyncGeneratorValue, [g]) => self.gen_value(g),

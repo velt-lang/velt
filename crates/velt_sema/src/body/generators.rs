@@ -43,15 +43,19 @@ impl FnCx<'_, '_> {
             );
         }
         let used = !self.f.stmt_yields.remove(&(span.lo, span.hi));
-        if used {
+        let next = self.f.next_ty.filter(|_| !delegate);
+        if used && next.is_none() {
             self.yield_value_used(delegate, span);
         }
         let h = match (delegate, arg) {
-            (true, Some(a)) => self.yield_star(a, span),
+            (true, Some(a)) => match self.yield_delegate(a, t, span) {
+                Some(h) => h,
+                None => self.yield_star(a, span),
+            },
             (true, None) => self.error_expr(span),
-            (false, arg) => self.yield_one(arg, t, span),
+            (false, arg) => self.yield_one(arg, t, used, span),
         };
-        if !used {
+        if !used || next.is_some() {
             return h;
         }
         // Checked, but its value is an error (reported above).
@@ -66,8 +70,9 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), self.cx.ty.error, span)
     }
 
-    /// `yield arg` (`arg` checked against the yield type `t`).
-    fn yield_one(&mut self, arg: Option<&ast::Expr>, t: TyId, span: Span) -> hir::Expr {
+    /// `yield arg` (`arg` checked against the yield type `t`); `used`: its value is used (it
+    /// is the value `next(value)` passes in, when the generator takes one).
+    fn yield_one(&mut self, arg: Option<&ast::Expr>, t: TyId, used: bool, span: Span) -> hir::Expr {
         let v = match arg {
             Some(a) if self.f.is_async => self.yielded_awaiting(a, t),
             Some(a) => self.expr_coerce(a, t, Want::Move),
@@ -81,11 +86,53 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         };
+        // In a program that calls `throw()`, a `yield` in a `try` with a `catch` may throw
+        // what `throw()` passes in, as an `any` (`ts_protocol::calls_throw`).
+        if self.cx.gen_throw && self.f.catch_depth > 0 && !self.f.is_async {
+            if let Some(any) = self.any_ty() {
+                self.cx.any_impl();
+                self.throw_src(ThrowSrc::Direct(any, span));
+            }
+        }
+        let mut args = vec![v];
+        let ty = match self.f.next_ty.filter(|_| used) {
+            // `Generator<T, E, N>`: the `yield` is the value `next(value)` passes in, or what
+            // `next()` without one means (`undefined`, when `N` holds it).
+            Some(n) => {
+                if let Some(d) = self.no_next_value(n, span) {
+                    args.push(d);
+                }
+                n
+            }
+            None => self.cx.ty.unit,
+        };
         let kind = H::Call {
             callee: Callee::Intrinsic(Intrinsic::Yield),
-            args: vec![v],
+            args,
         };
-        self.mk(kind, self.cx.ty.unit, span)
+        self.mk(kind, ty, span)
+    }
+
+    /// The value of a `yield` of type `n` resumed by a `next()` without a value: `undefined`
+    /// as an `n`, when `n` holds it (`None`: such a resume panics).
+    fn no_next_value(&mut self, n: TyId, span: Span) -> Option<hir::Expr> {
+        let dynamic = matches!(
+            self.cx.dynamic(n),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        );
+        let optional = matches!(
+            self.cx.ty.kind(n),
+            TyKind::Option(_, hir::Nothing::Undefined | hir::Nothing::Both)
+        );
+        if !dynamic && !optional {
+            return None;
+        }
+        let undefined = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Lit(ast::Lit::Undefined),
+            span,
+        };
+        Some(self.expr_coerce(&undefined, n, Want::Move))
     }
 
     /// Marks the `yield`s whose value expression statement `e` drops: `e` itself, or a branch
@@ -109,7 +156,7 @@ impl FnCx<'_, '_> {
         let (what, why) = match delegate {
             false => (
                 "`yield`",
-                "`yield` evaluates to the argument of the next `next(value)` call); Velt doesn't because `next()` takes no argument, so `yield` has no value; write the `yield` as a statement of its own, and pass values into the generator through its parameters or an object both sides share",
+                "`yield` evaluates to the argument of the next `next(value)` call, of the generator's `TNext` type); Velt doesn't when the type is not given (Velt does not default it to `any`); declare the generator's result as `Generator<T, void, N>`, with `N` the type of the values `next` passes, or write the `yield` as a statement of its own",
             ),
             true => (
                 "`yield*`",
@@ -135,6 +182,89 @@ impl FnCx<'_, '_> {
             self.expr(a, None, Want::Move);
         }
         self.error_expr(span)
+    }
+
+    /// `yield* src` in a sync generator that takes `next(value)` or may be thrown into, when
+    /// `src` is a `Generator` of the same `T` (and `N`, or none): `next(value)`, `throw(e)` and
+    /// closing reach the inner generator (module docs). `None`: the plain loop below.
+    fn yield_delegate(&mut self, src: &ast::Expr, t: TyId, span: Span) -> Option<hir::Expr> {
+        if self.f.is_async || (self.f.next_ty.is_none() && !self.cx.gen_throw) {
+            return None;
+        }
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let ty = self.expr(src, None, Want::Move).ty;
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
+            return None;
+        };
+        let n2 = *args.get(2)?;
+        let same_next = self.cx.ty.is_bottom(n2) || Some(n2) == self.f.next_ty;
+        if Some(d) != self.cx.generator_class() || args[0] != t || !same_next {
+            return None;
+        }
+        let h = self.expr(src, Some(ty), Want::Move);
+        let direct = matches!(&h.kind, H::Call { callee: Callee::Def(d, _), .. } if self.is_generator_fn(*d));
+        let init = match direct {
+            true => self.gen_intrinsic(Intrinsic::GeneratorEmbed, vec![h], ty, span),
+            false => h,
+        };
+        self.push_scope_until(span.hi);
+        let name = ast::Ident {
+            name: format!("<yield-gen@{}>", span.lo),
+            span,
+        };
+        let local = self.declare_local_mut(&name, ty, crate::body::LocalKind::Let, true);
+        self.pop_scope();
+        let use_g = |fx: &Self| fx.mk(H::Local(local, hir::UseMode::BorrowMut), ty, span);
+        let bool_ = self.cx.ty.bool_;
+        let e = args[1];
+        if e != self.cx.ty.never {
+            self.throw_src(ThrowSrc::Direct(e, span));
+        }
+        // Like a `yield`, it may throw what `throw()` passes in when it is in a `try` with a
+        // `catch` (the inner generator did not catch it).
+        if self.cx.gen_throw && self.f.catch_depth > 0 && !self.f.is_async {
+            if let Some(any) = self.any_ty() {
+                self.cx.any_impl();
+                self.throw_src(ThrowSrc::Direct(any, span));
+            }
+        }
+        let first = self.gen_intrinsic(Intrinsic::GeneratorResume, vec![use_g(self)], bool_, span);
+        let again = self.gen_intrinsic(Intrinsic::YieldDelegate, vec![use_g(self)], bool_, span);
+        let stmt = |kind| hir::Stmt { kind, span };
+        let block = |stmts| hir::Block {
+            stmts,
+            value: None,
+            span,
+        };
+        let lp = hir::StmtKind::While {
+            label: None,
+            cond: again,
+            body: block(vec![]),
+            step: None,
+        };
+        let stmts = vec![
+            stmt(hir::StmtKind::Let {
+                local,
+                init: Some(init),
+            }),
+            stmt(hir::StmtKind::If {
+                cond: first,
+                then: block(vec![stmt(lp)]),
+                els: None,
+            }),
+        ];
+        Some(self.mk(H::Block(block(stmts)), self.cx.ty.unit, span))
+    }
+
+    fn gen_intrinsic(&self, i: Intrinsic, args: Vec<hir::Expr>, ty: TyId, span: Span) -> hir::Expr {
+        let kind = H::Call {
+            callee: Callee::Intrinsic(i),
+            args,
+        };
+        self.mk(kind, ty, span)
     }
 
     /// `yield* src`: `for (const <yield@N> of src) { yield <yield@N>; }`, or `for await` in an

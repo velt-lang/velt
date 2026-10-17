@@ -216,7 +216,7 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
  *
  * The compiler creates these objects: the generator's state follows the class's fields.
  */
-export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, IterableIterator<T, E>, IteratorObject<T, E> {
+export class Generator<T, E = never, N = never> implements Iterator<T, E>, Iterable<T, E>, IterableIterator<T, E>, IteratorObject<T, E> {
   #state: u64 = 0;
 
   /** Runs the body up to its next `yield` and returns that value, or a `done` result. */
@@ -225,6 +225,32 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, 
       return { value: __intrinsic_generator_value(this), done: false };
     }
     return { done: true };
+  }
+
+  // `next(value)` in a `Generator<T, E, N>` (the compiler calls this for it): like `next()`,
+  // and the paused `yield` evaluates to `value` (the first call's value is ignored, as in JS).
+  private nextWith(value: N): IteratorResult<T> throws E {
+    if (__intrinsic_generator_resume_with(this, value)) {
+      return { value: __intrinsic_generator_value(this), done: false };
+    }
+    return { done: true };
+  }
+
+  /**
+   * Resumes the body with `e` thrown at the paused `yield`: a `try` around it catches it (and
+   * the result is the body's next step), else the generator is closed (its `finally` blocks
+   * run) and `throw()` throws `e`. A generator that has not started or is finished throws `e`
+   * at once (and is done). `e` is an `any`, as in TypeScript.
+   */
+  throw(e: any): IteratorResult<T> throws E | any {
+    const r = __intrinsic_generator_throw(this, e);
+    if (r == 1) {
+      return { value: __intrinsic_generator_value(this), done: false };
+    }
+    if (r == 0) {
+      return { done: true };
+    }
+    throw e;
   }
 
   /**

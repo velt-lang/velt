@@ -238,7 +238,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("AsyncGenerator", &["next", "return"]),
     ("AsyncIterator", &["next", "return"]),
-    ("Generator", &["next", "return"]),
+    ("Generator", &["next", "return", "throw"]),
     ("Iterator", &["next", "return"]),
     ("ArrayIterator", &["next"]),
     ("StringIterator", &["next"]),

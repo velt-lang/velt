@@ -205,6 +205,12 @@ pub(crate) struct Frame {
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
+    /// none).
+    pub next_ty: Option<TyId>,
+    /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
+    /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
+    pub catch_depth: u32,
     /// Body of a named generator function expression: its name (not in scope there).
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
@@ -313,6 +319,8 @@ impl Frame {
             discards_value: false,
             is_async: false,
             yield_ty: None,
+            next_ty: None,
+            catch_depth: 0,
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],

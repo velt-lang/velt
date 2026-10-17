@@ -380,6 +380,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     let mut frame = Frame::new(f.kind, frame_ret);
     frame.is_async = f.is_async || f.is_async_gen;
     frame.yield_ty = yield_ty;
+    if yield_ty.is_some() {
+        let n = cx.generator_next_ty(f.ret);
+        frame.next_ty = (!cx.ty.is_bottom(n)).then_some(n);
+    }
     let enclosing_locals = cx
         .nested_locals
         .get(&def)
