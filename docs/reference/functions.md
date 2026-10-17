@@ -369,7 +369,8 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `static *name()` or `*[Symbol.iterator]()`. Calling one creates a `Generator<T, E>`
   ([prelude](../std/prelude.md#iteration)) without running the body. Each `next()` runs the
   body up to its next `yield v` and returns `{ value: v, done: false }`; when the body ends it
-  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
+  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`; `undefined` in a
+  `Generator<any>` or `Generator<unknown>`, as in JS). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
 - The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
