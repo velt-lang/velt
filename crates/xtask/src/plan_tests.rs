@@ -483,3 +483,74 @@ fn the_vscode_extension_runs_its_own_tests() {
     assert!(!plan(&["crates/velt_syntax/src/lexer.rs"]).vscode);
     assert!(plan(&["Cargo.lock"]).vscode);
 }
+
+#[test]
+fn the_parser_and_its_dependencies_sweep_every_golden_in_full() {
+    for path in [
+        "crates/velt_syntax/src/parser/expr.rs",
+        "crates/velt_syntax/tests/common/mod.rs",
+        "crates/velt_syntax/Cargo.toml",
+        "crates/velt_common/src/span.rs",
+    ] {
+        let p = plan(&[path, "tests/golden/lang/foo.vlt"]);
+        assert_eq!(p.sweep, Sweep::Full, "{path}");
+        assert_eq!(p.sweep_env(), [("VELT_ROBUSTNESS", "full".to_string())]);
+    }
+}
+
+#[test]
+fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "std/string.vlt",
+        "docs/reference/README.md",
+        ".github/workflows/ci.yml",
+    ] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Sampled(set(&[])), "{path}");
+        assert!(plan(&[path]).sweep_env().is_empty(), "{path}");
+    }
+    let p = plan(&[
+        "tests/golden/lang/foo.vlt",
+        "tests/golden/lang/foo.out",
+        "tests/golden/m1/errors/bar.vlt",
+        "examples/hello.vlt",
+        "crates/velt_sema/src/check.rs",
+    ]);
+    assert_eq!(
+        p.sweep,
+        Sweep::Sampled(set(&[
+            "tests/golden/lang/foo.vlt",
+            "tests/golden/m1/errors/bar.vlt"
+        ]))
+    );
+    assert_eq!(
+        p.sweep_env(),
+        [(
+            "VELT_ROBUSTNESS_FILES",
+            "tests/golden/lang/foo.vlt,tests/golden/m1/errors/bar.vlt".to_string()
+        )]
+    );
+    // A change that selects everything still says which goldens it touched.
+    let p = plan(&["Cargo.lock", "tests/golden/lang/foo.vlt"]);
+    assert!(p.full);
+    assert_eq!(p.sweep, Sweep::Sampled(set(&["tests/golden/lang/foo.vlt"])));
+}
+
+#[test]
+fn comment_only_parser_changes_and_many_goldens() {
+    let paths = vec!["crates/velt_syntax/src/lexer/mod.rs".to_string()];
+    let p = Plan::for_changes(
+        &graph(),
+        &paths,
+        &set(&["crates/velt_syntax/src/lexer/mod.rs"]),
+    );
+    assert_eq!(p.sweep, Sweep::Sampled(set(&[])));
+    let many: Vec<String> = (0..=MAX_SWEPT_GOLDENS)
+        .map(|i| format!("tests/golden/lang/g{i}.vlt"))
+        .collect();
+    assert_eq!(Plan::for_paths(&graph(), &many).sweep, Sweep::Full);
+    assert!(matches!(
+        Plan::for_paths(&graph(), &many[1..]).sweep,
+        Sweep::Sampled(files) if files.len() == MAX_SWEPT_GOLDENS
+    ));
+}

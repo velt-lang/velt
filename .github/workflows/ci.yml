@@ -109,6 +109,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       os: ${{ steps.live.outputs.os || steps.plan.outputs.os }}
+      # How the parser's robustness test cuts the goldens (`--full` below knows no changes).
+      robustness: ${{ steps.plan.outputs.robustness }}
+      robustness_files: ${{ steps.plan.outputs.robustness_files }}
     steps:
       # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
       # the queue test the entries behind it again, under new branches, and deletes the old
@@ -159,6 +162,9 @@ jobs:
           - part: golden
             args: --part golden
     runs-on: ${{ matrix.os }}
+    env:
+      VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
+      VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
     # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
     # entry within the hour instead of holding the queue for two.
     timeout-minutes: 45

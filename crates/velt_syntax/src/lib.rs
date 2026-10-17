@@ -113,13 +113,32 @@ pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
     parse(&define_at)
 }
 
-/// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
+thread_local! {
+    /// Set on a thread [`on_parser_thread`] spawned: parsing there needs no thread of its own.
+    static ON_PARSER_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` on a thread with the parser's stack, where the parse functions run directly instead
+/// of each spawning a thread of its own: for callers that parse many sources in a row (the
+/// parser's robustness sweep parses millions).
+pub fn with_parser_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
+    on_parser_thread(f)
+}
+
+/// Runs `f` on a thread with the parser's stack (on this thread if it is one, or if none can be
+/// spawned).
 fn on_parser_thread<T: Send>(f: impl Fn() -> T + Sync) -> T {
+    if ON_PARSER_STACK.get() {
+        return f();
+    }
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .name("velt-parse".into())
             .stack_size(PARSER_STACK_BYTES)
-            .spawn_scoped(s, &f);
+            .spawn_scoped(s, || {
+                ON_PARSER_STACK.set(true);
+                f()
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
@@ -158,6 +177,16 @@ fn parse_source(
 /// Where JSX starts is decided by the parser, so this parses the file.
 pub fn comment_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
     on_parser_thread(|| parse_with_comments(FileId(0), src).2)
+}
+
+/// Byte ranges of the tokens of `src`, in source order, lexing it as code throughout: where JSX
+/// starts is decided by the parser, so inside JSX they are approximate. For tests that cut a file
+/// where a token starts or ends (the parser's robustness sweep).
+#[doc(hidden)]
+pub fn token_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
+    let mut lexer = lexer::Lexer::new(FileId(0), src);
+    lexer.fill(usize::MAX);
+    lexer.toks.iter().map(|t| t.lo..t.hi).collect()
 }
 
 /// The first `this: T` parameter of `src` (`function f(this: T, x: A)`, `(this: void) => R`),
