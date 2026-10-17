@@ -158,7 +158,7 @@ impl Ctx<'_> {
         let all = declared.len();
         let rest: Vec<TyId> = declared
             .into_iter()
-            .filter(|q| !parts.contains(q))
+            .filter(|&q| !parts.iter().any(|&p| self.same_object(p, q)))
             .collect();
         // No part of the pattern is a part of the argument (or every one is): the whole argument.
         let Some((&first, others)) = rest.split_first().filter(|_| rest.len() < all) else {
@@ -172,6 +172,23 @@ impl Ctx<'_> {
             }
         }
         acc
+    }
+
+    /// Are `a` and `b` one object type by structure: the same type, or object types (an
+    /// interface's or written out) with the same fields, each of the same type and optionality?
+    fn same_object(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b {
+            return true;
+        }
+        if !self.is_object_type(a) || !self.is_object_type(b) {
+            return false;
+        }
+        let (fa, fb) = (self.public_fields(a), self.public_fields(b));
+        fa.len() == fb.len()
+            && fa.iter().all(|f| {
+                fb.iter()
+                    .any(|g| g.name == f.name && g.ty == f.ty && g.optional == f.optional)
+            })
     }
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other

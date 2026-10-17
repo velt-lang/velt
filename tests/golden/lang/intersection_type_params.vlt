@@ -33,6 +33,16 @@ function parseLike<T>(_: T & { id: string }, s: string): T {
   return JSON.parse(s);
 }
 
+interface Id {
+  id: string;
+}
+function viaIface<T>(_: T & Id, s: string): T {
+  return JSON.parse(s);
+}
+function viaLit<T>(_: T & { id: string }, s: string): T {
+  return JSON.parse(s);
+}
+
 type Loose = unknown & { a: number };
 type Obj = object & { b: string };
 
@@ -67,6 +77,13 @@ function main() {
   const v: { a: number } & { id: string } = { a: 1, id: "k" };
   const parsed = parseLike(v, '{"a":5}');
   console.log(parsed, JSON.stringify(parsed));
+
+  // The parts match by structure: an interface's fields and the same fields written out.
+  const w: { a: number } & Id = { a: 3, id: "w" };
+  console.log(viaIface(w, '{"a":7}'));
+  console.log(viaLit(w, '{"a":8}'));
+  const lit: { a: number } & { id: string } = { a: 4, id: "u" };
+  console.log(viaIface(lit, '{"a":9}'));
 
   const l: Loose = { a: 7 };
   const o: Obj = { b: "o" };
