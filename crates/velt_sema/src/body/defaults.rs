@@ -146,7 +146,7 @@ pub(crate) fn arrow_defaults(
 }
 
 impl super::FnCx<'_, '_> {
-    /// `let p = p === undefined ? <default> : p;` for each parameter (its name, default,
+    /// `let p = typeof p === "undefined" ? <default> : p;` for each parameter (its name, default,
     /// whether it is optional, and its type) whose default the function applies itself
     /// (`in_callee`), appended to `out`: the start of the body, before destructured parameters
     /// are unpacked. The local hides the parameter, whose argument stays the caller's.

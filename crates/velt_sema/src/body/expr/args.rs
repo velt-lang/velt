@@ -252,11 +252,7 @@ impl FnCx<'_, '_> {
     fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
         match &h.kind {
             H::ToDyn { expr, .. } => self.is_undefined_lit(expr),
-            H::Lit(hir::Lit::Null) => self
-                .cx
-                .ty
-                .nothing_of(h.ty)
-                == Some(hir::Nothing::Undefined),
+            H::Lit(hir::Lit::Null) => self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined),
             _ => false,
         }
     }
