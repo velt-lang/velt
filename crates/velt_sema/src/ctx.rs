@@ -233,6 +233,8 @@ pub(crate) struct Ctx<'m> {
     /// Object values converted by copying their fields, and the field assignments that could
     /// tell the copy from the original (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
+    pub super_calls: std::collections::HashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known (`ts_protocol`).
@@ -361,6 +363,7 @@ impl<'m> Ctx<'m> {
             fresh_checks: vec![],
             any_keys: vec![],
             object_copies: Default::default(),
+            super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

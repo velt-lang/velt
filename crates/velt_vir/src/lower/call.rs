@@ -68,15 +68,11 @@ impl FnLower<'_, '_> {
             }
             _ => self.cx.func_for(def, targs.clone()),
         };
-        if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() {
+        // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
+        let sup = std::mem::take(&mut self.super_call);
+        if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
             let rty = self.sub(args[0].ty);
-            // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
-            // (Sema passes `this` upcast to the base class there.)
-            let own = match &args[0].kind {
-                hir::ExprKind::Upcast(inner) => self.sub(inner.ty),
-                _ => rty,
-            };
-            if self.cx.is_class(rty) && self.cx.proxiable(rty) && !self.overridden_in(def, own) {
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
                 self.proxy_recv = Some((def, targs.clone()));
             }
         }

@@ -133,7 +133,14 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
             } => self.source_location(e.span),
-            K::Call { callee, args } => self.call_value(callee, args, e.ty),
+            K::Call { callee, args } => {
+                // `super.m(args)` (`Program::super_calls`), taken by `call_def`.
+                let sup = self.cx.hir.super_calls.contains(&e.span);
+                let prev = std::mem::replace(&mut self.super_call, sup);
+                let v = self.call_value(callee, args, e.ty);
+                self.super_call = prev;
+                v
+            }
             K::Cast(inner) => {
                 let v = self.expr(inner);
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));

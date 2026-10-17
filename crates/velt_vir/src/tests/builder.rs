@@ -92,6 +92,7 @@ impl PB {
             object: None,
             function: None,
             unknown: None,
+            super_calls: Default::default(),
         }
     }
 }

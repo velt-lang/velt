@@ -495,6 +495,9 @@ struct FnLower<'c, 'h> {
     /// receiver is lowered, a proxy with a `get` trap reads the method through it
     /// (proxy_method.rs), before the other arguments.
     proxy_recv: Option<(DefId, Vec<TyId>)>,
+    /// The call being lowered is `super.m(args)` (`Program::super_calls`): its receiver is not
+    /// read through a proxy (`call_def` takes it).
+    super_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
     /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats

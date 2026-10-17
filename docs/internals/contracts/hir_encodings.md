@@ -9,7 +9,10 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
   root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
-  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
+  `Lit(Unit)` when no ancestor has a constructor. `super.m(args)` in a method is a
+  `Callee::Def` call of the base implementation with `this` (upcast) as `args[0]`; the call
+  expression's span is in `Program::super_calls` (#823: JavaScript does not read `m` from
+  `this` there, so a typed proxy's `get` trap does not run). Field defaults (`FieldDef::default`) run
   in JavaScript's order: a constructor evaluates those of its class's fields that its base
   constructor's class does not have, right after the `super(args)` call (when no ancestor has
   a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
@@ -805,8 +808,8 @@ entry is an `ICE:`.
   a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call
-  then runs with `this` the proxy. A direct call of a method its receiver's class overrides
-  (`super.m()`, `this` passed upcast) does not read through the proxy, as in JavaScript. An
+  then runs with `this` the proxy. A `super.m()` call (`Program::super_calls`) does not read
+  through the proxy, as in JavaScript. An
   async method, or one that owns its receiver, cannot be read as a value yet: a call of one
   through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
   type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with

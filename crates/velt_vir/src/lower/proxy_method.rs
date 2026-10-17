@@ -168,27 +168,6 @@ impl FnLower<'_, '_> {
         self.cx.is_class(rty) && self.cx.proxiable(rty)
     }
 
-    /// Is the method `def` overridden in the class `cls` (so a direct call of it on a `cls`
-    /// receiver is `super.m()`, which JavaScript does not read through the receiver)?
-    pub(super) fn overridden_in(&mut self, def: DefId, cls: TyId) -> bool {
-        let TyKind::Adt(d, _) = self.cx.kind(cls) else {
-            return false;
-        };
-        // A virtual method has the same slot in every class of the hierarchy.
-        let mut cur = Some(d);
-        while let Some(c) = cur {
-            if let Some(slot) = self.cx.adt_def(c).vtable.iter().position(|&m| m == def) {
-                let own = self.cx.adt_def(d).vtable.get(slot).copied();
-                return own.is_some_and(|m| m != def);
-            }
-            cur = self.cx.adt_def(c).base.and_then(|b| match self.cx.kind(b) {
-                TyKind::Adt(bd, _) => Some(bd),
-                _ => None,
-            });
-        }
-        false
-    }
-
     /// The property name of the method `def` (its name after the class's).
     fn method_name(&self, def: DefId) -> String {
         let name = &self.cx.fn_def(def).name;
