@@ -136,6 +136,31 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        self.non_null_of(inner, exp, want, false, span)
+    }
+
+    /// `x!` passed for a borrowed parameter: a variable (or a path of fields) stays where it
+    /// is and the callee gets another reference to its value, as it gets the variable itself
+    /// for `x` (#1196: `new WeakRef(k!)` keeps its target while `k` lives, as in JS, where the
+    /// moved value would be dropped after the call).
+    pub(crate) fn non_null_arg(
+        &mut self,
+        inner: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        self.non_null_of(inner, exp, Want::Borrow, true, span)
+    }
+
+    /// `inner!`; with `keep`, a place is not consumed (`non_null_arg`).
+    fn non_null_of(
+        &mut self,
+        inner: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
@@ -161,7 +186,8 @@ impl FnCx<'_, '_> {
             }
             return h;
         }
-        self.nullish_checked(h, &panic, exp, span)
+        let keep = keep && is_place(&h) && self.cx.dynamic(h.ty).is_none();
+        self.nullish_checked_keeping(h, &panic, exp, keep, span)
     }
 
     pub(crate) fn nullish(
@@ -178,9 +204,22 @@ impl FnCx<'_, '_> {
     /// `s ?? rhs` of a checked left side (also `s || rhs` on a nullable object).
     pub(crate) fn nullish_checked(
         &mut self,
+        s: hir::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        self.nullish_checked_keeping(s, rhs, exp, false, span)
+    }
+
+    /// `s ?? rhs`; with `keep`, a place `s` is borrowed, not consumed (its payload, used as a
+    /// value, is another reference to it).
+    fn nullish_checked_keeping(
+        &mut self,
         mut s: hir::Expr,
         rhs: &ast::Expr,
         exp: Option<TyId>,
+        keep: bool,
         span: Span,
     ) -> hir::Expr {
         let lhs_span = s.span;
@@ -201,7 +240,7 @@ impl FnCx<'_, '_> {
             self.expr(rhs, exp, Want::Move);
             return self.error_expr(span);
         };
-        let (l, mode) = self.option_binding(&s, payload, "<nullish>", true);
+        let (l, mode) = self.option_binding(&s, payload, "<nullish>", !keep);
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }

@@ -1,0 +1,42 @@
+// A type argument that is not assignable to its parameter's type bound is an error, as in
+// TypeScript (TS2345 for an inferred one, TS2344 for one written out); an overloaded call
+// whose arguments satisfy no signature's bounds is TS2769.
+function same<T extends "a" | "b">(t: T): T {
+  return t;
+}
+
+function total<T extends Record<string, number>>(o: T): number {
+  return 0;
+}
+
+function id<T extends string | number>(x: T): T {
+  return x;
+}
+
+function pick<T extends string>(x: T): string;
+function pick<T extends number[]>(x: T): number;
+function pick<T>(x: T): string | number {
+  return 1;
+}
+
+function optional<T extends "a" | "b">(t?: T): number {
+  return 1;
+}
+
+function list<T extends "a" | "b">(t: T[]): number {
+  return 1;
+}
+
+function open<T>(x: T): T {
+  return id(x);
+}
+
+function main() {
+  same("c");
+  total({ a: "x" });
+  id(true);
+  id<boolean>(false);
+  pick(true);
+  optional("c");
+  list(["a", "z"]);
+}

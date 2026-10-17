@@ -83,6 +83,7 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            constraints: names.constraints,
             js_numbers: false,
             positions: false,
             js_api: false,

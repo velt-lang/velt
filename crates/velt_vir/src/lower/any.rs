@@ -744,10 +744,14 @@ impl FnLower<'_, '_> {
                 self.terminate(Terminator::Unreachable);
                 self.switch_to(no);
             }
-            let msg = format!(
+            let mut msg = format!(
                 "TypeError: the value is not {an} {want} (it is {})",
                 FOUND[k]
             );
+            if k == TAG_OBJECT as usize && self.prelude_record(ty).is_some() {
+                // Node reads any object as a record; Velt's objects of a fixed shape are not one.
+                msg.push_str(": only a Record converts to a Record (an object of a fixed shape does not yet, #1219)");
+            }
             self.panic_msg(&msg);
             self.terminate(Terminator::Unreachable);
         }

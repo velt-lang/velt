@@ -422,6 +422,7 @@ impl FnCx<'_, '_> {
         let mut info = fn_placeholder(name, span, span, self.module, FnKind::Closure, None);
         info.generics.names = self.env.params.clone();
         info.generics.bounds = self.bounds.clone();
+        info.generics.constraints = self.constraints.clone();
         info.generics
             .bounds
             .resize(info.generics.names.len(), vec![]);

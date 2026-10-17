@@ -61,7 +61,7 @@ impl FnCx<'_, '_> {
         for p in props {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => self
-                    .spread_fields(e, &mut lets)
+                    .spread_fields(e, &mut lets, false)
                     .into_iter()
                     .map(|(n, h, src)| (n, Value::Read(h, src)))
                     .collect(),
@@ -113,6 +113,26 @@ impl FnCx<'_, '_> {
         self.with_lets(lets, lit)
     }
 
+    /// The `Record` def and value type `V` of the first spread source of `props` that is a
+    /// variable or field path of type `Record<string, V>`.
+    pub(super) fn spread_string_record(
+        &mut self,
+        props: &[ast::ObjectProp],
+    ) -> Option<(DefId, TyId)> {
+        let str_ = self.cx.ty.str_;
+        props.iter().find_map(|p| {
+            let ast::ObjectProp::Spread(e) = p else {
+                return None;
+            };
+            let t = self.peek_ty(e)?;
+            let (k, v) = self.record_args(t)?;
+            let TyKind::Adt(d, _) = self.cx.ty.kind(t) else {
+                return None;
+            };
+            (k == str_).then_some((*d, v))
+        })
+    }
+
     /// `{ stmts; value }` (or just `value` when there are no statements).
     pub(crate) fn with_lets(&mut self, lets: Vec<hir::Stmt>, value: hir::Expr) -> hir::Expr {
         if lets.is_empty() {
@@ -153,19 +173,33 @@ impl FnCx<'_, '_> {
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
     ) -> Vec<(String, hir::Expr, bool)> {
-        self.spread_fields(e, lets)
+        self.spread_fields(e, lets, true)
             .into_iter()
             .map(|(n, h, src)| (n, h, src.optional && !src.presence))
             .collect()
     }
 
-    /// [`spread_source`](Self::spread_source), with whether each field is optional.
+    /// [`spread_source`](Self::spread_source), with whether each field is optional;
+    /// `record_ok`: a `Record` source gives no fields (else it is reported: its entries are no
+    /// fields of an object type).
     fn spread_fields(
         &mut self,
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
+        record_ok: bool,
     ) -> Vec<(String, hir::Expr, Src)> {
         let h = self.expr(e, None, Want::Borrow);
+        if !record_ok && self.record_args(h.ty).is_some() {
+            let tn = self.cx.display(h.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("cannot spread the `{tn}` into an object of a fixed shape"),
+                    e.span,
+                )
+                .with_note("a record's keys are known only at run time: build a `Record` (`const o: Record<string, V> = { ...r }`)"),
+            );
+            return vec![];
+        }
         let seen = crate::object_copies::Seen::Spread;
         self.cx.object_copies.observe(h.ty, e.span, seen);
         let Some((d, args)) = self.adt_of(h.ty) else {
