@@ -189,11 +189,17 @@ impl FnLower<'_, '_> {
     /// that type's trace glue; any other target is left out (a leak at worst). So a weak map
     /// entry whose value is a proxy of its key (a `raw -> proxy` cache) is an ephemeron cycle
     /// like any other.
+    ///
+    /// When `object` is weakly held, the field walk has already visited a target whose weak
+    /// word says it is a counted object (`trace_dyn`); it is visited here only otherwise, so
+    /// each reference is counted once (a second visit made a live key look dead, #1223).
     fn trace_proxy_target(&mut self, o: &Place, ty: TyId, tv: (vir::Local, vir::Local)) {
         let cands = self.cx.proxy_traced_as(None, ty);
         if cands.is_empty() {
             return;
         }
+        let walked = self.cx.adt_field_tys(ty).first().copied();
+        let walked = walked.is_some_and(|t| self.refers(t));
         let target = self.field_place(o, ty, 0);
         let data = self.rvalue_temp(
             Ty::Ptr,
@@ -205,6 +211,20 @@ impl FnLower<'_, '_> {
         );
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         let done = self.new_block();
+        if walked {
+            let has_table = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Ne, table.clone(), cint(0, Ty::Ptr)),
+            );
+            let (check, go) = (self.new_block(), self.new_block());
+            self.branch(has_table, check, go);
+            self.switch_to(check);
+            let word = self.dispatch(table.clone(), crate::lower::weak_object::SLOT_WEAK);
+            let unseen =
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, word, cint(0, Ty::Ptr)));
+            self.branch(unseen, go, done);
+            self.switch_to(go);
+        }
         for c in cands {
             let want = self.vtable_addr(VtableKey::Impl(imp, c));
             let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, table.clone(), want));
