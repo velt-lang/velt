@@ -190,10 +190,21 @@ impl FnLower<'_, '_> {
     pub(super) fn make_dyn(&mut self, e: &hir::Expr, impl_index: u32, ty: TyId) -> Operand {
         let cty = self.sub(e.ty);
         let ty = self.sub(ty);
+        if self.cx.is_narrow_dynamic(ty) {
+            // `object` / `Function` key collections by identity (issue #926).
+            self.cx.note_identity(ty);
+        }
         self.cx.note_dyn_identity(ty, cty);
         let v = self.consume(e);
         if self.dead() {
             return unit();
+        }
+        // A type parameter bound by `object` / `Function` (issue #926) instantiated with a
+        // dynamic type: the same value, never a box in a box. It is returned as an owned
+        // temporary: a moved parameter's place would read as borrowed to `consume`, which
+        // would share it and leave the parameter undropped.
+        if self.cx.is_any_impl(impl_index) && self.cx.is_dynamic(cty) {
+            return self.own_value(v, ty);
         }
         if self.cx.is_any_impl(impl_index)
             && matches!(self.cx.kind(cty), TyKind::Dyn(..))

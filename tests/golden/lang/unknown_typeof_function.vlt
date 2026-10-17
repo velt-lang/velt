@@ -1,0 +1,29 @@
+// check: no leaks
+// `typeof u === "function"` narrows an `unknown` to `Function`, as in TypeScript (issue #926):
+// calling it goes through the descriptor, the result is an `any`.
+function run(u: unknown, arg: number): string {
+  if (typeof u === "function") {
+    const f: Function = u;
+    return `function giving ${f(arg)} and ${u(arg + 1)}`;
+  }
+  if (typeof u === "object") {
+    return u === null ? "null" : "an object";
+  }
+  return `a ${typeof u}`;
+}
+
+function main(): void {
+  console.log(run((n: number): number => n * 10, 2));
+  console.log(run((n: number): string => `n=${n}`, 5));
+  console.log(run([1, 2], 0));
+  console.log(run(null, 0));
+  console.log(run("text", 0));
+  const handlers: Function[] = [];
+  const items: unknown[] = [(): string => "a", 1, (): string => "b"];
+  for (const it of items) {
+    if (typeof it === "function") {
+      handlers.push(it);
+    }
+  }
+  console.log(handlers.length, handlers[1]());
+}

@@ -209,7 +209,17 @@ impl Cx<'_> {
     /// The interface value type `dyn_ty` is compared by identity, and its implementor `t` is an
     /// object type that a conversion would copy: record that `t` must be counted.
     pub(super) fn note_dyn_identity(&mut self, dyn_ty: TyId, t: TyId) {
-        if self.boxing.identity_dyns.contains(&dyn_ty) && self.copied_object(t) {
+        // Once values convert to `object` / `Function` (issue #926), which key collections by
+        // identity, every dynamic type holds objects by identity: a value may reach `object`
+        // through `any` or `unknown` (`u as object`).
+        let identity = self.boxing.identity_dyns.contains(&dyn_ty)
+            || (self.is_dynamic(dyn_ty)
+                && self
+                    .boxing
+                    .identity_dyns
+                    .iter()
+                    .any(|d| self.is_narrow_dynamic(*d)));
+        if identity && self.copied_object(t) {
             self.facts.identity.insert(t);
             self.facts.shares.insert(t);
         }

@@ -1,0 +1,38 @@
+// check: no leaks
+// `?.()` on a `Function` that holds `undefined` or `null` (issue #926): `Function | undefined`
+// is a `Function`, which holds `undefined` itself, and the call is skipped as in JavaScript.
+class Button {
+  label = "ok";
+  onClick?: Function;
+}
+
+function fire(b: Button, arg: string): void {
+  console.log(b.label, b.onClick?.(arg));
+}
+
+function main(): void {
+  let f: Function | undefined = undefined;
+  console.log(f?.("y"));
+  f = (s: string): string => s + "!";
+  console.log(f?.("y"));
+  let n: Function | null = null;
+  console.log(n?.(1));
+  n = (x: number): number => x + 1;
+  console.log(n?.(1));
+
+  const b = new Button();
+  fire(b, "a");
+  b.onClick = (s: string): number => s.length;
+  fire(b, "abc");
+
+  const handlers = new Map<string, Function>();
+  handlers.set("twice", (x: number): number => x * 2);
+  console.log(handlers.get("twice")?.(21), handlers.get("missing")?.(21));
+
+  const holder: { cb?: Function } = {};
+  console.log(holder.cb?.(1) === undefined);
+  const items: (Function | null)[] = [null, (x: number): number => x * 3];
+  for (const g of items) {
+    console.log(g?.(5));
+  }
+}

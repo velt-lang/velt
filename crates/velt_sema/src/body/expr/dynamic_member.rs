@@ -23,23 +23,84 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The receiver `obj` of a dynamic member access: `Ok(any type)` for an `any`, `Err(obj)`
-    /// for anything else. An `unknown` reports its error and gives `Ok(None)`.
-    fn dynamic_receiver(&mut self, obj: hir::Expr) -> Result<(hir::Expr, Option<TyId>), hir::Expr> {
-        match self.cx.dynamic(obj.ty) {
-            None => Err(obj),
-            Some(Dynamic::Unknown) => {
+    /// The receiver `obj` of a dynamic member access (`member`: the member read or called,
+    /// `Some(None)` for a computed key, `None` for a call of `obj` itself): `Ok(any type)` for an `any` (and a `Function`
+    /// called), `Err(obj)` for anything else. An `unknown`, an `object` and a member of a
+    /// `Function` report their error and give `Ok(None)`.
+    fn dynamic_receiver(
+        &mut self,
+        obj: hir::Expr,
+        member: Option<Option<&str>>,
+    ) -> Result<(hir::Expr, Option<TyId>), hir::Expr> {
+        let d = match self.cx.dynamic(obj.ty) {
+            None => return Err(obj),
+            Some(d) => d,
+        };
+        match (d, member) {
+            (Dynamic::Unknown, _) => {
                 self.unknown_use_error(obj.span);
                 Ok((obj, None))
             }
-            Some(Dynamic::Any) => {
+            (Dynamic::Object | Dynamic::Function, Some(m)) => {
+                self.narrow_dynamic_error(d, m, obj.span);
+                Ok((obj, None))
+            }
+            (Dynamic::Object, None) => {
+                self.cx.error(
+                    Diagnostic::error("an `object` value is not callable", obj.span)
+                        .with_note("narrow it with `typeof x === \"function\"` or convert it with `as Function` first"),
+                );
+                Ok((obj, None))
+            }
+            (Dynamic::Any | Dynamic::Function, _) => {
                 let mut obj = obj;
                 set_place_mode(&mut obj, UseMode::Borrow);
-                let any = obj.ty;
+                let any = match d {
+                    Dynamic::Function => self.any_ty(),
+                    _ => Some(obj.ty),
+                };
                 self.note_dyn_members();
-                Ok((obj, Some(any)))
+                Ok((obj, any))
             }
         }
+    }
+
+    /// A member `m` of an `object` / `Function` value: TypeScript allows only the members of
+    /// `Object.prototype` (and `Function.prototype`), which Velt does not have yet.
+    pub(crate) fn narrow_dynamic_error(&mut self, d: Dynamic, m: Option<&str>, span: Span) {
+        const OBJECT: &[&str] = &[
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+            "valueOf",
+        ];
+        const FUNCTION: &[&str] = &["apply", "bind", "call", "length", "name"];
+        let n = d.name();
+        let Some(m) = m else {
+            self.cx.error(
+                Diagnostic::error(format!("the members of {} `{n}` value are unknown", d.article()), span)
+                    .with_note("narrow it with `typeof` or `instanceof` first, or convert it with `as T` (checked at run time)"),
+            );
+            return;
+        };
+        let known = OBJECT.contains(&m) || (d == Dynamic::Function && FUNCTION.contains(&m));
+        let diag = if known {
+            Diagnostic::error(
+                format!(
+                    "`{m}` of {} `{n}` value is not supported yet (#926)",
+                    d.article()
+                ),
+                span,
+            )
+            .with_note("convert the value to a typed one first (`x as T`, checked at run time)")
+        } else {
+            Diagnostic::error(format!("property `{m}` does not exist on type `{n}`"), span)
+                .with_note("narrow it with `typeof` or `instanceof` first, or convert it with `as T` (checked at run time)")
+        };
+        self.cx.error(diag);
     }
 
     /// The key `name` as a string literal.
@@ -56,7 +117,7 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (obj, any) = self.dynamic_receiver(obj)?;
+        let (obj, any) = self.dynamic_receiver(obj, Some(Some(name)))?;
         let Some(any) = any else {
             return Ok(self.error_expr(span));
         };
@@ -77,7 +138,11 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (obj, any) = self.dynamic_receiver(obj)?;
+        let key = match &index.kind {
+            ast::ExprKind::Lit(ast::Lit::Str(k)) => Some(k.as_str()),
+            _ => None,
+        };
+        let (obj, any) = self.dynamic_receiver(obj, Some(key))?;
         let k = self.expr(index, None, Want::Borrow);
         let Some(any) = any else {
             return Ok(self.error_expr(span));
@@ -119,7 +184,7 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (recv, any) = self.dynamic_receiver(recv)?;
+        let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
             return Ok(self.error_expr(span));
@@ -142,7 +207,7 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (f, any) = self.dynamic_receiver(f)?;
+        let (f, any) = self.dynamic_receiver(f, None)?;
         let Some(any) = any else {
             self.check_args_loose(args);
             return Ok(self.error_expr(span));

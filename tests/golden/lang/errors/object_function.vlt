@@ -1,0 +1,23 @@
+// What TypeScript rejects about `object` and `Function` (issue #926), one error per line.
+class P {
+  x = 1;
+}
+function take(o: object): void {}
+function body(): void {
+  take(5);
+  take("s");
+  const n: P | null = null;
+  take(n);
+  const o: object = new P();
+  console.log(o.x);
+  const back: P = o;
+  const f: Function = 3;
+  const g: Function = () => 1;
+  console.log(g.foo);
+  const u: unknown = 1;
+  const ou: object = u;
+}
+function onlyObjects<T extends object>(v: T): T {
+  return v;
+}
+onlyObjects(1);

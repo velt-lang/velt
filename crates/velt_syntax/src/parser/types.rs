@@ -7,6 +7,8 @@ use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
+pub(super) use super::optional_types::{has_undefined, optional_param, or_null};
+
 impl<'a> Parser<'a> {
     /// A union type (no conditional type at the top level). Unguarded: its callers are
     /// `parse_type`, which counts the nesting depth once for both.
@@ -612,7 +614,7 @@ impl<'a> Parser<'a> {
                 );
             }
             seen_optional |= optional;
-            params.push(if optional { or_null(ty) } else { ty });
+            params.push(if optional { optional_param(ty) } else { ty });
             if !self.eat(Tok::Comma) {
                 break;
             }
@@ -732,36 +734,6 @@ const PROTOCOL_TYPES: [&str; 10] = [
     "IteratorObject",
     "IteratorResult",
 ];
-
-/// `T | null` for the written type of an optional parameter or field (`name?: T`), keeping
-/// `T`'s span; a type that already admits `null` stays as it is.
-pub(super) fn or_null(ty: TypeExpr) -> TypeExpr {
-    let null = TypeExpr {
-        kind: TypeExprKind::Null,
-        span: Span::new(ty.span.file, ty.span.hi, ty.span.hi),
-    };
-    let span = ty.span;
-    match ty.kind {
-        TypeExprKind::Null => ty,
-        TypeExprKind::Union(ms) if ms.iter().any(|m| matches!(m.kind, TypeExprKind::Null)) => {
-            TypeExpr {
-                kind: TypeExprKind::Union(ms),
-                span,
-            }
-        }
-        TypeExprKind::Union(mut ms) => {
-            ms.push(null);
-            TypeExpr {
-                kind: TypeExprKind::Union(ms),
-                span,
-            }
-        }
-        _ => TypeExpr {
-            kind: TypeExprKind::Union(vec![ty, null]),
-            span,
-        },
-    }
-}
 
 /// An index signature while its object type or interface is parsed.
 pub(super) struct IndexSignature {
