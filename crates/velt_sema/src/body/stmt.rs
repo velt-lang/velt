@@ -299,7 +299,9 @@ impl FnCx<'_, '_> {
             );
             return;
         };
-        if super::pattern_defaults::has_default(&v.pattern) {
+        if super::pattern_defaults::has_default(&v.pattern)
+            || super::object_rest::has_object_rest(&v.pattern)
+        {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
                 Some(t) => self.typed_temp(e, t, out),
@@ -313,6 +315,9 @@ impl FnCx<'_, '_> {
         };
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
+                if let Some(src) = self.method_source(fields, e, init.clone(), out) {
+                    return self.object_decls(v.kind, fields, None, &src, out);
+                }
                 return self.property_decls(v.kind, fields, init, out);
             }
         }
