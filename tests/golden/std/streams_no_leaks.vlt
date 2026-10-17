@@ -1,0 +1,64 @@
+// check: no leaks
+// A source whose callbacks hold the controller (`start(c) { ctl = c; }`, a `pull` that closes
+// over it) is freed with its stream: the stream drops the callbacks once it is closed, errored
+// or cancelled, and never keeps `start`. Expected output is Node 22's.
+
+async function closed(): Promise<void> {
+  let ctl: ReadableStreamDefaultController<string> | null = null;
+  const s = new ReadableStream<string>({
+    start(c) {
+      ctl = c;
+    },
+    pull(c) {
+      ctl?.enqueue("a");
+      ctl?.close();
+    },
+  });
+  for await (const x of s) {
+    console.log("closed", x);
+  }
+}
+
+async function errored(): Promise<void> {
+  let ctl: ReadableStreamDefaultController<string> | null = null;
+  const s = new ReadableStream<string>({
+    start(c) {
+      ctl = c;
+    },
+  });
+  ctl?.error(new Error("e"));
+  try {
+    await s.getReader().read();
+  } catch (e) {
+    console.log("errored", e.message);
+  }
+}
+
+async function cancelled(): Promise<void> {
+  let ctl: ReadableStreamDefaultController<string> | null = null;
+  const s = new ReadableStream<string>({
+    start(c) {
+      ctl = c;
+      c.enqueue("x");
+    },
+    cancel(reason) {
+      console.log("cancel", ctl != null);
+    },
+  });
+  await s.cancel("done");
+  console.log("cancelled", s.locked);
+}
+
+async function main() {
+  await closed();
+  await errored();
+  await cancelled();
+  // `start` alone: not kept, so the stream is freed even while readable.
+  let ctl: ReadableStreamDefaultController<number> | null = null;
+  const s = new ReadableStream<number>({
+    start(c) {
+      ctl = c;
+    },
+  });
+  console.log(s.locked, ctl != null);
+}

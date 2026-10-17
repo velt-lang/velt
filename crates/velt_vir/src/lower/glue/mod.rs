@@ -101,6 +101,13 @@ pub(crate) enum Glue {
     AnySame,
     AnyNumber,
     AnyHash,
+    AnyGet,
+    AnyIndex,
+    AnyCall,
+    AnyApply,
+    AnySet,
+    AnySetIndex,
+    AnyHas,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -152,6 +159,13 @@ impl Glue {
             Glue::AnySame => "anysame",
             Glue::AnyNumber => "anynumber",
             Glue::AnyHash => "anyhash",
+            Glue::AnyGet => "anyget",
+            Glue::AnyIndex => "anyindex",
+            Glue::AnyCall => "anycall",
+            Glue::AnyApply => "anyapply",
+            Glue::AnySet => "anyset",
+            Glue::AnySetIndex => "anysetindex",
+            Glue::AnyHas => "anyhas",
         }
     }
 
@@ -185,6 +199,13 @@ impl Glue {
             Glue::AnySame => (vec![Ptr, Ptr], Bool),
             Glue::AnyNumber => (vec![Ptr], F64),
             Glue::AnyHash => (vec![Ptr], U64),
+            Glue::AnyGet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnyIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyCall => (vec![Ptr, Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyHas => (vec![Ptr, Ptr], U8),
         }
     }
 }
@@ -233,6 +254,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
             Glue::AnyNumber => lw.any_number_body(args[0], ty),
             Glue::AnyHash => lw.any_hash_body(args[0], ty),
+            Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {
+                lw.any_member_glue(g, &args, ty)
+            }
+            Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
+            Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

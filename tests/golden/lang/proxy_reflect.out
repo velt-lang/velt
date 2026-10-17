@@ -1,0 +1,14 @@
+track count
+track label
+effect sees 0 a
+trigger count
+effect sees 1 a
+trigger label
+effect sees 1 b
+raw 1 b
+1 3 10 undefined
+5 7
+20 3 1,length
+outer get v
+inner get v true
+1

@@ -1,0 +1,29 @@
+// check: no leaks
+// `Object.keys` of an `any` (issues #924, #926): when every value the program converts to a
+// dynamic type is a class instance, the keys are the fields of the instance's class, including
+// a subclass's.
+class Point {
+  x = 1;
+  y = 2;
+}
+
+class Point3 extends Point {
+  z = 3;
+}
+
+class Named {
+  constructor(public name: string) {}
+}
+
+function keysOf(v: any): string[] {
+  return Object.keys(v);
+}
+
+function main(): void {
+  const a: any = new Point();
+  const b: any = new Point3();
+  const c: any = new Named("n");
+  console.log(Object.keys(a));
+  console.log(keysOf(b));
+  console.log(keysOf(c).join(","));
+}

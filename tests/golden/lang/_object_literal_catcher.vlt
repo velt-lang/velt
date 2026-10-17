@@ -1,0 +1,22 @@
+// A library module catching what an interface's implementations throw, imported before the
+// module whose object literal implements it (see object_literal_interfaces_import_order.vlt).
+export interface Source {
+  read(n: number): number;
+}
+
+export function drive(x: Source, n: number): string {
+  const opts = { tag: () => "n=" };
+  try {
+    return opts.tag() + String(x.read(n));
+  } catch (e) {
+    return "caught " + (e as Error).message + " " + (e instanceof RangeError);
+  }
+}
+
+export function depth(x: Source, n: number): number {
+  try {
+    return x.read(n);
+  } catch (e) {
+    return -1;
+  }
+}

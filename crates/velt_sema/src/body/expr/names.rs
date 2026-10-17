@@ -96,6 +96,10 @@ impl FnCx<'_, '_> {
             return e;
         }
         let span = e.span;
+        if e.ty == target {
+            // `instanceof` of a generic class on an `any`: it stays an `any`.
+            return e;
+        }
         if self.cx.dynamic(e.ty).is_some() && self.cx.class_of(target).is_none() {
             // `typeof x === "number"` on an `any`: the value it holds, checked (crate::any).
             let share = self.share_if_place(e);
@@ -240,6 +244,9 @@ impl FnCx<'_, '_> {
             self.cx.not_found(msg, &id.name, id.span);
             return;
         }
+        if self.in_kept_nested() {
+            return; // reported by `nested_closures` (recursion, or a use before a local)
+        }
         if self.generic_arrow {
             self.cx.error(
                 Diagnostic::error(
@@ -261,6 +268,14 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// Checking a capturing nested function `nested_closures` reported and left a declaration.
+    fn in_kept_nested(&self) -> bool {
+        !self.cx.kept_nested.is_empty()
+            && self
+                .body_def
+                .is_some_and(|d| self.cx.kept_nested.contains(&self.cx.fn_info(d).name_span))
+    }
+
     fn def_value(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>, want: Want) -> hir::Expr {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
@@ -275,7 +290,9 @@ impl FnCx<'_, '_> {
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
             // compares integers, `N / 3` divides numbers.
             DefInfo::Global(g)
-                if g.src.ann.is_none() && g.src.init.is_some_and(super::member::untyped_int) =>
+                if !g.mutable
+                    && g.src.ann.is_none()
+                    && g.src.init.is_some_and(super::member::untyped_int) =>
             {
                 let init = g.src.init.expect("ICE: checked above");
                 let h = self.expr(init, exp, want);
@@ -322,7 +339,15 @@ impl FnCx<'_, '_> {
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name) = (g.ty, g.name.clone());
+        let (ty, name, mutable) = (g.ty, g.name.clone(), g.stored);
+        if mutable {
+            let read = self.mk(H::Global(d), ty, span);
+            if want == Want::Move && !self.cx.is_copy(ty) {
+                // Another reference to the value the module state keeps, as JS aliases it.
+                return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+            }
+            return read;
+        }
         if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
             // A function computed at each use: another reference to it is owned.
             let read = self.mk(H::Global(d), ty, span);

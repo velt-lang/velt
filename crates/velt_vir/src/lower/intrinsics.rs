@@ -135,9 +135,18 @@ impl FnLower<'_, '_> {
                 self.zero_value(vt)
             }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
+            (I::ClosureSibling(def), []) => self.closure_sibling(def, ty),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::AnyTo, [a]) => self.any_to(a, ty),
             (I::AnyTypeof, [a]) => self.any_typeof(a),
+            (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
+            (I::AnyIndex, [o, i]) => self.any_index(o, i, ty),
+            (I::AnyCall, [o, k, text, rest @ ..]) => self.any_call(o, Some(k), text, rest, ty),
+            (I::AnyApply, [f, text, rest @ ..]) => self.any_call(f, None, text, rest, ty),
+            (I::AnySet, [o, k, v]) => self.any_set(o, k, v, false),
+            (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
+            (I::AnyHas, [o, k]) => self.any_has(o, k),
+            (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),

@@ -1,0 +1,40 @@
+// Object literals implementing interfaces with methods: what they may not do yet, and the
+// members they must give.
+interface Counter {
+  next(): number;
+  readonly count: number;
+}
+
+interface Mapper {
+  map<R>(f: (x: number) => R): R;
+}
+
+function main(): void {
+  // A getter where no interface is expected: the literal's own type is plain data.
+  const plain = {
+    get value() {
+      return 1;
+    },
+  };
+
+  // A missing method.
+  const a: Counter = { count: 1 };
+
+  // A member the interface doesn't have.
+  const b: Counter = { next: () => 1, count: 2, extra: true };
+
+  // A getter of the wrong type.
+  const c: Counter = {
+    next: () => 1,
+    get count() {
+      return "many";
+    },
+  };
+
+  // A generic method can't be a function value.
+  const d: Mapper = {
+    map(f) {
+      return f(1);
+    },
+  };
+}

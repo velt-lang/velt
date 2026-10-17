@@ -1,0 +1,98 @@
+// check: no leaks
+// Proxy and Reflect (#823): get / set traps, forwarding, the receiver, a reduced sigx-style signal.
+class Point {
+  x: number = 1;
+  y: number = 2;
+  get sum(): number {
+    return this.x + this.y;
+  }
+  scale(k: number): number {
+    return this.x * k;
+  }
+}
+
+// Effects by id: a dependency list holds ids, so a proxy's handler never holds the closures
+// that read the proxy (that cycle is freed only by a garbage collector).
+const effects: (() => void)[] = [];
+let currentEffect = -1;
+
+function reactive(target: any): any {
+  const deps = new Map<string, number[]>();
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (typeof prop === "string" && currentEffect >= 0) {
+        const list = deps.get(prop) ?? [];
+        list.push(currentEffect);
+        deps.set(prop, list);
+        console.log("track", prop);
+      }
+      return Reflect.get(obj, prop);
+    },
+    set(obj, prop, value, receiver) {
+      const old = Reflect.get(obj, prop);
+      const ok = Reflect.set(obj, prop, value);
+      if (typeof prop === "string" && old !== value) {
+        console.log("trigger", prop);
+        for (const id of deps.get(prop) ?? []) {
+          effects[id]();
+        }
+      }
+      return ok;
+    },
+  });
+}
+
+function effect(fn: () => void): void {
+  effects.push(fn);
+  currentEffect = effects.length - 1;
+  fn();
+  currentEffect = -1;
+}
+
+function main(): void {
+  const raw = { count: 0, label: "a" };
+  const state = reactive(raw);
+  effect(() => {
+    console.log("effect sees", state.count, state.label);
+  });
+  state.count = 1;
+  state.count = 1;
+  state.label = "b";
+  console.log("raw", raw.count, raw.label);
+  effects.length = 0;
+
+  // No traps: everything forwards to the target.
+  const p = new Proxy(new Point(), {});
+  console.log(p.x, p.sum, p.scale(10), p.missing);
+  p.x = 5;
+  console.log(p.x, p.sum);
+
+  // Index keys reach the trap as strings.
+  const log: string[] = [];
+  const arr = new Proxy([10, 20, 30], {
+    get(t, k, r) {
+      log.push(typeof k === "string" ? k : "?");
+      return Reflect.get(t, k);
+    },
+  });
+  console.log(arr[1], arr.length, log.join(","));
+
+  // A proxy of a proxy: the receiver is the outer proxy.
+  let outer: any = null;
+  const inner = new Proxy({ v: 1 }, {
+    get(t, k, r) {
+      console.log("inner get", k, r === outer);
+      return Reflect.get(t, k, r);
+    },
+  });
+  outer = new Proxy(inner, {
+    get(t, k, r) {
+      console.log("outer get", k);
+      return Reflect.get(t, k, r);
+    },
+  });
+  console.log(outer.v);
+  // The inner handler refers to the outer proxy, which holds the inner one: a cycle that
+  // reference counting frees only once it is broken.
+  outer = null;
+}

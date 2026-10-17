@@ -21,7 +21,7 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_generics(type_params, v);
             walk_type(ty, v);
         }
-        T::Construct(ty) => walk_type(ty, v),
+        T::Construct(ty) | T::TupleRest(ty) | T::TupleOptional(ty) => walk_type(ty, v),
         T::Function {
             params,
             ret,
@@ -41,6 +41,10 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             fields.iter().for_each(|f| walk_type(&f.ty, v));
             walk_type(&key.ty, v);
             walk_type(value, v);
+        }
+        T::Callable { sigs, members } => {
+            sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
+            walk_type(members, v);
         }
         T::KeyOf(inner) => walk_type(inner, v),
         T::Conditional(c) => {

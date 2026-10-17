@@ -1,0 +1,6 @@
+const seen = new Map<string, number>();
+
+function main() {
+  seen = new Map<string, number>();
+  console.log(seen.size);
+}

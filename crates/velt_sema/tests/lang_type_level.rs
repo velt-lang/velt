@@ -155,22 +155,100 @@ fn mapped_types_over_literal_unions() {
 }
 
 #[test]
-fn forms_over_type_parameters_are_errors() {
-    let e = err_src("type IsStr<T> = T extends string ? 1 : 2;\nfunction g<T>(x: IsStr<T>) {}\nfunction main() {}");
+fn inline_forms_over_type_parameters_are_errors() {
+    let e = err_src(
+        "function g<T>(x: T extends string ? 1 : 2) {}
+function main() {}",
+    );
     assert!(
         e.contains("a conditional type over a type parameter is not supported yet"),
         "{e}"
     );
-    let e =
-        err_src("class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }\nfunction main() {}");
+    let e = err_src(
+        "class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }
+function main() {}",
+    );
     assert!(
         e.contains("a mapped type over a type parameter is not supported yet"),
         "{e}"
     );
     // Declaring such an alias without using it is fine.
-    ok_src("type IsStr<T> = T extends string ? 1 : 2;\ntype M<T> = { [K in keyof T]: T[K] };\nfunction main() {}");
-    let e = err_src("type Bad = infer X;\nfunction main() {}");
+    ok_src(
+        "type IsStr<T> = T extends string ? 1 : 2;
+type M<T> = { [K in keyof T]: T[K] };
+function main() {}",
+    );
+    let e = err_src(
+        "type Bad = infer X;
+function main() {}",
+    );
     assert!(e.contains("only permitted in the `extends` clause"), "{e}");
+}
+
+/// The type of local `name` of function `f` in `src`.
+fn local(src: &str, f: &str, name: &str) -> String {
+    let p = ok_src(src);
+    let f = func(&p, f);
+    let l = f
+        .body
+        .locals
+        .iter()
+        .find(|l| l.name == name)
+        .expect("local");
+    show(&p, l.ty)
+}
+
+/// An alias over a type parameter in a generic signature, class or interface is deferred
+/// (`TyKind::Op`) and evaluated at each instantiation, to what tsc evaluates it to there.
+#[test]
+fn aliases_over_type_parameters_are_deferred() {
+    let decls = "type IsStr<T> = T extends string ? \"y\" : \"n\";
+type RO<T> = { readonly [K in keyof T]: T[K] };
+type Opt<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
+type Ev<T> = { [K in keyof T as `on${Capitalize<string & K>}`]?: (d: T[K]) => void };
+function g<T>(x: T): IsStr<T> { throw new Error(); }
+function ro<T>(x: T): RO<T> { throw new Error(); }
+function opt<T>(x: T): Opt<T> { throw new Error(); }
+function ev<T>(x: T): Ev<T> { throw new Error(); }
+interface Ctx<P> { props: RO<P> }
+function ctx<P>(p: P): Ctx<P> { throw new Error(); }";
+    let at = |init: &str| {
+        local(
+            &format!(
+                "{decls}
+function main() {{ const v = {init}; }}"
+            ),
+            "main",
+            "v",
+        )
+    };
+    // tsc: "y", "n", { readonly a: number }, "b" | undefined, { onClick?: (d: number) => void }
+    assert_eq!(at("g(\"s\")"), "\"y\"");
+    assert_eq!(at("g(1)"), "\"n\"");
+    assert_eq!(at("ro({ a: 1 })"), "{ a: number }");
+    assert_eq!(
+        at("opt<{ a: string; b?: number }>({ a: \"\" })"),
+        "\"b\" | undefined"
+    );
+    // (`show` prints a function type's result only.)
+    assert_eq!(at("ev({ click: 1 })"), "{ onClick?: () => Unit }");
+    assert_eq!(at("ctx({ a: \"s\" }).props"), "{ a: string }");
+    // In the generic signature the type stays deferred; lowering gets its reductions.
+    let p = ok_src(&format!(
+        "{decls}
+function main() {{ g(1); }}"
+    ));
+    let g = func(&p, "g");
+    assert!(
+        matches!(p.types.kind(g.ret), TyKind::Op(..)),
+        "{:?}",
+        p.types.kind(g.ret)
+    );
+    assert!(
+        p.type_ops.values().any(|t| show(&p, *t) == "\"n\""),
+        "{:?}",
+        p.type_ops
+    );
 }
 
 /// The type of `f`'s first parameter for each alias in `cases` (`(alias, tsc's type)`), the

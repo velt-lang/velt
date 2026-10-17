@@ -221,10 +221,10 @@ impl Ctx<'_> {
         ty: TyId,
         iface: crate::hir::DefId,
     ) -> Option<(u32, Vec<TyId>, TyId)> {
-        if let Some(a) = self.any {
-            if iface == a.any || iface == a.unknown {
-                return self.any_impl().map(|i| (i, vec![], ty));
-            }
+        match self.dynamic_takes(iface, ty) {
+            Some(true) => return self.any_impl().map(|i| (i, vec![], ty)),
+            Some(false) => return None,
+            None => {}
         }
         self.impl_index.extend(&self.impls);
         let mut cur = Some(ty);

@@ -149,8 +149,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   source extension (`src/dup.vlt`, `src/dup.ts`) are an error per group, located in the first
   file and naming all of them relative to the package root. A configured entry that is missing is an error naming it (as
   for `build`). Package dependencies are installed. Every diagnostic the front end reports
-  appears once, even for a module several roots import (all files' syntax errors; if there are
-  none, all type errors). Exit 0 without errors (warnings allowed), 1 with errors, 101 on an
+  appears once, even for a module several roots import: all files' syntax errors, then the type
+  errors of the modules without syntax errors (changed: formerly none when any file had a
+  syntax error). The modules with syntax errors report only those; a name imported from one
+  (directly or through re-exports) that it doesn't declare but whose source has that word
+  reports nothing, nor do its uses, as the parser may have dropped its declaration. `build` and `run` still stop at syntax errors. Exit 0 without errors (warnings allowed), 1 with errors, 101 on an
   internal error.
   Diagnostics go to stderr as for `build`; `--json` prints instead one JSON document on stdout:
   `{"diagnostics": [{"severity": "error"|"warning"|"note", "message", "location", "labels":

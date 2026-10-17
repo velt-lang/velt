@@ -8,6 +8,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
+use super::sequence::later_each;
 use super::{ice, FnLower};
 use crate::vir::{Operand, Proj, Rvalue, Ty};
 
@@ -88,6 +89,20 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The receiver `rv` of a dispatched call (`args[0]`), held against the arguments after it.
+    /// An argument may replace or free what the receiver was read from (`xs[0].m(clear())`
+    /// where `clear` pops `xs`, `x.f = v()` where `v` reassigns `x`), and JavaScript calls the
+    /// method on the object read before, so the receiver gets a reference of its own for the
+    /// call, as a class method's receiver does (`lower_args`). Arguments that run no code that
+    /// can change memory or write a local leave the receiver as it was read.
+    fn hold_receiver(&mut self, rv: Operand, args: &[hir::Expr], transfer: bool) -> Operand {
+        if transfer {
+            return rv;
+        }
+        let later = later_each(args).first().copied().unwrap_or_default();
+        self.hold(rv, args[0].ty, later)
+    }
+
     pub(super) fn call_virtual(
         &mut self,
         slot: u32,
@@ -108,6 +123,7 @@ impl FnLower<'_, '_> {
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
         let rv = self.receiver(recv, transfer);
+        let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
@@ -140,6 +156,7 @@ impl FnLower<'_, '_> {
             _ => ice("interface call on a non-interface receiver"),
         };
         let rv = self.receiver(recv, transfer);
+        let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,

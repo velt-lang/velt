@@ -62,9 +62,9 @@ pub(crate) fn copy_statics(cx: &mut Ctx) {
     }
 }
 
-/// Does static method `m`'s body mention `this` or `super` (also in nested functions, which
-/// only costs an unneeded copy)?
-fn uses_this(cx: &Ctx, m: DefId) -> bool {
+/// Does method `m`'s body mention `this` or `super` (also in nested functions, which only
+/// costs an unneeded copy of a static method)?
+pub(crate) fn uses_this(cx: &Ctx, m: DefId) -> bool {
     struct Finder(bool);
     impl<'a> Visit<'a> for Finder {
         fn expr(&mut self, e: &'a ast::Expr) {

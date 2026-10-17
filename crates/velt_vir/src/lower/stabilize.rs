@@ -26,7 +26,10 @@ impl FnLower<'_, '_> {
         if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
             return self.borrowed_arg(a);
         }
-        if self.cx.counted(ty) {
+        // An `any` holds a counted box (or a plain value its share copies): the callee may
+        // replace the place it is read from through a method it runs on it (`show(h.x)` where a
+        // method of `h.x` sets `h.x = null`), so it gets a share, as a counted value does.
+        if self.cx.counted(ty) || self.cx.is_dynamic(ty) {
             let v = self.expr(a);
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);

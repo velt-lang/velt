@@ -1,0 +1,12 @@
+// A closure's rest parameter is checked as a function's: one whose type is no array type is
+// TypeScript's TS2370 (at module level and inside a function alike). A local arrow with an
+// array-typed rest parameter is not supported yet (#943; a module-level constant is).
+const bad = (...xs: number) => xs;
+
+function outer(): number {
+  const local = (...xs: string) => xs;
+  const ok = (...xs: number[]) => xs.length;
+  return ok(1, 2);
+}
+
+console.log(outer());

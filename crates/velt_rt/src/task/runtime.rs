@@ -411,6 +411,8 @@ unsafe extern "C" fn never_dropped(_: *mut u8) {}
 /// the workers until the process exits.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
+    // The module state initialized before `main` is the tasks' from now on.
+    super::local::module_release_outside();
     let root = Compiled::from_store(poll, never_dropped, Borrowed(SendPtr(state)));
     let rt = runtime();
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.

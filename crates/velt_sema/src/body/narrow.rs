@@ -30,6 +30,9 @@ impl FnCx<'_, '_> {
     /// Facts that hold when `cond` is true / when it is false.
     pub fn narrowing(&mut self, cond: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
         use ast::BinaryOp as B;
+        if let Some(facts) = self.destructured_facts(cond, true) {
+            return facts;
+        }
         match &cond.kind {
             ast::ExprKind::Paren(inner) => self.narrowing(inner),
             ast::ExprKind::Unary {
@@ -89,9 +92,12 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => match self.is_array_test(callee, args) {
-                Some(arg) => self.is_array_facts(arg),
-                None => self.predicate_facts(callee, args, cond.span),
+            } => match self.dynamic_is_array_facts(callee, args) {
+                Some(facts) => facts,
+                None => match self.is_array_test(callee, args) {
+                    Some(arg) => self.is_array_facts(arg),
+                    None => self.predicate_facts(callee, args, cond.span),
+                },
             },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
@@ -166,7 +172,15 @@ impl FnCx<'_, '_> {
                     });
                     let done = out.iter().any(|f| matches!(f, Fact::Class(m, _) if m == l));
                     if let (Some(tb), false) = (tb, done) {
-                        if let Some(c) = self.common_class(*l, *ta, tb) {
+                        let c = if *ta == tb {
+                            Some(tb)
+                        } else {
+                            self.common_class(*l, *ta, tb)
+                        };
+                        // `u instanceof Map || u instanceof Box` on an `unknown`: read through
+                        // `any` either way (`dynamic_narrow`).
+                        let c = c.or_else(|| self.dynamic_join(*l));
+                        if let Some(c) = c {
                             out.push(Fact::Class(*l, c));
                         }
                     }
@@ -254,6 +268,25 @@ impl FnCx<'_, '_> {
         out
     }
 
+    /// Facts of `done == b` (`if (done)` for `b` true) where `done` is the discriminant binding
+    /// of `const { value, done } = r` (`Frame::destructured_discriminants`): the bindings not
+    /// null when it holds / does not hold `b`.
+    fn destructured_facts(&mut self, e: &ast::Expr, b: bool) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        if !matches!(e.kind, ast::ExprKind::Ident(_)) {
+            return None;
+        }
+        let l = self.named_local(e)?;
+        let facts = self.f.destructured_discriminants.get(&l)?;
+        let when = |v: bool| -> Vec<Fact> {
+            facts
+                .iter()
+                .filter(|(w, _)| *w == v)
+                .map(|(_, l)| Fact::NonNull(*l))
+                .collect()
+        };
+        Some((when(b), when(!b)))
+    }
+
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
     fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
         if let Some(l) = self.nullable_local(e) {
@@ -297,6 +330,11 @@ impl FnCx<'_, '_> {
             (Some(l), None) => (rhs, l),
             _ => return (vec![], vec![]),
         };
+        if let ast::Lit::Bool(b) = lit.lit {
+            if let Some(facts) = self.destructured_facts(other, b) {
+                return facts;
+            }
+        }
         if let Some(facts) = self.discriminant_facts(other, &lit) {
             return facts;
         }
@@ -394,6 +432,10 @@ impl FnCx<'_, '_> {
                     "number" => self.cx.ty.f64,
                     "string" => self.cx.ty.str_,
                     "boolean" => self.cx.ty.bool_,
+                    // TypeScript's `Function` (issue #926): called through the descriptor.
+                    "function" => return (self.dynamic_to_function_fact(operand), vec![]),
+                    // TypeScript's `object | null` (issue #926), which is `object` here.
+                    "object" => return (self.dynamic_to_object_fact(operand), vec![]),
                     _ => return (vec![], vec![]),
                 };
                 return (vec![Fact::Class(l, t)], vec![]);

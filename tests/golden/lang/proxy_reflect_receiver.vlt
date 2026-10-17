@@ -1,0 +1,11 @@
+// `Reflect.set` with a receiver that is neither the target nor a proxy would write the
+// receiver's own property in JavaScript; that is not supported yet and throws (#823) rather
+// than writing the target.
+function main(): void {
+  const t: any = { x: 1 };
+  const same = Reflect.set(t, "x", 2, t);
+  console.log(same, t.x);
+  console.log(Reflect.get(t, "x"), Reflect.get(t, "x", t));
+  const other: any = { x: 2 };
+  console.log(Reflect.set(t, "x", 5, other), t.x, other.x);
+}

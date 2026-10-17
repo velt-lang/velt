@@ -29,14 +29,12 @@ The differences come from three rules:
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
   statements run in a generated `main`; only the root file may have them
   ([Scripts](../reference/modules.md#scripts-top-level-statements)).
-- Module scope holds no mutable state: a top-level variable that functions use stays a module
-  constant, and a module-level `let` that a function uses is an error ("mutable module-level
-  state is not allowed"). *Why*: no hidden global state means request handlers can't race on
-  it, and `velt dev` can hot-swap code without migrating globals.
-- A module constant may be initialized by a call of a function without effects
-  (`const Counter = component(...)`): it is evaluated at each use, with the same result as
-  TypeScript's evaluation at load. Its identity is the one difference: `Counter === Counter` is
-  an error, and two copies of it in locals compare unequal
+- A module-level `let` works as in Node: one per process, which every task (spawned tasks,
+  HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
+  Node's single thread between `await`s, so updates are never lost
+  ([module state](../reference/variables.md#module-state)). A module constant that is not a
+  constant value (`new Map()`, a call with effects, a function from a call) is evaluated once
+  per process in the same way
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
@@ -180,7 +178,8 @@ contents.
   signatures without other members (`{ [key: string]: V }`, a `Record<string, V>`) work as in
   TypeScript ([Type queries](../reference/types.md#type-queries-and-keyof)).
 - Not available: mapped and conditional types, template literal types, the other utility types
-  (`Record` aside), index signatures next to named members, `namespace`. Interfaces merge, and
+  (`Record` aside), index signatures next to named members, values in a `namespace` (namespaces
+  of types work: [Namespaces](../reference/modules.md#namespaces)). Interfaces merge, and
   `declare global` / `declare module` blocks augment them
   ([declaration merging](../reference/classes.md#declaration-merging)); other declarations
   don't merge.
@@ -306,8 +305,8 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 
 ## Not supported
 
-`var`, `eval`, prototypes, `delete` (other than on a `Record`), `with`, getters on object literals,
-decorators, `Symbol` (other
+`var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`),
+`with`, getters on object literals, decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
 method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps

@@ -1,0 +1,19 @@
+// A constant arrow function (or function expression) whose rest parameter is `Array<T>` or
+// `ReadonlyArray<T>`.
+const max = (...xs: Array<number>): number => {
+  let m = -Infinity;
+  for (const x of xs) {
+    if (x > m) {
+      m = x;
+    }
+  }
+  return m;
+};
+const lengths = function (...words: ReadonlyArray<string>): number[] {
+  return words.map((w) => w.length);
+};
+const shout = (...words: Array<string>) => words.map((w) => w.toUpperCase()).join(" ");
+
+console.log(max(3, 9, 4), max());
+console.log(lengths("a", "bcd", "ef"), lengths());
+console.log(shout("hi", "there"));

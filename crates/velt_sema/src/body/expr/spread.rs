@@ -352,8 +352,10 @@ impl FnCx<'_, '_> {
                     self.field_value(&k, value, Some(expected), watched)
                 }
                 (Value::Prop(k, value), None) => {
-                    self.cx
-                        .err(format!("no field `{}` on type `{sname}`", k.name), k.span);
+                    if !crate::collect::exports::def_member_maybe_dropped(self.cx, d, &k.name) {
+                        self.cx
+                            .err(format!("no field `{}` on type `{sname}`", k.name), k.span);
+                    }
                     self.prop_value(&k, value, None);
                     continue;
                 }

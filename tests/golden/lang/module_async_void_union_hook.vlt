@@ -1,0 +1,23 @@
+// A module-level hook typed `() => void | Promise<void>` holding an async arrow (#1163).
+type Cb = () => void | Promise<void>;
+
+const cb: Cb = async () => {
+  await Promise.resolve();
+  console.log("cb ran");
+};
+const syncCb: Cb = () => {
+  console.log("sync cb ran");
+};
+
+async function run(hook: Cb) {
+  const r = hook();
+  if (r instanceof Promise) {
+    await r;
+  }
+}
+
+async function main() {
+  await run(cb);
+  await run(syncCb);
+  console.log("done");
+}

@@ -1,0 +1,22 @@
+let current: string | null = null;
+let hits = 0;
+
+function enter(name: string): string | null {
+  const prev = current;
+  current = name;
+  hits++;
+  return prev;
+}
+
+async function worker(name: string): Promise<string> {
+  enter(name);
+  await sleep(5);
+  return `${name}: current=${current ?? "none"} hits=${hits}`;
+}
+
+async function main() {
+  enter("main");
+  const r = await spawn(worker("task"));
+  console.log(r);
+  console.log(`main: current=${current ?? "none"} hits=${hits}`);
+}

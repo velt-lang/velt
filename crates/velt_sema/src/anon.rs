@@ -94,6 +94,25 @@ impl Ctx<'_> {
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Op(o, args) => {
+                // A deferred type whose arguments are all known now is evaluated (#934).
+                let args: Vec<TyId> = args.iter().map(|a| c(self, *a)).collect();
+                let op = self.ty.intern(TyKind::Op(o, args));
+                let mut ps = vec![];
+                crate::types::collect_params(&self.ty, op, &mut ps);
+                let out = if ps.is_empty() {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
+                if op != t {
+                    if let Some(&s) = self.type_level.op_sites.get(&t) {
+                        self.type_level.op_sites.entry(op).or_insert(s);
+                    }
+                }
+                self.canon_memo.insert(t, out);
+                return out;
+            }
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(a, b) => TyKind::Map(c(self, a), c(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| c(self, *a)).collect()),
@@ -396,6 +415,29 @@ impl Ctx<'_> {
             TyKind::Dyn(..) => true,
             _ => false,
         })
+    }
+
+    /// A struct no source names, with fields `fields` (types over the type params `T0..Tn`), for
+    /// a value sema builds itself: an object literal implementing an interface
+    /// (`body/expr/iface_object.rs`). Unlike [`Self::anon_def`]'s it is never shared with
+    /// another shape, so an implementation added for it belongs to it alone.
+    pub(crate) fn hidden_struct_def(
+        &mut self,
+        name: &str,
+        fields: &[(String, TyId)],
+        n: usize,
+        module: usize,
+    ) -> DefId {
+        let norm: Vec<ShapeField> = fields
+            .iter()
+            .map(|(f, t)| ShapeField::plain(f, *t))
+            .collect();
+        let d = self.new_anon_def(&norm, n, module);
+        let a = self.adt_mut(d);
+        a.kind = AdtKind::Struct;
+        a.name = name.to_string();
+        a.qual_name = name.to_string();
+        d
     }
 
     /// A fresh anonymous object def with fields `norm` (over `n` type params).

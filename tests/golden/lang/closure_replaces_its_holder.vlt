@@ -1,0 +1,155 @@
+// check: no leaks
+// A function value called from a holder that the call itself replaces (#1146): a closure in a
+// field assigns the field, the object holding it, its array element or map entry, or the
+// variable holding it, and then reads one of its captures. The call keeps the function value
+// alive until it returns, as in Node.
+
+class K {
+  f: (n: number) => string = (n) => "x";
+}
+
+function fieldReplacesItself(): void {
+  const k = new K();
+  const captured = "captured" + String(1);
+  k.f = (n: number): string => {
+    k.f = (m: number) => "other " + m;
+    return captured + n;
+  };
+  console.log(k.f(5));
+  console.log(k.f(6));
+}
+
+class Box {
+  f: () => string;
+  constructor(f: () => string) {
+    this.f = f;
+  }
+}
+
+class Owner {
+  b: Box = new Box(() => "init");
+}
+
+function holderReplaced(): void {
+  const o = new Owner();
+  const tag = "holder" + String(2);
+  o.b = new Box((): string => {
+    o.b = new Box(() => "fresh");
+    return tag + "!";
+  });
+  console.log(o.b.f());
+  console.log(o.b.f());
+}
+
+class Registry {
+  fs: Array<() => string> = [];
+  m: Map<string, () => string> = new Map();
+}
+
+function elementSplicesItself(): void {
+  const tag = "element" + String(3);
+  const r = new Registry();
+  const first = (): string => {
+    r.fs.splice(0, 1);
+    return tag + " " + r.fs.length;
+  };
+  r.fs.push(first);
+  r.fs.push(() => "second");
+  console.log(r.fs[0]());
+  console.log(r.fs[0]());
+}
+
+function mapValueDeletesItsKey(): void {
+  const tag = "map" + String(4);
+  const r = new Registry();
+  const f = (): string => {
+    r.m.delete("a");
+    return tag + " " + r.m.size;
+  };
+  r.m.set("a", f);
+  console.log(r.m.get("a")!());
+  console.log(r.m.has("a"));
+}
+
+interface Handlers {
+  onEvent: (s: string) => string;
+}
+
+function fire(h: Handlers, s: string): string {
+  return h.onEvent(s);
+}
+
+function callbackPassedAround(): void {
+  const tag = "callback" + String(5);
+  const h: Handlers = { onEvent: (s: string) => s };
+  h.onEvent = (s: string): string => {
+    h.onEvent = (t: string) => "replaced " + t;
+    return tag + ":" + s;
+  };
+  console.log(fire(h, "a"));
+  console.log(fire(h, "b"));
+}
+
+class Optional {
+  f: ((n: number) => string) | null = null;
+}
+
+function callOptional(o: Optional, n: number): string {
+  return o.f?.(n) ?? "none";
+}
+
+function optionalFieldCleared(): void {
+  const o = new Optional();
+  const tag = "optional" + String(6);
+  o.f = (n: number): string => {
+    o.f = null;
+    return tag + n;
+  };
+  console.log(callOptional(o, 1));
+  console.log(callOptional(o, 2));
+}
+
+function variableReplaced(): void {
+  const tag = "variable" + String(7);
+  let f: (n: number) => string = (n) => "none";
+  f = (n: number): string => {
+    f = (m: number) => "other " + m;
+    return tag + n;
+  };
+  console.log(f(1));
+  console.log(f(2));
+  const g = (): string => f(3);
+  f = (n: number): string => {
+    f = (m: number) => "again " + m;
+    return tag + "/" + n;
+  };
+  console.log(g());
+  console.log(g());
+}
+
+class AsyncK {
+  f: () => Promise<string> = async () => "x";
+}
+
+async function asyncReplacesItself(): Promise<void> {
+  const k = new AsyncK();
+  const tag = "async" + String(8);
+  k.f = async (): Promise<string> => {
+    k.f = async () => "other";
+    await Promise.resolve();
+    return tag + "?";
+  };
+  console.log(await k.f());
+  console.log(await k.f());
+}
+
+async function main(): Promise<void> {
+  fieldReplacesItself();
+  holderReplaced();
+  elementSplicesItself();
+  mapValueDeletesItsKey();
+  callbackPassedAround();
+  optionalFieldCleared();
+  variableReplaced();
+  await asyncReplacesItself();
+}

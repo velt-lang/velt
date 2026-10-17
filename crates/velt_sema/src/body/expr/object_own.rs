@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match m {
             _ if self
-                .dynamic_args(&format!("Object.prototype.{m}.call"), args, span)
+                .reject_dynamic_args(&format!("Object.prototype.{m}.call"), args, span)
                 .is_some() =>
             {
                 self.error_expr(span)

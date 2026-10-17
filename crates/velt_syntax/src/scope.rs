@@ -85,7 +85,8 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Extend(_)
-            | ItemKind::Augment(_) => {}
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => {}
         }
     }
 
@@ -139,6 +140,7 @@ impl<'a> Walker<'a, '_> {
             }
             ItemKind::Interface(i) => {
                 i.fields.iter().for_each(|f| self.ty(&f.ty));
+                i.call_sigs.iter().for_each(|s| self.signature(&s.sig));
                 for m in &i.methods {
                     match &m.body {
                         Some(body) => self.body(&m.sig, body, None),
@@ -160,6 +162,7 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Var(v) => self.var(v),
             ItemKind::TypeAlias(a) => self.ty(&a.ty),
             ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
+            ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ItemKind::ExternFn(sig) => self.signature(sig),
             ItemKind::Import(_) => {}
         }
@@ -195,7 +198,9 @@ impl<'a> Walker<'a, '_> {
                 }
             }
             T::Named { args, .. } => args.iter().for_each(|a| self.ty(a)),
-            T::Array(x) | T::Construct(x) | T::KeyOf(x) => self.ty(x),
+            T::Array(x) | T::Construct(x) | T::KeyOf(x) | T::TupleRest(x) | T::TupleOptional(x) => {
+                self.ty(x)
+            }
             T::GenericFunction { ty, .. } => self.ty(ty),
             T::Tuple(xs) | T::Union(xs) | T::Intersection(xs) => {
                 xs.iter().for_each(|x| self.ty(x));
@@ -223,6 +228,10 @@ impl<'a> Walker<'a, '_> {
                 self.ty(value);
             }
             T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
+            T::Callable { sigs, members } => {
+                sigs.iter().for_each(|s| self.signature(&s.sig));
+                self.ty(members);
+            }
             // `infer X` and a mapped type's key bind type names, not values: the sub-types are
             // walked for type queries as everywhere else.
             T::Conditional(c) => {

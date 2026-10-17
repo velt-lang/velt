@@ -119,7 +119,9 @@ impl FnCx<'_, '_> {
                     x
                 }
                 None => {
-                    if !self.cx.ty.is_bottom(ty) {
+                    if !self.cx.ty.is_bottom(ty)
+                        && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
+                    {
                         let tn = self.cx.display(ty);
                         self.cx.err(
                             format!("no field `{}` on type `{tn}`", name.name),

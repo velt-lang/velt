@@ -22,6 +22,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let recv = match self.dynamic_method_call(recv, prop, args, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
         // `x.toFixed(2)`: a number's method (`literal_locals`).
@@ -106,7 +110,7 @@ impl FnCx<'_, '_> {
         if let Resolved::Def { def, .. } = &r {
             self.no_generator_send(recv.ty, *def, span);
         }
-        self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
+        self.check_extension_ambiguity(&r, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {
@@ -270,12 +274,26 @@ impl FnCx<'_, '_> {
                 }
                 return self.error_expr(span);
             }
-            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. }) {
+            // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
+            // call of the value it holds.
+            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || matches!(
+                    self.cx.dynamic(fty),
+                    Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
+                )
+            {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),
                 };
             }
+        }
+        if crate::collect::exports::member_maybe_dropped(self.cx, recv.ty, &prop.name) {
+            // The parser may have dropped its declaration (`Ctx::recovered`).
+            for a in args {
+                self.expr(a, None, Want::Move);
+            }
+            return self.error_expr(span);
         }
         let tn = self.cx.display(recv.ty);
         let mut d = Diagnostic::error(

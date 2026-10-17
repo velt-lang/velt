@@ -38,6 +38,8 @@ pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &
                 owner: Some(owner),
                 is_private: f.is_private,
             },
+            mutable: false,
+            stored: false,
         };
         let g = cx.alloc_def(f.name.span, DefInfo::Global(Box::new(info)));
         if cx
@@ -59,17 +61,6 @@ pub(super) fn global_info<'m>(
     m: usize,
     v: &'m ast::VarDecl,
 ) -> Option<(&'m ast::Ident, DefInfo<'m>)> {
-    if v.kind == ast::VarKind::Let {
-        // Reported once; the binding is then checked as a constant so its uses don't cascade.
-        cx.error(
-            Diagnostic::error("mutable module-level state is not allowed", v.span)
-                .with_note("use `const` for a constant value")
-                .with_note(
-                    "for state that changes, create it in `main` (e.g. `const hits = shared(0);`) \
-                     and pass it where it is needed",
-                ),
-        );
-    }
     let ast::PatternKind::Ident(name) = &v.pattern.kind else {
         cx.err(
             "destructuring is not supported in module-level constants",
@@ -92,6 +83,8 @@ pub(super) fn global_info<'m>(
             owner: None,
             is_private: false,
         },
+        mutable: v.kind == ast::VarKind::Let,
+        stored: v.kind == ast::VarKind::Let,
     };
     Some((name, DefInfo::Global(Box::new(info))))
 }

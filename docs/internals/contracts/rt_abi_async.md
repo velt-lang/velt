@@ -35,7 +35,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - Before the first poll a state may be moved/copied bytewise (the runtime copies initial states
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
-- `cx` is the Rust `&mut Context`; generated code only passes it on.
+- `cx` points to the runtime's `{ const uint32_t* word; Context* cx; }`: the task's **await
+  word**, then the Rust `&mut Context`. Generated code passes `cx` on and reads only the word
+  (below, "Awaiting").
 - Generators (`function*`) reuse this state-machine shape without the runtime: their poll
   function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
   or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
@@ -54,6 +56,18 @@ typedef struct VeltFut {                             // every runtime-owned futu
   then move the result out of `(char*)f + 16` (type given per function below), then
   `velt_rt_fut_drop(f)` (frees it; never touches the result). `f->poll(f, cx)` may be called
   directly instead of `velt_rt_fut_poll`.
+- *The step after an `await`* (user code; std code takes none, its prelude counts Node's steps
+  with `velt_rt_microtask`): once the child or heap future is READY, the code after the `await`
+  runs one microtask later, as in Node. `if (*cx->word != 0) { t = velt_rt_await_tick(cx); if
+  (t != 0) { st->ticket = t; suspend; on resume: if (!velt_rt_await_ready(st->ticket, cx))
+  return 0; } }`. The result stays where it is (child state offset 0, or moved out of the heap
+  future before it was freed) and is dropped by the cancel path of that suspension. The word is
+  0 while no other job of the task could run first (its microtask queue is empty and no
+  synchronous run is under way: a started promise's first run, a promise run from inside another
+  poll), so `await`-only code pays one load and branch. A program that calls none of
+  `velt_rt_fut_start`, `velt_rt_microtask`, `velt_rt_latch_open`, `velt_rt_fut_detach`,
+  `velt_rt_race`, `velt_rt_race_ok`, `velt_rt_all_or_reject` can never make the word non-0;
+  lowering drops its checks (velt_vir `async_fn/await_order.rs`).
 - Every runtime function returning `VeltFut*` allocates exactly that object and does no work until
   the first poll, except that a timer's deadline is fixed at creation (like Rust's `sleep`).
 
@@ -74,7 +88,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
-| `velt_rt_microtask` | `() -> VeltFut*` | waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.vlt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` never goes through the queue. No code pointers are stored (§13.5). (additive) |
+| `velt_rt_await_tick` | `(void* cx) -> u64` | the step of an `await` when the word is not 0: 0 to go on now (nothing else can run first, or the waiter's step was queued by `velt_rt_latch_open` already), else the ticket of an entry queued at the back of the task's microtask queue for `cx`'s waker. No allocation. (additive) |
+| `velt_rt_await_ready` | `(u64 ticket, void* cx) -> u32` | 1 once the queue reached `ticket` (or for a ticket of another queue); 0 while it waits, and the entry then resumes whoever polls with `cx` now. (additive) |
+| `velt_rt_microtask` | `() -> VeltFut*` | waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.vlt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` steps (`velt_rt_await_tick`) use the same queue. No code pointers are stored (§13.5). (additive) |
 | `velt_rt_unhandled_defer` | `() -> u8` | called by the function that disposes of an unclaimed rejecting promise's result (`velt_rt_fut_start`'s `result_drop`) before it reports an `Err`: 1 when the runtime keeps the promise to report it once the task's microtask queue is drained, as Node does (the function then returns without reporting or dropping; the runtime calls it again then, and it gets 0); 0 to report now (outside a runtime drop of a started promise in a task). (additive) |
 | `velt_rt_task_gate` | `() -> u64` | a counted handle to the gate of the task being polled (0 outside a task): `setTimeout` / `setInterval` take it when they schedule their spawned task (std/prelude/timers.vlt). Released with `velt_rt_task_gate_free`. WebAssembly: always 0. (additive) |
 | `velt_rt_task_gate_wait` | `(u64 gate) -> VeltFut*` | completes once the poll the gate's task was in when the wait was first polled has ended (each poll ends with the task's microtask queue drained), at once when the task is not in a poll or for gate 0; so a timer's callback never runs before the callbacks its creator queued. Result: none. (additive) |
@@ -169,8 +185,8 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 |---|---|---|
 | `velt_rt_latch_new` | `() -> u64` | a closed latch |
 | `velt_rt_latch_free` | `(u64 latch)` | releases the handle (a pending wait keeps the latch alive) |
-| `velt_rt_latch_open` | `(u64 latch)` | opens it and wakes every waiter; a no-op when open |
-| `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open |
+| `velt_rt_latch_open` | `(u64 latch)` | opens it and resumes every waiter; a no-op when open. A waiter of the task being polled (its root or one of its started promises) is queued in that task's microtask queue now, as Node queues a promise's reactions inside `resolve`; that entry is the waiter's `await` step. Other waiters are woken. |
+| `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
 | `velt_rt_task_id` | `() -> u64` | a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
 ### 2.2 Channels (`velt:channel`)
@@ -615,7 +631,7 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `__inspect()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` (additive) |
 | `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |

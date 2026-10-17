@@ -15,6 +15,7 @@ use crate::resolve::TyEnv;
 const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
+    super::literal_hosts::find(cx);
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
         field_defaults(cx, d);
@@ -29,6 +30,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
         super::defaults::param_defaults(cx, d);
     }
     super::defaults::iface_defaults(cx);
+    super::literal_hosts::ensure_all(cx);
     for d in fns {
         ensure_body(cx, d);
     }
@@ -148,13 +150,15 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                 true => "module-level constant refers to itself".to_string(),
             };
             cx.err(msg, span);
+            cx.global_cycles += 1;
             return;
         }
         BodyState::Unchecked => {}
     }
-    let (module, qual, owner) = (g.module, g.qual_name.clone(), g.src.owner);
+    let (module, qual, owner, mutable) = (g.module, g.qual_name.clone(), g.src.owner, g.mutable);
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
+    cx.literal_hosts.in_constants += 1;
     let saved = std::mem::take(&mut cx.display_params);
     let mut fcx = detached(cx, module, &[]);
     fcx.fn_name = qual;
@@ -168,6 +172,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         (None, _) => {
             let what = if owner.is_some() {
                 "static fields must be initialized"
+            } else if mutable {
+                "a module-level `let` must be initialized"
             } else {
                 "`const` declarations must be initialized"
             };
@@ -176,15 +182,87 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
-    if let Some(i) = &init {
+    let mut stored = mutable;
+    if let (Some(i), false) = (&init, mutable) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
-        super::pure_init::check_init(cx, &name, i, ty);
+        let cycles = cx.global_cycles;
+        let mut own = Vec::new();
+        super::pure_init::check_init(cx, &name, i, ty, &mut own);
+        // A module `const` that is not a constant is evaluated once per process, as Node evaluates
+        // it once (#802): kept in the module state instead of being an error. So is a function
+        // from a call, whose identity shows. Only `check_init`'s own diagnostics go then: those
+        // of the functions it calls (checked on the way) stay.
+        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        let function = super::pure_init::has_call(i)
+            && matches!(
+                cx.ty.kind(ty),
+                crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
+            );
+        // A constant that depends on itself stays an error (its value is never known).
+        // So does one that may throw or is a promise: module state is initialized where
+        // nothing can catch or await.
+        let cycle = cx.global_cycles != cycles || own.iter().any(|o| o.fatal);
+        if top_level && (!own.is_empty() || function) && !cycle && ty != cx.ty.error {
+            stored = true;
+        } else {
+            cx.diags.extend(own.into_iter().map(|o| o.diag));
+        }
+    }
+    if stored && ty != cx.ty.error {
+        promise_in_state(cx, d, ty, decl_span);
     }
     cx.display_params = saved;
+    cx.literal_hosts.in_constants -= 1;
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
         g.ty = ty;
         g.init = init;
+        g.stored = stored;
         g.state = BodyState::Done;
+    }
+}
+
+/// Module state cannot hold a promise: it is initialized before `main` runs, where nothing can
+/// await it, and a promise has one owner, while every task reads the state.
+fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_common::Span) {
+    if !holds_promise_by_value(cx, ty, 0) {
+        return;
+    }
+    let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
+    let shown = cx.display(ty);
+    cx.error(
+        velt_common::Diagnostic::error(
+            format!("module-level `{name}` holds a promise (`{shown}`): module state cannot hold one"),
+            span,
+        )
+        .with_note("module state is initialized before `main` runs and shared by every task, while a promise is awaited by one owner")
+        .with_note("start the work in `main` (`const p = work();`) and pass the promise, or its result, where it is needed"),
+    );
+}
+
+/// Does a value of `t` hold a promise itself (not behind a class or an array, which are shared)?
+fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
+    use crate::hir::{AdtKind, TyKind};
+    if depth > 8 {
+        return false;
+    }
+    match cx.ty.kind(t) {
+        TyKind::Promise(..) => true,
+        TyKind::Option(x, _) => holds_promise_by_value(cx, *x, depth + 1),
+        TyKind::Tuple(xs) => xs.iter().any(|x| holds_promise_by_value(cx, *x, depth + 1)),
+        // An object literal type or a struct holds its fields inline.
+        TyKind::Adt(d, args) => match cx.adt(*d) {
+            Some(a) if matches!(a.kind, AdtKind::Anon | AdtKind::Struct) => {
+                a.fields.iter().any(|f| {
+                    let t = match cx.ty.kind(f.ty) {
+                        TyKind::Param(i) => args.get(*i as usize).copied().unwrap_or(f.ty),
+                        _ => f.ty,
+                    };
+                    holds_promise_by_value(cx, t, depth + 1)
+                })
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -361,7 +439,8 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         Some(r) => r,
         None => fcx.inferred_fn_ret(def, &mut block),
     };
-    fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
+    fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block);
+    fcx.wrap_adopted(&mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
     fcx.note_refused_facts(diags_before);
@@ -425,9 +504,7 @@ impl FnCx<'_, '_> {
     /// The result of function `def` inferred from its checked body `block`, recorded as its
     /// signature (`Promise<T>` for an async function).
     fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
-        let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
-        let who = format!("`{short}`");
-        let ret = self.finish_inferred_ret(block, &who);
+        let ret = self.finish_inferred_ret(block);
         let sig = if self.f.is_async {
             self.cx.ty.promise(ret)
         } else {
@@ -439,12 +516,33 @@ impl FnCx<'_, '_> {
         ret
     }
 
-    /// "must return a value on every path" for non-void functions.
-    pub fn check_returns(&mut self, name: &str, ret: hir::TyId, span: Span, block: &hir::Block) {
+    /// "must return a value on every path" for non-void functions. A function whose result may
+    /// be `undefined` returns it at the end, as in TypeScript (issue #930).
+    pub fn check_returns(
+        &mut self,
+        name: &str,
+        ret: hir::TyId,
+        span: Span,
+        block: &mut hir::Block,
+    ) {
         if ret != self.cx.ty.unit
             && !self.cx.ty.is_bottom(ret)
             && !crate::flow::block_diverges(block, &self.cx.ty)
         {
+            if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined())
+            {
+                let end = Span::new(block.span.file, block.span.hi, block.span.hi);
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, end);
+                block.stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Return(Some(value)),
+                    span: end,
+                });
+                return;
+            }
             let rty = self.cx.display(ret);
             let short = name.rsplit("::").next().unwrap_or(name);
             self.cx.error(

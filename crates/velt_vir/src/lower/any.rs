@@ -10,6 +10,7 @@
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
+//! | 5..8 | member reads and calls (any_member.rs), when the program has them |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -63,14 +64,28 @@ const FOUND: [&str; 8] = [
 ];
 
 impl Cx<'_> {
-    /// Is `t` `any` or `unknown`?
+    /// Is `t` `any`, `unknown`, `object` or `Function`?
     pub(super) fn is_dynamic(&self, t: TyId) -> bool {
         let Some(i) = self.hir.any_impl else {
             return false;
         };
         let any = self.hir.impls[i as usize].iface;
         match self.types.kind(t) {
-            TyKind::Dyn(d, args) if args.is_empty() => *d == any || Some(*d) == self.hir.unknown,
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                *d == any
+                    || [self.hir.unknown, self.hir.object, self.hir.function].contains(&Some(*d))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `t` `object` or `Function` (issue #926)?
+    pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                self.hir.any_impl.is_some()
+                    && [self.hir.object, self.hir.function].contains(&Some(*d))
+            }
             _ => false,
         }
     }
@@ -135,6 +150,7 @@ impl Cx<'_> {
                 Const::Func(self.func(Work::Glue(Glue::AnyNumber, ty))),
             ));
         }
+        e.extend(self.any_member_entries(ty));
         e
     }
 }
@@ -377,6 +393,14 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if self.cx.is_dynamic(ty) {
+            if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
+                // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
+                // `null` and `undefined` are what `object | null` holds.
+                let fvt = self.cx.ty(from);
+                let p = Place::local(self.copy_to_temp(v, fvt));
+                self.check_not_primitive(&p, ty);
+                return self.own_value(Operand::Copy(p), ty);
+            }
             return self.own_value(v, ty);
         }
         let fvt = self.cx.ty(from);
@@ -385,8 +409,29 @@ impl FnLower<'_, '_> {
         self.own_value(r, ty)
     }
 
+    /// Is `t` TypeScript's `object` (issue #926)?
+    fn is_object_ty(&self, t: TyId) -> bool {
+        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
+    }
+
+    /// Stop with a `TypeError` when the dynamic value at `p` holds a boolean, number, string
+    /// or symbol (converted to `object`, `ty`).
+    fn check_not_primitive(&mut self, p: &Place, ty: TyId) {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc.clone());
+        let lo = cint(TAG_BOOLEAN as i128, Ty::U64);
+        let k = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, tag, lo));
+        let n = cint((TAG_SYMBOL - TAG_BOOLEAN) as i128, Ty::U64);
+        let bad = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, k, n));
+        let (bad_bb, ok_bb) = (self.new_block(), self.new_block());
+        self.branch(bad, bad_bb, ok_bb);
+        self.switch_to(bad_bb);
+        self.any_type_error(desc, ty);
+        self.switch_to(ok_bb);
+    }
+
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
-    fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
+    pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
             return Operand::Copy(p.clone());
@@ -484,7 +529,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The name of `ty` in a `TypeError`, with its type arguments (`Box<number>`).
-    fn any_target_name(&self, ty: TyId) -> String {
+    pub(super) fn any_target_name(&self, ty: TyId) -> String {
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
             TyKind::Adt(_, args) if !args.is_empty() => {

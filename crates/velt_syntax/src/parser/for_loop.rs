@@ -105,7 +105,12 @@ impl<'a> Parser<'a> {
             return Ok(ForInit::Stmts(vec![]));
         }
         let mut stmts = vec![];
-        if self.at_kw(Kw::Let) || self.at_kw(Kw::Const) {
+        // `var` is reported and read as `let`, so that the rest of the loop is still checked.
+        let var = self.at_var_decl();
+        if var {
+            self.reject_nested_var("in the head of a `for` loop");
+        }
+        if var || self.at_kw(Kw::Let) || self.at_kw(Kw::Const) {
             let kind = if self.at_kw(Kw::Const) {
                 VarKind::Const
             } else {

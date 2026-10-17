@@ -282,6 +282,36 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         return;
     }
     report_mutated(cx, c, why, "async closure");
+    report_generators(cx, c, why);
+}
+
+/// A non-local async closure copies what it captured for each call, and a generator's state
+/// cannot be copied: report each captured generator (a local one shares it, as in JS).
+fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return;
+    };
+    let caps: Vec<(TyId, String, velt_common::Span)> = f
+        .captures
+        .iter()
+        .map(|cap| &f.body.locals[cap.inner.0 as usize])
+        .map(|l| (l.ty, l.name.clone(), l.span))
+        .collect();
+    let gens: Vec<_> = caps
+        .into_iter()
+        .filter(|c| cx.holds_generator(c.0))
+        .collect();
+    for (_, name, at) in gens {
+        let mut d = Diagnostic::error(
+            format!("an async closure that may run on another thread cannot capture the generator `{name}`"),
+            at,
+        );
+        if let Some(w) = why {
+            let label = reaches(cx, &w);
+            d = d.with_label(w.span, label);
+        }
+        cx.error(d.with_note("such a closure copies what it captured for each call, and a generator's suspended state cannot be copied: create the generator inside the closure, or keep the closure on the task that created it"));
+    }
 }
 
 /// The label naming where a non-local closure leaves its task.

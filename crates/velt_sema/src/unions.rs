@@ -29,6 +29,39 @@ pub(crate) const TYPEOF_TAGS: [&str; 7] = [
 ];
 
 impl Ctx<'_> {
+    /// A union with an `object` or `Function` member (issue #926) is a dynamic type, which
+    /// holds `null` / `undefined` itself: `Function` when every other member is a function,
+    /// `object` when every one is an object, else `unknown` (`string | Function`), whose values
+    /// are narrowed with `typeof` before use.
+    fn narrow_dynamic_union(&mut self, flat: &[TyId]) -> Option<TyId> {
+        use crate::any::Dynamic;
+        let defs = self.any?;
+        let narrow: Vec<Dynamic> = flat
+            .iter()
+            .filter_map(|t| self.dynamic(*t))
+            .filter(|d| matches!(d, Dynamic::Object | Dynamic::Function))
+            .collect();
+        if narrow.is_empty() {
+            return None;
+        }
+        let (unit, never) = (self.ty.unit, self.ty.never);
+        let rest: Vec<TyId> = flat
+            .iter()
+            .copied()
+            .filter(|t| self.dynamic(*t).is_none() && *t != unit && *t != never)
+            .collect();
+        let iface = if narrow.iter().all(|d| *d == Dynamic::Function)
+            && rest.iter().all(|t| self.is_function_ty(*t))
+        {
+            defs.function
+        } else if rest.iter().all(|t| self.is_object_ty(*t)) {
+            defs.object
+        } else {
+            defs.unknown
+        };
+        Some(self.ty.intern(TyKind::Dyn(iface, vec![])))
+    }
+
     /// The canonical type of the union of `members` (plus `null` when `nullable`); reports
     /// invalid members at `span` and returns `Error` for them.
     pub fn union_of(&mut self, members: &[TyId], nullable: bool, span: Span) -> TyId {
@@ -53,9 +86,15 @@ impl Ctx<'_> {
                 return t;
             }
         }
-        if flat.contains(&self.ty.unit) {
-            self.err("`void` cannot be a member of a union type", span);
-            return self.ty.error;
+        if let Some(t) = self.narrow_dynamic_union(&flat) {
+            return t;
+        }
+        // `T | void` is `T | undefined`: a `void` function's value is `undefined` (issue #930).
+        let unit = self.ty.unit;
+        if flat.contains(&unit) {
+            self.writes_undefined = true;
+            flat.retain(|t| *t != unit);
+            nothing = Some(nothing.map_or(Nothing::Undefined, |n| n.join(Nothing::Undefined)));
         }
         let never = self.ty.never;
         flat.retain(|t| *t != never);

@@ -1,0 +1,5 @@
+iface_field_writes.vlt:23:21: error: this object literal has a getter but no setter for `owner`, which is written through `Hook`
+  = note: add `set owner(v)` to the object literal
+
+iface_field_writes.vlt:19:5: error: cannot assign to `id`: it is a readonly field
+  = note: `Hook` declares it `readonly`

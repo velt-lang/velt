@@ -361,6 +361,33 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
+    /// Checking a module-level constant or a field initializer itself (not a closure body in
+    /// it): there is no frame to hold the hidden local a wrapper keeps its function in.
+    fn frameless(&self) -> bool {
+        self.detached && self.outer.is_empty()
+    }
+
+    /// The arrow `e` adapted where no frame holds a hidden local (`frameless`): the wrapper calls
+    /// it in place, `(p…) => (e)(p…)`, with `e` checked as `inner` (a function of `n`
+    /// parameters). Outside any body `e` captures nothing, so making the closure at each call
+    /// is the same as making it once.
+    fn immediate_wrapper(
+        &mut self,
+        e: &ast::Expr,
+        inner: TyId,
+        n: usize,
+        wrap: Wrap,
+        exp: Option<TyId>,
+    ) -> hir::Expr {
+        let span = e.span;
+        let callee = synth(ast::ExprKind::Paren(Box::new(e.clone())), span);
+        let arrow = wrapper(callee, n, n, wrap == Wrap::Discard, span);
+        self.immediate_hint = Some((span, inner));
+        let w = self.closure(&arrow, exp, true);
+        self.immediate_hint = None;
+        w
+    }
+
     /// An `async` arrow where the function type returns `void` or a union with one promise
     /// member (see the module docs); `None` for any other expected type.
     pub(super) fn async_arrow_callback(
@@ -396,6 +423,10 @@ impl FnCx<'_, '_> {
         } else {
             async_ty
         };
+        if self.frameless() {
+            let wrap = if discard { Wrap::Discard } else { Wrap::Call };
+            return Some(self.immediate_wrapper(e, async_ty, n, wrap, exp));
+        }
         let f = self.closure(e, Some(async_ty), true);
         if self.thread_adapter == Some(e.span) {
             self.thread_adapter = None;
@@ -450,11 +481,15 @@ impl FnCx<'_, '_> {
             return None;
         }
         let n = ptys.len().max(params.len());
+        let ptys_len = ptys.len();
         let member_ty = self.cx.ty.intern(TyKind::FnPtr {
             params: ptys,
             ret: declared,
             throws,
         });
+        if self.frameless() {
+            return Some(self.immediate_wrapper(e, member_ty, ptys_len, Wrap::Call, exp));
+        }
         let f = self.closure(e, Some(member_ty), true);
         let exp = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr { ret: found, .. }
