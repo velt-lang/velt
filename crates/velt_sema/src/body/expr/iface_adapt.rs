@@ -189,7 +189,9 @@ fn adaptable(
         || !from
             .iter()
             .zip(to)
-            .all(|(a, b)| a == b || cx.dynamic(*b).is_some())
+            .all(|(a, b)| {
+                a == b || matches!(cx.dynamic(*b), Some(Dynamic::Any | Dynamic::Unknown))
+            })
     {
         return false;
     }

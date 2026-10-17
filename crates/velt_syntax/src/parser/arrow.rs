@@ -219,8 +219,12 @@ impl<'a> Parser<'a> {
                 }
                 let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
                 let span = Span::new(self.file, at, at);
-                default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-                ty.map(super::types::or_null)
+                let nothing = match ty.as_ref().is_some_and(super::types::has_undefined) {
+                    true => Lit::Undefined,
+                    false => Lit::Null,
+                };
+                default = Some(self.mk_expr(ExprKind::Lit(nothing), span));
+                ty.map(super::types::optional_param)
             }
             (false, ty) => ty,
         };

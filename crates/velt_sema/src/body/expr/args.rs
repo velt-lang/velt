@@ -16,6 +16,9 @@ use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
 
+/// The temporary holding an argument tested for `undefined` (no source name can be this).
+const ARG: &str = "<arg>";
+
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
 pub(crate) struct Callable {
     /// For messages: "function `f`", "method `push`".
@@ -162,7 +165,11 @@ impl FnCx<'_, '_> {
             } else {
                 h
             };
+            let arg_ty = h.ty;
             let mut h = self.coerce(h, target);
+            if let Some(d) = &p.default {
+                h = self.default_on_undefined(h, arg_ty, d, &type_args);
+            }
             if p.mode == PassMode::BorrowMut {
                 self.use_mutably(&mut h, "modify");
             }
@@ -184,6 +191,59 @@ impl FnCx<'_, '_> {
             ret,
             type_args,
         }
+    }
+
+    /// JavaScript applies a parameter's default to a passed `undefined` too. For a parameter of
+    /// a dynamic type (`o: any = 5`), an argument that may hold `undefined` (`h`, of type
+    /// `arg_ty` before its conversion) is tested where it is passed:
+    /// `{ const <arg> = h; <arg> === undefined ? <default> : <arg> }`. Other parameters whose
+    /// type allows `undefined` take no default but `undefined` itself (`defaults.rs`).
+    fn default_on_undefined(
+        &mut self,
+        h: hir::Expr,
+        arg_ty: TyId,
+        default: &hir::Expr,
+        type_args: &[TyId],
+    ) -> hir::Expr {
+        let may_be_undefined = self.cx.dynamic(arg_ty).is_some()
+            || self
+                .cx
+                .ty
+                .nothing_of(arg_ty)
+                .is_some_and(|n| n.has_undefined());
+        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined {
+            return h;
+        }
+        let (ty, span) = (h.ty, h.span);
+        let mut stmts = vec![];
+        self.push_scope();
+        let arg = self.bind_temp(ARG, h, &mut stmts);
+        let name = |span| {
+            super::setters::synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: ARG.into(),
+                    span,
+                }),
+                span,
+            )
+        };
+        let undefined = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+        let test =
+            super::accessor_rmw::binary(ast::BinaryOp::StrictEq, name(span), undefined, span);
+        let cond = self.cond(&test);
+        let mut d = default.clone();
+        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
+        d.span = span;
+        let els = self.read_temp(arg, ty, span);
+        let pick = H::If {
+            cond: Box::new(cond),
+            then: Box::new(d),
+            els: Box::new(els),
+        };
+        let pick = self.mk(pick, ty, span);
+        self.pop_scope();
+        let b = super::accessor_rmw::block(stmts, Some(pick), span);
+        self.mk(H::Block(b), ty, span)
     }
 
     /// A call whose arguments were reported: no arguments, the result with what is known.

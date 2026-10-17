@@ -429,8 +429,10 @@ impl FnCx<'_, '_> {
                     "number" => self.cx.ty.f64,
                     "string" => self.cx.ty.str_,
                     "boolean" => self.cx.ty.bool_,
-                    // TypeScript's `Function`: called through the descriptor.
-                    "function" => return (self.dynamic_to_any_fact(operand), vec![]),
+                    // TypeScript's `Function` (issue #926): called through the descriptor.
+                    "function" => return (self.dynamic_to_function_fact(operand), vec![]),
+                    // TypeScript's `object | null` (issue #926), which is `object` here.
+                    "object" => return (self.dynamic_to_object_fact(operand), vec![]),
                     _ => return (vec![], vec![]),
                 };
                 return (vec![Fact::Class(l, t)], vec![]);

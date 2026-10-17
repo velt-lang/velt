@@ -33,6 +33,10 @@ impl FnCx<'_, '_> {
                 self.unknown_use_error(obj.span);
                 Ok(None)
             }
+            Some(d @ (Dynamic::Object | Dynamic::Function)) => {
+                self.narrow_dynamic_error(d, None, obj.span);
+                Ok(None)
+            }
             Some(Dynamic::Any) => {
                 let mut obj = obj;
                 set_place_mode(&mut obj, UseMode::Borrow);

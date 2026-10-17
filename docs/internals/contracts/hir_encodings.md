@@ -748,8 +748,9 @@ entry is an `ICE:`.
   write of the field it names (or, for a computed key, of every field) for `object_copies`.
 - `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
   array's or tuple's `any` table is `u64::MAX - 1`. `Array.isArray(x)`, `x instanceof C` of a
-  generic class and `typeof x === "function"` narrow a dynamic local with `Fact::Class(l, any)`
-  (an `unknown` reads as `AnyTo(Share(x))` to `any`; an `any` stays as it is).
+  generic class and `typeof x === "function"` (on an `object`; an `unknown` narrows to
+  `Function`, below) narrow a dynamic local with `Fact::Class(l, any)` (an `unknown` reads as
+  `AnyTo(Share(x))` to `any`; an `any` stays as it is).
 - `Intrinsic::AnyHas(x, key)` is `key in x` on an `any` `x` (key `string`, or `any`: a number
   names an element by its string), of type `bool`; `x` is borrowed. Lowering evaluates `key`
   before `x`, as JavaScript does, although `x` is the first argument. It runs user code (a
@@ -785,6 +786,21 @@ entry is an `ICE:`.
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
   Lowering sees only these ordinary forms.
+- `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
+  `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
+  with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
+  `any_impl`, the same tables, `AnyTo` to convert out, and lowering's `is_dynamic` covers them.
+  Sema only lets objects (classes, object types, arrays, tuples, maps, functions, interface
+  values) into `object` and functions into `Function`; `find_impl` of either interface answers
+  for the type, so `T extends object` is a bound that primitives fail. A `ToDyn` operand may then
+  be a type parameter bound by `object` / `Function`; when its instantiation is itself dynamic,
+  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`).
+  `AnyTo` from `any` / `unknown` to `object` checks the tag: a boolean, number, string or
+  symbol is a `TypeError`. `typeof x === "function"` narrows an `unknown` local with
+  `Fact::Class(l, Function)`. Once
+  any value converts to `object` / `Function`, lowering converts objects to every dynamic type by
+  identity (one counted object, as with a write through `any`), so `Set<object>` keys compare by
+  identity whichever dynamic type a value went through.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any`, iteration.

@@ -32,7 +32,10 @@ pub(crate) fn param_defaults(cx: &mut Ctx, d: DefId) {
     for (i, p) in sig.params.iter().enumerate() {
         let Some(e) = &p.default else { continue };
         let ty = cx.fn_info(d).params[i].ty;
-        let h = check_default(cx, module, &names, &name, owner, e, ty);
+        let h = match p.optional {
+            true => optional_default(cx, module, &names, e, ty),
+            false => check_default(cx, module, &names, &name, owner, e, ty),
+        };
         cx.fn_info_mut(d).params[i].default = Some(h);
     }
 }
@@ -53,6 +56,27 @@ fn check_default(
     let h = fcx.expr_coerce(e, ty, Want::Move);
     cx.display_params = saved;
     undefined_default(cx, e, ty);
+    h
+}
+
+/// The value of an optional parameter (`p?: T`) a call leaves out: `undefined`, as in
+/// JavaScript. The parser gives it the default `null` (`T | null`, whose `null` reads as
+/// `undefined`); a dynamic type (`any`, `unknown`) holds its own `undefined` instead, so that
+/// `p === undefined`, `typeof p` and printing see `undefined`.
+fn optional_default(
+    cx: &mut Ctx,
+    module: usize,
+    names: &[String],
+    e: &ast::Expr,
+    ty: TyId,
+) -> crate::hir::Expr {
+    let saved = std::mem::replace(&mut cx.display_params, names.to_vec());
+    let mut fcx = detached(cx, module, names);
+    let h = match fcx.cx.dynamic(ty).is_some() {
+        true => fcx.dynamic_nothing(crate::hir::Nothing::Undefined, ty, e.span),
+        false => fcx.expr_coerce(e, ty, Want::Move),
+    };
+    cx.display_params = saved;
     h
 }
 
@@ -99,7 +123,10 @@ pub(crate) fn arrow_defaults(
         let Some(ty) = cx.fn_info(closure).params.get(i).map(|p| p.ty) else {
             continue;
         };
-        let h = check_default(cx, module, &[], &name, None, e, ty);
+        let h = match p.optional {
+            true => optional_default(cx, module, &[], e, ty),
+            false => check_default(cx, module, &[], &name, None, e, ty),
+        };
         cx.fn_info_mut(closure).params[i].default = Some(h);
     }
 }
@@ -142,7 +169,10 @@ fn own_iface_defaults(cx: &mut Ctx, d: DefId) {
             let Some(e) = &p.default else { continue };
             let ty = cx.iface(d).expect("ICE: iface").methods[slot].params[k].ty;
             let fname = format!("{qual}.{key}");
-            let h = check_default(cx, module, &names, &fname, Some(d), e, ty);
+            let h = match p.optional {
+                true => optional_default(cx, module, &names, e, ty),
+                false => check_default(cx, module, &names, &fname, Some(d), e, ty),
+            };
             iface_method_mut(cx, d, slot).params[k].default = Some(h);
         }
     }

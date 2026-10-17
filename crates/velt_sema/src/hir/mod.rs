@@ -162,6 +162,11 @@ pub struct Program {
     /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
     /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
     pub unknown: Option<DefId>,
+    /// The prelude's `object` and `Function` interfaces when `any_impl` is set (issue #926):
+    /// `Dyn(object, [])` and `Dyn(Function, [])` are dynamic types too, with the same
+    /// representation and tables as `any`.
+    pub object: Option<DefId>,
+    pub function: Option<DefId>,
     /// The methods and accessors of each struct / class / object type by name, own ones before
     /// inherited ones, when the program reads or calls a member of an `any`
     /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then

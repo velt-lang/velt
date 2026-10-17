@@ -29,6 +29,7 @@ pub mod hir;
 mod absent_fields;
 mod anon;
 mod any;
+mod any_keys;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -305,6 +306,8 @@ fn check_on_current_thread(
         type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
+        object: any.and_then(|a| a.imp.map(|_| a.object)),
+        function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members,
     };
     (Some(program), diags)
@@ -345,6 +348,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     body::check_bodies(cx);
     absent_fields::check(cx);
     fresh_returns::check(cx);
+    any_keys::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if instantiation_cycles::check(cx) {

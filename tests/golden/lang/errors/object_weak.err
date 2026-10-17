@@ -1,0 +1,3 @@
+object_weak.vlt:5:14: error: `object` as a member of a `WeakSet` is not supported yet (#926)
+object_weak.vlt:6:14: error: `object` as a `WeakMap` key is not supported yet (#926)
+object_weak.vlt:7:15: error: `object` as the target of a `WeakRef` is not supported yet (#926)
