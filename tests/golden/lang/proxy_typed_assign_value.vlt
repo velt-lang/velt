@@ -1,0 +1,34 @@
+// check: no leaks
+// The value of an assignment through a typed proxy (#823) is the assigned value (for `op=`, the
+// computed one): no `get` trap runs for it, as in JavaScript, even when the `set` trap stores
+// something else.
+let traps = 0;
+let sets = 0;
+class C {
+  n: number = 1;
+  label: string = "a";
+}
+const r = new Proxy(new C(), {
+  get(o: any, k: string | symbol, rc: any): any {
+    traps += 100;
+    return Reflect.get(o, k);
+  },
+  set(o: any, k: string | symbol, v: any, rc: any): boolean {
+    sets++;
+    if (k === "n") {
+      return Reflect.set(o, k, (v as number) * 2);
+    }
+    return Reflect.set(o, k, v);
+  },
+}) as C;
+const v2 = (r.n = 6);
+console.log(v2, traps, sets);
+let z = 0;
+z = r.n = 8;
+console.log(z, traps, sets);
+const w = (r.n += 1);
+console.log(w, traps, sets);
+console.log(r.n, traps);
+const s = (r.label = "bc");
+console.log(s, s.length, traps, sets);
+console.log(r.label, traps);

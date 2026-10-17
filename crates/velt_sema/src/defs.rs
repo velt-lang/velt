@@ -251,6 +251,17 @@ pub(crate) struct FnInfo<'m> {
 }
 
 impl FnInfo<'_> {
+    /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose
+    /// `this` is a leading parameter that callers pass (`body::expr::this_param`)?
+    pub fn has_this_param(&self) -> bool {
+        matches!(self.kind, FnKind::Free | FnKind::Closure)
+            && self.this.is_some()
+            && self.source.is_some_and(|s| match s {
+                FnSource::Decl(d) => d.sig.this_param.is_some(),
+                _ => false,
+            })
+    }
+
     /// The type the polymorphic `this` type resolves to in this function: its class in an
     /// instance method.
     pub fn this_type(&self) -> Option<TyId> {

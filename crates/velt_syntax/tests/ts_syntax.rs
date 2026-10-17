@@ -548,9 +548,29 @@ fn this_parameters_and_the_this_type() {
         velt_syntax::first_this_param("const t = this; f(this);"),
         None
     );
+    // A function whose body uses `this` keeps the type (the type checker passes the receiver).
+    let m = parse_ok("function f(this: { n: number }) { return this.n; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(f.sig.params.is_empty());
+    assert!(f.sig.this_param.is_some());
+    let m = parse_ok("function f(this: { n: number }, x: number) { return x; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(f.sig.this_param.is_none());
+    let m = parse_ok("const f = function (this: { n: number }) { return this.n; };");
+    let ItemKind::Var(v) = &m.items[0].kind else {
+        panic!()
+    };
+    let Some(ExprKind::Function(d)) = v.init.as_ref().map(|e| &e.kind) else {
+        panic!()
+    };
+    assert!(d.sig.this_param.is_some());
     assert_eq!(
-        errors("function f(this: { n: number }) { return this.n; }"),
-        vec!["`this` in a function with a `this` parameter is not supported yet"]
+        errors("const f = function (this: { n: number }, x) { return this.n + x; };"),
+        vec!["`this` in a generator, or in a function with overloads or parameters without a written type, that has a `this` parameter is not supported yet"]
     );
     assert_eq!(
         errors("const f = (this: number) => 1;"),

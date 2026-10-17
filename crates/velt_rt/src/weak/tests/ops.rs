@@ -159,6 +159,26 @@ fn handles_are_reused() {
 }
 
 #[test]
+fn weak_ref_to_a_tagged_word() {
+    no_leak(|| {
+        // A typed proxy's word: the counted object with bit 0 set.
+        let o = new_obj(&[]);
+        let tagged = (o as usize | 1) as *mut u8;
+        // SAFETY: `o` is live; the ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new(tagged) };
+        assert!(is_marked(o), "the object is recorded, not the tagged word");
+        let d = velt_rt_weakref_deref(r);
+        assert_eq!(d, tagged, "deref gives the word back as given");
+        assert_eq!(count(o), 2);
+        release(o);
+        release(o);
+        assert!(velt_rt_weakref_deref(r).is_null());
+        unsafe { velt_rt_weakref_drop(r) };
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
 fn a_weak_ref_keeps_its_word() {
     no_leak(|| {
         let o = new_obj(&[]);
@@ -194,6 +214,16 @@ fn a_weak_ref_keeps_its_word() {
         unsafe { velt_rt_weakref_drop(b) };
         release(o);
         assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+#[should_panic(expected = "ICE: a tagged proxy word")]
+fn a_tagged_map_key_is_an_ice() {
+    no_leak(|| {
+        let m = obj_map();
+        let k = new_obj(&[]);
+        let _ = table::with(|s| s.get(m, (k as usize | 1) as *mut u8));
     });
 }
 

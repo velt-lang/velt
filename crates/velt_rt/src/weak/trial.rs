@@ -240,7 +240,8 @@ fn add_entry_edges(s: &State, g: &mut Graph, i: u32) {
         }
     }
     for &(m, k) in &node.member_of {
-        // A key's own trace glue (the keys of a dynamic key type differ), else the map's.
+        // A key's own trace glue (the keys of a dynamic key type differ, and so do a proxiable
+        // key type's typed proxies, which are `Proxy` objects), else the map's.
         let trace = s.nodes.get(&k).and_then(|n| n.trace);
         g.add(k, trace.or(s.map(m).key_trace));
     }

@@ -12,7 +12,7 @@ mod kinds;
 mod transfers;
 mod weak;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -24,10 +24,10 @@ pub(super) use kinds::ShareKind;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Boxing {
     /// Class hierarchies (by root class) whose objects carry a count in front of them.
-    roots: HashSet<DefId>,
+    pub(super) roots: HashSet<DefId>,
     /// Arrays and object types whose values are counted boxes (`Ptr` to the inline value with
     /// the count in front) instead of inline values.
-    boxes: HashSet<TyId>,
+    pub(super) boxes: HashSet<TyId>,
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
     interior: HashSet<TyId>,
@@ -61,6 +61,16 @@ pub(super) struct Boxing {
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
     pub(super) dyn_to_any: HashSet<DefId>,
+    /// Typed proxies (#823, proxy_typed.rs): class hierarchies (by root class) and object types
+    /// whose values may hold a tagged pointer to the prelude's `Proxy` object. Empty in a
+    /// program that creates no proxy.
+    pub(super) proxy_roots: HashSet<DefId>,
+    pub(super) proxy_types: HashSet<TyId>,
+    /// The prelude's `Proxy` class, once the program creates a proxy.
+    pub(super) proxy_class: Option<DefId>,
+    /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
+    /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
+    pub(super) proxy_traced: BTreeSet<TyId>,
 }
 
 impl Boxing {
@@ -161,6 +171,12 @@ pub(super) struct Facts {
     pub(super) object_from_dyn: bool,
     /// Interfaces whose values are converted to `any` / `unknown`.
     dyn_to_any: HashSet<DefId>,
+    /// The program creates a `Proxy` (proxy_typed.rs).
+    pub(super) proxy_new: bool,
+    /// Concrete targets of `AnyTo` in the program's own code (proxy_typed.rs).
+    pub(super) proxy_targets: HashSet<TyId>,
+    /// `(from, to)` of the `Upcast`s lowered: a proxiable `from` makes `to` proxiable.
+    pub(super) proxy_casts: HashSet<(TyId, TyId)>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -279,6 +295,7 @@ impl Cx<'_> {
         next.identity_dyns.extend(dyns);
         next.boxes
             .extend(self.facts.identity_borrows.iter().copied());
+        self.close_proxies(&mut next);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         // A weak key of type `object` (issue #926) is any dynamic value's object: each type
         // dynamic values hold is counted, so its data pointer is the object itself.
@@ -341,7 +358,7 @@ impl Cx<'_> {
     }
 
     /// `counted` against a candidate set.
-    fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
+    pub(super) fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
             TyKind::Adt(d, _) if b.recursive.contains(d) => true,

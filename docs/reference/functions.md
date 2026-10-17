@@ -672,14 +672,15 @@ async function main() {
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
   annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet: take the object as an ordinary parameter,
-  or write a class method. In a function expression that is the value of an object-literal
-  property (`{ v: 1, get: function () { return this.v; } }`), where TS types `this` as the
-  literal, `this` is not supported yet either.
+  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
+  receiver): declare the function and call it with `call` or `apply` (below), take the object as
+  an ordinary parameter, or write a class method. In a function expression that is the value of
+  an object-literal property (`{ v: 1, get: function () { return this.v; } }`), where TS types
+  `this` as the literal, `this` is not supported yet either.
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
-  `this` and is no parameter: callers don't pass it. `this: void` says the function doesn't
-  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet, so it leaves
-  a file with one as written and reports it.
+  `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
+  have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written
+  and reports it. See [`this` parameters](#this-parameters) for function declarations.
 - The name of a named expression inside its own body (recursion) is not supported yet: declare
   the function with `function name(…) { … }`.
 
@@ -824,6 +825,37 @@ async function main() {
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
   now; leaving the optional one out (`install(app)`) is not supported yet.
 
+### `this` parameters
+
+A function declaration whose body uses `this` may declare its type with a `this` parameter,
+`function f(this: T, a: A)`, as in TypeScript. The caller passes `this`:
+`f.call(obj, a)` and `f.apply(obj, [a])` run the body with `this` = `obj`, which must be a `T`
+(TypeScript's TS2345 otherwise). A plain call `f(a)` passes `undefined`, which only `this: any`
+and `this: unknown` accept; for another `T` it is TypeScript's TS2684 ("The 'this' context of
+type 'void' is not assignable to method's 'this' of type 'T'"), also for `T | undefined`.
+
+```ts
+interface Counter {
+  n: number;
+}
+function bump(this: Counter, by: number): number {
+  this.n += by;
+  return this.n;
+}
+const c: Counter = { n: 1 };
+console.log(bump.call(c, 2), bump.apply(c, [3])); // 3 6
+function kind(this: unknown): string {
+  return typeof this;
+}
+console.log(kind(), kind.call("s")); // undefined string
+```
+
+A function with a `this` parameter that its body doesn't use is called like any other function.
+Not supported yet: using a function whose body uses its `this` parameter as a value (`const g =
+f`, `{ m: f }`, `xs.map(f)`), a function expression whose body uses one, one with overloads, a
+generator with one, and `this` in a function type (`(this: T, a: A) => R` is `(a: A) => R` for
+now).
+
 ### `call` and `apply`
 
 `f.call(thisArg, a, b)` and `f.apply(thisArg, [a, b])` call a function value as JavaScript's
@@ -833,7 +865,8 @@ parameters one by one, and an array of unknown length only a rest parameter
 (`String.fromCharCode.apply(null, codes)`, `Math.max.apply(null, xs)`), as TypeScript's
 `strictBindCallApply` checks it.
 
-`this` matters only to a function that reads it. Function declarations, arrow functions and the
+`this` matters only to a function that reads it. A function declaration with a [`this`
+parameter](#this-parameters) runs on the `thisArg`. Other function declarations, arrow functions and the
 static functions of built-in namespaces read none, so any `thisArg` works for them
 (`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or

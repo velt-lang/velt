@@ -34,6 +34,20 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let sig = &d.sig;
+        if let Some(t) = &sig.this_param {
+            let this_ty = self.resolve(t);
+            let shown = self.cx.display(this_ty);
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` in a function expression with a `this` parameter is not supported yet",
+                    span,
+                )
+                .with_note(format!(
+                    "TypeScript allows this (`this` is the object the function is called on, typed `{shown}`); Velt doesn't yet because a function value has no receiver; take the object as an ordinary parameter, or declare the function (`function f(this: T, ...)`) and call it with `f.call(obj, ...)`"
+                )),
+            );
+            return self.error_expr(span);
+        }
         if !sig.is_generator {
             self.cx.error(
                 Diagnostic::error("function expressions are not supported", span).with_note(

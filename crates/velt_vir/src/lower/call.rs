@@ -6,7 +6,6 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::later_each;
 use super::{ice, unit, FnLower, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -69,8 +68,15 @@ impl FnLower<'_, '_> {
             }
             _ => self.cx.func_for(def, targs.clone()),
         };
+        let receiver_first = pre.is_empty();
         let mut argv = pre;
         argv.extend(self.lower_args(args, &modes, true));
+        if f.self_ty.is_some() && !args.is_empty() && receiver_first {
+            let rty = self.sub(args[0].ty);
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
+                self.proxy_method_check(&argv[0]);
+            }
+        }
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -189,7 +195,7 @@ impl FnLower<'_, '_> {
             ice("argument count does not match parameter count");
         }
         let mut argv = vec![];
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             match (self.vty(a.ty), mode) {
@@ -249,7 +255,7 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);

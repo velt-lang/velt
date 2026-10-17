@@ -1,0 +1,46 @@
+// check: no leaks
+// Methods through a proxy typed as a class (#823): with a handler without a `get` trap the
+// method runs with `this` the proxy, so its writes run the `set` trap; a virtual call uses the
+// target's class.
+class Counter {
+  n: number = 0;
+  label: string = "c";
+  bump(by: number): number {
+    this.n = this.n + by;
+    return this.n;
+  }
+  get double(): number {
+    return this.n * 2;
+  }
+  describe(): string {
+    return `${this.label}:${this.n}`;
+  }
+}
+
+class Named extends Counter {
+  override describe(): string {
+    return `named ${this.label}=${this.n}`;
+  }
+}
+
+function logged(target: any): any {
+  return new Proxy(target, {
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+const c = logged(new Counter()) as Counter;
+console.log(c.bump(2));
+console.log(c.double);
+console.log(c.describe());
+const base: Counter = logged(new Named()) as Named;
+console.log(base.describe());
+base.label = "z";
+console.log(base.describe());
+const plain = new Counter();
+plain.bump(5);
+console.log(plain.describe(), plain.double);
+console.log(c);

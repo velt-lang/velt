@@ -17,11 +17,11 @@
 
 use velt_sema::hir::{TyId, TyKind};
 
-use super::Glue;
+use super::{Glue, VtableKey};
 use crate::lower::operand::proj;
 use crate::lower::weak::WordKind;
 use crate::lower::{cfunc, cint, unit, FnLower, Work};
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// Trace glue of the counted type `ty`, or null when its objects are opaque.
@@ -51,6 +51,7 @@ impl FnLower<'_, '_> {
                         self.trace_part(fp, t, tv);
                     }
                 }
+                self.trace_proxy_target(&o, ty, tv);
             }
             _ => {
                 let payload = self.cx.payload_ty(ty);
@@ -159,7 +160,10 @@ impl FnLower<'_, '_> {
             let done = self.new_block();
             let nn = self.non_null(p.clone());
             self.when(nn, done);
-            let tf = self.trace_fn(c);
+            let (p, tf) = match self.cx.proxiable(c) {
+                true => self.trace_proxiable(p, c),
+                false => (p, self.trace_fn(c)),
+            };
             let (visit, cx) = (
                 Operand::Copy(Place::local(tv.0)),
                 Operand::Copy(Place::local(tv.1)),
@@ -178,6 +182,77 @@ impl FnLower<'_, '_> {
             ];
             self.call_glue(Glue::TraceIn, t, args);
         }
+    }
+
+    /// In the trace glue of the `Proxy` class (#823): its target, an `any`, when its table is
+    /// that of a type the program converts a proxy to (`Cx::proxy_traced_as`), visited with
+    /// that type's trace glue; any other target is left out (a leak at worst). So a weak map
+    /// entry whose value is a proxy of its key (a `raw -> proxy` cache) is an ephemeron cycle
+    /// like any other.
+    fn trace_proxy_target(&mut self, o: &Place, ty: TyId, tv: (vir::Local, vir::Local)) {
+        let cands = self.cx.proxy_traced_as(None, ty);
+        if cands.is_empty() {
+            return;
+        }
+        let target = self.field_place(o, ty, 0);
+        let data = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(&target, Proj::Field(0)))),
+        );
+        let table = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(&target, Proj::Field(1)))),
+        );
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let done = self.new_block();
+        for c in cands {
+            let want = self.vtable_addr(VtableKey::Impl(imp, c));
+            let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, table.clone(), want));
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.branch(is, yes, no);
+            self.switch_to(yes);
+            let tf = self.trace_fn(c);
+            let (visit, cx) = (
+                Operand::Copy(Place::local(tv.0)),
+                Operand::Copy(Place::local(tv.1)),
+            );
+            self.call_entry(
+                visit,
+                vec![cx, data.clone(), tf],
+                vec![Ty::Ptr; 3],
+                Ty::Unit,
+            );
+            self.goto(done);
+            self.switch_to(no);
+        }
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// The object to visit for the pointer `p` of the proxiable type `c`, and its trace glue: a
+    /// typed proxy's `Proxy` object (untagged) with the `Proxy` class's.
+    fn trace_proxiable(&mut self, p: Operand, c: TyId) -> (Operand, Operand) {
+        let (obj, tf) = (self.temp(Ty::Ptr), self.temp(Ty::Ptr));
+        let t = self.proxy_tagged(p.clone());
+        let (cold, hot, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(t, cold, hot);
+        self.switch_to(cold);
+        let u = self.proxy_untag(p.clone());
+        self.assign(Place::local(obj), Rvalue::Use(u));
+        let pty = self.cx.proxy_class_ty();
+        let pf = self.trace_fn(pty);
+        self.assign(Place::local(tf), Rvalue::Use(pf));
+        self.goto(join);
+        self.switch_to(hot);
+        self.assign(Place::local(obj), Rvalue::Use(p));
+        let f = self.trace_fn(c);
+        self.assign(Place::local(tf), Rvalue::Use(f));
+        self.goto(join);
+        self.switch_to(join);
+        (
+            Operand::Copy(Place::local(obj)),
+            Operand::Copy(Place::local(tf)),
+        )
     }
 
     /// Body of `Glue::WeakRetain` for map values of type `ty`.

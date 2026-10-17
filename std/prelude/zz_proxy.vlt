@@ -80,6 +80,14 @@ export class Proxy {
     return h.get == null && h.set == null && h.has == null;
   }
 
+  /**
+   * Whether the handler has a `get` trap: a method called on a typed proxy needs it to read
+   * the method (not supported yet, #823).
+   */
+  __hasGet(): boolean {
+    return this.#handler.get != null;
+  }
+
   /** The target. */
   __target(): any {
     return this.#target;

@@ -282,6 +282,9 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                 }
+                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                    return h;
+                }
                 self.fn_ref(d, id, exp)
             }
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`

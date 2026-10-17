@@ -294,7 +294,7 @@ will use them too. Design: [weak-refs.md](../design/weak-refs.md).
 | `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
 | `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
 | `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
-| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj` |
+| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `deref` returns the word as given |
 | `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
 | `velt_rt_weakref_drop` | `(uint32_t r)` | |
 | `velt_rt_weakmap_set_traced` | `(uint32_t m, uint8_t* key, uint64_t value, TraceFn key_trace)` | `velt_rt_weakmap_set` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a null `key_trace`) |

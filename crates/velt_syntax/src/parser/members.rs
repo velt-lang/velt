@@ -376,6 +376,7 @@ impl<'a> Parser<'a> {
             throws,
             is_async: false,
             is_generator: false,
+            this_param: None,
             span: self.span_from(lo),
         };
         let mut body = self.parse_fn_body()?;

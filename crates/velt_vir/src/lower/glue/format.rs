@@ -225,7 +225,16 @@ impl FnLower<'_, '_> {
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_format_split(&buf, &place, &depth, done);
+            done
+        });
         self.format_expand(&buf, &place, ty, &depth);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 

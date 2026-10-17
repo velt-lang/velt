@@ -284,7 +284,8 @@ impl FnLower<'_, '_> {
             return base.clone();
         }
         let t = self.copy_to_temp(Operand::Copy(base.clone()), Ty::Ptr);
-        self.retain(Operand::Copy(Place::local(t)));
+        let c = self.count_ptr(Operand::Copy(Place::local(t)), ty);
+        self.retain(c);
         self.own_temp(t, ty);
         Place::local(t)
     }
