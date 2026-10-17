@@ -1809,12 +1809,15 @@ through the other, and every copy of the converted value (an array element read 
 
 A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
 arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element
-types: the method works on a copy holding the elements, and when it returns the copy is
-written back into the caller's array, map or set, so the caller sees what the method changed.
-Each element written back converts to the original's own element type, checked as above.
-Differences from Node: changing the length of such an array (`push`, `pop`) stops with a
-`TypeError` naming #1185, and the method sees a copy, not the caller's object itself (`===`
-with it, and a reference the method keeps after it returns, differ).
+types. The method receives a copy holding the elements boxed, and when it returns the copy is
+written back into the caller's array, map or set. Each element written back converts to the
+original's own element type, checked as above. Reads and changes the method makes during the
+call match Node: it sees every element, and the caller sees what it added, deleted or replaced.
+Differences from Node, tracked in #1185:
+
+- the method's container is not the caller's: `===` between the two is `false`, and a
+  reference the method keeps after it returns no longer follows the caller's container;
+- changing the length of an `unknown[]` (`push`, `pop`) stops with a `TypeError` naming #1185.
 
 ```ts
 interface Handler<T = unknown, E = unknown> {
