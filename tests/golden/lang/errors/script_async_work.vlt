@@ -1,0 +1,5 @@
+// An imported module's top-level statements can't start a timer or a promise chain yet: they
+// run before the scheduler starts.
+import { ready } from "./_script_async_work_lib";
+
+console.log(ready());

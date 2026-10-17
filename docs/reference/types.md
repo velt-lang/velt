@@ -711,6 +711,30 @@ the nullable type; `void` cannot be a member.
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
+- A union alias may name itself behind an indirection: as an array's element, an index
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
+  give such a type a nominal member, such as an interface or a class.
+
+```ts
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+type Tree = number | Tree[];
+
+function depth(t: Tree): number {
+  if (typeof t === "number") {
+    return 0;
+  }
+  let max = 0;
+  for (const k of t) {
+    max = Math.max(max, depth(k));
+  }
+  return max + 1;
+}
+
+const v: Json = { a: [1, "x", { b: null }] };
+console.log(JSON.stringify(v)); // {"a":[1,"x",{"b":null}]}
+console.log(depth([1, [2, [3]]])); // 3
+```
 
 ```ts
 class NotFound {
@@ -781,9 +805,9 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
-- Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
-  to itself.
+- A discriminated union may name itself behind an indirection
+  (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
+  [Union types](#union-types)).
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
