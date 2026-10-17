@@ -374,7 +374,8 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `static *name()` or `*[Symbol.iterator]()`. Calling one creates a `Generator<T, E>`
   ([prelude](../std/prelude.md#iteration)) without running the body. Each `next()` runs the
   body up to its next `yield v` and returns `{ value: v, done: false }`; when the body ends it
-  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
+  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`; `undefined` in a
+  `Generator<any>` or `Generator<unknown>`, as in JS). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
 - The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
@@ -407,6 +408,10 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   Because closing runs `finally` blocks where the generator can neither pause, report an
   error, nor go on with its body, a `finally` block in a generator cannot `yield`, throw, or
   `break` / `continue` to a loop outside it (TS allows all three).
+- A generator's parameter defaults are evaluated when it is called, before the body runs, as
+  in JS; a default of a parameter of a dynamic type (`x: any = "g"`) also applies to a passed
+  `undefined`, whether the generator is called directly or through a function value
+  (`const gv = gen; gv(undefined)`).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Calling `next()` or `return()` on a generator from inside its

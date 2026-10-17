@@ -223,7 +223,9 @@ Differences from JavaScript:
 - **Freed at once.** Velt frees an object when its last reference goes (which can be the last
   use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
   Node keeps returning the object until a later garbage collection, and at least until the
-  current job ends.
+  current job ends. A variable passed as a key, a member or a target (`new WeakRef(k)`, also
+  `k!` of a nullable one, or through a function's parameter) stays alive to the end of its
+  scope, so a fresh `WeakRef` keeps its target while the variable lives.
 - **One task.** A weak collection belongs to the task that made it (it keeps working when an
   `await` resumes the task on another thread): it cannot be passed to a spawned task (in either
   branch of `spawn(c ? f(x) : g(y))`), be its result or the error it throws, sent on a

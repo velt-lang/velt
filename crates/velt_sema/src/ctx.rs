@@ -163,6 +163,8 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_all: HashSet<Span>,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: HashSet<Span>,
+    /// Per generator with a dynamic default, the function its value is (`gen_value.rs`).
+    pub generator_values: HashMap<DefId, (DefId, TyId)>,
     /// Recursive closure groups made by `crate::nested_closures`.
     pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
     /// Group and member of each group member, by the name span of its `const`.
@@ -326,6 +328,7 @@ impl<'m> Ctx<'m> {
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             kept_nested: HashSet::new(),
+            generator_values: HashMap::new(),
             closure_groups: vec![],
             group_names: HashMap::new(),
             group_defs: HashSet::new(),
