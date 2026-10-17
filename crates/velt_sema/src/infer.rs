@@ -114,7 +114,9 @@ impl Ctx<'_> {
     /// `Signal<T>` against a `Signal<{ n: number }>` binds `T = { n: number }`); a type parameter
     /// part still unbound then takes the whole argument, as TypeScript infers it from an object
     /// literal (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against
-    /// `T & { id: string }`).
+    /// `T & { id: string }`), or, for an argument whose type an intersection made, the
+    /// intersection of its parts that are not parts of the pattern (`T = A` for an
+    /// `A & { id: string }`, as TypeScript infers it).
     fn match_intersection(
         &mut self,
         parts: &[TyId],
@@ -140,11 +142,36 @@ impl Ctx<'_> {
             if let TyKind::Param(i) = self.ty.kind(p) {
                 let i = *i as usize;
                 if i < slots.len() && slots[i].is_none() && !self.ty.has_error(actual) {
-                    slots[i] = Some(actual);
+                    slots[i] = Some(self.unmatched_parts(parts, actual));
                 }
             }
         }
         ok
+    }
+
+    /// `actual` without the parts of the intersection that made it which are parts of the
+    /// pattern `parts` too; `actual` when no intersection made it, or nothing is left.
+    fn unmatched_parts(&mut self, parts: &[TyId], actual: TyId) -> TyId {
+        let Some(declared) = self.type_level.intersection_parts.get(&actual).cloned() else {
+            return actual;
+        };
+        let all = declared.len();
+        let rest: Vec<TyId> = declared
+            .into_iter()
+            .filter(|q| !parts.contains(q))
+            .collect();
+        // No part of the pattern is a part of the argument (or every one is): the whole argument.
+        let Some((&first, others)) = rest.split_first().filter(|_| rest.len() < all) else {
+            return actual;
+        };
+        let mut acc = first;
+        for &o in others {
+            match self.meet(acc, o, 0, 0) {
+                Ok(m) => acc = m,
+                Err(_) => return actual,
+            }
+        }
+        acc
     }
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other

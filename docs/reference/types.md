@@ -901,8 +901,10 @@ generic alias or written in a generic signature: the intersection is worked out 
 arguments are known, so a caller sees the object type with both parts' fields, and a type
 argument that can't be a part (a class, say) is reported there. A type argument inferred
 through such a parameter comes from the fields the object part names (`T = { n: number }` for a
-`Signal<{ n: number }>`), else from the whole argument (`T = { a: number; id: string }` for
-`{ a: 1, id: "x" }` against `T & { id: string }`), as in TypeScript. `any`, `unknown` and
+`Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
+for a value declared `A & { id: string }`), else from the whole argument
+(`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
+TypeScript. `any`, `unknown` and
 `object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
 `object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
 
@@ -941,9 +943,11 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
   is passed on and returned as it is, but its members (`x.id`), its conversion to one part
   (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
-  TypeScript infers `T` from a value whose type was written as an intersection without the
-  other parts (`T = A` for an `A & { id: string }`); Velt infers the whole object type there,
-  as TypeScript does for an object literal.
+- An intersection is the same type as the object type with its fields written out, so where a
+  program has both forms, inference through `T & { id: string }` treats them alike: an object
+  literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type
+  `A & { id: string }` (TypeScript: `{ a: number; id: string }`). It differs only where code
+  depends on `T` itself, such as `JSON.parse(s)` returned as a `T`.
 - Interface declarations merge as in TypeScript
   ([declaration merging](classes.md#declaration-merging)).
 

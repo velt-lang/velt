@@ -102,10 +102,26 @@ impl Ctx<'_> {
 
     /// The deferred intersection `op` (`TyOp::Intersect`) with known parts `args`, reduced.
     pub(crate) fn reduce_intersection(&mut self, op: TyId, args: Vec<TyId>, span: Span) -> TyId {
+        // A part with an error inside (a closure whose parameter type is unknown) was reported.
+        if args.iter().any(|&a| self.error_inside(a, 0)) {
+            return self.ty.error;
+        }
         let module = self.type_level.op_modules.get(&op).copied().unwrap_or(0);
         let operands: Vec<(TyId, Span)> = args.into_iter().map(|a| (a, span)).collect();
         let names = vec![None; operands.len()];
         self.intersect(operands, names, module, span)
+    }
+
+    /// Does `t` hold an error type, also in the fields of the object types it holds?
+    fn error_inside(&mut self, t: TyId, depth: u32) -> bool {
+        if self.ty.has_error(t) {
+            return true;
+        }
+        if depth > 4 || !self.is_object_type(t) {
+            return false;
+        }
+        let fields = self.public_fields(t);
+        fields.iter().any(|f| self.error_inside(f.ty, depth + 1))
     }
 
     /// The intersection of `operands` (written as `names`, where they are names), at `span`.
@@ -173,6 +189,25 @@ impl Ctx<'_> {
             }
         }
         self.declare_intersection_fields(acc, &operands);
+        // A part that is the whole result (`T & { id: string }` at a `T` that has `id`) splits
+        // nothing: such a result is not recorded as made of parts.
+        if brand.is_none()
+            && operands.len() > 1
+            && self.is_object_type(acc)
+            && operands.iter().all(|&(o, _)| o != acc)
+        {
+            let mut parts = vec![];
+            for &(o, _) in &operands {
+                match self.type_level.intersection_parts.get(&o) {
+                    Some(ps) => parts.extend(ps.iter().copied()),
+                    None => parts.push(o),
+                }
+            }
+            self.type_level
+                .intersection_parts
+                .entry(acc)
+                .or_insert(parts);
+        }
         match brand {
             Some(base) => self.brand_type(base, acc, module, span),
             None => acc,

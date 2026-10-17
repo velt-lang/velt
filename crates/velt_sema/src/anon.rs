@@ -47,15 +47,44 @@ impl ShapeField {
 impl Ctx<'_> {
     /// Replace `Param(i)` by `args[i]` in `t`, keeping anonymous object types canonical.
     pub fn subst(&mut self, t: TyId, args: &[TyId]) -> TyId {
-        let t = self.ty.subst(t, args);
-        self.canon(t)
+        let s = self.ty.subst(t, args);
+        if s != t && !self.type_level.op_sites.is_empty() {
+            self.carry_op_sites(t, &mut |cx, o| cx.ty.subst(o, args));
+        }
+        self.canon(s)
     }
 
     /// [`Types::subst_known`](crate::types::Types::subst_known), keeping anonymous object
     /// types canonical.
     pub fn subst_known(&mut self, t: TyId, slots: &[Option<TyId>]) -> TyId {
-        let t = self.ty.subst_known(t, slots);
-        self.canon(t)
+        let s = self.ty.subst_known(t, slots);
+        if s != t && !self.type_level.op_sites.is_empty() {
+            self.carry_op_sites(t, &mut |cx, o| cx.ty.subst_known(o, slots));
+        }
+        self.canon(s)
+    }
+
+    /// Gives each deferred type in `t`, as `sub` substitutes it, the site and module of the one
+    /// written (`TypeLevel::op_sites`), so a reduction reports where the type was written.
+    pub(crate) fn carry_op_sites(&mut self, t: TyId, sub: &mut dyn FnMut(&mut Self, TyId) -> TyId) {
+        let mut stack = vec![t];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(x) = stack.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            let k = self.ty.kind(x).clone();
+            if let TyKind::Op(..) = k {
+                if let Some(&site) = self.type_level.op_sites.get(&x) {
+                    let to = sub(self, x);
+                    self.type_level.op_sites.entry(to).or_insert(site);
+                    if let Some(&m) = self.type_level.op_modules.get(&x) {
+                        self.type_level.op_modules.entry(to).or_insert(m);
+                    }
+                }
+            }
+            stack.extend(crate::types::children(&k));
+        }
     }
 
     /// `t` with every anonymous object type in its canonical form: the def of its substituted

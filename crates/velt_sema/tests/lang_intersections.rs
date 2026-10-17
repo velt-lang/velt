@@ -369,3 +369,27 @@ fn members_of_a_deferred_intersection_are_not_available_in_generic_code_yet() {
         err_src("function f<T>(x: T & { id: string }): string { return x.id; } function main() {}");
     assert!(e.contains("not available yet (#350)"), "{e}");
 }
+
+#[test]
+fn a_declared_intersection_infers_its_other_parts() {
+    // tsc: `T = A` for an argument declared `A & { id: string }` against `T & { id: string }`.
+    ok_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.a);
+         }",
+    );
+    let e = err_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.id);
+         }",
+    );
+    assert!(e.contains("no field `id`"), "{e}");
+}

@@ -28,6 +28,11 @@ function both<A, B>(ab: A & B, n: number): (A & B)[] {
   return out;
 }
 
+// `T` inferred from a value whose type an intersection made is its other parts, as in TypeScript.
+function parseLike<T>(_: T & { id: string }, s: string): T {
+  return JSON.parse(s);
+}
+
 type Loose = unknown & { a: number };
 type Obj = object & { b: string };
 
@@ -58,6 +63,10 @@ function main() {
 
   const pair = both<{ x: number }, { y: string }>({ x: 1, y: "b" }, 2);
   console.log(pair.length, pair[1].x, pair[1].y);
+
+  const v: { a: number } & { id: string } = { a: 1, id: "k" };
+  const parsed = parseLike(v, '{"a":5}');
+  console.log(parsed, JSON.stringify(parsed));
 
   const l: Loose = { a: 7 };
   const o: Obj = { b: "o" };
