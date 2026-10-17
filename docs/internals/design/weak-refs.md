@@ -125,7 +125,8 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
 - **`object` keys** (issue #926, `lower/weak_object.rs`): once `object` is a weak key or
   `WeakRef` target, every concrete type a dynamic value holds (each type an `any` table is
   built for) is counted and weak-capable, and every `any` table gets a weak word: 0 when the
-  value cannot be weakly held (a primitive, `null`, an object the conversion boxed), else 1 or
+  value cannot be weakly held (a primitive, `null`, an object the conversion boxed: a tuple, a
+  function value), else 1 or
   the type's trace glue. The key is the dynamic value's data pointer; `set` passes the key's
   trace glue (`velt_rt_weakmap_set_traced`), the trace glue of a value holding a dynamic value
   visits its data pointer through the same word (so `WeakMap<object, object>` caches are

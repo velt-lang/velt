@@ -52,8 +52,8 @@ pub(super) struct Boxing {
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
     weak_roots: HashSet<DefId>,
     weak: HashSet<TyId>,
-    /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types of dynamic
-    /// values (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
+    /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types that reach
+    /// `object` (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
     /// and the trace glue looks into dynamic values (weak_object.rs). False in every other
     /// program, which compiles as before.
     pub(super) weak_object: bool,
@@ -154,6 +154,11 @@ pub(super) struct Facts {
     pub(super) weak_object: bool,
     /// Concrete types an `any` table was built for: the types dynamic values hold.
     pub(super) dyn_types: HashSet<TyId>,
+    /// Concrete types converted to `object` straight from a typed value.
+    pub(super) object_types: HashSet<TyId>,
+    /// An `any`, `unknown` or interface value is converted to `object`: it may hold any type
+    /// dynamic values hold.
+    pub(super) object_from_dyn: bool,
     /// Interfaces whose values are converted to `any` / `unknown`.
     dyn_to_any: HashSet<DefId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
@@ -279,7 +284,13 @@ impl Cx<'_> {
         // dynamic values hold is counted, so its data pointer is the object itself.
         next.weak_object |= self.facts.weak_object;
         if next.weak_object {
-            next.dyn_types.extend(self.facts.dyn_types.iter().copied());
+            // Only the types that reach `object` pay (all a dynamic value holds when an `any`,
+            // `unknown` or interface value converts to `object`).
+            let reach = match self.facts.object_from_dyn {
+                true => &self.facts.dyn_types,
+                false => &self.facts.object_types,
+            };
+            next.dyn_types.extend(reach.iter().copied());
             work.extend(next.dyn_types.iter().copied());
         }
         let mut seen = HashSet::new();

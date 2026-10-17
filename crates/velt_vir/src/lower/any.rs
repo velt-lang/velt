@@ -396,6 +396,7 @@ impl FnLower<'_, '_> {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
                 // `null` and `undefined` are what `object | null` holds.
+                self.cx.note_to_object(None);
                 let fvt = self.cx.ty(from);
                 let p = Place::local(self.copy_to_temp(v, fvt));
                 self.check_not_primitive(&p, ty);
@@ -443,6 +444,9 @@ impl FnLower<'_, '_> {
     fn object_into(&mut self, v: Operand, t: TyId, ty: TyId, out: &Place) {
         if self.dead() {
             return;
+        }
+        if matches!(self.cx.kind(t), TyKind::Dyn(..)) {
+            self.cx.note_to_object(None);
         }
         match self.cx.kind(t) {
             TyKind::Dyn(..) if self.cx.is_dynamic(t) => {
@@ -531,6 +535,7 @@ impl FnLower<'_, '_> {
     /// An object value of the concrete type `t` as the `object` `ty`, as `make_dyn` boxes it.
     fn object_leaf(&mut self, v: Operand, t: TyId, ty: TyId) -> Operand {
         self.cx.note_dyn_identity(ty, t);
+        self.cx.note_to_object(Some(t));
         let data = if self.cx.is_class(t) || self.cx.boxed(t) {
             v
         } else {

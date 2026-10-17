@@ -7,7 +7,7 @@
 //!
 //! | word | the value |
 //! |---|---|
-//! | 0 | cannot be weakly held: a primitive, `null` / `undefined`, or an object the conversion boxed (a `Map`, a tuple, a function value) |
+//! | 0 | cannot be weakly held: a primitive, `null` / `undefined`, or an object the conversion boxed (a tuple, a function value) |
 //! | 1 | its data pointer is a counted, weak-capable object without trace glue |
 //! | other | the same, and the word is the object's trace glue |
 //!
@@ -136,7 +136,7 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Unreachable);
         self.switch_to(obj);
         self.panic_msg(&format!(
-            "{} (this kind of object cannot be weakly held yet, #926)",
+            "{} (this kind of object cannot be weakly held yet)",
             what.error()
         ));
         self.terminate(Terminator::Unreachable);

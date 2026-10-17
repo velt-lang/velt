@@ -32,6 +32,17 @@ impl Cx<'_> {
         self.facts.dyn_types.insert(t);
     }
 
+    /// Record that values of the concrete type `t` convert to `object` (`None`: an `any`,
+    /// `unknown` or interface value does, which may hold any type).
+    pub(in crate::lower) fn note_to_object(&mut self, t: Option<TyId>) {
+        match t {
+            Some(t) => {
+                self.facts.object_types.insert(t);
+            }
+            None => self.facts.object_from_dyn = true,
+        }
+    }
+
     /// Is `object` a weak key or `WeakRef` target in this program (see `Boxing::weak_object`)?
     pub(in crate::lower) fn weak_object(&self) -> bool {
         self.boxing.weak_object

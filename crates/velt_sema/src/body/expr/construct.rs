@@ -90,6 +90,7 @@ impl FnCx<'_, '_> {
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);
+        self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends

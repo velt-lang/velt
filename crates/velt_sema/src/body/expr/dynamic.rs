@@ -92,6 +92,61 @@ impl FnCx<'_, '_> {
         self.box_dynamic(h, exp)
     }
 
+    /// The key of a weak operation (`WeakMap.set` / `get` / `has` / `delete`, `WeakSet`'s,
+    /// `new WeakRef`) converted to its parameter `exp` (issue #926). A variable stays its own:
+    /// the conversion to `object` takes a share of it, so the key (a fresh `WeakRef`'s target)
+    /// lives to the end of the variable's scope, as a typed key does. An `any` enters `object`
+    /// unchecked: a primitive reaches the operation, which finds nothing or throws
+    /// JavaScript's `TypeError` (velt_vir `weak_object.rs`).
+    pub(crate) fn weak_key_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return self.coerce(h, exp);
+        }
+        match self.cx.dynamic(h.ty) {
+            Some(Dynamic::Any) => {
+                let Some(imp) = self.cx.any_impl() else {
+                    return self.coerce(h, exp);
+                };
+                let mut h = self.share_if_place(h);
+                self.force_move(&mut h);
+                let span = h.span;
+                self.mk(
+                    H::ToDyn {
+                        expr: Box::new(h),
+                        impl_index: imp,
+                    },
+                    exp,
+                    span,
+                )
+            }
+            Some(_) => self.coerce(h, exp),
+            None => {
+                let h = self.share_place(h);
+                self.coerce(h, exp)
+            }
+        }
+    }
+
+    /// A typed variable (a place) passed for a borrowed `object` parameter (issue #926): a
+    /// share of it, so the variable lives to the end of its scope as it does when passed to a
+    /// typed parameter (a `WeakRef` made from the parameter keeps its target).
+    pub(crate) fn object_arg_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) || self.cx.dynamic(h.ty).is_some() {
+            return self.coerce(h, exp);
+        }
+        let h = self.share_place(h);
+        self.coerce(h, exp)
+    }
+
+    fn share_place(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if is_place(&h) {
+            set_place_mode(&mut h, UseMode::Borrow);
+            let (ty, span) = (h.ty, h.span);
+            h = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
+        }
+        h
+    }
+
     /// A typed value boxed as `exp` (`any` or `unknown`).
     fn box_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;

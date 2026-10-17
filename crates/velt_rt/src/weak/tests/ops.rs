@@ -176,11 +176,22 @@ fn a_weak_ref_keeps_its_word() {
         );
         unsafe { velt_rt_weakref_drop(r) };
         unsafe { velt_rt_weakref_drop(plain) };
-        // A reused slot takes the new word.
+        // Reused slots take the new word: both freed slots come back, one made with another
+        // word, one with none.
         let o = new_obj(&[]);
-        let r = unsafe { velt_rt_weakref_new(o) };
-        assert_eq!(velt_rt_weakref_word(r), 0);
-        unsafe { velt_rt_weakref_drop(r) };
+        let a = unsafe { velt_rt_weakref_new_with(o, 7) };
+        let b = unsafe { velt_rt_weakref_new(o) };
+        let mut ids = [a, b];
+        ids.sort_unstable();
+        let mut old = [r, plain];
+        old.sort_unstable();
+        assert_eq!(ids, old, "the freed slots are reused");
+        assert_eq!(velt_rt_weakref_word(a), 7);
+        assert_eq!(velt_rt_weakref_word(b), 0);
+        assert_eq!(velt_rt_weakref_deref(a), o);
+        release(o);
+        unsafe { velt_rt_weakref_drop(a) };
+        unsafe { velt_rt_weakref_drop(b) };
         release(o);
         assert_eq!(tracked_objects(), 0);
     });
