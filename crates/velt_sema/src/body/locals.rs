@@ -463,7 +463,7 @@ impl FnCx<'_, '_> {
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
             s.members.retain(|(x, _)| *x != l && !fields.contains(x));
             s.classes.retain(|(x, _)| *x != l && !fields.contains(x));
-            s.excluded.retain(|(x, _)| *x != l);
+            s.excluded.retain(|(x, _)| *x != l && !fields.contains(x));
         }
     }
 

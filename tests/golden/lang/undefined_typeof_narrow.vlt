@@ -37,8 +37,26 @@ function obj(x: string | null | undefined): string {
   return "str " + x.length;
 }
 
+class D {
+  a = "A1";
+}
+
+function o(x: D | null | undefined): string {
+  if (typeof x === "object") {
+    return x === null ? "null" : x.a;
+  }
+  return "u";
+}
+
+function o2(x: D | null | undefined): string {
+  if (typeof x !== "object") return "u";
+  if (x === null) return "N";
+  return x.a;
+}
+
 function main(): void {
   console.log(len("ab"), len(5), len(null), len(undefined));
   console.log(kind(new A(1)), kind(new B("x")), kind(null), kind(undefined));
   console.log(obj(null), obj(undefined), obj("abc"));
+  console.log(o(new D()), o(null), o(undefined), o2(new D()), o2(null), o2(undefined));
 }

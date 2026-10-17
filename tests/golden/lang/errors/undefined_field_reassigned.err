@@ -1,0 +1,1 @@
+undefined_field_reassigned.vlt:13:31: error: value of type `string | null | undefined` may be null

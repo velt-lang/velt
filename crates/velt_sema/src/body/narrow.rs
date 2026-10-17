@@ -472,7 +472,8 @@ impl FnCx<'_, '_> {
             return match tag {
                 "undefined" => (vec![], vec![Fact::Excludes(l, Nothing::Undefined)]),
                 "object" => {
-                    let (t, mut f) = self.split_facts(l, false, u, &pred, false);
+                    let (mut t, mut f) = self.split_facts(l, false, u, &pred, false);
+                    t.push(Fact::Excludes(l, Nothing::Undefined));
                     f.push(Fact::Excludes(l, Nothing::Null));
                     (t, f)
                 }
