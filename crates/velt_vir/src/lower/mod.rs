@@ -72,6 +72,7 @@ mod pattern;
 mod place;
 mod program;
 mod proxy_typed;
+mod proxy_write;
 mod rc;
 mod rt;
 mod same;

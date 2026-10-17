@@ -8,7 +8,6 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
-use super::sequence::later_each;
 use super::{ice, FnLower};
 use crate::vir::{Operand, Proj, Rvalue, Ty};
 
@@ -99,7 +98,7 @@ impl FnLower<'_, '_> {
         if transfer {
             return rv;
         }
-        let later = later_each(args).first().copied().unwrap_or_default();
+        let later = self.later_each(args).first().copied().unwrap_or_default();
         self.hold(rv, args[0].ty, later)
     }
 

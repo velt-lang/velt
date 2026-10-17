@@ -6,7 +6,6 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::later_each;
 use super::{ice, unit, FnLower, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -196,7 +195,7 @@ impl FnLower<'_, '_> {
             ice("argument count does not match parameter count");
         }
         let mut argv = vec![];
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             match (self.vty(a.ty), mode) {
@@ -256,7 +255,7 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);

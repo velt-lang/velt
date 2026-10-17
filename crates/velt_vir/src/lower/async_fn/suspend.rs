@@ -24,7 +24,6 @@ use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 use super::AsyncInfo;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::sequence::later_each;
 use crate::lower::{cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -120,7 +119,7 @@ impl FnLower<'_, '_> {
         modes: &[PassMode],
     ) -> Vec<Option<Operand>> {
         let mut out = vec![];
-        let later = later_each(args);
+        let later = self.later_each(args);
         for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             let t = self.vty(a.ty);
             let v = match (t, mode) {

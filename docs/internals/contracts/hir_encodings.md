@@ -783,7 +783,9 @@ entry is an `ICE:`.
   target's class; weak map keys are the untagged `Proxy` object (values of a proxiable type are
   boxed), and a `WeakRef` keeps the tagged word (rt_abi.md). Sema's update-as-value blocks
   (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
-  with one read. Without proxiable types nothing changes. No HIR form was added.
+  with one read, and assignment-as-value blocks (`{ s.f = v; s.f }`) with none (the value is
+  `v`); a field read on a proxiable type counts as running user code when lowering orders
+  operands (`sequence.rs`). Without proxiable types nothing changes. No HIR form was added.
 - Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
   an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
   or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the

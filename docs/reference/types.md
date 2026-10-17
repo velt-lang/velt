@@ -1873,7 +1873,9 @@ read through the `get` trap is checked against the field's type when it arrives 
 on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
 target whose `get` trap answers every key). A method called through a typed proxy runs with
 `this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
-value runs the `get` trap once, as in JavaScript.
+value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
+in JavaScript. A field read through a typed proxy runs after the operands before it, as any
+call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
 
 `s instanceof C` answers for the proxy's target, as JavaScript does when the handler has no
 `getPrototypeOf` trap. A typed proxy as a `WeakMap` or `WeakSet` key, or a `WeakRef` target, is
