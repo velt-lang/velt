@@ -142,36 +142,70 @@ fn contains_by_value(
 }
 
 /// Bounds of generic params `gs` (resolved in `env`, which already names them).
-pub(crate) fn resolve_bounds(
-    cx: &mut Ctx,
-    gs: &[ast::GenericParam],
-    env: &TyEnv,
-) -> Vec<Vec<Bound>> {
-    gs.iter()
-        .map(|g| {
-            g.bounds
-                .iter()
-                .filter_map(|b| iface_bound(cx, b, env))
-                .collect()
-        })
-        .collect()
+pub(crate) struct ParamBounds {
+    /// Interface bounds per parameter (`T extends A & B`).
+    pub bounds: Vec<Vec<Bound>>,
+    /// Per parameter, a bound that is a type (`T extends Record<string, V>`); empty when no
+    /// parameter has one. See `Generics::constraints`.
+    pub constraints: Vec<Option<TyId>>,
+}
+
+pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv) -> ParamBounds {
+    let mut out = ParamBounds {
+        bounds: vec![],
+        constraints: vec![],
+    };
+    for (i, g) in gs.iter().enumerate() {
+        let mut bounds = vec![];
+        for b in &g.bounds {
+            let ty = cx.resolve_type(b, env);
+            match as_bound(cx, ty) {
+                Some(Ok(bound)) => bounds.push(bound),
+                Some(Err(ty)) => {
+                    out.constraints.resize(i + 1, None);
+                    match out.constraints[i] {
+                        None => out.constraints[i] = Some(ty),
+                        Some(_) => cx.err(
+                            "a type parameter with more than one bound that is not an interface is not supported yet (#350)",
+                            b.span,
+                        ),
+                    }
+                }
+                None => {}
+            }
+        }
+        out.bounds.push(bounds);
+    }
+    if !out.constraints.is_empty() {
+        out.constraints.resize(gs.len(), None);
+    }
+    out
+}
+
+/// `ty` written as a bound: `Ok` with an interface bound, `Err` with a type that is no
+/// interface, `None` for an error type (reported).
+fn as_bound(cx: &Ctx, ty: TyId) -> Option<Result<Bound, TyId>> {
+    match cx.ty.kind(ty) {
+        TyKind::Dyn(iface, args) => Some(Ok(Bound {
+            iface: *iface,
+            args: args.clone(),
+        })),
+        // A field-only interface written as a type is its object type; here it is the bound.
+        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Ok(Bound {
+            iface: cx.field_only_of[d],
+            args: args.clone(),
+        })),
+        TyKind::Error => None,
+        _ => Some(Err(ty)),
+    }
 }
 
 /// A type expression that must name an interface (`extends` bound / `implements` entry).
 pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Option<Bound> {
     let ty = cx.resolve_type(t, env);
-    match cx.ty.kind(ty) {
-        TyKind::Dyn(iface, args) => Some(Bound {
-            iface: *iface,
-            args: args.clone(),
-        }),
-        // A field-only interface written as a type is its object type; here it is the bound.
-        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Bound {
-            iface: cx.field_only_of[d],
-            args: args.clone(),
-        }),
-        TyKind::Error => None,
-        _ => {
+    match as_bound(cx, ty)? {
+        Ok(b) => Some(b),
+        Err(ty) => {
             let tn = cx.display(ty);
             cx.err(format!("`{tn}` is not an interface"), t.span);
             None
@@ -241,7 +275,8 @@ fn iface_shape(cx: &mut Ctx, d: DefId) {
     let DefInfo::Iface(i) = &mut cx.info[d.0 as usize] else {
         unreachable!("ICE: iface")
     };
-    i.generics.bounds = bounds;
+    i.generics.bounds = bounds.bounds;
+    i.generics.constraints = bounds.constraints;
     i.fields = fields;
     i.parents = parents;
 }
@@ -266,7 +301,8 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
         .filter_map(|t| iface_bound(cx, t, &env))
         .collect();
     let a = cx.adt_mut(d);
-    a.generics.bounds = bounds;
+    a.generics.bounds = bounds.bounds;
+    a.generics.constraints = bounds.constraints;
     a.fields = fields;
     a.base = base;
     a.implements = implements;

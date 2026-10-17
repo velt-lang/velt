@@ -126,6 +126,7 @@ impl FnCx<'_, '_> {
             params: params.into_iter().map(|(t, m)| param(t, m, span)).collect(),
             ret,
             bounds: vec![vec![]; slot_names.len().max(1)],
+            constraints: vec![],
             slot_names,
             js_numbers: false,
             positions: false,

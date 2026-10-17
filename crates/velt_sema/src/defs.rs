@@ -18,6 +18,11 @@ pub(crate) struct Generics {
     /// parameters before it), used when nothing infers it; `None` without one. Empty when
     /// no parameter has one (a type's defaults live in `crate::type_defaults`).
     pub defaults: Vec<Option<TyId>>,
+    /// Per parameter, a bound that is a type rather than an interface (`T extends Record<string,
+    /// V>`, `T extends string | number`, `T extends readonly X[]`), in terms of the parameters:
+    /// a type argument must be assignable to it (`crate::constraints`). Empty when no parameter
+    /// has one.
+    pub constraints: Vec<Option<TyId>>,
 }
 
 impl Generics {

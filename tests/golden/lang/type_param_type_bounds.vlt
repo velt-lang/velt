@@ -1,0 +1,60 @@
+// Type parameters bounded by types that are not interfaces (TypeScript's constraints): a type
+// argument must be assignable to the bound, and an overloaded call takes the first signature
+// whose bounds its arguments satisfy.
+type Primitive = string | number | boolean | null;
+type PrimitiveSignal<T> = { value: T };
+type Box<T> = { inner: T; tag: string };
+
+function wrapPrimitive<T>(target: T): PrimitiveSignal<T> {
+  return { value: target };
+}
+
+function wrapObject<T>(target: T): Box<T> {
+  return { inner: target, tag: "object" };
+}
+
+function signal<T extends Primitive>(target: T): PrimitiveSignal<T>;
+function signal<T extends object>(target: T): Box<T>;
+function signal<T>(target: T): PrimitiveSignal<T> | Box<T> {
+  return isObject(target) ? wrapObject(target) : wrapPrimitive(target);
+}
+
+function isObject<T>(v: T): boolean {
+  return String(v) === "[object Object]";
+}
+
+function describe<T extends string | number>(x: T): string;
+function describe<T extends readonly number[]>(x: T): number;
+function describe<T>(x: T): string | number {
+  return isObject(x) || String(x).includes(",") ? -1 : "value " + String(x);
+}
+
+function count<T extends Record<string, number>>(o: T, keys: string[]): number {
+  return keys.length;
+}
+
+function run<F extends (x: number) => unknown>(f: F): string {
+  return "accepted";
+}
+
+function same<T extends "a" | "b">(t: T): T {
+  return t;
+}
+
+// A type parameter of the caller satisfies a bound through its own.
+function label<T extends string | number>(x: T): string {
+  return describe(x);
+}
+
+function main() {
+  const n = signal(5);
+  const s = signal("x");
+  const o = signal({ st: "idle", n: 1 });
+  console.log(n.value, s.value, o.tag, o.inner.st, o.inner.n);
+  o.inner.st = "done";
+  console.log(o.inner.st);
+  console.log(describe("s"), describe(3), describe([1, 2, 3]));
+  console.log(count({ a: 1, b: 2 }, ["a", "b"]));
+  console.log(run((x: number) => x + 1), same("a"), same("b"));
+  console.log(label(7), label("q"));
+}

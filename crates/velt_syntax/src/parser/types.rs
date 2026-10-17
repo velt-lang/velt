@@ -30,7 +30,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `A & B & …` (a leading `&` is allowed), or one type without a top-level union.
-    fn parse_intersection(&mut self) -> PResult<TypeExpr> {
+    pub(super) fn parse_intersection(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.eat(Tok::Amp);
         let first = self.parse_type_no_union()?;
