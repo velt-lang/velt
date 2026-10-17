@@ -1,0 +1,19 @@
+// A method called through a typed proxy whose handler has a `get` trap (#823): JavaScript reads
+// the method through the trap first (`get(target, "bump", proxy)`), which needs method values
+// as `any`; a `TypeError` until then rather than a call that skips the trap.
+class Counter {
+  n: number = 0;
+  bump(by: number): number {
+    this.n = this.n + by;
+    return this.n;
+  }
+}
+
+const c = new Proxy(new Counter(), {
+  get(t: any, key: string | symbol, receiver: any): any {
+    return Reflect.get(t, key, receiver);
+  },
+}) as Counter;
+console.log("before");
+console.log(c.n);
+console.log(c.bump(2));

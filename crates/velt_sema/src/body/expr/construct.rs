@@ -130,7 +130,7 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         let h = self.mk(kind, ck.ret, span);
-        self.proxy_new(d, h, exp, span)
+        self.proxy_new(d, h, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type

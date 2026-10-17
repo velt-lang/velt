@@ -4,7 +4,6 @@ use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::sequence::Later;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Ty, STR_AGG};
 
@@ -229,7 +228,8 @@ impl FnLower<'_, '_> {
     /// Evaluate two operands to places (the first held if the second may change it).
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
-        let va = self.expr_held(a, Later::of(b));
+        let later = self.later_of(b);
+        let va = self.expr_held(a, later);
         let vb = self.expr(b);
         (self.place_of(va, ta), self.place_of(vb, tb))
     }

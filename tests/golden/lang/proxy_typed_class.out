@@ -1,0 +1,9 @@
+set n 2
+2
+4
+c:2
+named c=0
+set label z
+named z=0
+c:5 10
+Counter { n: 2, label: 'c' }

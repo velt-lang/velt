@@ -1,1 +1,0 @@
-proxy_typed.vlt:5:20: error: a proxy cannot be used as a `State` yet: it is an `any` (#823)

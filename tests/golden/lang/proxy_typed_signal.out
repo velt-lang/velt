@@ -1,0 +1,8 @@
+effect: count=0 title=a done=false
+effect: count=1 title=a done=false
+effect: count=2 title=a done=false
+effect: count=2 title=b done=false
+effect: count=2 title=b done=true
+effect: count=10 title=c done=true
+10 c
+true true

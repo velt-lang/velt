@@ -5,7 +5,6 @@
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::rt::Rt;
-use super::sequence::later_each;
 use super::{cint, unit, FnLower};
 use crate::vir::{Operand, Ty, STR_AGG};
 
@@ -25,7 +24,7 @@ impl FnLower<'_, '_> {
     pub(super) fn print(&mut self, stream: i128, args: &[hir::Expr]) -> Operand {
         let stream = cint(stream, Ty::U32);
         let mut vals = vec![];
-        for (a, later) in args.iter().zip(later_each(args)) {
+        for (a, later) in args.iter().zip(self.later_each(args)) {
             let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
             vals.push((v, t));

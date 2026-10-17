@@ -1,0 +1,10 @@
+3 true false
+3 4
+true false true
+set n 7
+true
+true false
+set n 8
+true 8
+rec
+object

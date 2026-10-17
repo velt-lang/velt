@@ -262,6 +262,17 @@ gives up the map's own reference. A wrong answer can therefore leak or drop an e
 free memory that is still in use. Trace glue must report exactly the counted references an object
 owns; one it misses makes the target look referenced from outside (a leak).
 
+**Typed proxies** (#823, velt_vir's `proxy_typed.rs`). A value of a proxiable type may be its
+`Proxy` object's address with bit 0 set. The compiler never hands that word to the table as a
+key or a released object (the runtime treats one as an ICE): a map key is the untagged `Proxy`
+object, a weak map value of a proxiable type is boxed, and a `WeakRef` slot keeps the word as
+given (the record and the count are the untagged object's), so `deref` gives the proxy back.
+Trace glue visits a typed proxy as its `Proxy` object, whose own trace glue visits its target
+when the target's `any` table is that of a type the program converts proxies to (others are
+opaque). A map whose key type is proxiable has no key trace, since a key may be a `Proxy`
+object or a key-type object; each key's record gets its trace when the value graph reaches it,
+and the trial uses the record's trace for such keys.
+
 ### What it handles
 
 The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in every order:
