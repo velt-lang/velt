@@ -671,6 +671,13 @@ impl FnLower<'_, '_> {
 
     /// The name of `ty` in a `TypeError`, with its type arguments (`Box<number>`).
     pub(super) fn any_target_name(&self, ty: TyId) -> String {
+        if let TyKind::Array(e) = self.cx.kind(ty) {
+            let e = self.any_target_name(e);
+            return match e.contains(' ') {
+                true => format!("({e})[]"),
+                false => format!("{e}[]"),
+            };
+        }
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
             TyKind::Adt(_, args) if !args.is_empty() => {
@@ -684,11 +691,23 @@ impl FnLower<'_, '_> {
     /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
     fn any_type_error(&mut self, desc: Operand, ty: TyId) {
         let want = self.any_target_name(ty);
-        let article = match want.chars().next() {
-            Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
-            _ => "a",
+        let an = article(&want);
+        // A value of the expected generic class (or an array) with other type arguments is
+        // named as one: "it is a Map", "it is an array".
+        let (same_id, same_name) = match self.cx.kind(ty) {
+            TyKind::Array(_) => (Some(super::any_set_site::ARRAY_ID), "an array".to_string()),
+            TyKind::Adt(d, args)
+                if self.cx.is_class(ty) && !args.is_empty() && !self.cx.has_header(d) =>
+            {
+                let name = self.cx.type_name(ty);
+                (
+                    Some(self.cx.class_range(d).0),
+                    format!("{} {name}", article(&name)),
+                )
+            }
+            _ => (None, String::new()),
         };
-        let tag = self.any_tag_of(desc);
+        let tag = self.any_tag_of(desc.clone());
         let blocks: Vec<_> = (0..FOUND.len()).map(|_| self.new_block()).collect();
         let cases = blocks
             .iter()
@@ -702,13 +721,34 @@ impl FnLower<'_, '_> {
         });
         for (k, b) in blocks.into_iter().enumerate() {
             self.switch_to(b);
+            if let (Some(id), true) = (same_id, k == TAG_OBJECT as usize) {
+                let (yes, no) = (self.new_block(), self.new_block());
+                let have = self.vtable_class_id(desc.clone());
+                let want_id = cint(id as i128, Ty::U64);
+                let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, have, want_id));
+                self.branch(same, yes, no);
+                self.switch_to(yes);
+                self.panic_msg(&format!(
+                    "TypeError: the value is not {an} {want} (it is {same_name})"
+                ));
+                self.terminate(Terminator::Unreachable);
+                self.switch_to(no);
+            }
             let msg = format!(
-                "TypeError: the value is not {article} {want} (it is {})",
+                "TypeError: the value is not {an} {want} (it is {})",
                 FOUND[k]
             );
             self.panic_msg(&msg);
             self.terminate(Terminator::Unreachable);
         }
+    }
+}
+
+/// The indefinite article before `word` ("an Animal", "a Map").
+fn article(word: &str) -> &'static str {
+    match word.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
     }
 }
 

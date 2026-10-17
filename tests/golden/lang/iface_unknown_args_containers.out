@@ -1,0 +1,8 @@
+map 2
+set [ 'x', 'y' ]
+arr 3
+entries 2 a 2
+mapAdd 2 2 false 26 true
+setAdd 3 3 true
+arrWrite 3 100 3
+1

@@ -1,5 +1,9 @@
 //! Default parameter values (`f(a: i64, b: i64 = 2)`): checked once per signature, in the
 //! declaring module, and inserted at call sites that omit the argument (`args::check_call`).
+//! A default of a parameter of a dynamic type (`x: any = "d"`) is the exception: a passed
+//! `undefined` takes it too, and the function may be called through an interface, a base class
+//! or a function value whose signature does not know it. So the function applies it itself, at
+//! the start of its body (`default_prologue`), and its callers pass `undefined` for it.
 //! Interface methods have their own defaults (used for calls through interface values and
 //! bounded generics); an inherited interface method takes the defaults of the ancestor that
 //! declares it, substituted into the inheriting interface.
@@ -7,7 +11,7 @@
 use velt_syntax::ast;
 
 use super::driver::detached;
-use super::Want;
+use super::{LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::FnSource;
 use crate::hir::{DefId, TyId};
@@ -28,11 +32,12 @@ pub(crate) fn param_defaults(cx: &mut Ctx, d: DefId) {
     let Some(src) = f.source else { return };
     let (module, names, name, owner) =
         (f.module, f.generics.names.clone(), f.name.clone(), f.owner);
+    let has_body = !f.is_generator;
     let sig = fn_sig_ast(src);
     for (i, p) in sig.params.iter().enumerate() {
         let Some(e) = &p.default else { continue };
         let ty = cx.fn_info(d).params[i].ty;
-        let h = match p.optional {
+        let h = match p.optional || (has_body && in_callee(cx, e, ty)) {
             true => optional_default(cx, module, &names, e, ty),
             false => check_default(cx, module, &names, &name, owner, e, ty),
         };
@@ -59,10 +64,17 @@ fn check_default(
     h
 }
 
+/// Does the function apply default `e` of a parameter of type `ty` itself (see the module
+/// doc)? For a dynamic type, unless the default is `undefined`, which a call passes anyway.
+pub(crate) fn in_callee(cx: &mut Ctx, e: &ast::Expr, ty: TyId) -> bool {
+    cx.dynamic(ty).is_some() && !is_undefined(e)
+}
+
 /// The value of an optional parameter (`p?: T`) a call leaves out: `undefined`, as in
 /// JavaScript. The parser gives it the default `null` (`T | null`, whose `null` reads as
 /// `undefined`); a dynamic type (`any`, `unknown`) holds its own `undefined` instead, so that
-/// `p === undefined`, `typeof p` and printing see `undefined`.
+/// `p === undefined`, `typeof p` and printing see `undefined`. A parameter whose function
+/// applies its default itself (`in_callee`) is passed `undefined` too.
 fn optional_default(
     cx: &mut Ctx,
     module: usize,
@@ -110,12 +122,14 @@ pub(crate) fn is_undefined(e: &ast::Expr) -> bool {
 }
 
 /// Defaults of an arrow's parameters (`(x: T = e) => …`), checked like a function's: in the
-/// module's scope, and evaluated at the call site.
+/// module's scope, and evaluated at the call site; with `has_body`, those the arrow applies
+/// itself (`in_callee`, `default_prologue`) are passed `undefined`.
 pub(crate) fn arrow_defaults(
     cx: &mut Ctx,
     module: usize,
     closure: DefId,
     params: &[ast::ArrowParam],
+    has_body: bool,
 ) {
     let name = cx.fn_info(closure).name.clone();
     for (i, p) in params.iter().enumerate() {
@@ -123,12 +137,77 @@ pub(crate) fn arrow_defaults(
         let Some(ty) = cx.fn_info(closure).params.get(i).map(|p| p.ty) else {
             continue;
         };
-        let h = match p.optional {
+        let h = match p.optional || (has_body && in_callee(cx, e, ty)) {
             true => optional_default(cx, module, &[], e, ty),
             false => check_default(cx, module, &[], &name, None, e, ty),
         };
         cx.fn_info_mut(closure).params[i].default = Some(h);
     }
+}
+
+impl super::FnCx<'_, '_> {
+    /// `let p = typeof p === "undefined" ? <default> : p;` for each parameter (its name, default,
+    /// whether it is optional, and its type) whose default the function applies itself
+    /// (`in_callee`), appended to `out`: the start of the body, before destructured parameters
+    /// are unpacked. The local hides the parameter, whose argument stays the caller's.
+    pub(crate) fn default_prologue<'p>(
+        &mut self,
+        params: impl IntoIterator<Item = (&'p ast::Ident, Option<&'p ast::Expr>, bool, TyId)>,
+        out: &mut Vec<crate::hir::Stmt>,
+    ) {
+        for (name, default, optional, ty) in params {
+            let Some(e) = default.filter(|e| !optional && in_callee(self.cx, e, ty)) else {
+                continue;
+            };
+            let span = e.span;
+            let synth = |kind| ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind,
+                span,
+            };
+            let param = || synth(ast::ExprKind::Ident(name.clone()));
+            let test = undefined_test(param(), span);
+            let cond = self.cond(&test);
+            let then = self.expr_coerce(e, ty, Want::Move);
+            let els = self.expr_coerce(&param(), ty, Want::Move);
+            let pick = crate::hir::ExprKind::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(els),
+            };
+            let init = self.mk(pick, ty, span);
+            let local = self.new_local(&name.name, ty, false, name.span, LocalKind::Let);
+            let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+            scope.names.insert(name.name.clone(), local);
+            self.rec_local_decl(local);
+            out.push(crate::hir::Stmt {
+                kind: crate::hir::StmtKind::Let {
+                    local,
+                    init: Some(init),
+                },
+                span,
+            });
+        }
+    }
+}
+
+/// `typeof <x> === "undefined"`: for a dynamic `x`, a test of its kind, where `x === undefined`
+/// compares it with a boxed `undefined`.
+pub(crate) fn undefined_test(x: ast::Expr, span: velt_common::Span) -> ast::Expr {
+    let synth = |kind| ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span,
+    };
+    let typeof_ = synth(ast::ExprKind::Unary {
+        op: ast::UnaryOp::TypeOf,
+        expr: Box::new(x),
+    });
+    synth(ast::ExprKind::Binary {
+        op: ast::BinaryOp::StrictEq,
+        lhs: Box::new(typeof_),
+        rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Str("undefined".into())))),
+    })
 }
 
 /// The type of an arrow parameter written with only a default (`(digits = 2) => …`), as TS

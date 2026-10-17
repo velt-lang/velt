@@ -420,6 +420,15 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     }
     let diags_before = fcx.cx.diags.len();
     let sig_params = &crate::body::defaults::fn_sig_ast(src).params;
+    if !f.is_generator {
+        fcx.default_prologue(
+            sig_params
+                .iter()
+                .zip(&f.params)
+                .map(|(p, q)| (&p.name, p.default.as_ref(), p.optional, q.ty)),
+            &mut stmts,
+        );
+    }
     fcx.destructure_params(
         sig_params
             .iter()

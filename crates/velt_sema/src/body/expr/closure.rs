@@ -305,6 +305,14 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
+        self.default_prologue(
+            params
+                .iter()
+                .zip(&ptys)
+                .take(n_params)
+                .map(|(p, ty)| (&p.name, p.default.as_ref(), p.optional, *ty)),
+            &mut locals,
+        );
         self.destructure_params(
             params
                 .iter()
@@ -364,7 +372,7 @@ impl FnCx<'_, '_> {
             generator: None,
             span,
         });
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params, true);
         self.mk(H::Closure(def), fn_ty, span)
     }
 

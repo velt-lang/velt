@@ -200,11 +200,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// JavaScript applies a parameter's default to a passed `undefined` too. For a parameter of
-    /// a dynamic type (`o: any = 5`), an argument that may hold `undefined` (`h`, of type
-    /// `arg_ty` before its conversion) is tested where it is passed:
-    /// `{ const <arg> = h; <arg> === undefined ? <default> : <arg> }`. Other parameters whose
-    /// type allows `undefined` take no default but `undefined` itself (`defaults.rs`).
+    /// JavaScript applies a parameter's default to a passed `undefined` too. A function with a
+    /// body does that itself for a parameter of a dynamic type (`defaults::in_callee`); for one
+    /// that does not (an interface method's own default, a generator's), an argument that may
+    /// hold `undefined` (`h`, of type `arg_ty` before its conversion) is tested where it is
+    /// passed: `{ const <arg> = h; typeof <arg> === "undefined" ? <default> : <arg> }`. Other
+    /// parameters whose type allows `undefined` take no default but `undefined` itself
+    /// (`defaults.rs`).
     fn default_on_undefined(
         &mut self,
         h: hir::Expr,
@@ -218,7 +220,7 @@ impl FnCx<'_, '_> {
                 .ty
                 .nothing_of(arg_ty)
                 .is_some_and(|n| n.has_undefined());
-        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined {
+        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined || self.is_undefined_lit(default) {
             return h;
         }
         let (ty, span) = (h.ty, h.span);
@@ -234,9 +236,7 @@ impl FnCx<'_, '_> {
                 span,
             )
         };
-        let undefined = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
-        let test =
-            super::accessor_rmw::binary(ast::BinaryOp::StrictEq, name(span), undefined, span);
+        let test = crate::body::defaults::undefined_test(name(span), span);
         let cond = self.cond(&test);
         let mut d = default.clone();
         crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
@@ -251,6 +251,17 @@ impl FnCx<'_, '_> {
         self.pop_scope();
         let b = super::accessor_rmw::block(stmts, Some(pick), span);
         self.mk(H::Block(b), ty, span)
+    }
+
+    /// Is `h` the dynamic `undefined` (`dynamic_nothing`)? The default of an optional dynamic
+    /// parameter, and of one whose function applies its default itself (`defaults::in_callee`):
+    /// testing a passed argument for `undefined` changes nothing there.
+    fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::ToDyn { expr, .. } => self.is_undefined_lit(expr),
+            H::Lit(hir::Lit::Null) => self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined),
+            _ => false,
+        }
     }
 
     /// A call whose arguments were reported: no arguments, the result with what is known.

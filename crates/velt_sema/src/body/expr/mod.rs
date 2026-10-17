@@ -36,6 +36,7 @@ mod fn_union_call;
 mod gen_closure;
 mod gen_value;
 mod hoist;
+pub(crate) mod iface_adapt;
 mod iface_call;
 mod iface_object;
 mod iface_write;
