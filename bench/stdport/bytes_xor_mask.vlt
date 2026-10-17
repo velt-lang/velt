@@ -1,0 +1,19 @@
+// WebSocket masking (`xorMask`): a 125-byte frame 20M times, a 4 KiB one 1M times and a 64 KiB
+// one 60k times, each with a new mask. The Rust port is the loop the runtime had, eight bytes
+// per step.
+function mix(data: u8[], rounds: usize): i64 {
+  let mask: u32 = 0x9e3779b9;
+  for (let round: usize = 0; round < rounds; round++) {
+    data.xorMask(mask);
+    mask = mask * 1664525 + 1013904223;
+  }
+  let sum: i64 = 0;
+  for (let i: usize = 0; i < data.length; i++) {
+    sum += (data[i] as i64) * ((i % 7) as i64 + 1);
+  }
+  return sum;
+}
+
+function main() {
+  console.log(mix(Buffer.alloc(125), 20000000) + mix(Buffer.alloc(4096), 1000000) + mix(Buffer.alloc(65536), 60000));
+}
