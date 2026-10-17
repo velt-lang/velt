@@ -12,7 +12,7 @@ mod kinds;
 mod transfers;
 mod weak;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -62,6 +62,9 @@ pub(super) struct Boxing {
     pub(super) proxy_types: HashSet<TyId>,
     /// The prelude's `Proxy` class, once the program creates a proxy.
     pub(super) proxy_class: Option<DefId>,
+    /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
+    /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
+    pub(super) proxy_traced: BTreeSet<TyId>,
 }
 
 impl Boxing {
@@ -327,7 +330,7 @@ impl Cx<'_> {
     }
 
     /// `counted` against a candidate set.
-    fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
+    pub(super) fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
             TyKind::Adt(d, _) if b.recursive.contains(d) => true,

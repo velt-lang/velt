@@ -73,6 +73,14 @@ impl Cx<'_> {
             if !out.contains(&t) {
                 out.push(t);
             }
+            // A typed proxy (#823) is its `Proxy` object, which the trace glue visits instead.
+            let proxy = b.unwrap_or(&self.boxing).proxy_class;
+            if let Some(d) = proxy.filter(|_| self.proxiable_in(b.unwrap_or(&self.boxing), t)) {
+                let pty = self.intern(TyKind::Adt(d, vec![]));
+                if !out.contains(&pty) {
+                    out.push(pty);
+                }
+            }
             return;
         }
         if !seen.insert(t) {
@@ -107,7 +115,27 @@ impl Cx<'_> {
         for p in parts {
             self.refs_inline(b, p, &mut out, &mut seen);
         }
+        for c in self.proxy_traced_as(b, t) {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
         out
+    }
+
+    /// For the `Proxy` class `t`: the counted types its target is traced as (glue/trace.rs,
+    /// `Boxing::proxy_traced`); none for any other type.
+    pub(in crate::lower) fn proxy_traced_as(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
+        let bx = b.unwrap_or(&self.boxing);
+        let is_proxy = matches!(self.kind(t), TyKind::Adt(d, _) if Some(d) == bx.proxy_class);
+        if !is_proxy {
+            return vec![];
+        }
+        let cands: Vec<TyId> = bx.proxy_traced.iter().copied().collect();
+        cands
+            .into_iter()
+            .filter(|&c| self.counted_in(b.unwrap_or(&self.boxing), c) && self.traceable(c))
+            .collect()
     }
 
     /// Display names of the weak-capable types (`VELT_DEBUG_COUNTED=1`).

@@ -1792,7 +1792,9 @@ value runs the `get` trap once, as in JavaScript.
 
 `s instanceof C` answers for the proxy's target, as JavaScript does when the handler has no
 `getPrototypeOf` trap. A typed proxy as a `WeakMap` or `WeakSet` key, or a `WeakRef` target, is
-the proxy itself, not its target, and `deref()` gives the proxy back. A typed proxy that goes to
+the proxy itself, not its target, and `deref()` gives the proxy back. An entry that refers back
+to its key through a typed proxy (a `raw -> proxy` cache, or a value holding its proxy key) goes
+away with the key, as other such entries do. A typed proxy that goes to
 another task (`spawn`, a `shared` value or `Mutex`, a channel) is copied like any other value
 there: the proxy object together with its target and handler, so it is still a proxy on that
 task, and changes there don't reach the original.

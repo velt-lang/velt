@@ -218,11 +218,13 @@ impl State {
     }
 
     pub(super) fn get(&self, m: MapId, key: *mut u8) -> Option<u64> {
+        untagged(key);
         self.map(m).entries.get(&(key as usize)).map(|e| e.value)
     }
 
     /// Inserts or replaces an entry; returns the values to release.
     pub(super) fn set(&mut self, m: MapId, key: *mut u8, value: u64) -> Vec<(ReleaseFn, u64)> {
+        untagged(key);
         let old = self.delete(m, key).unwrap_or_default();
         let k = key as usize;
         let map = self.map(m);
@@ -245,6 +247,7 @@ impl State {
 
     /// Removes `key`'s entry from `m`; returns its value to release (`None`: there was no entry).
     pub(super) fn delete(&mut self, m: MapId, key: *mut u8) -> Option<Vec<(ReleaseFn, u64)>> {
+        untagged(key);
         let k = key as usize;
         let entry = self.map_mut(m).entries.remove(&k)?;
         if let Some(node) = self.nodes.get_mut(&k) {
@@ -347,6 +350,17 @@ impl State {
 
 /// Bit 0 of a `WeakRef`'s target word: set for a typed proxy (`new_ref`).
 const TAG: usize = 1;
+
+/// A map key or a released object is a counted object's address: never a typed proxy's tagged
+/// word (the compiler passes its `Proxy` object), which would name no object here. A `WeakRef`
+/// slot is the only place the tag is kept (`new_ref`).
+#[inline]
+pub(super) fn untagged(obj: *mut u8) {
+    assert!(
+        obj as usize & TAG == 0,
+        "ICE: a tagged proxy word {obj:p} reached the weak table"
+    );
+}
 
 fn remove_one<T: PartialEq>(v: &mut Vec<T>, x: &T) {
     if let Some(i) = v.iter().position(|y| y == x) {

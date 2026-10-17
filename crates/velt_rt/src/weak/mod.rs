@@ -200,6 +200,7 @@ pub unsafe extern "C" fn velt_rt_weak_release(obj: *mut u8) -> u8 {
 /// As for [`velt_rt_weak_release`].
 #[inline]
 pub(crate) unsafe fn weak_release(obj: *mut u8) -> bool {
+    table::untagged(obj);
     let rc = rc_word(obj);
     debug_assert!(
         *rc & RC_COUNT >= 1,
