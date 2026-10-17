@@ -75,6 +75,17 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
         };
+        if let ast::ExprKind::Ident(id) = &strip(f).kind {
+            if self.is_fn_item(id) {
+                if let Some(Item::Def(d)) = self.lookup_item(&id.name, id.span) {
+                    if self.takes_this(d) {
+                        let h =
+                            self.this_fn_call(d, &id.name, this_arg, &[], &call_args, exp, span);
+                        return Some(h);
+                    }
+                }
+            }
+        }
         if let Some(t) = this_arg {
             if let Some(why) = self.this_not_ignored(f, t) {
                 self.cx.error(

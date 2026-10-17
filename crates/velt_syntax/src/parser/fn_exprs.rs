@@ -4,15 +4,16 @@
 //! A function expression that is not a generator is parsed as the arrow function with the same
 //! parameters, result and body (`ExprKind::Arrow`): without `this` in its body the two behave
 //! the same. Its span starts at `function` (or `async`), which tells `velt fmt` to print it as
-//! written. `this` in the body is TypeScript's TS2683 without a `this` parameter, and not
-//! supported yet with one; the expression's own name used inside its body (recursion) is not
-//! supported yet either; so is `this` in one that is an object-literal property's value, where
-//! TypeScript types `this` as the literal. Generators stay `ExprKind::Function` (sema's
-//! `gen_closure`), with the same rules for `this`.
+//! written. `this` in the body is TypeScript's TS2683 without a `this` parameter; the
+//! expression's own name used inside its body (recursion) is not supported yet; so is `this` in
+//! one that is an object-literal property's value, where TypeScript types `this` as the literal.
+//! Generators stay `ExprKind::Function` (sema's `gen_closure`), with the same rules for `this`.
 //!
-//! A `this: T` parameter declares the type of `this` and is no parameter: it is parsed and
-//! dropped (`first_this_param` remembers where the first one is, for `velt fmt`). With a `this`
-//! parameter, `this` in the body is not supported yet.
+//! A `this: T` parameter declares the type of `this` and is no parameter: callers pass the
+//! receiver. A function declaration keeps `T` in `FnSig::this_param` (unless it is `void`); so
+//! does a function expression whose body uses `this`, which is then an `ExprKind::Function`
+//! (its parameters must have written types). `first_this_param` remembers where the first
+//! `this` parameter is, for `velt fmt`.
 
 use super::{PResult, Parser};
 use crate::ast::*;
@@ -36,6 +37,7 @@ impl<'a> Parser<'a> {
         if is_generator {
             let mut sig = self.parse_sig_rest(lo, name, is_async)?;
             sig.is_generator = true;
+            sig.this_param = None;
             let this_param = self.this_param.take();
             let body = self.parse_fn_body()?;
             self.check_fn_this(this_param, &body, in_object);
@@ -54,10 +56,35 @@ impl<'a> Parser<'a> {
             (None, None)
         };
         let body = self.parse_fn_body()?;
-        self.check_fn_this(this_param, &body, in_object);
         if !name.name.is_empty() {
             self.no_own_name(&name, &body);
         }
+        // With a `this` parameter that the body uses, the function keeps its `this` type, so
+        // its parameters must be written (sema checks it).
+        if let Some((p, ty)) = &this_param {
+            let typed: Option<Vec<Param>> = params.iter().map(|a| typed_param(a, p)).collect();
+            if let (false, Some(typed)) = (is_void(ty), typed) {
+                if own_this(&body).is_some() {
+                    let sig = FnSig {
+                        name,
+                        generics: type_params,
+                        params: typed,
+                        ret,
+                        throws,
+                        is_async,
+                        is_generator: false,
+                        this_param: Some(Box::new(ty.clone())),
+                        span: self.span_from(lo),
+                    };
+                    return Ok(ExprKind::Function(Box::new(FnDecl {
+                        sig,
+                        body,
+                        overloads: vec![],
+                    })));
+                }
+            }
+        }
+        self.check_fn_this(this_param, &body, in_object);
         Ok(ExprKind::Arrow {
             type_params,
             params,
@@ -66,6 +93,13 @@ impl<'a> Parser<'a> {
             body: ArrowBody::Block(body),
             is_async,
         })
+    }
+
+    /// The type of `this` declared by the `this` parameter of the parameter list parsed last,
+    /// unless it is `void` (`None` without one).
+    pub(super) fn this_type(&self) -> Option<Box<TypeExpr>> {
+        let (_, ty) = self.this_param.as_ref()?;
+        (!is_void(ty)).then(|| Box::new(ty.clone()))
     }
 
     /// `this: T` as the first parameter (the cursor after `(`): parsed with its `,` and
@@ -79,24 +113,24 @@ impl<'a> Parser<'a> {
         self.bump(); // this
         self.bump(); // :
         let ty = self.parse_type()?;
-        let void = matches!(ty.kind, TypeExprKind::Void);
         if self.first_this_param.is_none() {
             let at = self.span_from(lo);
             self.first_this_param = Some(at.lo..at.hi);
         }
-        self.this_param = Some((self.span_from(lo), void));
+        self.this_param = Some((self.span_from(lo), ty));
         if !self.at(Tok::RParen) {
             self.expect(Tok::Comma)?;
         }
         Ok(())
     }
 
-    /// `this` in the body of a function expression (or, with a `this` parameter `this_param`, a
+    /// `this` in the body of a function expression (or, with a `this: void` parameter, a
     /// function declaration); `in_object`: the expression is the value of an object-literal
-    /// property (TypeScript types `this` as the literal there).
+    /// property (TypeScript types `this` as the literal there). The type checker handles a
+    /// `this` of another type.
     pub(super) fn check_fn_this(
         &mut self,
-        this_param: Option<(Span, bool)>,
+        this_param: Option<(Span, TypeExpr)>,
         body: &Block,
         in_object: bool,
     ) {
@@ -114,16 +148,18 @@ impl<'a> Parser<'a> {
                 at,
             )
             .with_note("a function's `this` is the object it is called on; use a parameter for that object, an arrow function inside a method (whose `this` is the method's), or a class method"),
-            Some((_, true)) => Diagnostic::error(
+            Some((_, ty)) if is_void(&ty) => Diagnostic::error(
                 "`this` is `void` here: the function declares `this: void`",
                 at,
             ),
-            Some((p, false)) => Diagnostic::error(
-                "`this` in a function with a `this` parameter is not supported yet",
+            // A generator, a function with overloads or a function expression whose parameters
+            // are not all written.
+            Some((p, _)) => Diagnostic::error(
+                "`this` in a generator, or in a function with overloads or parameters without a written type, that has a `this` parameter is not supported yet",
                 at,
             )
             .with_note(format!(
-                "TypeScript allows this (`this` is the object the function is called on, typed by `{}`); Velt doesn't yet because a function value has no receiver; take the object as an ordinary parameter, or make the function a class method",
+                "TypeScript allows this (`this` is typed by `{}`); take the object as an ordinary parameter, or write a single signature and the type of each parameter",
                 self.text(p.lo, p.hi)
             )),
         };
@@ -161,8 +197,29 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Is `ty` `void`?
+fn is_void(ty: &TypeExpr) -> bool {
+    matches!(ty.kind, TypeExprKind::Void)
+}
+
+/// `a` as the parameter of a declaration, if its type is written (`this_at`: the `this`
+/// parameter, for the spans of the rest).
+fn typed_param(a: &ArrowParam, this_at: &Span) -> Option<Param> {
+    let ty = a.ty.clone()?;
+    let span = Span::new(this_at.file, a.name.span.lo, ty.span.hi.max(a.name.span.hi));
+    Some(Param {
+        name: a.name.clone(),
+        pattern: a.pattern.clone(),
+        ty,
+        default: a.default.clone(),
+        optional: a.optional,
+        rest: a.rest,
+        span,
+    })
+}
+
 /// The first `this` of `body` outside the classes and functions declared in it.
-fn own_this(body: &Block) -> Option<Span> {
+pub(super) fn own_this(body: &Block) -> Option<Span> {
     #[derive(Default)]
     struct Find {
         this: Vec<Span>,

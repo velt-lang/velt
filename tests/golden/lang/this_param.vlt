@@ -1,0 +1,40 @@
+// check: no leaks
+// `this` parameters (#942): `function f(this: T, ...)` types `this` in its body; `call` and
+// `apply` pass the receiver, as in Node.
+interface Counter {
+  n: number;
+  label: string;
+}
+function bump(this: Counter, by: number): number {
+  this.n += by;
+  return this.n;
+}
+class Box {
+  constructor(public v: number) {}
+}
+function doubled(this: Box): number {
+  return this.v * 2;
+}
+function tag(this: Counter, prefix: string, suffix: string): string {
+  return `${prefix}${this.label}${suffix}`;
+}
+function noThis(this: Counter, x: number): number {
+  return x + 1;
+}
+function maybe(this: Counter | undefined): string {
+  return this === undefined ? "no receiver" : this.label;
+}
+async function later(this: Counter, by: number): Promise<number> {
+  await Promise.resolve();
+  return this.n + by;
+}
+async function main(): Promise<void> {
+  const c: Counter = { n: 1, label: "c" };
+  console.log(bump.call(c, 2), bump.apply(c, [3]), c.n);
+  const b = new Box(21);
+  console.log(doubled.call(b), doubled.apply(b), doubled.apply(new Box(5), []));
+  console.log(tag.call(c, "<", ">"), tag.apply(c, ["[", "]"]));
+  console.log(noThis.call(c, 1), [1, 2].map(noThis));
+  console.log(maybe.call(c), maybe.call(undefined));
+  console.log(await later.call(c, 10));
+}

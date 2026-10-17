@@ -458,7 +458,12 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         ret: body_ret.unwrap_or(frame_ret),
         is_async: f.is_async || f.is_async_gen,
         is_generator: f.is_generator,
-        self_ty: f.this.as_ref().map(|t| t.ty),
+        // A function's `this` parameter is no method's receiver.
+        self_ty: f
+            .this
+            .as_ref()
+            .filter(|_| !f.has_this_param())
+            .map(|t| t.ty),
         captures: vec![],
         shares_captures: false,
         body: hir::Body {
