@@ -665,6 +665,10 @@ pub enum ExprKind {
         def: DefId,
         type_args: Vec<TyId>,
         fields: Vec<Expr>,
+        /// The literal converts an object to another object type by copying its fields
+        /// (hir_encodings.md "Object conversions"): each field is absent or reads one source
+        /// place. When the source holds a typed proxy, lowering gives that proxy instead.
+        converted: bool,
     },
     Variant {
         def: DefId,

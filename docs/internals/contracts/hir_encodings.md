@@ -785,7 +785,27 @@ entry is an `ICE:`.
   (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
   with one read, and assignment-as-value blocks (`{ s.f = v; s.f }`) with none (the value is
   `v`); a field read on a proxiable type counts as running user code when lowering orders
-  operands (`sequence.rs`). Without proxiable types nothing changes. No HIR form was added.
+  operands (`sequence.rs`). Without proxiable types nothing changes. Method calls through a proxy whose handler has a `get` trap
+  (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
+  name on a class object gives the method read as a value, a function value whose code is the
+  method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
+  a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
+  the receiver, before the other arguments) and checks that the answer is the method about to
+  run read as a value (for a virtual call, the instance in the target's vtable entry); the call
+  then runs with `this` the proxy. Object conversions keep a proxy's identity: `AdtLit` has
+  `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
+  source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
+  another object type whose fields it has (in another order, or only some of them) is an
+  `AdtLit` of the expected type with `converted: true`, whose fields each read the source place
+  (`Field` of it, possibly under `Share`) or are absent (`null` for an optional field the source
+  lacks); a source that is not a place is bound to a `let` first. Every other `AdtLit` has
+  `converted: false`. Lowering builds the literal, except that when the source's type is
+  proxiable (typed proxies, above) and the source holds a proxy, the value is that proxy (a new
+  reference, the bit kept): decision 2 of #823. In a program whose own code constructs a `Proxy`,
+  sema does not report a conversion whose source type no `AdtLit` in the program builds
+  (`object_copies.rs`): its values all come from conversions of `any` values (the proxies such
+  a program converts to its types).
 - Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
   an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
   or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the

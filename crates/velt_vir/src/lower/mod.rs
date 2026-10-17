@@ -71,6 +71,7 @@ mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_method;
 mod proxy_typed;
 mod proxy_write;
 mod rc;
@@ -202,6 +203,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
+    /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
+    /// called on its own (without the proxy as `this`) it throws a `TypeError`.
+    Unbound,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -485,6 +490,10 @@ struct FnLower<'c, 'h> {
     /// The next call lowered is spawned through a function value, vtable or interface: its
     /// arguments are transferred (transfer.rs). Taken by that call before anything else.
     transfer_call: bool,
+    /// The direct method call being lowered has a receiver of a proxiable class: once the
+    /// receiver is lowered, a proxy with a `get` trap reads the method through it
+    /// (proxy_method.rs), before the other arguments.
+    proxy_recv: Option<(DefId, Vec<TyId>)>,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
     /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats

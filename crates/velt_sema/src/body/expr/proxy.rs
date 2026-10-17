@@ -62,6 +62,7 @@ impl FnCx<'_, '_> {
         // No write is noted here: every write that reaches the target through a proxy starts
         // at a write the program's own code makes (`p.k = v`, `Reflect.set`), noted there.
         self.cx.note_dyn_members();
+        self.cx.object_copies.proxies = true;
         let any = self.cx.ty.intern(hir::TyKind::Dyn(defs.any, vec![]));
         let kind = H::ToDyn {
             expr: Box::new(h),

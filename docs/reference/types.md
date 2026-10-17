@@ -1872,7 +1872,13 @@ converting it back to `any` see one object, and `console.log(s)` prints the targ
 read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
 on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
 target whose `get` trap answers every key). A method called through a typed proxy runs with
-`this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
+`this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
+`get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
+trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
+the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
+stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
+`s.count++` used as a
 value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
 in JavaScript. A field read through a typed proxy runs after the operands before it, as any
 call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
@@ -1916,11 +1922,12 @@ function main(): void {
 
 **Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
 `defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
-as an array or a `Record`, and `in` on a typed proxy; a typed proxy passed where an object type
-with other fields is expected (it is copied there); a function the `get` trap returns, called
-as a method of a typed proxy; `Array.isArray` of an array proxy; proxies of functions (`apply`,
-`construct`); a method call through a proxy whose handler has a `get` trap (`p.m()`, where
-JavaScript reads `m` through the trap first); `Reflect.get` / `Reflect.set` with a receiver
+as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns, called
+as a method or a function-typed field of a typed proxy (`s.$set(v)`; `(s as any).$set(v)` works),
+or a `get` trap that answers a method name with another function; a method call through an
+interface value holding a proxy whose handler has a `get` trap; a method read as a value through
+`any` and called on its own; `Array.isArray` of an array proxy; proxies of functions (`apply`,
+`construct`); `Reflect.get` / `Reflect.set` with a receiver
 that is neither the target nor a proxy; destructuring a typed proxy
 (`const { n, label } = s`) and `JSON.stringify` of one. Until then each is a compile error or a `TypeError`
 naming #823. A method call through an `any` proxy whose handler has no traps is the call on

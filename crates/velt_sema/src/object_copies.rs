@@ -79,6 +79,10 @@ pub(crate) struct Copies {
     /// The optional fields without a presence flag an object literal's property gives a value
     /// that may be null, by name (`crate::absent_fields`).
     pub null_literals: Vec<(String, Span)>,
+    /// The program's own code constructs a `Proxy` (#823): a copy whose source type no object
+    /// literal builds holds only values converted from `any`, which are proxies there, and
+    /// lowering keeps a proxy's identity through the conversion (`AdtLit::converted`).
+    pub proxies: bool,
 }
 
 impl Copies {
@@ -126,9 +130,17 @@ pub(crate) fn check(cx: &mut Ctx) {
         writes,
         seen,
         in_keys,
+        proxies,
         ..
     } = std::mem::take(&mut cx.object_copies);
+    let built = match proxies {
+        true => built_types(cx),
+        false => vec![],
+    };
     for c in &copies {
+        if proxies && !built.iter().any(|&t| related(cx, t, c.from)) {
+            continue;
+        }
         if let Some(w) = assigned(cx, c, &writes) {
             report_write(cx, c, w);
         } else if let Some(&(t, span, how)) = seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys))
@@ -285,4 +297,30 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     .with_note(format!(
         "build the new object explicitly, {fields} (a new object in TypeScript too), or declare the parameter or variable as `{from}`"
     ))
+}
+
+/// The types of the object literals (`AdtLit`) in the program's bodies and constants.
+fn built_types(cx: &mut Ctx) -> Vec<TyId> {
+    struct Lits(HashSet<TyId>);
+    impl crate::visit::VisitMut for Lits {
+        fn expr(&mut self, e: &mut crate::hir::Expr) {
+            if let crate::hir::ExprKind::AdtLit { .. } = e.kind {
+                self.0.insert(e.ty);
+            }
+        }
+    }
+    let mut v = Lits(HashSet::new());
+    for d in cx.defs.iter_mut().flatten() {
+        if let crate::hir::Def::Fn(f) = d {
+            crate::visit::block(&mut f.body.block, &mut v);
+        }
+    }
+    for i in cx.info.iter_mut() {
+        if let crate::defs::DefInfo::Global(g) = i {
+            if let Some(e) = &mut g.init {
+                crate::visit::expr(e, &mut v);
+            }
+        }
+    }
+    v.0.into_iter().collect()
 }

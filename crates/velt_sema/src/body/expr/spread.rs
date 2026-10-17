@@ -295,6 +295,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: hs,
+            converted: false,
         };
         let lit = self.mk(kind, ty, span);
         self.apply_posts(lit, posts, span, lets)

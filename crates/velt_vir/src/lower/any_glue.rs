@@ -461,7 +461,11 @@ impl FnLower<'_, '_> {
                         self.any_invoke(&r, this, vec![], &outp);
                         self.ret_status(ST_OK);
                     }
-                    // A method read as a value (a bound function) comes later.
+                    // A method read as a value: in a program with proxies, the unbound method
+                    // (proxy_method.rs); a bound function comes later.
+                    (DynMemberKind::Method, Some(r)) if self.method_value_into(&r, &outp) => {
+                        self.ret_status(ST_OK);
+                    }
                     _ => self.ret_status(ST_UNSUPPORTED),
                 }
                 self.switch_to(next);

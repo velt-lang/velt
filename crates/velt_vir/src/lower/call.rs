@@ -68,15 +68,14 @@ impl FnLower<'_, '_> {
             }
             _ => self.cx.func_for(def, targs.clone()),
         };
-        let receiver_first = pre.is_empty();
-        let mut argv = pre;
-        argv.extend(self.lower_args(args, &modes, true));
-        if f.self_ty.is_some() && !args.is_empty() && receiver_first {
+        if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() {
             let rty = self.sub(args[0].ty);
             if self.cx.is_class(rty) && self.cx.proxiable(rty) {
-                self.proxy_method_check(&argv[0]);
+                self.proxy_recv = Some((def, targs.clone()));
             }
         }
+        let mut argv = pre;
+        argv.extend(self.lower_args(args, &modes, true));
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -194,10 +193,16 @@ impl FnLower<'_, '_> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
         }
-        let mut argv = vec![];
+        let mut argv: Vec<Operand> = vec![];
         let later = self.later_each(args);
         let outer = self.start_borrows();
+        let mut recv = self.proxy_recv.take();
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            if i == 1 {
+                if let (Some(r), Some(v)) = (recv.take(), argv.first()) {
+                    self.proxy_recv_lowered(r, &v.clone());
+                }
+            }
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
@@ -235,6 +240,9 @@ impl FnLower<'_, '_> {
                     argv.push(v);
                 }
             }
+        }
+        if let (Some(r), Some(v)) = (recv, argv.first()) {
+            self.proxy_recv_lowered(r, &v.clone());
         }
         self.finish_borrows(outer);
         argv

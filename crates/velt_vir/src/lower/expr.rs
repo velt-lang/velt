@@ -153,6 +153,11 @@ impl FnLower<'_, '_> {
             K::FnRef(d, targs) => self.fn_ref(*d, targs, e.ty),
             K::Field { base, index, mode } => self.field_expr(base, *index, *mode),
             K::Index { base, index, .. } => self.index_expr(base, index),
+            K::AdtLit {
+                fields,
+                converted: true,
+                ..
+            } => self.converted_lit(e.ty, fields),
             K::AdtLit { fields, .. } => self.adt_lit(e.ty, fields),
             K::Variant { variant, args, .. } => self.variant(e.ty, *variant, args),
             K::ArrayLit(es) => self.array_lit(es, e.ty),

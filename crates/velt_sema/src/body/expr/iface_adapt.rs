@@ -333,6 +333,7 @@ impl FnCx<'_, '_> {
                 def: a.def,
                 type_args: vec![],
                 fields: vec![h],
+                converted: false,
             },
             ty,
             span,
