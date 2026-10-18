@@ -709,7 +709,11 @@ the nullable type; `void` cannot be a member.
 - **Narrowing**: using a member's fields or methods needs that member.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
-    `"object"`; closures are `"function"`. An impossible tag is an error.
+    `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
+    not a union, a test it always passes leaves it `never` where the test fails, when its type
+    fixes the answer (numbers, strings, booleans, symbols, functions, classes, structs, arrays,
+    maps); not for `object`, which may hold a function, nor for interfaces or enums. On a value
+    whose type is a type parameter, `typeof` tells the instantiation's value at run time.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the

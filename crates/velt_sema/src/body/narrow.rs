@@ -11,7 +11,7 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{DefId, LocalId, Nothing, TyId};
+use crate::hir::{DefId, LocalId, Nothing, TyId, TyKind};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
@@ -577,9 +577,13 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
-        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none() && pred(self.cx, u) {
+        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+            && typeof_exact(self.cx, u)
+            && pred(self.cx, u)
+        {
             // A test every value passes (`typeof x === "string"` on a `string`, which may be a
-            // `string | bigint`): nothing is left where it fails, as in TypeScript.
+            // `string | bigint`): nothing is left where it fails, as in TypeScript. Only for
+            // types whose `typeof` the static type fixes.
             f.push(Fact::Members(l, vec![]));
         }
         if nullable {
@@ -754,5 +758,28 @@ pub(crate) fn literal_of(e: &ast::Expr) -> Option<ast::SignedLit> {
         },
         ast::ExprKind::Paren(inner) => literal_of(inner),
         _ => None,
+    }
+}
+
+/// Does the static type `t` fix the run-time `typeof` of its values? Not for `object`,
+/// `Function`, `any` / `unknown` or an interface value (which may hold a function), a type
+/// parameter (any instantiation), an enum (a number or a string) or a deferred type.
+fn typeof_exact(cx: &crate::ctx::Ctx, t: TyId) -> bool {
+    let t = cx.brand_base(t).unwrap_or(t);
+    match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Str
+        | TyKind::Bool
+        | TyKind::Symbol
+        | TyKind::Literal(_)
+        | TyKind::FnPtr { .. }
+        | TyKind::Closure(_)
+        | TyKind::Array(_)
+        | TyKind::Tuple(_)
+        | TyKind::Map(..)
+        | TyKind::Promise(..) => true,
+        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
+        _ => false,
     }
 }
