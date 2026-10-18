@@ -76,20 +76,20 @@ export class SymbolConstructor {
     return velt_rt_symbol_for(key, __intrinsic_symbol_registry());
   }
 
-  /** The key of a symbol `Symbol.for` made, or null (`undefined` in JavaScript) for others. */
-  static keyFor(sym: symbol): string | null {
+  /** The key of a symbol `Symbol.for` made, or `undefined` for others. */
+  static keyFor(sym: symbol): string | undefined {
     if (!velt_rt_symbol_registered(sym)) {
-      return null;
+      return undefined;
     }
     return velt_rt_symbol_description(sym);
   }
 }
 
 extend symbol {
-  /** The description given to `Symbol(description)`, or null (`undefined` in JavaScript). */
-  get description(): string | null {
+  /** The description given to `Symbol(description)`, or `undefined`. */
+  get description(): string | undefined {
     if (!velt_rt_symbol_described(this)) {
-      return null;
+      return undefined;
     }
     return velt_rt_symbol_description(this);
   }

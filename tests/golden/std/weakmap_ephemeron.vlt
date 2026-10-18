@@ -96,6 +96,6 @@ function main() {
   inner.set(leaf, new Reactive(leaf));
   outer.set(parent, inner);
   const found = outer.get(parent);
-  const hit = found != null ? found.get(leaf) : null;
+  const hit = found != null ? found.get(leaf) : undefined;
   console.log(hit != null ? hit.n : -1);
 }

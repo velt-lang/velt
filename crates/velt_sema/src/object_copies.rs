@@ -8,8 +8,8 @@
 //! - it assigns one of the copied fields, or an optional field the source doesn't have, on a
 //!   value of either type (one object would miss it);
 //! - it compares values of the converted-to type with `===`, also as a member of a union such
-//!   as `A | null` (two copies of one object are not `===`), or uses them as keys of a weak
-//!   map, weak set or weak reference;
+//!   as `A | null` (two copies of one object are not `===`), or uses them as keys of a `Map`,
+//!   `Set`, weak map, weak set or weak reference;
 //! - it converts a value whose type holds the converted-to type to a dynamic type (`any`,
 //!   `unknown`, `object`, `Function`) and compares dynamic values by identity somewhere: `===`
 //!   or `==` of them, or a `Map`, `Set`, `WeakMap`, `WeakSet` or `WeakRef` keyed by them;
@@ -71,9 +71,9 @@ pub(crate) enum Seen {
     /// A value converted to a dynamic type (`ToDyn` of `Program::any_impl`), from where
     /// `Copies::dyn_sources[i]` says.
     Dynamic(u32),
-    /// A key compared by identity: of a weak operation (`weak`), or of a `Map` (only a
-    /// dynamic key's objects compare by identity there).
-    Key { weak: bool },
+    /// A key compared by identity: of a weak operation, or of a `Map` or `Set` (whose objects
+    /// compare by identity, as with `===`).
+    Key,
 }
 
 /// The conversions, field writes and looks seen so far.
@@ -241,7 +241,7 @@ fn sees(
                     .declared_presence(c.from, k)
                     .is_some_and(|p| p != crate::symbols::Presence::No)
         }
-        Seen::Identity | Seen::Key { .. } => {
+        Seen::Identity | Seen::Key => {
             if c.fresh {
                 return false;
             }
@@ -249,8 +249,7 @@ fn sees(
             if members.iter().any(|&m| cx.dynamic(m).is_some()) && dynamic_holds(cx, c, ci, looks) {
                 return true;
             }
-            // A `Map` compares other keys by value.
-            how != (Seen::Key { weak: false }) && members.into_iter().any(|m| related(cx, m, c.to))
+            members.into_iter().any(|m| related(cx, m, c.to))
         }
         Seen::Dynamic(_) => false,
         Seen::Spread => {
@@ -382,7 +381,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         Seen::Serialized => format!("serializes {a} `{shown}`"),
         Seen::Keys => format!("lists the keys of {a} `{shown}`"),
         Seen::Identity => format!("compares `{shown}` values with `===` or `!==`"),
-        Seen::Key { .. } => format!("uses `{shown}` values as keys compared by identity"),
+        Seen::Key => format!("uses `{shown}` values as keys compared by identity"),
         // Never reported itself (`sees`).
         Seen::Dynamic(_) => format!("converts {a} `{shown}` to a dynamic type"),
         Seen::Spread => format!("spreads {a} `{shown}`"),
@@ -393,7 +392,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
     };
     let why = match how {
         Seen::Identity => "two copies of one object are not `===`",
-        Seen::Key { .. } => "two copies of one object are different keys",
+        Seen::Key => "two copies of one object are different keys",
         Seen::Spread => "Node would copy all the original object's fields, in its order",
         Seen::In(_) => "the copy lacks the original's other fields, which Node would find",
         _ => "Node would show the original object's fields, in its order",

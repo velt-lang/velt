@@ -1,21 +1,21 @@
 // std/collections/deque: `Deque<T>`, a double-ended queue on a growable ring buffer: O(1)
 // amortized push and pop at both ends, O(1) indexing.
 //
-// Slots are `(T | null)[]` (empty slots are null) with a power-of-two capacity plus one spare
-// slot at the end that is always null. An element can't be moved out of an array index, so
-// taking one swaps it into the spare slot and `pop()`s it, then pushes a fresh null back (no
-// reallocation: the array's buffer keeps its capacity). Growing appends nulls and swaps the
-// wrapped-around prefix up behind the old end, so elements are never cloned or copied.
-// Consequently `T` itself should not be a nullable type (`Deque<i64 | null>`): a stored null
-// would read as an empty slot.
+// Slots are `(T | undefined)[]` (empty slots are `undefined`) with a power-of-two capacity plus
+// one spare slot at the end that is always empty. An element can't be moved out of an array
+// index, so taking one swaps it into the spare slot and `pop()`s it, then pushes a fresh
+// `undefined` back (no reallocation: the array's buffer keeps its capacity). Growing appends
+// empty slots and swaps the wrapped-around prefix up behind the old end, so elements are never
+// cloned or copied. A `T` holding `null` (`Deque<i64 | null>`) keeps its `null` apart from an
+// empty slot; a `T` holding `undefined` is a compile error (it could not be told from one).
 
 // First ring capacity once a deque receives its first element.
 const INITIAL_CAPACITY: usize = 8;
 
 /** A double-ended queue (ring buffer). */
 export class Deque<T> {
-  // `capacity` ring slots, then the spare null slot.
-  private slots: (T | null)[] = [];
+  // `capacity` ring slots, then the spare empty slot.
+  private slots: (T | undefined)[] = [];
   // Ring index of the front element.
   private head: usize = 0;
   private count: usize = 0;
@@ -59,19 +59,19 @@ export class Deque<T> {
     this.count++;
   }
 
-  /** Removes and returns the back element, or null if empty. */
-  popBack(): T | null {
+  /** Removes and returns the back element, or `undefined` if empty. */
+  popBack(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     this.count--;
     return this.take((this.head + this.count) & (this.capacity() - 1));
   }
 
-  /** Removes and returns the front element, or null if empty. */
-  popFront(): T | null {
+  /** Removes and returns the front element, or `undefined` if empty. */
+  popFront(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     const value = this.take(this.head);
     this.head = (this.head + 1) & (this.capacity() - 1);
@@ -79,31 +79,31 @@ export class Deque<T> {
     return value;
   }
 
-  /** A clone of the front element, or null if empty. */
-  peekFront(): T | null {
+  /** A clone of the front element, or `undefined` if empty. */
+  peekFront(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     return this.slots[this.head].clone();
   }
 
-  /** A clone of the back element, or null if empty. */
-  peekBack(): T | null {
+  /** A clone of the back element, or `undefined` if empty. */
+  peekBack(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     return this.slots[(this.head + this.count - 1) & (this.capacity() - 1)].clone();
   }
 
   /**
    * A clone of the element `i` places from the front (negative `i` counts from the back, like
-   * `Array.prototype.at`), or null if out of range.
+   * `Array.prototype.at`), or `undefined` if out of range.
    */
-  at(i: i64): T | null {
+  at(i: i64): T | undefined {
     const n = this.count as i64;
     const k = i < 0 ? i + n : i;
     if (k < 0 || k >= n) {
-      return null;
+      return undefined;
     }
     return this.slots[(this.head + (k as usize)) & (this.capacity() - 1)].clone();
   }
@@ -111,7 +111,7 @@ export class Deque<T> {
   /** Removes every element (keeps the buffer). */
   clear() {
     for (let i: usize = 0; i < this.slots.length; i++) {
-      this.slots[i] = null;
+      this.slots[i] = undefined;
     }
     this.head = 0;
     this.count = 0;
@@ -139,14 +139,13 @@ export class Deque<T> {
     return this.slots.length == 0 ? 0 : this.slots.length - 1;
   }
 
-  // Moves the element out of ring slot `s`, leaving null behind (see the module comment).
-  private take(s: usize): T | null {
+  // Moves the element out of ring slot `s`, leaving it empty (see the module comment).
+  private take(s: usize): T | undefined {
     const spare = this.slots.length - 1;
     __intrinsic_array_swap(this.slots, s, spare);
     const value = this.slots.pop();
-    this.slots.push(null);
-    // `pop()` on `(T | null)[]` is a nested option for a generic `T`; flatten it.
-    return value ?? null;
+    this.slots.push(undefined);
+    return value;
   }
 
   // Makes room for one more element, doubling the ring when it is full.
@@ -157,14 +156,14 @@ export class Deque<T> {
     }
     if (cap == 0) {
       for (let i: usize = 0; i <= INITIAL_CAPACITY; i++) {
-        this.slots.push(null);
+        this.slots.push(undefined);
       }
       return;
     }
     // Full ring: [head, cap) then [0, head). Double it and move [0, head) to [cap, cap + head),
-    // which puts the elements in one run from `head`. Slot `cap` (the old spare) is null.
+    // which puts the elements in one run from `head`. Slot `cap` (the old spare) is empty.
     for (let i: usize = 0; i < cap; i++) {
-      this.slots.push(null);
+      this.slots.push(undefined);
     }
     for (let i: usize = 0; i < this.head; i++) {
       __intrinsic_array_swap(this.slots, i, cap + i);
@@ -172,14 +171,19 @@ export class Deque<T> {
   }
 }
 
-function pushClone<T>(out: T[], slot: T | null) {
-  if (slot != null) {
+// An occupied slot that reads `undefined` holds a `T` that allows `undefined`: that value.
+function pushClone<T>(out: T[], slot: T | undefined) {
+  if (slot !== undefined) {
     out.push(slot.clone());
+  } else if (__intrinsic_holds_null(__intrinsic_null_as<T>())) {
+    out.push(__intrinsic_null_as<T>());
   }
 }
 
-function visit<T, E>(slot: T | null, f: (value: T) => void throws E) throws E {
-  if (slot != null) {
+function visit<T, E>(slot: T | undefined, f: (value: T) => void throws E) throws E {
+  if (slot !== undefined) {
     f(slot);
+  } else if (__intrinsic_holds_null(__intrinsic_null_as<T>())) {
+    f(__intrinsic_null_as<T>());
   }
 }

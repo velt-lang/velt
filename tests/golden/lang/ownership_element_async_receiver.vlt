@@ -51,7 +51,7 @@ async function main() {
   const m = new Map<string, Box>();
   m.set("k", new Box(4));
   const mb = m.get("k");
-  if (mb !== null) {
+  if (mb !== undefined) {
     console.log(await mb.get());
   }
 

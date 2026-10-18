@@ -1,0 +1,71 @@
+// A closure in a `const`'s initializer uses the constant (#750): object literal methods
+// returning the object, a callback stored in the object, one passed to the object's constructor. The
+// object holds closures capturing it, a reference cycle that stays allocated (documented), so
+// this golden has no leak check.
+interface App {
+  name: string;
+  plugins: string[];
+  use(p: (a: App) => void): App;
+  hook(h: string): App;
+}
+
+function makeApp(name: string): App {
+  const hooks: string[] = [];
+  const app: App = {
+    name,
+    plugins: [],
+    use(p) {
+      p(app);
+      return app;
+    },
+    hook(h) {
+      hooks.push(h);
+      app.plugins.push(`hook:${h}`);
+      return app;
+    },
+  };
+  return app;
+}
+
+interface Cell {
+  value: number;
+  next: () => number;
+}
+
+function counter(start: number): Cell {
+  const node: Cell = {
+    value: start,
+    next: () => {
+      node.value += 1;
+      return node.value;
+    },
+  };
+  return node;
+}
+
+class Ticker {
+  count = 0;
+  onTick: () => string;
+  constructor(onTick: () => string) {
+    this.onTick = onTick;
+  }
+  tick(): string {
+    this.count += 1;
+    return this.onTick();
+  }
+}
+
+function ticker(prefix: string): Ticker {
+  const t: Ticker = new Ticker(() => `${prefix}${t.count}`);
+  return t;
+}
+
+const a = makeApp("x");
+a.use((x) => console.log("plugin", x.name))
+  .hook("h1")
+  .use((x) => console.log("again", x.name, x.plugins.length));
+console.log(a.hook("h2") === a, a.plugins);
+const c = counter(10);
+console.log(c.next(), c.next(), c.value);
+const t = ticker("tick ");
+console.log(t.tick(), t.tick());

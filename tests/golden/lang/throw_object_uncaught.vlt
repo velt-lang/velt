@@ -1,0 +1,13 @@
+// check: no leaks
+// A thrown object that is not an `Error` is reported as `console.log` prints it, as in Node
+// (#1265): `{ code: 503, reason: 'unavailable' }`.
+type Failure = { code: number; reason: string };
+
+function fail(code: number): void {
+  throw { code: code, reason: "unavailable" };
+}
+
+function main() {
+  console.log("start");
+  fail(503);
+}

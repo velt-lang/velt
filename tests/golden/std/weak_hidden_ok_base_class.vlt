@@ -6,7 +6,7 @@ class Base { n: number; constructor(n: number) { this.n = n; } peek(): number { 
 class H extends Base {
   r: WeakRef<V>;
   constructor(r: WeakRef<V>) { super(0); this.r = r; }
-  override peek(): number { const x = this.r.deref(); return x === null ? -1 : x.n; }
+  override peek(): number { const x = this.r.deref(); return x === undefined ? -1 : x.n; }
 }
 class Box { f: () => number; constructor() { this.f = () => 0; } }
 async function run(b: Base): Promise<number> { return b.peek(); }
@@ -16,7 +16,7 @@ async function main() {
   const m = shared(new Mutex<Box>(new Box()));
   const got = m.with((v) => {
     const r = new WeakRef(keep);
-    const look = (): number => { const x = r.deref(); return x === null ? -1 : x.n; };
+    const look = (): number => { const x = r.deref(); return x === undefined ? -1 : x.n; };
     const n = look();
     v.f = () => n + 1;
     return n + 1;

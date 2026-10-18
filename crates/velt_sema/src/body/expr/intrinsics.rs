@@ -32,6 +32,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_set_len" => I::ArraySetLen,
         "hash" => I::Hash,
         "eq" => I::Eq,
+        "key_eq" => I::KeyEq,
+        "includes_eq" => I::IncludesEq,
         "same" => I::Same,
         "same_value" => I::SameValue,
         "clone" => I::Clone,
@@ -155,7 +157,11 @@ impl FnCx<'_, '_> {
             I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
             I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),
-            I::ArrayPop => (vec![(arr, M)], ty.option(t), true),
+            I::ArrayPop => (
+                vec![(arr, M)],
+                ty.option_of(t, crate::hir::Nothing::Undefined),
+                true,
+            ),
             I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),
@@ -165,7 +171,9 @@ impl FnCx<'_, '_> {
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::Same | I::SameValue => (vec![(t, B), (t, B)], bool_, true),
+            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue => {
+                (vec![(t, B), (t, B)], bool_, true)
+            }
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
             I::NeedsTransfer

@@ -138,15 +138,15 @@ extend<T> Array<T> {
     return acc;
   }
 
-  /** First element matching `pred` (see header), or null. */
-  find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
+  /** First element matching `pred` (see header), or `undefined`. */
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
     if (!__intrinsic_may_alias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
         if (pred(this[i], i as i64)) {
           return __intrinsic_share(this[i]);
         }
       }
-      return null;
+      return undefined;
     }
     let n = this.length;
     for (let i: usize = 0; i < n; i++) {
@@ -157,7 +157,7 @@ extend<T> Array<T> {
         n = this.length;
       }
     }
-    return null;
+    return undefined;
   }
 
   /** Index of the first element matching `pred`, or -1. */
@@ -182,10 +182,13 @@ extend<T> Array<T> {
     return -1;
   }
 
-  /** Last element matching `pred` (see header), or null. */
-  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
+  /** Last element matching `pred` (see header), or `undefined`. */
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
     const i = this.findLastIndex(pred);
-    return i < 0 || i as usize >= this.length ? null : __intrinsic_share(this[i as usize]);
+    if (i < 0 || i as usize >= this.length) {
+      return undefined;
+    }
+    return __intrinsic_share(this[i as usize]);
   }
 
   /** Index of the last element matching `pred`, or -1. */
@@ -201,13 +204,13 @@ extend<T> Array<T> {
   }
 
   /**
-   * The element at `index` (negative counts from the end; see header), or null when
+   * The element at `index` (negative counts from the end; see header), or `undefined` when
    * out of range.
    */
-  at(index: i64): T | null {
+  at(index: i64): T | undefined {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
-      return null;
+      return undefined;
     }
     return __intrinsic_share(this[i as usize]);
   }
@@ -312,12 +315,24 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
-   * `includes`, `NaN` is never found.
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
    * @param x - The element to search for.
    */
   includes(x: T): bool {
-    return this.indexOf(x) >= 0;
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `==` itself can compare otherwise: the number `NaN`.
+    if (x == x) {
+      return false;
+    }
+    for (let i: usize = 0; i < this.length; i++) {
+      if (__intrinsic_includes_eq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -391,13 +406,13 @@ extend<T> Array<T> {
   }
 
   /**
-   * Removes and returns the first element, or null when the array is empty (JS: undefined).
+   * Removes and returns the first element, or `undefined` when the array is empty.
    * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
    * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
    */
-  shift(): T | null {
+  shift(): T | undefined {
     if (this.length == 0) {
-      return null;
+      return undefined;
     }
     return __intrinsic_array_remove(this, 0);
   }

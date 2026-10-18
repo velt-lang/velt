@@ -31,7 +31,7 @@ At run time:
 | Situation | Output | Exit code |
 |---|---|---|
 | panic | `panic: <message> at file:line:col` | 101 |
-| uncaught error | `Uncaught <Type>: <message> at file:line:col` | 1 |
+| uncaught error | `Uncaught <Type>: <message> at file:line:col` (a thrown non-`Error` value: `Uncaught <value>`, as `console.log` prints it) | 1 |
 
 The language server turns many of these diagnostics into quick fixes: removing `mut`,
 converting a `+` chain to a template literal, and adding

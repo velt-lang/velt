@@ -33,7 +33,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 |---|---|
 | `length` | code units |
 | `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` (JS: `s[i]` past the end is `undefined`) |
-| `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
+| `at(i): string \| undefined` | like `charAt`; a negative `i` counts from the end, `undefined` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
 | `startsWith(s)`, `endsWith(s)` | |
@@ -110,16 +110,16 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 
 | Method | Notes |
 |---|---|
-| `length`, `push(x)`, `pop(): T \| null` | built in |
-| `at(i): T \| null` | a negative `i` counts from the end |
+| `length`, `push(x)`, `pop(): T \| undefined` | built in; `undefined` when empty |
+| `at(i): T \| undefined` | a negative `i` counts from the end; `undefined` out of range |
 | `forEach`, `map`, `filter`, `reduce(f, init)` | callbacks get `(x, i)` (`reduce`: `(acc, x, i)`) and may take fewer |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | likewise |
-| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `NaN` is never found (JS's `includes` finds it) |
+| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `indexOf` never finds `NaN`; `includes` also finds the number `NaN`, as in JS (SameValueZero; tuples still compare part by part) |
 | `slice(start = 0, end?)`, `concat(other)` | |
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. Any other use of the result (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
 | `splice(start, deleteCount?, ...items): T[]` | removes and returns `deleteCount` elements (the rest when omitted) and inserts `items` there |
-| `shift(): T \| null`, `unshift(...items): i64` | take the first element (`null` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
+| `shift(): T \| undefined`, `unshift(...items): i64` | take the first element (`undefined` when empty) / insert `items` at the front and return the new length, like JS; both O(length), as in V8 for large arrays: a queue that takes from the front belongs in a `Deque` ([velt:collections/deque](collections/deque.md)) |
 | `xs.length = n`, `truncate(n)` | drop the elements from `n` on, as in JS (`xs.length = 0` empties the array; `xs.length -= k` works too). `n` is a `number`: one that is not a whole number from 0 to 2^32 - 1 (negative, fractional, `NaN`) panics with `RangeError: Invalid array length`, the error JS throws. Setting a larger `length` panics too: JS would add empty slots, which Velt has no value for (push the elements, or build the array with `new Array<T>(n).fill(v)`); `truncate(n)` leaves the array unchanged instead |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
@@ -139,35 +139,34 @@ the decoded size for `base64`/`base64url` and `hex`.
 
 ## Map
 
-`Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances, interface and function values (compared by identity, as `==` compares them), and
-structs, object types, tuples, arrays, maps and records (compared by content, as `deepEqual`
-compares them).
+`Map<K, V>` is an insertion-ordered hash map. Keys compare as in JavaScript (SameValueZero):
+numbers, `bool` and strings by value, and objects (class instances, object types, structs,
+arrays, maps, records, interface and function values) by identity, as `===` compares them. An
+object literal finds only itself: an equal object is another key, and changing an object after
+using it as a key keeps its entry where it is. A copy (`{ ...key }`, `key.clone()`) is another
+object, so it is another key.
 
-Float keys compare like JavaScript's (SameValueZero): `0` and `-0` are one key, and `NaN` is a
-key that finds itself (`m.get(NaN)`). Floats inside content keys (arrays, tuples, object types)
-compare the same way. `==` keeps IEEE comparison (`NaN == NaN` is `false`).
-
-One difference from JavaScript's keys:
-
-- **Content keys are hashed when they are inserted.** Changing an array, object, `Map` or
-  `Record` after using it as a key leaves its entry unreachable: `get` finds it neither by the
-  new content nor by the old (it still counts in `size` and shows up when iterating). Don't
-  change a key while it is in a map; insert a copy, or delete the entry and insert it again.
+Float keys compare like JavaScript's: `0` and `-0` are one key, and `NaN` is a key that finds
+itself (`m.get(NaN)`). `==` keeps IEEE comparison (`NaN == NaN` is `false`).
 
 ```ts
 const key: i64[] = [1];
 const m = new Map<i64[], string>();
 m.set(key, "one");
-console.log(m.get([1])); // one
 key.push(2);
-console.log(m.get(key), m.get([1]), m.size); // null null 1
+console.log(m.get(key), m.has([1]), m.has([1, 2]), m.size); // one false false 1
 ```
+
+One difference from JavaScript's keys:
+
+- **Tuples compare part by part**, as `===` compares them: `[1, "x"]` finds an entry set with
+  another `[1, "x"]` (in JavaScript a tuple is an array, another key). A tuple key is hashed
+  when it is inserted, so don't change one while it is in a map.
 
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`). Where the value type includes `null` (`Map<string, number \| null>`), an entry holding `null` also reads `null`: use `has` to tell it from a missing key |
+| `set(k, v)`, `get(k): V \| undefined`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `undefined` for a missing key. Where the value type includes `null` (`Map<string, number \| null>`), `get` is a `number \| null \| undefined`: an entry holding `null` reads `null`, a missing key `undefined`. A value type that includes `undefined` (`Map<string, number \| undefined>`) is not supported yet |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
@@ -184,7 +183,7 @@ callback deleted or added entries.
 
 `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` refer to objects without keeping them alive, as
 in JavaScript: when nothing else refers to a key, its entries go (their values are released),
-and a `WeakRef` to it returns `null` from then on. Keys, members and targets are objects: class
+and a `WeakRef` to it returns `undefined` from then on. Keys, members and targets are objects: class
 instances, object types and arrays, compared by identity (a primitive is an error, as in
 TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
 structs, function and interface values are not supported as keys yet). An `object` key
@@ -214,14 +213,14 @@ collector does ([memory](../reference/memory.md)).
 
 | Member | Notes |
 |---|---|
-| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `null` for a missing key (JS: `undefined`). `set` returns the map, so calls chain |
+| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| undefined`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `undefined` for a missing key. `set` returns the map, so calls chain |
 | `new WeakSet<T>()`; `add(x)`, `has(x)`, `delete(x): bool` | `add` returns the set, so calls chain |
-| `new WeakRef(target)`; `deref(): T \| null` | `null` once the target was freed (JS: `undefined`) |
+| `new WeakRef(target)`; `deref(): T \| undefined` | `undefined` once the target was freed |
 
 Differences from JavaScript:
 
 - **Freed at once.** Velt frees an object when its last reference goes (which can be the last
-  use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
+  use of the variable holding it), so a `WeakRef`'s `deref()` returns `undefined` right after, where
   Node keeps returning the object until a later garbage collection, and at least until the
   current job ends. A variable passed as a key, a member or a target (`new WeakRef(k)`, also
   `k!` of a nullable one, or through a function's parameter) stays alive to the end of its
@@ -307,8 +306,9 @@ console.log(css, kebab); // background-color { backgroundColor: 'background-colo
 
 ## Nullable values
 
-On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
-`map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
+On any `T | null`, `T | undefined` and `T | null | undefined` (what `Map.get`, `find` and `pop`
+give): `isNull()` (either nothing), `unwrap()` (panics on either), `unwrapOr(fallback)`, and
+`map(f)` (`undefined` for either nothing on the last two). The value-extracting helpers return the payload itself (an object is shared, not
 copied). A variable narrowed to its `T` (`let x: string | null = "a"; x.unwrapOr("b")`) keeps
 the helpers `T` does not have; a method of `T` with the same name wins (`xs.map(f)` on a
 narrowed `number[] | null` maps the elements).
@@ -319,7 +319,7 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 
 | Declaration | Notes |
 |---|---|
-| `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| null`) |
+| `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| undefined`, `undefined` when done) |
 | `interface Iterator<T, E = never>` | `next(): IteratorResult<T> throws E`; `return(): IteratorResult<T>` (default: returns `{ done: true }`) runs when a loop leaves early |
 | `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
 | `class Generator<T, E = never, N = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `next(value)` (with `N`, TypeScript's `TNext`, given) resumes the paused `yield` with `value`; `throw(e: any)` throws `e` at the paused `yield`; `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
@@ -376,7 +376,8 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   it returns normally.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
-  a deeply equal value, in any order (a key is matched as `get` matches it). Other class
+  a deeply equal value, in any order (a key is matched as `get` matches it, and an object key
+  that isn't a key of the other map pairs with a deeply equal key there). Other class
   instances compare by identity; `==` compares every object by identity. This is Node's
   `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node

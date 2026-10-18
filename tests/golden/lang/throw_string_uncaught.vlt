@@ -1,0 +1,14 @@
+// check: no leaks
+// A thrown value that is not an `Error` is reported with the value, as Node prints it when
+// nothing catches it (#1265): `throw "a string"` reports `a string`, not its type.
+function check(n: number) {
+  if (n > 1) {
+    throw "too big: " + n;
+  }
+  console.log("ok", n);
+}
+
+function main() {
+  check(1);
+  check(2);
+}

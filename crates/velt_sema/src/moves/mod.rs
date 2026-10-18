@@ -78,6 +78,13 @@ struct Moves<'a> {
     own_captures: HashSet<LocalId>,
     /// The open `try` bodies and handlers (innermost last), see [`tries`].
     tries: Vec<tries::TryFrame>,
+    /// Per local: a `const` that closures in its initializer capture before it is assigned
+    /// (`body::late_consts`; they check that it is assigned when they read it).
+    late: Vec<bool>,
+    /// The use being checked is a closure's capture.
+    capturing: bool,
+    /// Late `const`s reported as not shareable.
+    late_reported: HashSet<LocalId>,
 }
 
 /// What the move dataflow found besides errors.
@@ -200,6 +207,11 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 false => f.captures.iter().map(|c| c.inner).collect(),
             },
             tries: vec![],
+            late: (f.body.locals.iter())
+                .map(|l| cx.late_consts.contains(&l.span))
+                .collect(),
+            capturing: false,
+            late_reported: HashSet::new(),
             report: false,
             errors: vec![],
             loops: vec![],
@@ -456,6 +468,10 @@ impl Moves<'_> {
                 }
             }
             s.clear(i);
+        } else if s.uninit[i] && self.capturing && self.late[i] {
+            // Captured before it is assigned (`body::late_consts`): the closure and this
+            // function share the variable, which this function assigns afterwards.
+            self.late_capture(l, span);
         } else if s.uninit[i] {
             if self.report {
                 let name = &self.locals[i].name;
@@ -500,8 +516,8 @@ impl Moves<'_> {
             s.captured[i] = Some((at, holder, writes));
             return;
         }
-        if !self.report {
-            return;
+        if !self.report || self.late[i] {
+            return; // a late `const`: reported where it is captured (`late_capture`)
         }
         let name = &self.locals[i].name;
         self.errors.push(

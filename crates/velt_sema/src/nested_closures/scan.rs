@@ -215,9 +215,15 @@ impl Scan {
     }
 }
 
-pub(super) fn scan_fn(f: &ast::FnDecl) -> Scan {
+pub(crate) fn scan_fn(f: &ast::FnDecl) -> Scan {
     let mut s = Scan::default();
     s.func(f);
+    s
+}
+
+pub(crate) fn scan_expr(e: &ast::Expr) -> Scan {
+    let mut s = Scan::default();
+    s.expr(e);
     s
 }
 

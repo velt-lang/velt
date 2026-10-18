@@ -32,7 +32,8 @@ function main() {
   (`ToUint8`: 300 is 44 and -1 is 255; `Uint8ClampedArray` clamps and rounds halves to even;
   `Float32Array` rounds to the nearest `f32`). A write outside the array does nothing, as in JS.
   A **read** outside it panics like an array index (`index out of bounds: the len is 2 but the
-  index is 5`), where JS reads `undefined`; `xs.at(i)` returns `null` there instead.
+  index is 5`), where JS reads `undefined`; `xs.at(i)` returns `undefined` there, as in JS. `find` and `findLast` give `undefined` when
+  nothing matches.
 - **Methods**: `at`, `copyWithin`, `entries`, `every`, `fill`, `filter`, `find`, `findIndex`,
   `findLast`, `findLastIndex`, `forEach`, `includes`, `indexOf`, `join`, `keys`,
   `lastIndexOf`, `map`, `reduce`, `reduceRight`, `reverse`, `set`, `slice`, `some`, `sort`,

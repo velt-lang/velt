@@ -202,72 +202,69 @@ fn error_messages() {
         (r#"{"name":"x"}"#, "expected field \"age\" at $"),
         (
             r#"{"name":"x""#,
-            "invalid JSON at $: unexpected end of input (byte 11)",
+            "Expected ',' or '}' after property value in JSON at position 11 (line 1 column 12)",
         ),
         (
             r#"{"name":"x",}"#,
-            "invalid JSON at $: expected string key (byte 12)",
+            "Expected double-quoted property name in JSON at position 12 (line 1 column 13)",
         ),
         (
             r#"{"name":"x" "age":1}"#,
-            "invalid JSON at $: expected ',' or '}' (byte 12)",
+            "Expected ',' or '}' after property value in JSON at position 12 (line 1 column 13)",
         ),
         (
             r#"{"name" "x"}"#,
-            "invalid JSON at $: expected ':' (byte 8)",
+            "Expected ':' after property name in JSON at position 8 (line 1 column 9)",
         ),
         (
             r#"{"name":"x\q"}"#,
-            "invalid JSON at $.name: invalid escape (byte 11)",
+            "Bad escaped character in JSON at position 11 (line 1 column 12)",
         ),
         (
             r#"{"name":"x\u12"}"#,
-            "invalid JSON at $.name: invalid \\u escape (byte 14)",
+            "Bad Unicode escape in JSON at position 14 (line 1 column 15)",
         ),
         (
             "{\"name\":\"a\nb\"}",
-            "invalid JSON at $.name: control character in string (byte 10)",
+            "Bad control character in string literal in JSON at position 10 (line 1 column 11)",
         ),
         (
             r#"{"name":"x","age":01,"tags":[]}"#,
-            "invalid JSON at $: expected ',' or '}' (byte 19)",
+            "Unexpected number in JSON at position 19 (line 1 column 20)",
         ),
         (
             r#"{"name":"x","age":-,"tags":[]}"#,
-            "invalid JSON at $.age: invalid number (byte 19)",
+            "No number after minus sign in JSON at position 19 (line 1 column 20)",
         ),
         (
             r#"{"name":"x","age":1,"tags":["a" "b"]}"#,
-            "invalid JSON at $.tags: expected ',' or ']' (byte 32)",
+            "Expected ',' or ']' after array element in JSON at position 32 (line 1 column 33)",
         ),
         (
             r#"{"name":"x","age":1,"tags":[],"z":[1,{"a":]}]}"#,
-            "invalid JSON at $.z: unexpected character ']' (byte 42)",
+            "Unexpected token ']', ...\"\":[1,{\"a\":]}]}\" is not valid JSON",
         ),
         (
             r#"{"name":"x","age":1,"tags":[],"z":tru}"#,
-            "invalid JSON at $.z: unexpected character '}' (byte 37)",
+            "Unexpected token '}', ...\"[],\"z\":tru}\" is not valid JSON",
         ),
         (
             r#"{"name":"x","age":1,"tags":[]} x"#,
-            "invalid JSON at $: unexpected trailing characters (byte 31)",
+            "Unexpected non-whitespace character after JSON at position 31 (line 1 column 32)",
         ),
         (
             r#"{"name":"x","age":1,"tags":[]}{}"#,
-            "invalid JSON at $: unexpected trailing characters (byte 30)",
+            "Unexpected non-whitespace character after JSON at position 30 (line 1 column 31)",
         ),
-        ("", "invalid JSON at $: unexpected end of input (byte 0)"),
-        (
-            "  é",
-            "invalid JSON at $: unexpected character 'é' (byte 2)",
-        ),
+        ("", "Unexpected end of JSON input"),
+        ("  é", "Unexpected token 'é', \"  é\" is not valid JSON"),
         (
             "\u{1}",
-            "invalid JSON at $: unexpected character U+0001 (byte 0)",
+            "Unexpected token '\u{1}', \"\u{1}\" is not valid JSON",
         ),
         (
             r#"{"name":"x","age":1,"tags":[],"z":[[[[["#,
-            "invalid JSON at $.z: unexpected end of input (byte 39)",
+            "Unexpected end of JSON input",
         ),
     ];
     for (doc, want) in cases {
@@ -396,7 +393,7 @@ fn deep_nesting_is_skipped_without_recursion() {
     );
     let err = decode_user(&bad).unwrap_err();
     assert!(
-        err.starts_with("invalid JSON at $.deep: unexpected character '}'"),
+        err.starts_with("Unexpected token '}', ...\"[[[[[[[[[[}\" is not valid JSON"),
         "{err}"
     );
 }

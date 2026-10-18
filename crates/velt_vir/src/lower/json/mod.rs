@@ -73,6 +73,9 @@ enum Seg<'a> {
     Index(Operand),
 }
 
+/// The name of the prelude's `JsonError` class.
+const PRELUDE_JSON_ERROR: &str = "std/prelude/json::JsonError";
+
 impl Cx<'_> {
     /// `{ expected: string, path: string }`, the decoders' failure context.
     fn json_ctx_agg(&mut self) -> AggId {
@@ -86,16 +89,37 @@ impl Cx<'_> {
 
     /// The prelude's `JsonError` type (a struct or class with a `message: string` field).
     fn json_error_ty(&mut self) -> TyId {
-        let found = self.hir.defs.iter().position(|d| match d {
-            hir::Def::Adt(a) => {
-                a.name == "JsonError"
-                    || a.name.ends_with("::JsonError")
-                    || a.name.ends_with(".JsonError")
-            }
-            _ => false,
-        });
-        let d = found.unwrap_or_else(|| ice("JSON.parse needs the prelude's `JsonError` type"));
-        self.intern(TyKind::Adt(hir::DefId(d as u32), vec![]))
+        let d = self
+            .json_error_def()
+            .unwrap_or_else(|| ice("JSON.parse needs the prelude's `JsonError` type"));
+        self.intern(TyKind::Adt(d, vec![]))
+    }
+
+    /// The prelude's `JsonError` definition: `std/prelude/json::JsonError`, else (a program
+    /// built without the real prelude, as in unit tests) the first type named `JsonError`. A
+    /// user's own class of that name is never it.
+    pub(super) fn json_error_def(&self) -> Option<hir::DefId> {
+        let named = |f: &dyn Fn(&str) -> bool| {
+            self.hir
+                .defs
+                .iter()
+                .position(|d| matches!(d, hir::Def::Adt(a) if f(&a.name)))
+        };
+        named(&|n| n == PRELUDE_JSON_ERROR)
+            .or_else(|| {
+                if self
+                    .hir
+                    .defs
+                    .iter()
+                    .any(|d| matches!(d, hir::Def::Adt(a) if a.name.starts_with("std/prelude/")))
+                {
+                    return None;
+                }
+                named(&|n| {
+                    n == "JsonError" || n.ends_with("::JsonError") || n.ends_with(".JsonError")
+                })
+            })
+            .map(|d| hir::DefId(d as u32))
     }
 
     /// Is `t` the prelude's `JsonValue` handle type (serialized with
@@ -179,7 +203,8 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(out), t)
     }
 
-    /// A `JsonError` with the owned `message`; any other field is zero.
+    /// A `JsonError` with the owned `message`, named `SyntaxError` (as the prelude's
+    /// constructor names it); any other field is zero.
     fn json_error_value(&mut self, message: Operand) -> Operand {
         let et = self.cx.json_error_ty();
         let TyKind::Adt(d, _) = self.cx.kind(et) else {
@@ -188,10 +213,16 @@ impl FnLower<'_, '_> {
         let adt = self.cx.adt_def(d);
         let msg = adt.fields.iter().position(|f| f.name == "message");
         let msg = msg.unwrap_or_else(|| ice("JsonError has no `message` field")) as u32;
+        let name_field = adt.fields.iter().position(|f| f.name == "#name");
         if adt.kind == AdtKind::Class {
             let obj = self.alloc_object_raw(et);
             let p = self.field_place(&obj, et, msg);
             self.store(p, message);
+            if let Some(n) = name_field {
+                let name = self.str_lit("SyntaxError");
+                let p = self.field_place(&obj, et, n as u32);
+                self.store(p, name);
+            }
             return Operand::Copy(obj);
         }
         let Ty::Agg(a) = self.cx.ty(et) else {
