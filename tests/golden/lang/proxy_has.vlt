@@ -1,0 +1,30 @@
+// check: no leaks
+// `key in` a proxy runs its `has` trap (#823); `in` on other `any` values and `Reflect.has`;
+// printing a proxy.
+class Box {
+  size: number = 1;
+  get double(): number {
+    return this.size * 2;
+  }
+}
+function main(): void {
+  const seen: string[] = [];
+  const p = new Proxy({ a: 1 }, {
+    has(t, k) {
+      seen.push(typeof k === "string" ? k : "?");
+      return k === "virtual" || Reflect.has(t, k);
+    },
+  });
+  console.log("a" in p, "b" in p, "virtual" in p, seen.join(","));
+  const plain = new Proxy(new Box(), {});
+  console.log("size" in plain, "double" in plain, "nope" in plain, "toString" in plain);
+  const b: any = new Box();
+  const key: any = "size";
+  console.log(key in b, "double" in b, "x" in b, Reflect.has(b, "size"));
+  const r: any = { x: 1, y: 2 };
+  console.log("x" in r, "z" in r);
+  const xs: any = [1, 2];
+  console.log("length" in xs);
+  // Printing shows the target and runs no trap, as in Node.
+  console.log(p, [plain], seen.length);
+}

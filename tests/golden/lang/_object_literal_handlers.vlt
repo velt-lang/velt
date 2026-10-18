@@ -1,0 +1,33 @@
+// A library module exporting object literals that implement an interface (see
+// object_literal_interfaces_modules.vlt).
+export interface Handler {
+  readonly name: string;
+  get priority(): number;
+  handle(input: string): string;
+}
+
+export const upper: Handler = {
+  name: "upper",
+  priority: 2,
+  handle: (s) => s.toUpperCase(),
+};
+
+export const reverse: Handler = {
+  name: "reverse",
+  get priority() {
+    return 1;
+  },
+  handle(s) {
+    return s.split("").reverse().join("");
+  },
+};
+
+const twice: Handler = {
+  name: "twice",
+  priority: 3,
+  handle: (s) => s + s,
+};
+
+export function all(): Handler[] {
+  return [upper, reverse, twice];
+}

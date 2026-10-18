@@ -1,0 +1,14 @@
+function parse(text: string): number {
+  if (text.length === 0) {
+    throw new Error("empty config");
+  }
+  return text.length;
+}
+
+console.log("lib starts");
+const CONFIG = parse("");
+console.log("never printed either");
+
+export function parsed(): number {
+  return CONFIG;
+}

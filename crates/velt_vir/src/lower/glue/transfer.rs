@@ -35,8 +35,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn transfer_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            let at = place.clone();
+            self.proxy_glue_split(&place, done, |lw, up, pty| lw.transfer_proxy(&at, up, pty));
+            done
+        });
         self.transfer_expand(&place, ty);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// A typed proxy at `at` (its `Proxy` object, untagged, at `up`): the object transferred
+    /// as an `any` holding it is (a deep copy of it, its target and its handler when shared),
+    /// and stored back tagged.
+    fn transfer_proxy(&mut self, at: &Place, up: Place, pty: TyId) {
+        self.transfer_in_place(up.clone(), pty);
+        let t = self.proxy_tag(Operand::Copy(up));
+        self.assign(at.clone(), Rvalue::Use(t));
     }
 
     fn transfer_expand(&mut self, place: &Place, ty: TyId) {
@@ -73,7 +92,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
             TyKind::Dyn(..) => {
                 let data = proj(place, Proj::Field(0));
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
-                self.via_vtable(&data, vt);
+                if !self.cx.has_proxies() {
+                    return self.via_vtable(&data, vt);
+                }
+                let at = data.clone();
+                self.proxy_dyn_data(
+                    &data,
+                    |lw, up, pty| lw.transfer_proxy(&at, up, pty),
+                    |lw| lw.via_vtable(&data, vt),
+                );
             }
             _ => {}
         }

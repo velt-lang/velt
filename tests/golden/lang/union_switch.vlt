@@ -66,7 +66,7 @@ function main() {
   console.log(onlyTypes(1), onlyTypes("x"));
 
   // A switch borrows the member; a narrowed local can be mutated in place.
-  let items: i64[] | string = [1, 2];
+  let items = [1, 2] as i64[] | string;
   switch (typeof items) {
     case "object":
       console.log(`${items.length} items`);

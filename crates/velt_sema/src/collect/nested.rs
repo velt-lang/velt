@@ -197,6 +197,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
     let what = match &item.kind {
         ast::ItemKind::Function(f) => return Some(&f.sig.name.name),
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => return Some(&t.name.name),
+        ast::ItemKind::Interface(i) if !i.call_sigs.is_empty() => "interfaces with call signatures",
         ast::ItemKind::Interface(i) => return Some(&i.name.name),
         ast::ItemKind::Enum(e) => return Some(&e.name.name),
         ast::ItemKind::TypeAlias(a) => return Some(&a.name.name),
@@ -205,6 +206,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
         ast::ItemKind::Extend(_) => "`extend` blocks",
         ast::ItemKind::Var(_) => "module constants",
         ast::ItemKind::Augment(_) => "`declare global` and `declare module` blocks",
+        ast::ItemKind::Namespace(_) => "namespaces",
     };
     cx.err(format!("{what} must be at the module level"), item.span);
     None

@@ -128,6 +128,11 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold programs of
   their own: check them with `velt check <file>`.
 - `velt check <file>` checks that file and the files it imports, and nothing else.
+- A syntax error stops a build, but not `velt check`: it reports every file's syntax errors, and
+  then the type errors of the files without any, as `tsc` does. A file importing one with a
+  syntax error is still checked; a name it imports that the broken file mentions but doesn't
+  declare (the error may have cut the declaration short) reports nothing, and neither do its
+  uses.
 - `--json` prints one JSON document on stdout instead, for editors and other tools:
   `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further

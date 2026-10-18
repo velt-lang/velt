@@ -34,7 +34,13 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
+            return h;
+        }
+        if let Some(h) = self.call_apply(callee, type_args, args, exp, span) {
             return h;
         }
         if let Some(h) = self.json_stringify_layout(callee, type_args, args, span) {
@@ -55,6 +61,15 @@ impl FnCx<'_, '_> {
                     }
                 }
                 self.named_call(id, type_args, args, exp, span)
+            }
+            // `it.return(undefined)`: TypeScript's `return(value)` takes the generator's return
+            // value; Velt's `return()` has none, and `undefined` is what leaving it out passes.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } if self.iteration_return_undefined(object, prop, args) => {
+                self.member_call(object, prop, *optional, type_args, &[], exp, span)
             }
             ast::ExprKind::Member {
                 object,
@@ -83,8 +98,51 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
+    /// #1144)?
+    fn iteration_return_undefined(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> bool {
+        let [arg] = args else {
+            return false;
+        };
+        if prop.name != "return" || crate::body::narrow::nothing_word(arg) != Some("undefined") {
+            return false;
+        }
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        let d = match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => *d,
+            _ => return false,
+        };
+        const PROTOCOL: [&str; 7] = [
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "IteratorObject",
+        ];
+        PROTOCOL
+            .iter()
+            .any(|n| matches!(self.cx.prelude.get(*n), Some(Item::Def(p)) if *p == d))
+    }
+
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.
@@ -143,6 +201,7 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
+            constraints: f.generics.constraints.clone(),
             js_numbers,
             positions,
             js_api,
@@ -214,6 +273,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.takes_this(d) {
+            return self.this_fn_call(d, name, None, type_args, args, exp, span);
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
@@ -240,6 +302,10 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let f = match self.dynamic_apply(f, args, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
         let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,
@@ -295,6 +361,7 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: vec![],
             bounds: vec![],
+            constraints: vec![],
             js_numbers: false,
             positions: false,
             js_api: false,
@@ -355,6 +422,11 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        let recv = match self.optional_fn_member_call(object, recv, prop, args, span) {
+            Ok(call) => return call,
+            Err(recv) => recv,
+        };
+        let recv = self.nullable_helper_receiver(recv, &prop.name);
         let r = self.in_place_receiver(object, recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
         self.after_receiver(r.before, call)
@@ -517,8 +589,20 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
+        self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
-        let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
+        // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
+        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (std's
+        // `JSON.__parseFromContext`).
+        let from_context = type_args.is_empty()
+            && prop.name == "parse"
+            && cname == "JSON"
+            && self.cx.declared_in_std(d);
+        let lookup = match from_context {
+            true => "__parseFromContext",
+            false => prop.name.as_str(),
+        };
+        let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
             Err(instance) => {
                 let what = match instance {

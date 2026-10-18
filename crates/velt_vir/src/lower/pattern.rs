@@ -134,7 +134,14 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
-    fn test_variant(&mut self, v: u32, args: &[Pat], place: &Place, ty: TyId, fail: BlockId) {
+    pub(super) fn test_variant(
+        &mut self,
+        v: u32,
+        args: &[Pat],
+        place: &Place,
+        ty: TyId,
+        fail: BlockId,
+    ) {
         let tag = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
                 let disc = self.cx.enum_def(d).variants[v as usize].discriminant;

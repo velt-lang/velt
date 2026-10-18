@@ -5,20 +5,27 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::{is_null, nothing_word};
+use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, TyKind, UseMode};
+use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
 
 /// What an assignment writes to.
 enum AssignTarget {
     /// A writable place (`BorrowMut` modes).
     Place(hir::Expr),
-    /// `obj.name` where `name` is a setter: the checked receiver.
+    /// `obj.name` where `name` is a setter, or a field written through an interface
+    /// (`iface_write`): the checked receiver.
     Setter(hir::Expr),
     /// `r[k]` / `r.name` of a `Record`: the checked record.
     Record(hir::Expr),
+    /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
+    Indexer(hir::Expr),
+    /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver.
+    Dynamic(hir::Expr),
 }
+
+use super::assign_paths::{is_plain_path, is_pure_place};
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -38,10 +45,17 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => return d.map(AssignTarget::Dynamic),
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
                 self.note_field_write(obj.ty, prop);
+                if let Some(ok) = self.iface_write_target(obj.ty, prop) {
+                    return ok.then_some(AssignTarget::Setter(obj));
+                }
                 if self.has_setter(obj.ty, &prop.name) {
                     return Some(AssignTarget::Setter(obj));
                 }
@@ -59,8 +73,23 @@ impl FnCx<'_, '_> {
                 optional: false,
             } => {
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => {
+                        if d.is_none() {
+                            self.expr(index, None, Want::Borrow);
+                        }
+                        return d.map(AssignTarget::Dynamic);
+                    }
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
+                }
+                if self.has_indexer(obj.ty)
+                    && super::member::literal_key(index).is_none()
+                    && self.symbol_key_of(index).is_none()
+                {
+                    return Some(AssignTarget::Indexer(obj));
                 }
                 // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
                 // key the member it names: a setter or a getter-only accessor is handled the
@@ -76,6 +105,9 @@ impl FnCx<'_, '_> {
                     };
                     // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
                     self.note_field_write(obj.ty, &prop);
+                    if let Some(ok) = self.iface_write_target(obj.ty, &prop) {
+                        return ok.then_some(AssignTarget::Setter(obj));
+                    }
                     if self.has_setter(obj.ty, &prop.name) {
                         return Some(AssignTarget::Setter(obj));
                     }
@@ -108,7 +140,10 @@ impl FnCx<'_, '_> {
             return None;
         }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
-            if self.lookup_item(&id.name, id.span).is_some() {
+            let item = self.lookup_item(&id.name, id.span);
+            if let Some(place) = self.module_let_target(item, id) {
+                return place;
+            } else if item.is_some() {
                 self.cx.err(
                     format!("cannot assign to `{}`: it is not a variable", id.name),
                     span,
@@ -146,52 +181,6 @@ impl FnCx<'_, '_> {
         self.mark_mutated(l, id.span);
         let ty = self.local_ty(l);
         Some(self.mk(H::Local(l, UseMode::BorrowMut), ty, id.span))
-    }
-
-    /// `Type.NAME = v` on a `static readonly` field (reported; statics are constants).
-    fn static_field_target(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
-        let ast::ExprKind::Ident(id) = &object.kind else {
-            return false;
-        };
-        if self.is_local_name(&id.name) {
-            return false;
-        }
-        let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
-            return false;
-        };
-        if !self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.statics.contains_key(&prop.name))
-        {
-            return false;
-        }
-        self.cx.err(
-            format!(
-                "cannot assign to `{}.{}`: static fields are readonly",
-                id.name, prop.name
-            ),
-            prop.span,
-        );
-        true
-    }
-
-    /// Remember an assignment to field `prop` of an object type (or of a type parameter, which
-    /// may be one) for the copies of `crate::object_copies`.
-    fn note_field_write(&mut self, ty: TyId, prop: &ast::Ident) {
-        let ty = match self.cx.ty.kind(ty) {
-            TyKind::Param(_) => None,
-            _ if self.cx.is_object_type(ty) => Some(ty),
-            _ => return,
-        };
-        self.cx
-            .object_copies
-            .writes
-            .push(crate::object_copies::Write {
-                ty,
-                name: prop.name.clone(),
-                span: prop.span,
-            });
     }
 
     pub(super) fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
@@ -318,13 +307,26 @@ impl FnCx<'_, '_> {
                 let e = self.setter_assign(obj, Some(op), target, value, as_value, span);
                 return (e, as_value);
             }
+            if let Some(AssignTarget::Indexer(obj)) = checked {
+                let e = self.indexer_assign(obj, Some(op), target, value, as_value, span);
+                return (e, as_value);
+            }
+            if let Some(AssignTarget::Dynamic(obj)) = checked {
+                return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
+            }
+            // A record key has rules of its own (a key may be missing; `record_logical.rs`).
+            if let Some(AssignTarget::Record(obj)) = checked {
+                let (object, key) = super::record::record_parts(target);
+                let e = self.record_logical(obj, object, key, op, value, as_value, span);
+                return (e, as_value);
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
         }
     }
 
-    /// `a ??= b` on a place or record key (`checked` is the target as resolved).
+    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     fn logical_assign(
         &mut self,
         op: ast::BinaryOp,
@@ -347,18 +349,19 @@ impl FnCx<'_, '_> {
             self.expr(value, None, Want::Borrow);
             return self.error_expr(span);
         }
-        // A record key has rules of its own (a key may be missing): the record path handles
-        // every compound form. A target in error is reported once, here.
+        // A target in error is reported once, here.
         match checked {
-            Some(AssignTarget::Record(obj)) => {
-                let (object, key) = super::record::record_parts(target);
-                return self.record_assign(obj, object, key, Some(op), target, value, span);
-            }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
-            Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+            Some(
+                AssignTarget::Place(_)
+                | AssignTarget::Record(_)
+                | AssignTarget::Setter(_)
+                | AssignTarget::Indexer(_)
+                | AssignTarget::Dynamic(_),
+            ) => {}
         }
         let rhs = ast::Expr {
             id: ast::NodeId(u32::MAX),
@@ -387,9 +390,16 @@ impl FnCx<'_, '_> {
                 let e = self.setter_assign(obj, op, target, value, as_value, span);
                 return (e, as_value);
             }
+            Some(AssignTarget::Indexer(obj)) => {
+                let e = self.indexer_assign(obj, op, target, value, as_value, span);
+                return (e, as_value);
+            }
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
                 self.record_assign(obj, object, key, op, target, value, span)
+            }
+            Some(AssignTarget::Dynamic(obj)) => {
+                return self.dynamic_assign(obj, op, target, value, as_value, span);
             }
             None => {
                 self.expr(value, None, Want::Borrow);
@@ -440,15 +450,15 @@ impl FnCx<'_, '_> {
                 self.check_capture_assign(l, target.span);
                 self.unnarrow(l);
             }
-            // Assigning a non-null value narrows the target like a check would (TS).
-            if matches!(v.kind, H::WrapSome(_)) {
-                let token = match place.kind {
-                    H::Local(l, _) => Some(l),
-                    _ => self.field_token(target),
-                };
-                if let Some(t) = token {
-                    self.narrow(&crate::body::narrow::Fact::NonNull(t));
-                }
+            // Assigning narrows the target like a check would (TS): to non-null, or to the
+            // union member assigned (`assign_narrow`).
+            let token = match place.kind {
+                H::Local(l, _) => Some(l),
+                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ => None,
+            };
+            if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
+                self.narrow_to_assigned(t, lty, &v);
             }
             let kind = H::Assign {
                 place: Box::new(place),
@@ -464,7 +474,12 @@ impl FnCx<'_, '_> {
             self.hoist_indices(&mut place, &mut stmts);
             // `s += n`: the number is appended as `String(n)` writes it (#740).
             let v = self.expr(value, Some(lty), Want::Borrow);
-            let v = self.concat_operand(v);
+            // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
+            // conversion to `string`).
+            let v = match self.any_to_source(v) {
+                Ok(a) => self.js_text(a, "a string concatenation"),
+                Err(v) => self.concat_operand(v),
+            };
             let v = self.coerce(v, lty);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
@@ -541,6 +556,13 @@ impl FnCx<'_, '_> {
             }
             Some(AssignTarget::Record(obj)) => {
                 return self.record_update(obj, op, target, as_value, span)
+            }
+            Some(AssignTarget::Indexer(obj)) => {
+                return self.indexer_update(obj, op, prefix, target, as_value, span)
+            }
+            Some(AssignTarget::Dynamic(_)) => {
+                self.dynamic_write_error(span);
+                return self.error_expr(span);
             }
             None => return self.error_expr(span),
         };
@@ -650,7 +672,7 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || is_null(e);
+        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);
@@ -692,14 +714,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if let Some(word) = nothing_word(second) {
-            let n = if word == "null" {
-                Nothing::Null
-            } else {
-                Nothing::Undefined
-            };
-            if self.cx.ty.opt_payload(first.ty).is_none() {
-                return Some(self.cx.ty.option_of(first.ty, n));
+        if let Some(n) = written_nothings(second) {
+            match self.cx.ty.nothing_of(first.ty) {
+                None => return Some(self.cx.ty.option_of(first.ty, n)),
+                // `c ? undefined : x` against a `T | null` (or the reverse): both nothings
+                // (#1218).
+                Some(m) if !n.within(m) => {
+                    let core = self.cx.ty.core(first.ty).unwrap_or(first.ty);
+                    return Some(self.cx.ty.option_of(core, m.join(n)));
+                }
+                Some(_) => {}
             }
         }
         Some(first.ty)
@@ -754,44 +778,20 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `x`, `this.a`, `x.a.b`: re-reading it has no side effects.
-/// A place that reading again has no effect: names, `this`, member paths, and indexes by such
-/// values, literals and arithmetic on them (`xs[i + 1].count`).
-fn is_pure_place(e: &ast::Expr) -> bool {
+/// The `null` / `undefined` literals `e` may give: itself, or the arms of a conditional
+/// (`c ? null : undefined`), so the branch is checked against a type holding them.
+fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
-        ast::ExprKind::Index {
-            object,
-            index,
-            optional: false,
-        } => is_pure_place(object) && is_pure_value(index),
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => is_pure_place(object),
-        ast::ExprKind::Paren(inner) => is_pure_place(inner),
-        _ => is_plain_path(e),
-    }
-}
-
-fn is_pure_value(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Lit(_) => true,
-        ast::ExprKind::Unary { expr, .. } => is_pure_value(expr),
-        ast::ExprKind::Binary { lhs, rhs, .. } => is_pure_value(lhs) && is_pure_value(rhs),
-        _ => is_pure_place(e),
-    }
-}
-
-fn is_plain_path(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => is_plain_path(object),
-        ast::ExprKind::Paren(inner) => is_plain_path(inner),
-        _ => false,
+        ast::ExprKind::Paren(inner) => written_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => {
+            match (written_nothings(then), written_nothings(els)) {
+                (Some(a), Some(b)) => Some(a.join(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        _ => nothing_word(e).map(|w| match w {
+            "null" => Nothing::Null,
+            _ => Nothing::Undefined,
+        }),
     }
 }

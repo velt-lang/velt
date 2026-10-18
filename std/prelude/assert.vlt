@@ -50,3 +50,20 @@ export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected 
 export function __satisfies<T>(value: T): T {
   return value;
 }
+
+/**
+ * `get name() { … }` in an object literal: the parser writes the getter as an arrow passed to
+ * this function. Sema reads it where the literal implements an interface (the getter runs on
+ * each read); this body never runs.
+ */
+export function __object_get<T>(get: () => T): T {
+  return get();
+}
+
+/**
+ * `set name(v) { … }` in an object literal, written as a call of this function (see
+ * `__object_get`).
+ */
+export function __object_set<T>(set: (value: T) => void): (value: T) => void {
+  return set;
+}

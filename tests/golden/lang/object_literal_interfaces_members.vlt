@@ -1,0 +1,77 @@
+// Methods of an object literal implementing an interface given as a conditional of functions
+// that throw different errors, and taken from module constants whose functions throw.
+// Expected output from node.
+interface Src {
+  read(): number;
+}
+
+function f(): number {
+  throw new RangeError("f");
+}
+
+function g(): number {
+  throw new TypeError("g");
+}
+
+function h(): number {
+  return 3;
+}
+
+function pick(c: boolean): Src {
+  return { read: c ? f : g };
+}
+
+function pick3(c: number): Src {
+  return { read: c === 0 ? f : c === 1 ? g : h };
+}
+
+function orArrow(c: boolean): Src {
+  return { read: c ? f : () => 5 };
+}
+
+for (const c of [true, false]) {
+  try {
+    pick(c).read();
+  } catch (e) {
+    console.log((e as Error).name, e instanceof RangeError, e instanceof TypeError);
+  }
+}
+for (const c of [0, 1, 2]) {
+  try {
+    console.log(pick3(c).read());
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+console.log(orArrow(false).read());
+
+const obj = {
+  fn: (): number => {
+    throw new TypeError("member");
+  },
+};
+
+const table = {
+  boom: (): number => {
+    throw new SyntaxError("table");
+  },
+};
+
+function fromObj(): Src {
+  return { read: obj.fn };
+}
+
+function fromTable(): Src {
+  return { read: table["boom"] };
+}
+
+try {
+  fromObj().read();
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}
+try {
+  fromTable().read();
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}

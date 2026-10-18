@@ -1,44 +1,28 @@
-undefined_unsupported.vlt:4:13: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
-undefined_unsupported.vlt:7:10: error: type `null` is not assignable to type `string | undefined` (TypeScript's TS2322)
-undefined_unsupported.vlt:11:10: error: type `undefined` is not assignable to type `string | null` (TypeScript's TS2322)
-undefined_unsupported.vlt:15:13: error: `undefined` with no type to take here is not supported yet (its type would be `undefined` alone)
-undefined_unsupported.vlt:19:19: error: `undefined` alone as a type is not supported yet; write `T | undefined`
-undefined_unsupported.vlt:22:15: error: `JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string) is not supported yet
-undefined_unsupported.vlt:23:18: error: `JSON.parse` into a type that may hold `undefined` is not supported yet
-undefined_unsupported.vlt:27:13: error: `f64 | undefined` as a type argument of `Map` is not supported yet
-undefined_unsupported.vlt:28:3: error: `f64 | undefined` as a type argument of `Map.set` is not supported yet
-undefined_unsupported.vlt:34:16: error: `?.` on a value that may be `undefined`, giving a `Node | null`, is not supported yet
-undefined_unsupported.vlt:39:15: error: `=== undefined` on a `f64 | null` is not supported yet (#930)
-undefined_unsupported.vlt:39:32: error: `!== undefined` on a `f64 | null` is not supported yet (#930)
-undefined_unsupported.vlt:39:58: error: `typeof` compared with "undefined" on a `f64 | null` is not supported yet (#930)
-undefined_unsupported.vlt:44:10: error: `case null` on a value of type `f64 | undefined`, which is never null
-undefined_unsupported.vlt:56:28: error: type `f64 | undefined` is not assignable to type `f64 | null` (TypeScript's TS2322)
-undefined_unsupported.vlt:57:33: error: type `f64 | null` is not assignable to type `f64 | undefined` (TypeScript's TS2322)
-undefined_unsupported.vlt:58:28: error: type `f64 | undefined` is not assignable to type `f64 | null` (TypeScript's TS2322)
-undefined_unsupported.vlt:63:13: error: a cast from `f64 | undefined` to `f64 | null` is not supported yet (#930)
-undefined_unsupported.vlt:64:13: error: a cast from `string | null` to `string | undefined` is not supported yet (#930)
-undefined_unsupported.vlt:68:46: error: a default on a parameter whose type allows `undefined` (`f64 | undefined`) is not supported yet (#930)
-undefined_unsupported.vlt:95:13: error: `string | null` as a type argument of `firstOne` is not supported yet
-undefined_unsupported.vlt:96:13: error: `f64 | null` as a type argument of `Slot` is not supported yet
-undefined_unsupported.vlt:97:13: error: `f64 | undefined` as a type argument of `outer` is not supported yet
-undefined_unsupported.vlt:113:13: error: `f64 | undefined` as a type argument of `sortedBy` is not supported yet (#930)
-undefined_unsupported.vlt:114:13: error: `f64 | undefined` as a type argument of `copySorted` is not supported yet (#930)
-undefined_unsupported.vlt:137:17: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:138:18: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:139:19: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:140:15: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:141:20: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
-undefined_unsupported.vlt:151:15: error: a default for `b`, an optional class field declared `T | null`, is not supported yet (#930)
-undefined_unsupported.vlt:165:23: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:166:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:167:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:168:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:169:45: error: `undefined` as the value of an optional field is not supported yet (#930)
-undefined_unsupported.vlt:170:45: error: `undefined` as the value of an optional field is not supported yet (#930)
-undefined_unsupported.vlt:178:21: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
-undefined_unsupported.vlt:178:54: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
-undefined_unsupported.vlt:179:12: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
-undefined_unsupported.vlt:194:47: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:195:30: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
-undefined_unsupported.vlt:196:53: error: `undefined` as the value of an optional field is not supported yet (#930)
-undefined_unsupported.vlt:201:10: error: a `f64 | null` from the standard library where a `f64 | undefined` is expected is not supported yet (#930)
+undefined_unsupported.vlt:6:10: error: type `null` is not assignable to type `string | undefined` (TypeScript's TS2322)
+undefined_unsupported.vlt:10:10: error: type `undefined` is not assignable to type `string | null` (TypeScript's TS2322)
+undefined_unsupported.vlt:14:15: error: `JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string) is not supported yet
+undefined_unsupported.vlt:15:18: error: `JSON.parse` into a type that may hold `undefined` is not supported yet
+undefined_unsupported.vlt:19:13: error: `f64 | undefined` as a type argument of `Map` is not supported yet
+undefined_unsupported.vlt:20:3: error: `f64 | undefined` as a type argument of `Map.set` is not supported yet
+undefined_unsupported.vlt:25:15: error: `=== undefined` on a `f64 | null` is not supported yet (#930)
+undefined_unsupported.vlt:25:32: error: `!== undefined` on a `f64 | null` is not supported yet (#930)
+undefined_unsupported.vlt:25:58: error: `typeof` compared with "undefined" on a `f64 | null` is not supported yet (#930)
+undefined_unsupported.vlt:30:10: error: `case null` on a value of type `f64 | undefined`, which is never null
+undefined_unsupported.vlt:42:28: error: type `f64 | undefined` is not assignable to type `f64 | null` (TypeScript's TS2322)
+undefined_unsupported.vlt:43:33: error: type `f64 | null` is not assignable to type `f64 | undefined` (TypeScript's TS2322)
+undefined_unsupported.vlt:44:28: error: type `f64 | undefined` is not assignable to type `f64 | null` (TypeScript's TS2322)
+undefined_unsupported.vlt:49:13: error: a cast from `f64 | undefined` to `f64 | null` is not supported yet (#930)
+undefined_unsupported.vlt:50:13: error: a cast from `string | null` to `string | undefined` is not supported yet (#930)
+undefined_unsupported.vlt:54:46: error: a default on a parameter whose type allows `undefined` (`f64 | undefined`) is not supported yet (#930)
+undefined_unsupported.vlt:84:13: error: `f64 | undefined` as a type argument of `outer` is not supported yet
+undefined_unsupported.vlt:100:13: error: `f64 | undefined` as a type argument of `sortedBy` is not supported yet (#930)
+undefined_unsupported.vlt:101:13: error: `f64 | undefined` as a type argument of `copySorted` is not supported yet (#930)
+undefined_unsupported.vlt:124:17: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:125:18: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:126:19: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:127:15: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:128:20: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:152:23: error: `undefined` passed for a parameter with a default is not supported yet (#930)
+undefined_unsupported.vlt:166:21: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
+undefined_unsupported.vlt:167:12: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
+undefined_unsupported.vlt:189:10: error: a `f64 | null` from the standard library where a `f64 | undefined` is expected is not supported yet (#930)

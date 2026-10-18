@@ -86,6 +86,12 @@ impl FnCx<'_, '_> {
         let mut arms = vec![];
         for (v, m) in without {
             let wild = self.pat(P::Wildcard, m, span);
+            // An `IteratorResult<any>` (`Generator<any>`): the dynamic `undefined`, as in JS
+            // (`T | null` of a dynamic `T` is that `T`, which has no `Lit::Null`).
+            let none = match self.cx.dynamic(ty) {
+                Some(_) => self.dynamic_nothing(hir::Nothing::Undefined, ty, span),
+                None => self.mk(H::Lit(hir::Lit::Null), ty, span),
+            };
             arms.push(hir::Arm {
                 pat: self.pat(
                     P::Variant {
@@ -97,7 +103,7 @@ impl FnCx<'_, '_> {
                     span,
                 ),
                 guard: None,
-                body: self.mk(H::Lit(hir::Lit::Null), ty, span),
+                body: none,
             });
         }
         for (v, m, i, fty) in fields {

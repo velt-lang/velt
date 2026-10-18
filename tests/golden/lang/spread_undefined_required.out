@@ -1,0 +1,2 @@
+{ name: 'ann', nick: 'b', note: 'n' }
+{ name: 'ann', nick: 'a', note: null }

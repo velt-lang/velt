@@ -1,0 +1,14 @@
+// Bytes from `fetch` in a program that never names `Uint8Array`: lengths, positions and
+// elements are still numbers (the globals behind them load because std imports them).
+async function main() {
+  const b = await new Response("abc").bytes();
+  const s = 2.5;
+  console.log(b.length / 2 / s, b[0] * 0.5, b.indexOf(98) * 1.5, b.byteLength + 0.5);
+  const buf = await new Response("hello").arrayBuffer();
+  console.log(buf.byteLength / 2);
+  let total = 0;
+  for (let i = 0; i < b.length; i++) {
+    total += b[i] / 2;
+  }
+  console.log(total);
+}

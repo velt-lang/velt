@@ -57,3 +57,15 @@ Reading it:
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.
+
+## Hex
+
+`hex` is `velt:encoding`'s `hexEncode` and `hexDecode` against the `hex` crate. Instructions
+executed (cachegrind, Linux arm64, `VELT_THREADS=1`):
+
+| benchmark | Velt before | Velt | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|
+| hex | 9,179 M | 2,285 M | 17,420 M | 0.13 |
+
+The Velt code works on SIMD vectors (docs/std/simd.md), sixteen bytes per step when encoding
+and 32 digits when decoding; the crate goes digit by digit through a table.

@@ -218,6 +218,20 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
   links or co-author trailers, in the description or in your commits.
+- The required check **`hygiene`** (`cargo xtask pr-lint`, `.github/workflows/hygiene.yml`)
+  enforces that on the title, the description and every commit. It fails on tool footers
+  (`Generated with …`) and trailers (`Co-authored-by:`), links to chat or agent sessions,
+  absolute machine paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`,
+  `/private/tmp/…`), review-process wording ("review round", "addressed the review", "Stacked on
+  #N": say these in a comment), and commits not by the pull request's author: GitHub must
+  attribute each commit to the author's account (any email verified there; the GitHub noreply
+  address `<id>+<login>@users.noreply.github.com` keeps it private), or its email must be in the
+  repository variable `PR_LINT_AUTHORS`. Merge commits, such as "Update branch", are not checked
+  for authorship. Text in code spans and blocks is exempt from the wording rules, but not from
+  the path rule or from whole session URLs.
+  Editing the description re-runs it. Before opening a pull request, check the description
+  locally: `cargo xtask pr-lint --title "<title>" --body-file <file>` (commits since
+  `origin/main` and `git config user.email` by default).
 - **Dependent changes** go in a stack of pull requests (the
   [gh-stack](https://github.com/github/gh-stack) extension: `gh extension install
   github/gh-stack`). Start one with `gh stack init`, `gh stack add` and `gh stack submit`, or join

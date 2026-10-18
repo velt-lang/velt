@@ -175,6 +175,7 @@ impl<'a> Parser<'a> {
             extends,
             fields: vec![],
             methods: vec![],
+            call_sigs: vec![],
         };
         let mut index = None;
         self.parse_members(|p| {
@@ -191,7 +192,8 @@ impl<'a> Parser<'a> {
                 p.add_index_signature(&mut index, sig);
                 return p.expect_member_end();
             }
-            if p.skip_call_signature() {
+            if let Some(sig) = p.parse_call_signature()? {
+                decl.call_sigs.push(sig);
                 return p.expect_member_end();
             }
             p.parse_interface_member(&mut decl)
@@ -220,9 +222,9 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(|f| ObjectTypeField {
                 name: f.name,
-                // An object type's optional field has the `| null` an interface's leaves out.
+                // An object type's optional field has the `| undefined` an interface's leaves out.
                 ty: if f.optional {
-                    super::types::or_null(f.ty)
+                    super::types::or_undefined(f.ty)
                 } else {
                     f.ty
                 },
@@ -232,13 +234,23 @@ impl<'a> Parser<'a> {
             })
             .collect();
         let span = self.span_from(lo);
+        let mut ty = TypeExpr {
+            kind: index.into_type(fields),
+            span,
+        };
+        if !decl.call_sigs.is_empty() {
+            ty = TypeExpr {
+                kind: TypeExprKind::Callable {
+                    sigs: decl.call_sigs,
+                    members: Box::new(ty),
+                },
+                span,
+            };
+        }
         Ok(ItemKind::TypeAlias(TypeAlias {
             name: decl.name,
             generics: decl.generics,
-            ty: TypeExpr {
-                kind: index.into_type(fields),
-                span,
-            },
+            ty,
         }))
     }
 

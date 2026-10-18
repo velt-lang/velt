@@ -1,0 +1,25 @@
+// Two equally specific `extend` blocks of a base class are ambiguous on a subclass receiver too.
+class Base<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+class Sub extends Base<string> {}
+
+extend Base<string> {
+  m(): string {
+    return "one";
+  }
+}
+
+extend Base<string> {
+  m(): string {
+    return "two";
+  }
+}
+
+function main() {
+  console.log(new Sub("a").m());
+}

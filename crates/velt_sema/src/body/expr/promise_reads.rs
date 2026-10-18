@@ -30,7 +30,7 @@ impl FnCx<'_, '_> {
     /// Is `t` a promise (possibly `| null`) itself, which a by-reference binding could only be
     /// awaited through, not an object that holds one (whose other fields read in place)?
     pub(in crate::body) fn binds_promise(&mut self, t: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let t = self.cx.ty.core(t).unwrap_or(t);
         matches!(self.cx.ty.kind(t), TyKind::Promise(..))
     }
 

@@ -1,0 +1,18 @@
+1.5 hi true null undefined Point { x: 1, y: 2 } [ 1, 2, 3 ]
+[ 'number', 'string', 'boolean', 'object', 'undefined' ]
+[ 'object', 'object', 'function' ]
+2.5 hi! false 1 true
+null hi
+1 true
+[
+  false, true,  false,
+  true,  false, false,
+  false, true,  false,
+  true,  true
+]
+true true false true false
+true false false true true false
+true false false true true false
+43
+string 4
+42

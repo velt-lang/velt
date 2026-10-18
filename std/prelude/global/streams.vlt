@@ -1,0 +1,10 @@
+// Global (loaded when a module names one of these): WHATWG streams, as in Node
+// (docs/std/streams.md).
+export {
+  ReadableStream,
+  ReadableStreamDefaultController,
+  ReadableStreamDefaultReader,
+  ReadableStreamReadResult,
+  UnderlyingSource,
+  QueuingStrategy,
+} from "velt:streams";

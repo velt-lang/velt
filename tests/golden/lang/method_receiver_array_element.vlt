@@ -1,0 +1,38 @@
+// check: no leaks
+// A method called on an array element, whose body empties or overwrites the array (#1188): a
+// module array emptied or overwritten, and an array in a module `let` the method replaces.
+// Each case has a class of its own. Identical to Node.
+class ItemA {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  popAll(): string { itemsA.length = 0; return this.label + " popped"; }
+}
+const itemsA: ItemA[] = [];
+class ItemB {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  replace(): string { itemsB[0] = new ItemB("replacement"); return this.label + " replaced"; }
+}
+const itemsB: ItemB[] = [];
+class ItemC {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  swap(): string { lists = [[new ItemC("other")]]; return this.label + " swapped"; }
+}
+let lists: ItemC[][] = [[new ItemC("list" + String(1))]];
+class ItemD {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  splice(): string { removeFirst(); return this.label + " spliced"; }
+}
+let itemsD: ItemD[] = [new ItemD("d" + String(1)), new ItemD("d" + String(2))];
+function removeFirst(): void { itemsD.splice(0, 1); }
+
+function main(): void {
+  itemsA.push(new ItemA("a" + String(1)));
+  console.log(itemsA[0].popAll(), itemsA.length);
+  itemsB.push(new ItemB("b" + String(1)));
+  console.log(itemsB[0].replace(), itemsB[0].label);
+  console.log(lists[0][0].swap(), lists[0][0].label);
+  console.log(itemsD[0].splice(), itemsD.length, itemsD[0].label);
+}

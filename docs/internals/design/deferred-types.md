@@ -130,14 +130,21 @@ gives and `FieldInfo::declared` the written type):
   (TS2322 both ways); it does accept `{ a: F | null }` as `{ a?: F | null }` (decision 7).
   The mismatch suggests `{ ...x }`.
 
+Since #930 phase 2, `a?: F` reads as `F | undefined` and `a?: F | null` as
+`F | null | undefined`, as in TypeScript, and every optional field of an object type or
+field-only interface keeps the presence flag, so an absent key and a key holding `undefined` stay
+apart as in Node (a spread copies a present `undefined`, `JSON.stringify` leaves it out). The
+table and the bullets above describe the state before it.
+
 Representation: `hir::FieldDef` has `optional` (#583) and gains `presence`. A presence field's
 flag is a `bool` stored after the fields of the VIR aggregate (`Cx::presence_slot`, part of the
 aggregate's parts, so copy, clone and equality glue carry it). A literal leaves the field absent
 with `Intrinsic::FieldAbsent`, any write sets the flag, and spreads read it with
 `Intrinsic::FieldPresent`.
 
-Not covered by P2: classes (an optional class field is absent while it is `null`, so a class's
-`a?: F | null` doesn't keep the two apart; decision 8), and a generic object type whose
+Not covered by P2: classes (before #930 phase 2 an optional class field was absent while it
+was `null`, so a class's `a?: F | null` didn't keep the two apart; decision 8; now it starts as
+an own key holding `undefined`, as in Node), and a generic object type whose
 field is `a?: T`, instantiated at a nullable `T` only inside generic code that sema never
 substitutes, so that no concrete def of the nullable shape exists: lowering lays that instance
 out without the flag. The create-on-demand shape table of step 4 closes this gap.
@@ -164,7 +171,7 @@ getter, as in TypeScript. Write `B(T)` for the fields the bounds declare. Inside
 | `Required` | clears `?` only (P2) | done with P2 |
 | `Readonly<X>` | readonly field flags, erased before lowering like any readonly type (R4) | as merged |
 | `Pick`, `Omit`, `keyof` of a union | the common keys; each field's type is the union of the members' types | was an error |
-| Indexed access `X[K]` | the union of the fields' types; an optional field contributes `F \| null` | as merged (#649) |
+| Indexed access `X[K]` | the union of the fields' types; an optional field contributes `F \| undefined` (`F \| null` before #930 phase 2) | as merged (#649) |
 | Class instance → object type | error with the fix-it `{ ...x }` | fix-it changed |
 
 `keyof X` is the union of `X`'s keys as literal types: string literals, and number literals for
@@ -345,10 +352,9 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 | TypeScript | Velt | Why |
 |---|---|---|
 | `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` (same object) | in storage positions an error suggesting `{ ...x }`; parameters: #672 | different layouts; a conversion makes a new object |
-| `{ a: F \| null }` assignable to `{ a?: F \| null }` | error suggesting `{ ...x }` (decision 7) | the second has a presence flag |
+| `{ a: F \| undefined }` assignable to `{ a?: F }`, and `{ a: F \| null }` to `{ a?: F \| null }` | error suggesting `{ ...x }` (decision 7) | the second has a presence flag |
 | `x[k] = v` with a union `K` stores any member | panics when the member doesn't match | it would store a value of the wrong type |
-| a patch `{ name: undefined }` removes `name` | an error (`undefined` for an optional field is not supported yet); `null` is absent only for `a?: F` without `null` | an optional field still holds `null` for absent (#930 phase 2) |
-| an optional class field without an initializer is an own key holding `undefined`, so spreading the instance clears the target's field | it is absent and isn't copied | an optional field still holds `null` for absent (#930 phase 2) |
+| a spread of `Partial<T>` back into a `T` copies a present `undefined` into a required field at run time (Node) | stops with a `TypeError` (an absent field keeps the earlier value) | the field cannot hold `undefined` |
 
 ## Cost
 
@@ -417,7 +423,10 @@ these answers:
    standard `pick` compiles unchanged, at one presence test per field at the conversion.
 6. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
    #350, is a deferred operator, `TyOp::Intersect`, reduced by `crate::intersections` at
-   instantiation, in step 4; the spread is a `DeferredObject` like `update`'s.
+   instantiation, in step 4; the spread is a `DeferredObject` like `update`'s. Landed first, ahead
+   of step 4: `TyOp::Intersect`, its reduction at every instantiation (`type_level::instances`,
+   `Program::type_ops`) and inference through it. Member access by name, conversion to a part
+   and the `DeferredObject` spread in generic bodies still wait for step 4.
 7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
    error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
    parameters); types.md lists it as a difference from TypeScript.
@@ -448,5 +457,11 @@ these answers:
 
 ## Not proposed
 
-- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`).
+- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`). Since #934
+  phase 1 they are evaluated where their type arguments are known (`velt_sema::type_level`).
+  Since phase 2, an alias whose body needs an argument that is still a type parameter is the
+  stuck operator `TyOp::Alias` (`TyKind::Op`), reduced by `Ctx::canon` once its arguments are
+  concrete; `type_level::instances` reduces each one an instantiation reaches, and lowering reads
+  the reductions from `hir::Program::type_ops`. This is the first `TyKind::Op`; step 4's
+  operators join the same `TyOp`.
 - Re-checking generic bodies per instantiation (C++ templates).

@@ -166,6 +166,8 @@ impl Printer<'_> {
                 format!("{}{}", self.generics(type_params), self.ty(ty))
             }
             TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
+            TypeExprKind::TupleRest(ty) => format!("...{}", self.ty(ty)),
+            TypeExprKind::TupleOptional(ty) => format!("{}?", self.ty(ty)),
             TypeExprKind::Union(members) => {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")
@@ -177,7 +179,12 @@ impl Printer<'_> {
             TypeExprKind::Indexed { object, key } => {
                 format!("{}[{}]", self.ty_operand(object), self.ty(key))
             }
-            TypeExprKind::Literal(_) => self.flat(t.span),
+            TypeExprKind::Literal(_)
+            | TypeExprKind::Conditional(_)
+            | TypeExprKind::Infer(_)
+            | TypeExprKind::Mapped(_)
+            | TypeExprKind::TemplateLiteral { .. }
+            | TypeExprKind::Callable { .. } => self.flat(t.span),
             TypeExprKind::Object(fields) => {
                 if fields.is_empty() {
                     return "{}".into();
@@ -239,14 +246,14 @@ impl Printer<'_> {
         }
     }
 
-    /// The type of `name?: T` as written: the parser added `| null`.
+    /// The type of `name?: T` as written: the parser added a zero-width `| undefined`.
     fn ty_optional(&self, t: &TypeExpr) -> String {
         let TypeExprKind::Union(members) = &t.kind else {
             return self.ty(t);
         };
         let members: Vec<String> = members
             .iter()
-            .filter(|m| !matches!(m.kind, TypeExprKind::Null))
+            .filter(|m| !(matches!(m.kind, TypeExprKind::Undefined) && m.span.lo == m.span.hi))
             .map(|m| self.ty_operand(m))
             .collect();
         members.join(" | ")

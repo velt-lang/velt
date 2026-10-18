@@ -1,0 +1,85 @@
+// A `with` callback cannot reach module state: `with` blocks the thread while it waits, and a
+// task holds the module lock for its whole step, so two tasks could wait for each other.
+let count = 0;
+const names = new Map<string, number>();
+function bump(): number {
+  count++;
+  return count;
+}
+function viaBump(): number {
+  return bump();
+}
+// Code that runs without a call: field initializers, and the hooks std and drops call.
+class Counted {
+  n: number = ++count;
+}
+class Plain {
+  n: number = 1;
+}
+class Json {
+  toJSON(): number {
+    return count;
+  }
+}
+class Text {
+  toString(): string {
+    return `${count}`;
+  }
+}
+class Disposed {
+  [Symbol.dispose](): void {
+    count++;
+  }
+}
+function* ticks(): Generator<number> {
+  yield count;
+}
+const cmps: ((a: number, b: number) => number)[] = [(a, b) => a - b + count];
+function main() {
+  const m = new Mutex<number>(0);
+  m.with((v) => {
+    v = v + count;
+  });
+  m.with((v) => {
+    v = viaBump();
+  });
+  m.with((v) => {
+    v = names.size;
+  });
+  const f = (): number => 1;
+  m.with((v) => {
+    v = f();
+  });
+  m.with((v) => {
+    v = new Counted().n;
+  });
+  m.with((v) => {
+    const a = [3, 1, 2];
+    a.sort(cmps[0]);
+    v = a[0];
+  });
+  m.with((v) => {
+    v = JSON.stringify(new Json()).length;
+  });
+  m.with((v) => {
+    v = [new Text()].join(",").length;
+  });
+  m.with((v) => {
+    {
+      using d = new Disposed();
+    }
+    v = 1;
+  });
+  const g = ticks();
+  m.with((v) => {
+    v = g.next().value ?? 0;
+  });
+  m.with((v) => {
+    const a = [3, 1, 2];
+    a.sort((x, y) => x - y);
+    v = new Plain().n + a[0];
+  });
+  m.with((v) => {
+    v = v + 1;
+  });
+}

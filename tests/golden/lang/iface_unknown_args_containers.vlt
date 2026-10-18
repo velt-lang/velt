@@ -1,0 +1,73 @@
+// check: no leaks
+// `Map<unknown, unknown>`, `Set<unknown>` and `unknown[]` as type arguments of a generic
+// interface converted to `unknown` arguments (#1153), the shapes of a serializer's handler table:
+// the method gets a map, set or array of any element types. It works on a copy holding the
+// elements boxed, written back when it returns, so the caller sees its changes as in Node.
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+class P {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+const mapSize: Handler<Map<unknown, unknown>, number> = {
+  name: "map",
+  serialize: (m) => m.size,
+};
+const setItems: Handler<Set<unknown>, unknown[]> = { name: "set", serialize: (s) => [...s] };
+const arrLength: Handler<unknown[], number> = { name: "arr", serialize: (v) => v.length };
+const mapEntries: Handler<Map<unknown, unknown>, [unknown, unknown][]> = {
+  name: "entries",
+  serialize: (m) => [...m.entries()],
+};
+const mapAdd: Handler<Map<unknown, unknown>, number> = {
+  name: "mapAdd",
+  serialize: (m) => {
+    m.set("z", new P(26));
+    m.delete("a");
+    return m.size;
+  },
+};
+const setAdd: Handler<Set<unknown>, number> = {
+  name: "setAdd",
+  serialize: (s) => {
+    s.add("r");
+    return s.size;
+  },
+};
+const arrWrite: Handler<unknown[], number> = {
+  name: "arrWrite",
+  serialize: (v) => {
+    v[0] = 100;
+    return v.length;
+  },
+};
+
+function main(): void {
+  const all: Handler[] = [mapSize, setItems, arrLength, mapEntries, mapAdd, setAdd, arrWrite];
+  const m = new Map<string, P>([
+    ["a", new P(1)],
+    ["b", new P(2)],
+  ]);
+  const s = new Set<string>(["x", "y", "x"]);
+  const xs = [1, 2, 3];
+  console.log(all[0].name, all[0].serialize(m));
+  console.log(all[1].name, all[1].serialize(s));
+  console.log(all[2].name, all[2].serialize(xs));
+  const entries = all[3].serialize(m) as [unknown, unknown][];
+  console.log(all[3].name, entries.length, entries[0][0], (entries[1][1] as P).x);
+  const b = m.get("b");
+  console.log(all[4].name, all[4].serialize(m), m.size, m.has("a"), m.get("z")?.x, m.get("b") === b);
+  console.log(all[5].name, all[5].serialize(s), s.size, s.has("r"));
+  console.log(all[6].name, all[6].serialize(xs), xs[0], xs.length);
+  for (const h of all) {
+    if (h.name == "map") {
+      console.log(h.serialize(new Map<number, boolean>([[1, true]])));
+    }
+  }
+}

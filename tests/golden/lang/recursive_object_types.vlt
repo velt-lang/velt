@@ -34,7 +34,7 @@ function sum(n: Node | null): number {
   let cur = n;
   while (cur != null) {
     total += cur.value;
-    cur = cur.next;
+    cur = cur.next ?? null;
   }
   return total;
 }

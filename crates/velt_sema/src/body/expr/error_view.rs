@@ -107,7 +107,11 @@ impl FnCx<'_, '_> {
         }
         let v = self.mk(H::Local(l, mode), payload, span);
         let some = self.js_text(v, what);
-        let word = self.cx.ty.nothing_of(h.ty).map_or("null", |n| n.word());
+        // A `T | null | undefined`'s own nothing is `undefined` (its payload is the `T | null`).
+        let word = match self.cx.ty.nothing_of(h.ty) {
+            Some(crate::hir::Nothing::Both) => "undefined",
+            n => n.map_or("null", |n| n.word()),
+        };
         let none = self.str_lit(word, span);
         let sty = h.ty;
         let bind = self.pat(P::Binding(l, mode), payload, span);

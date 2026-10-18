@@ -62,7 +62,9 @@ impl FnLower<'_, '_> {
         shown
             .iter()
             .zip(flags)
-            .map(|((_, _, t), opt)| opt && matches!(self.cx.kind(*t), TyKind::Option(..)))
+            .map(|((_, _, t), opt)| {
+                opt && (matches!(self.cx.kind(*t), TyKind::Option(..)) || self.cx.is_dynamic(*t))
+            })
             .collect()
     }
 
@@ -192,7 +194,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Whether optional field `index` (at `fp`, of type `t`) of `ty` is present: its presence
-    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null`.
+    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null` (`undefined`
+    /// for an `a?: any`).
     fn field_present(&mut self, fp: &Place, ty: TyId, index: u32, t: TyId) -> Operand {
         match self.cx.presence_slot(ty, index) {
             Some(slot) => {
@@ -202,6 +205,8 @@ impl FnLower<'_, '_> {
                 }
                 Operand::Copy(f)
             }
+            // `a?: any`: present unless it holds `undefined`.
+            None if self.cx.is_dynamic(t) => self.any_defined(fp),
             None => self.option_is_some(fp, t),
         }
     }

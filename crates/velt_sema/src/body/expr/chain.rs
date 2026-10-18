@@ -26,7 +26,8 @@ impl FnCx<'_, '_> {
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
         let span = e.span;
-        let s = self.expr(object, None, Want::Borrow);
+        let s = self.test_operand(object, None, Want::Borrow);
+        let s = self.flatten_chain(s);
         if self.cx.ty.is_bottom(s.ty) {
             // The rest is still checked (its own errors), on the link's object bound as an
             // error value: the synthetic name must not be reported as unknown.
@@ -39,14 +40,24 @@ impl FnCx<'_, '_> {
             self.pop_scope();
             return Some(self.error_expr(span));
         }
-        let payload = self.cx.ty.opt_payload(s.ty);
+        let payload = self.present_payload(s.ty);
+        // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
+        let dynamic = self
+            .cx
+            .dynamic(s.ty)
+            .is_some_and(|d| d != crate::any::Dynamic::Unknown);
         let (l, mode) = self.option_binding(&s, payload.unwrap_or(s.ty), &name, false);
         self.push_scope();
         if let Some(scope) = self.f.scopes.last_mut() {
             scope.names.insert(name, l);
         }
-        let r = self.expr(&rest, if payload.is_some() { None } else { exp }, want);
+        let known = payload.is_some() || dynamic;
+        let r = self.expr(&rest, if known { None } else { exp }, want);
         self.pop_scope();
+        if dynamic {
+            // `a?.b.c` on an `any` `a`: `undefined` when `a` is `null` or `undefined`.
+            return Some(self.dynamic_chain_match(s, l, mode, r, span));
+        }
         Some(match payload {
             Some(p) => self.chain_match(s, l, mode, p, r, span),
             None => {
@@ -65,6 +76,74 @@ impl FnCx<'_, '_> {
                 self.mk(kind, ty, span)
             }
         })
+    }
+
+    /// An optional chain whose rest gives a `T | null`, so that the chain is a
+    /// `T | null | undefined` (`item.get("tags")?.at(0)`), as a `T | null` where the
+    /// difference doesn't matter: the object of another optional link
+    /// (`item.get("tags")?.at(0)?.asString()`) and the left side of `??` treat both nothings
+    /// alike. The chain's short-circuit then gives `null` and its rest is not wrapped, which
+    /// saves building and testing the three-state value. Anything else is returned as it is.
+    pub(super) fn flatten_chain(&mut self, s: hir::Expr) -> hir::Expr {
+        match self.cx.ty.opt_payload(s.ty) {
+            Some(mid) if self.is_three_state(s.ty) && flattens(&s, mid) => self.flatten_to(s, mid),
+            _ => s,
+        }
+    }
+
+    /// [`Self::flatten_chain`] of `s`, which [`flattens`] to `mid`.
+    fn flatten_to(&mut self, s: hir::Expr, mid: TyId) -> hir::Expr {
+        let span = s.span;
+        match s.kind {
+            // The chain after the statements that evaluate its receiver's temporaries.
+            H::Block(mut b) => {
+                if let Some(value) = b.value.take() {
+                    b.value = Some(Box::new(self.flatten_to(*value, mid)));
+                }
+                self.mk(H::Block(b), mid, span)
+            }
+            H::Match {
+                scrutinee,
+                mut arms,
+            } => {
+                let (Some(mut none_arm), Some(mut some_arm)) = (arms.pop(), arms.pop()) else {
+                    unreachable!("ICE: a chain's match has two arms");
+                };
+                some_arm.body = match some_arm.body.kind {
+                    H::WrapSome(inner) => *inner,
+                    // A chain continued past another link (`a?.b()?.c()` checked as one chain):
+                    // its rest is a chain of its own.
+                    _ => self.flatten_to(some_arm.body, mid),
+                };
+                none_arm.body = self.mk(H::Lit(hir::Lit::Null), mid, span);
+                let kind = H::Match {
+                    scrutinee,
+                    arms: vec![some_arm, none_arm],
+                };
+                self.mk(kind, mid, span)
+            }
+            _ => unreachable!("ICE: `flattens` accepted only blocks and matches"),
+        }
+    }
+}
+
+/// Is `e` an optional chain's short-circuit whose rest gives `mid` (a `T | null`) wrapped as a
+/// `T | null | undefined` ([`FnCx::flatten_chain`]): `match (o) { l => rest, _ => undefined }`,
+/// where `rest` is `WrapSome` of a `mid` value or such a chain itself, possibly after a block's
+/// statements.
+fn flattens(e: &hir::Expr, mid: TyId) -> bool {
+    match &e.kind {
+        H::Block(b) => b.value.as_ref().is_some_and(|v| flattens(v, mid)),
+        H::Match { arms, .. } => {
+            arms.len() == 2
+                && arms.iter().all(|a| a.guard.is_none())
+                && matches!(arms[1].body.kind, H::Lit(hir::Lit::Null))
+                && match &arms[0].body.kind {
+                    H::WrapSome(inner) => inner.ty == mid,
+                    _ => arms[0].body.ty == e.ty && flattens(&arms[0].body, mid),
+                }
+        }
+        _ => false,
     }
 }
 

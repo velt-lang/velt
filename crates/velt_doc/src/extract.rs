@@ -250,7 +250,8 @@ fn declared_name(item: &Item) -> Option<&String> {
         ItemKind::Extend(_)
         | ItemKind::Import(_)
         | ItemKind::ExternFn(_)
-        | ItemKind::Augment(_) => return None,
+        | ItemKind::Augment(_)
+        | ItemKind::Namespace(_) => return None,
     })
 }
 
@@ -336,7 +337,10 @@ impl Source<'_> {
                     ..leaf(Kind::Extension, &target, &e.generics, doc)
                 }
             }
-            ItemKind::Import(_) | ItemKind::ExternFn(_) | ItemKind::Augment(_) => return None,
+            ItemKind::Import(_)
+            | ItemKind::ExternFn(_)
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => return None,
         })
     }
 
@@ -399,6 +403,12 @@ impl Source<'_> {
             i.methods
                 .iter()
                 .map(|m| self.member_fn(Kind::Method, &m.sig)),
+        );
+        // Call signatures, as `(x: T): R`.
+        members.extend(
+            i.call_sigs
+                .iter()
+                .map(|s| self.member_fn(Kind::Method, &s.sig)),
         );
         DocItem {
             signature: self.printer.type_header(

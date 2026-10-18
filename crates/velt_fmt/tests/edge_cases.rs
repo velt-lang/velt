@@ -319,3 +319,29 @@ fn private_names() {
 }",
     );
 }
+
+#[test]
+fn an_optional_function_field_keeps_its_unparenthesized_form() {
+    // `get?: (t: any) => any` is valid TypeScript (lib.es2015.proxy.d.ts writes it so).
+    holds(
+        "type H = {
+  get?: (target: any, p: string, receiver: any) => any;
+  has?: (target: any, p: string) => boolean;
+  f?: (() => void) | null;
+};
+",
+    );
+    holds("function f(cb?: (x: i64) => void) {}\n");
+    let out = velt_fmt::format_source("type H = { g?: ((x: i64) => i64) };\n").unwrap();
+    assert_eq!(out, "type H = { g?: (x: i64) => i64 };\n");
+}
+
+/// `p?: T | null | undefined` and `p?: T | null` keep their written `null` (#930): without it the
+/// parameter would be a `T | undefined`.
+#[test]
+fn optional_parameters_with_both_nothings() {
+    holds(
+        "function f(p?: string | null | undefined, q?: number | undefined, r?: number | null) {}
+const g = (p?: string | null | undefined) => p;",
+    );
+}

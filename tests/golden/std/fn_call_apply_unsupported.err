@@ -1,0 +1,7 @@
+`call` with this `this` is not supported yet: a method read as a value keeps the object it was read from
+`call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+`apply` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+`call` with this `this` is not supported yet: a method read as a value keeps the object it was read from
+`call` with this `this` is not supported yet: a static method that uses `this` runs on its class
+`call` with this `this` is not supported yet: this variable holds a method read as a value, which keeps the object it was read from
+`call` with this `this` is not supported yet: `Promise`'s static methods make their value with `this`, which must be `Promise`

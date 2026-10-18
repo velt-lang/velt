@@ -1,0 +1,140 @@
+// More orders in which an object literal's methods reach a `catch` around a call through the
+// interface: the catching function also builds a literal holding a function and comes first; a
+// literal's method and the catching function call each other; a method given as a named
+// function or as shorthand; a method that calls through its own interface; a class and a literal
+// implementing one interface. Expected output from node.
+interface Src {
+  read(): number;
+}
+
+function drive(x: Src): string {
+  const opts = { tag: () => "x" };
+  try {
+    return opts.tag() + String(x.read());
+  } catch (e) {
+    return "caught " + (e as Error).message;
+  }
+}
+
+function later(): Src {
+  return {
+    read() {
+      throw new RangeError("later");
+    },
+  };
+}
+
+console.log(drive(later()));
+
+interface Counted {
+  read(n: number): number;
+}
+
+function count(x: Counted, n: number): number {
+  try {
+    return x.read(n);
+  } catch (e) {
+    return -1;
+  }
+}
+
+function counted(): Counted {
+  return {
+    read(n: number): number {
+      if (n <= 0) throw new RangeError("z");
+      return count(counted(), n - 1) + 1;
+    },
+  };
+}
+
+console.log(count(counted(), 3));
+
+interface Named {
+  read(): number;
+}
+
+function named(x: Named): string {
+  try {
+    return String(x.read());
+  } catch (e) {
+    return "caught " + (e as Error).message + " " + (e instanceof RangeError);
+  }
+}
+
+function boom(): number {
+  throw new RangeError("named");
+}
+
+function viaName(): Named {
+  return { read: boom };
+}
+
+function viaShorthand(): Named {
+  const read = (): number => {
+    throw new RangeError("short");
+  };
+  return { read };
+}
+
+console.log(named(viaName()));
+console.log(named(viaShorthand()));
+
+interface Chain {
+  next(): Chain | null;
+  read(): number;
+}
+
+function total(c: Chain): string {
+  try {
+    return String(c.read());
+  } catch (e) {
+    return "caught " + (e as Error).message + " " + (e instanceof TypeError);
+  }
+}
+
+function chain(n: number): Chain {
+  return {
+    next: () => (n > 0 ? chain(n - 1) : null),
+    read(): number {
+      const rest = this_next(n);
+      if (rest === null) throw new TypeError("end");
+      return n + rest.read();
+    },
+  };
+}
+
+function this_next(n: number): Chain | null {
+  return n > 0 ? chain(n - 1) : null;
+}
+
+console.log(total(chain(3)));
+
+interface Shape {
+  area(): number;
+}
+
+function measure(s: Shape): string {
+  try {
+    return String(s.area());
+  } catch (e) {
+    if (e instanceof SyntaxError) return "syntax " + e.message;
+    return "other " + (e as Error).message;
+  }
+}
+
+function blob(): Shape {
+  return {
+    area() {
+      throw new SyntaxError("blob");
+    },
+  };
+}
+
+class Square implements Shape {
+  area(): number {
+    throw new EvalError("square");
+  }
+}
+
+console.log(measure(blob()));
+console.log(measure(new Square()));

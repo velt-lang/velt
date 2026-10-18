@@ -1,0 +1,28 @@
+// Calling an optional member of function type without a check that narrows it is an error,
+// as in TypeScript ("cannot invoke an object which is possibly undefined", #1206).
+interface Config {
+  onError?: (err: Error) => boolean;
+}
+
+function unchecked(config: Config, err: Error): boolean {
+  return config.onError(err);
+}
+
+function reassigned(config: Config, err: Error): boolean {
+  if (config.onError) {
+    config = {};
+    return config.onError(err);
+  }
+  return false;
+}
+
+function otherBranch(config: Config, err: Error): boolean {
+  if (config.onError) {
+    return true;
+  }
+  return config.onError(err);
+}
+
+function main() {
+  console.log(unchecked({}, new Error("x")), reassigned({}, new Error("y")), otherBranch({}, new Error("z")));
+}

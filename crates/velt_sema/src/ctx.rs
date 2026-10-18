@@ -8,7 +8,7 @@ use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
 use crate::hir::{AdtKind, Def, DefId, ImplDef, TyId, TyKind};
-use crate::types::{int_name, Types};
+use crate::types::{display_key, int_name, Types};
 use crate::SourceModule;
 
 /// A name visible at module level.
@@ -47,9 +47,11 @@ pub(crate) struct Ctx<'m> {
     pub aliases: Vec<AliasInfo<'m>>,
     pub extensions: Vec<Extension>,
     pub impls: Vec<ImplDef>,
+    /// Interfaces written through and their setter slots (`crate::iface_writes`).
+    pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
-    /// Anonymous object types by shape.
     /// Anonymous object defs by shape: field names, declared types and flags, in order.
     pub anon: HashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
@@ -79,26 +81,30 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
-    /// The program (not std) writes `undefined`, as a type or a value. The checks that only
-    /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
-    /// skipped otherwise; the type table alone cannot tell, since the prelude declares
-    /// `Array<T | undefined>.sort`.
+    /// The state of type-level evaluation (`crate::type_level`).
+    pub(crate) type_level: crate::type_level::State,
+    /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
+    /// a `toJSON()` returning `undefined`) are skipped (the prelude uses `T | undefined` itself).
     pub writes_undefined: bool,
-    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
-    /// now: a utility type in a field type shapes the type it reads first, whatever the
-    /// declaration order.
+    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
+    /// a utility type in a field type shapes the type it reads first, whatever the order.
     pub shaped: HashSet<DefId>,
     pub shaping: Vec<DefId>,
     /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
     pub laid_out: HashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: HashMap<TyId, TyId>,
-    /// Object types the replaced-holder check (`crate::replaced_holders`) accepted assignments
-    /// for because they are shared: lowering counts them from its first pass
-    /// (`hir::Program::counted_objects`).
+    /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
+    /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
+    pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
+    pub promoted_consts: HashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
+    pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
+    pub recursive_unions: HashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: HashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -117,16 +123,25 @@ pub(crate) struct Ctx<'m> {
     pub closure_counts: HashMap<String, u32>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
-    /// Named functions used as values (`FnRef`) with their type arguments, checked after
-    /// ownership inference.
+    /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
+    /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
+    pub literal_hosts: crate::body::literal_hosts::LiteralHosts,
+    /// What the methods of the object literals being checked throw, by interface slot, before
+    /// their implementations exist (`body/expr/iface_object.rs`; read by `crate::throws`).
+    pub provisional_slots: Vec<(DefId, u32, Vec<crate::defs::ThrowSrc>)>,
+    /// The adapters converting generic interface values to `unknown` type arguments
+    /// (`body/expr/iface_adapt.rs`), made on first use.
+    pub iface_adapters: HashMap<
+        crate::body::expr::iface_adapt::AdapterKey,
+        crate::body::expr::iface_adapt::Adapter,
+    >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
-    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
-    /// error type is inferred: it must turn out `never`, since the interface's iterator type
-    /// is fixed before bodies are checked (throws/checks.rs).
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
+    /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
@@ -143,15 +158,25 @@ pub(crate) struct Ctx<'m> {
     pub static_copy_of: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
-    /// Name spans of every function made from a generic arrow, module-level ones included
-    /// (diagnostics show them as arrows).
+    /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: HashSet<Span>,
+    /// Name spans of capturing nested functions reported by `crate::nested_closures`.
+    pub kept_nested: HashSet<Span>,
+    /// Per generator with a dynamic default, the function its value is (`gen_value.rs`).
+    pub generator_values: HashMap<DefId, (DefId, TyId)>,
+    /// Recursive closure groups made by `crate::nested_closures`.
+    pub closure_groups: Vec<crate::nested_closures::ClosureGroup>,
+    /// Group and member of each group member, by the name span of its `const`.
+    pub group_names: HashMap<Span, (usize, usize)>,
+    /// Definitions of the closures that are members of a recursive closure group.
+    pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
-    /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
-    /// errors were reported).
+    /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
     /// JSX component adapters, checked after ownership inference.
     pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
@@ -178,8 +203,7 @@ pub(crate) struct Ctx<'m> {
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
-    /// Function bodies being checked, outermost first (a return type inferred from a body that
-    /// is on this stack refers to itself: `body::returns`).
+    /// Bodies being checked, outermost first (inferring one on it is recursion: `body::returns`).
     pub checking: Vec<DefId>,
     /// Signature comparisons waiting for inferred result types (`body::returns`).
     pub ret_checks: Vec<crate::defs::RetCheck>,
@@ -196,19 +220,23 @@ pub(crate) struct Ctx<'m> {
     /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
     /// second check of a program the borrowing version rejects (`crate::check_with`).
     pub held_borrows: bool,
+    /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
+    pub ns_private: Vec<crate::namespaces::Private>,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
     /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
-    /// Object values converted by copying their fields, and the field assignments that could
-    /// tell the copy from the original (`crate::object_copies`).
+    /// Where `Object.keys` of an `any` is called (`crate::any_keys`).
+    pub any_keys: Vec<velt_common::Span>,
+    /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
+    pub super_calls: std::collections::HashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
-    /// Second arguments of protocol types written before base classes were known
-    /// (`crate::ts_protocol`).
+    /// Protocol types' second arguments written before base classes were known (`ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
@@ -225,6 +253,13 @@ pub(crate) struct Ctx<'m> {
     pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
     /// What the last check of a body found about those locals.
     pub literal_found: HashMap<DefId, crate::body::literal_locals::LiteralLocals>,
+    /// Modules whose parse reported errors (`velt check` goes on with the recovered syntax
+    /// trees, [`crate::check_recovered`]), with the words of their source: a name missing from
+    /// one may be a declaration the parser dropped (`collect::exports::maybe_dropped`).
+    pub recovered: HashMap<usize, HashSet<String>>,
+    /// Names bound by such an import that found nothing (file of the importing module, local
+    /// name): a use of one reports nothing more, as its import didn't (`Ctx::not_found`).
+    pub poisoned: HashSet<(velt_common::FileId, String)>,
 }
 
 impl<'m> Ctx<'m> {
@@ -247,6 +282,8 @@ impl<'m> Ctx<'m> {
             aliases: vec![],
             extensions: vec![],
             impls: vec![],
+            iface_writes: Default::default(),
+            any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
@@ -259,13 +296,19 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            type_level: Default::default(),
             writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],
             laid_out: HashSet::new(),
             canon_memo: HashMap::new(),
             counted_objects: Vec::new(),
+            module_slots: Vec::new(),
+            module_scripts: Vec::new(),
+            promoted_consts: HashSet::new(),
+            global_cycles: 0,
             unions: HashMap::new(),
+            recursive_unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
             display_params: vec![],
@@ -276,6 +319,9 @@ impl<'m> Ctx<'m> {
             fn_defs: vec![],
             fn_values: vec![],
             groups: None,
+            literal_hosts: Default::default(),
+            provisional_slots: vec![],
+            iface_adapters: HashMap::new(),
             throw_checks: vec![],
             iface_generators: vec![],
             nested: vec![],
@@ -285,8 +331,14 @@ impl<'m> Ctx<'m> {
             static_copies: HashMap::new(),
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
+            kept_nested: HashSet::new(),
+            generator_values: HashMap::new(),
+            closure_groups: vec![],
+            group_names: HashMap::new(),
+            group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
+            gen_throw: false,
             overloaded_methods: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
@@ -295,6 +347,8 @@ impl<'m> Ctx<'m> {
             sync_handlers: vec![],
             thread_adapters: vec![],
             ide: None,
+            recovered: HashMap::new(),
+            poisoned: HashSet::new(),
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),
             symbol_keys: Default::default(),
@@ -306,10 +360,13 @@ impl<'m> Ctx<'m> {
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
+            ns_private: vec![],
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
+            any_keys: vec![],
             object_copies: Default::default(),
+            super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
@@ -332,6 +389,9 @@ impl<'m> Ctx<'m> {
     /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
     /// one of the SIMD types, which are not global (`velt:simd`).
     pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
+        if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
+            return;
+        }
         let mut d = Diagnostic::error(msg, span);
         if crate::hir::SimdTy::named(name).is_some() {
             d = d.with_note(format!(
@@ -538,23 +598,6 @@ impl<'m> Ctx<'m> {
         }
     }
 
-    /// The item a written type path names: `T`, or `ns.T` through namespace import `ns`.
-    pub fn lookup_path_at(
-        &self,
-        module: usize,
-        path: &[velt_syntax::ast::Ident],
-        at: Span,
-    ) -> Option<Item> {
-        match path {
-            [name] => self.lookup_item_at(module, &name.name, at),
-            [ns, name] if self.scopes[module].namespaces.contains_key(&ns.name) => {
-                let key = format!("{}.{}", ns.name, name.name);
-                self.scopes[module].items.get(&key).copied()
-            }
-            _ => None,
-        }
-    }
-
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves
     /// of it are soft (`crate::ownership::strings`).
     pub fn is_string_value(&self, t: TyId) -> bool {
@@ -572,34 +615,6 @@ impl<'m> Ctx<'m> {
         let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
         self.shared_memo.insert(t, b);
         b
-    }
-
-    /// Does a value of `t` hold a promise (itself, or in a part)?
-    pub(crate) fn holds_promise(&mut self, t: TyId) -> bool {
-        self.holds_promise_in(t, 0)
-    }
-
-    fn holds_promise_in(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 8 {
-            return false;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Promise(..) => return true,
-            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
-            TyKind::Tuple(ts) => ts,
-            TyKind::Adt(d, args) => {
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| self.subst(f, &args)).collect()
-            }
-            _ => vec![],
-        };
-        parts
-            .into_iter()
-            .any(|p| self.holds_promise_in(p, depth + 1))
     }
 
     /// Ownership: can values of this type be duplicated bitwise?
@@ -664,14 +679,15 @@ impl<'m> Ctx<'m> {
                 .join(", ")
         };
         let with_args = |s: &Self, name: &str, args: &[TyId]| {
+            let name = crate::namespaces::written(name);
             if args.is_empty() {
-                name.to_string()
+                name.into_owned()
             } else {
                 format!("{name}<{}>", list(s, args))
             }
         };
         if let Some(n) = self.alias_names.get(&t) {
-            return n.clone();
+            return crate::namespaces::written(n).into_owned();
         }
         match self.ty.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),
@@ -698,6 +714,8 @@ impl<'m> Ctx<'m> {
                 self.display_in(*v, names)
             ),
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
+            // `undefined` alone is an option of `never` (`Types::undefined`).
+            TyKind::Option(t, n) if *t == self.ty.never => n.suffix()[3..].to_string(),
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
@@ -742,7 +760,7 @@ impl<'m> Ctx<'m> {
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
-                DefInfo::Adt(a) => with_args(self, &a.name, args),
+                DefInfo::Adt(a) => with_args(self, &a.name, self.shown_args(*d, args)),
                 DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
@@ -751,6 +769,7 @@ impl<'m> Ctx<'m> {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),
             },
+            TyKind::Op(o, args) => self.display_op(*o, args, names),
             TyKind::Closure(d) => match self.try_fn(*d) {
                 Some(f) => {
                     let ps: Vec<String> = f
@@ -776,20 +795,5 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
-    }
-}
-
-/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
-/// identifier, otherwise quoted (`{ "content-type": string }`).
-pub(crate) fn display_key(name: &str) -> String {
-    let mut chars = name.chars();
-    let ident = chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
-    if ident {
-        name.to_string()
-    } else {
-        format!("{name:?}")
     }
 }

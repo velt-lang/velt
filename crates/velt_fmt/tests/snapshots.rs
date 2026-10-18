@@ -371,7 +371,7 @@ fn files_with_this_parameters_are_refused() {
 fn optional_params_and_object_type_fields_keep_their_spelling() {
     assert_fmt(
         "function f(a: i64, b?: string, c?: A | B | null) {}\ntype O = { x?: i64; y: string | null };\n",
-        "function f(a: i64, b?: string, c?: A | B) {}\n\ntype O = { x?: i64; y: string | null };\n",
+        "function f(a: i64, b?: string, c?: A | B | null) {}\n\ntype O = { x?: i64; y: string | null };\n",
     );
 }
 

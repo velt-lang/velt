@@ -1,0 +1,23 @@
+// check: no leaks
+// `g!` of a module `let` passed for a borrowed parameter, while the callee replaces or clears
+// that `let` (issues #1164, #1196): the callee keeps the object it was passed.
+class G {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+let g: G | null = new G(1);
+let h: G | null = new G(3);
+function swap(x: G): number {
+  g = new G(99);
+  return x.n + 1;
+}
+function clear(x: G): number {
+  h = null;
+  return x.n;
+}
+function main(): void {
+  console.log(swap(g!), g!.n);
+  console.log(clear(h!), h === null);
+}

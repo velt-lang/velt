@@ -1,0 +1,73 @@
+// How many microtasks each form takes, next to a plain chain: as in Node. `finally` passes the
+// value on two steps after its callback, a callback returning a promise adds the step that
+// adopts it and the one after it settles, `Promise.allSettled` and `Promise.any` settle in the
+// callback for the deciding promise, and `then(null, g)` is `catch(g)`.
+
+class Failed extends Error {}
+
+async function value(n: number): Promise<number, Failed> {
+  return n;
+}
+
+async function fail(message: string): Promise<number, Failed> {
+  throw new Failed(message);
+}
+
+// A chain of plain steps to measure against: t1, t2, ...
+function ticks(name: string, n: number) {
+  let p: Promise<number> = Promise.resolve(0);
+  for (let i = 1; i <= n; i++) {
+    p = p.then((v) => {
+      console.log(`${name} t${i}`);
+      return v;
+    });
+  }
+}
+
+async function settle() {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 1));
+}
+
+async function main() {
+  ticks("finally", 5);
+  value(1)
+    .finally(() => console.log("finally runs"))
+    .then((v) => console.log(`finally passes ${v} on`));
+  fail("x")
+    .finally(async () => console.log("async finally runs"))
+    .catch((e) => {
+      console.log(`async finally passes ${e.message} on`);
+      return 0;
+    });
+  await settle();
+
+  ticks("flat", 5);
+  value(10)
+    .then((v) => value(v + 1))
+    .then((v) => console.log(`flat ${v}`));
+  fail("y")
+    .catch((e) => value(7))
+    .then((v) => console.log(`catch flat ${v}`));
+  await settle();
+
+  ticks("combinators", 4);
+  Promise.allSettled([value(1), fail("z")]).then((rs) => console.log(`allSettled ${rs.length}`));
+  Promise.any([fail("a"), value(2)]).then((v) => console.log(`any ${v}`));
+  Promise.any([fail("b")]).catch((e) => {
+    console.log("any rejects");
+    return 0;
+  });
+  await settle();
+
+  ticks("absent", 3);
+  fail("w").then(null, (e) => {
+    console.log(`then(null, g) ${e.message}`);
+    return 0;
+  });
+  fail("u").then(undefined, (e) => {
+    console.log(`then(undefined, g) ${e.message}`);
+    return 0;
+  });
+  value(3).then((v) => console.log(`then(f, null) ${v}`), null);
+  console.log("sync end");
+}

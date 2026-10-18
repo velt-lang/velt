@@ -34,6 +34,20 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let sig = &d.sig;
+        if let Some(t) = &sig.this_param {
+            let this_ty = self.resolve(t);
+            let shown = self.cx.display(this_ty);
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` in a function expression with a `this` parameter is not supported yet",
+                    span,
+                )
+                .with_note(format!(
+                    "TypeScript allows this (`this` is the object the function is called on, typed `{shown}`); Velt doesn't yet because a function value has no receiver; take the object as an ordinary parameter, or declare the function (`function f(this: T, ...)`) and call it with `f.call(obj, ...)`"
+                )),
+            );
+            return self.error_expr(span);
+        }
         if !sig.is_generator {
             self.cx.error(
                 Diagnostic::error("function expressions are not supported", span).with_note(
@@ -113,8 +127,12 @@ impl FnCx<'_, '_> {
         frame.escaping = true;
         frame.is_async = sig.is_async;
         frame.yield_ty = Some(t);
+        let n = self.cx.generator_next_ty(ret);
+        frame.next_ty = (!self.cx.ty.is_bottom(n)).then_some(n);
         frame.fn_expr_name = Some(sig.name.name.clone()).filter(|n| !n.is_empty());
         let defaults = sig.params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends =
+            crate::body::assign_ends::assignment_ends(&d.body.stmts, defaults.clone());
         let assigned = crate::body::assigned::assigned_by_closures(&d.body.stmts, defaults);
         frame.closure_assigned = crate::body::closure_assigned::owned(assigned);
         let saved = std::mem::replace(&mut self.f, frame);
@@ -167,7 +185,7 @@ impl FnCx<'_, '_> {
             span,
         });
         let aparams: Vec<ast::ArrowParam> = sig.params.iter().map(arrow_param).collect();
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams, false);
         self.mk(H::Closure(def), fn_ty, span)
     }
 }

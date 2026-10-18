@@ -172,7 +172,7 @@ fn bound(m: &ast::Module) -> Vec<String> {
                     names.push(id.name.clone());
                 }
             }
-            ast::ItemKind::Extend(_) | ast::ItemKind::Augment(_) => {}
+            ast::ItemKind::Extend(_) | ast::ItemKind::Augment(_) | ast::ItemKind::Namespace(_) => {}
         }
     }
     names

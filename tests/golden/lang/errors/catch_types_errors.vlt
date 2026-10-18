@@ -1,0 +1,12 @@
+// TypeScript's TS1196: a catch binding's type annotation must be `any` or `unknown`.
+try {
+  console.log("x");
+} catch (e: Error) {
+  console.log(e);
+}
+
+try {
+  console.log("y");
+} catch ({ message }: string) {
+  console.log(message);
+}

@@ -81,7 +81,7 @@ enum Wrap {
 const TIMERS: [&str; 3] = ["setTimeout", "setInterval", "setImmediate"];
 
 /// An expression with `span` and no node of its own.
-fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
+pub(super) fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
     ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -99,7 +99,7 @@ fn arg_name(k: usize, span: velt_common::Span) -> ast::Ident {
 
 /// `(#arg0, …, #arg{n-1}) => callee(#arg0, …, #arg{passed-1})`, or with `discard` a block body
 /// that keeps the call's value in a hidden `const` (a started promise runs to completion).
-fn wrapper(
+pub(super) fn wrapper(
     callee: ast::Expr,
     n: usize,
     passed: usize,
@@ -185,7 +185,7 @@ impl FnCx<'_, '_> {
         let arg = resolved.as_ref().unwrap_or(arg);
         // `f?: (s: string) => void` is `((s: string) => void) | null`: adapt to the function type.
         let exp = expected;
-        let expected = self.cx.ty.opt_payload(expected).unwrap_or(expected);
+        let expected = self.cx.ty.core(expected).unwrap_or(expected);
         let TyKind::FnPtr {
             params: want,
             ret: want_ret,
@@ -221,7 +221,7 @@ impl FnCx<'_, '_> {
         let to_void = want_ret == self.cx.ty.unit;
         // The result matters only for `void` (dropped), union results (widened) and tasks.
         let widening = {
-            let inner = self.cx.ty.opt_payload(want_ret).unwrap_or(want_ret);
+            let inner = self.cx.ty.core(want_ret).unwrap_or(want_ret);
             inner != want_ret || self.cx.union_def(inner).is_some()
         };
         let sig = self.named_fn_sig(arg, to_void || widening || task)?;
@@ -361,6 +361,33 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
+    /// Checking a module-level constant or a field initializer itself (not a closure body in
+    /// it): there is no frame to hold the hidden local a wrapper keeps its function in.
+    fn frameless(&self) -> bool {
+        self.detached && self.outer.is_empty()
+    }
+
+    /// The arrow `e` adapted where no frame holds a hidden local (`frameless`): the wrapper calls
+    /// it in place, `(p…) => (e)(p…)`, with `e` checked as `inner` (a function of `n`
+    /// parameters). Outside any body `e` captures nothing, so making the closure at each call
+    /// is the same as making it once.
+    fn immediate_wrapper(
+        &mut self,
+        e: &ast::Expr,
+        inner: TyId,
+        n: usize,
+        wrap: Wrap,
+        exp: Option<TyId>,
+    ) -> hir::Expr {
+        let span = e.span;
+        let callee = synth(ast::ExprKind::Paren(Box::new(e.clone())), span);
+        let arrow = wrapper(callee, n, n, wrap == Wrap::Discard, span);
+        self.immediate_hint = Some((span, inner));
+        let w = self.closure(&arrow, exp, true);
+        self.immediate_hint = None;
+        w
+    }
+
     /// An `async` arrow where the function type returns `void` or a union with one promise
     /// member (see the module docs); `None` for any other expected type.
     pub(super) fn async_arrow_callback(
@@ -396,6 +423,10 @@ impl FnCx<'_, '_> {
         } else {
             async_ty
         };
+        if self.frameless() {
+            let wrap = if discard { Wrap::Discard } else { Wrap::Call };
+            return Some(self.immediate_wrapper(e, async_ty, n, wrap, exp));
+        }
         let f = self.closure(e, Some(async_ty), true);
         if self.thread_adapter == Some(e.span) {
             self.thread_adapter = None;
@@ -441,7 +472,7 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let inner = self.cx.ty.opt_payload(want).unwrap_or(want);
+        let inner = self.cx.ty.core(want).unwrap_or(want);
         if inner == want && self.cx.union_def(inner).is_none() {
             return None;
         }
@@ -450,11 +481,15 @@ impl FnCx<'_, '_> {
             return None;
         }
         let n = ptys.len().max(params.len());
+        let ptys_len = ptys.len();
         let member_ty = self.cx.ty.intern(TyKind::FnPtr {
             params: ptys,
             ret: declared,
             throws,
         });
+        if self.frameless() {
+            return Some(self.immediate_wrapper(e, member_ty, ptys_len, Wrap::Call, exp));
+        }
         let f = self.closure(e, Some(member_ty), true);
         let exp = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr { ret: found, .. }
@@ -592,7 +627,7 @@ impl FnCx<'_, '_> {
         let TyKind::FnPtr { params, throws, .. } = self.cx.ty.kind(fn_ty).clone() else {
             return fn_ty;
         };
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         let members: Vec<TyId> = match self.cx.union_members(inner) {
             Some(ms) => ms
                 .into_iter()
@@ -619,7 +654,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.promise_payload(ret).is_some() || ret == self.cx.ty.error {
             return None;
         }
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let inner = self.cx.ty.core(ret).unwrap_or(ret);
         if self.cx.ty.promise_payload(inner).is_some() {
             return Some(inner);
         }

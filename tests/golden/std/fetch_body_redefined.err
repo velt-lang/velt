@@ -1,0 +1,2 @@
+fetch_body_redefined.vlt:4:7
+error: `body` is an `extend` method of `Response` and cannot be redefined in a subclass yet

@@ -7,8 +7,11 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
 `AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
-`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
-`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), `TextEncoder`,
+`TextDecoder`, `btoa` and `atob` ([velt:encoding](encoding.md)), `DOMException`
+([Errors](#errors)), `ArrayBuffer`, `DataView`, `Uint8Array` and the other typed arrays
+([typed arrays](typed_array.md)), and `ReadableStream` and its reader and controller
+([streams](streams.md)). They are loaded when a module names one and
 doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
 JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
 class of your own: write `x.clone()`) is a compile error. The builtin `process`
@@ -184,8 +187,11 @@ in JavaScript: when nothing else refers to a key, its entries go (their values a
 and a `WeakRef` to it returns `null` from then on. Keys, members and targets are objects: class
 instances, object types and arrays, compared by identity (a primitive is an error, as in
 TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
-structs, function and interface values are not supported as keys yet). Like JavaScript's, the
-maps are not iterable and have no `size`.
+structs, function and interface values are not supported as keys yet). An `object` key
+(`WeakMap<object, V>`, as reactive libraries write their caches) is the object it holds
+([object and Function](../reference/types.md#object-and-function)); `deref()` of a
+`WeakRef<object>` returns `undefined` once the target was freed, as in JavaScript. Like
+JavaScript's, the maps are not iterable and have no `size`.
 
 ```ts
 class Node {
@@ -217,7 +223,9 @@ Differences from JavaScript:
 - **Freed at once.** Velt frees an object when its last reference goes (which can be the last
   use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
   Node keeps returning the object until a later garbage collection, and at least until the
-  current job ends.
+  current job ends. A variable passed as a key, a member or a target (`new WeakRef(k)`, also
+  `k!` of a nullable one, or through a function's parameter) stays alive to the end of its
+  scope, so a fresh `WeakRef` keeps its target while the variable lives.
 - **One task.** A weak collection belongs to the task that made it (it keeps working when an
   `await` resumes the task on another thread): it cannot be passed to a spawned task (in either
   branch of `spawn(c ? f(x) : g(y))`), be its result or the error it throws, sent on a
@@ -276,8 +284,11 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 ```
 
 A key of a `Record<string, V>` may be missing, so counting needs a starting value:
-`r[k] += 1` is an error there, and `??` supplies it. `r[k] ||= v` and `r[k] &&= v` are errors
-too; `r[k] ??= v` sets the key only when it is missing.
+`r[k] += 1` is an error there, and `??` supplies it. The logical assignments are defined for a
+missing key, which reads as `undefined`: `r[k] ??= v` sets the key only when it is missing,
+`r[k] ||= v` also when its value is falsy (`""`, `0`, `false`, `NaN`), and `r[k] &&= v` only when
+it is present and truthy. As in JavaScript, the record and the key are evaluated once, `v` only
+when it is stored, and the expression's value is the value stored or kept.
 
 ```ts
 const seen: Record<string, i64> = {};
@@ -285,13 +296,20 @@ for (const w of ["a", "b", "a"]) {
   seen[w] = (seen[w] ?? 0) + 1;
 }
 console.log(seen); // { a: 2, b: 1 }
+
+const kebab: Record<string, string> = {};
+const prop = "backgroundColor";
+const css = (kebab[prop] ||= prop.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase());
+console.log(css, kebab); // background-color { backgroundColor: 'background-color' }
 ```
 
 ## Nullable values
 
 On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
 `map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
-copied).
+copied). A variable narrowed to its `T` (`let x: string | null = "a"; x.unwrapOr("b")`) keeps
+the helpers `T` does not have; a method of `T` with the same name wins (`xs.map(f)` on a
+narrowed `number[] | null` maps the elements).
 
 ## Iteration
 
@@ -302,7 +320,7 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 | `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| null`) |
 | `interface Iterator<T, E = never>` | `next(): IteratorResult<T> throws E`; `return(): IteratorResult<T>` (default: returns `{ done: true }`) runs when a loop leaves early |
 | `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
-| `class Generator<T, E = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
+| `class Generator<T, E = never, N = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `next(value)` (with `N`, TypeScript's `TNext`, given) resumes the paused `yield` with `value`; `throw(e: any)` throws `e` at the paused `yield`; `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
 | `interface AsyncIterator<T, E = never>` | `next(): Promise<IteratorResult<T>, E>`; `async return(): Promise<IteratorResult<T>>` (default: resolves to `{ done: true }`) |
 | `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; what [`for await`](../reference/control-flow.md#for-await) iterates |
 | `class AsyncGenerator<T, E = never>` | what calling an [async generator](../reference/functions.md#async-generators) (`async function*`) creates: `implements AsyncIterator<T, E>, AsyncIterable<T, E>`; `return()` and `[Symbol.asyncDispose]()` close it (awaiting its cleanup), `[Symbol.dispose]()` closes it without awaiting. Overlapping `next()` / `return()` calls are queued and served in call order, like JS. Only async generator calls create one |
@@ -328,6 +346,27 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 - `class Error { message: string; name: string }`, the base class of thrown errors (`String(e)` is
   `"<name>: <message>"`), and its subclasses `TypeError`, `RangeError`, `SyntaxError`,
   `ReferenceError`, `EvalError` and `URIError` ([Errors](../reference/errors.md)).
+- `DOMException`, a global as in Node: the error web APIs throw (`btoa` and `atob` throw one
+  named `InvalidCharacterError`). `new DOMException(message = "", name = "Error")`; `e.name` is
+  the name, `e.code` the legacy code Node gives it (`5` for `InvalidCharacterError`, `20` for
+  `AbortError`, `25` for `DataCloneError`, …, 0 for a name without one), and the codes are also
+  static constants (`DOMException.ABORT_ERR`). It extends `Error`, so `String(e)` is
+  `"<name>: <message>"`; `console.log(e)` prints `DOMException [<name>]: <message>`, Node's
+  first line (Node adds the stack); `JSON.stringify(e)` writes `{"message":"…"}`, as for the
+  other errors (Node writes `{}`). Node's second form, `new DOMException(message, { name,
+  cause })`, is not supported: pass the name as a string.
+
+```ts
+try {
+  btoa("€");
+} catch (e) {
+  console.log(e instanceof DOMException, e.name, e.code, String(e));
+  // true InvalidCharacterError 5 InvalidCharacterError: Invalid character
+}
+const abort = new DOMException("This operation was aborted", "AbortError");
+console.log(abort.code == DOMException.ABORT_ERR); // true
+```
+
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
@@ -380,7 +419,9 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `sleep(ms)`, `yieldNow()`, `spawn(p, options?)` (options: `{ worker }`, see
 [velt:task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
-`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, `shared(x)`, `Mutex<T>`,
+`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, the promise methods
+`then`, `catch` and `finally` with `queueMicrotask(f)`
+([Async](../reference/async.md#then-catch-and-finally)), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
 handle ([velt:timers](timers.md)).

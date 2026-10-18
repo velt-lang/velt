@@ -1,0 +1,36 @@
+// check: no leaks
+// `s.f++` / `++s.f` (and `--`) used as a value on a typed proxy (#823): one `get` and one
+// `set`, as in JavaScript; the value is the old or the new field value.
+function traced(target: any): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      console.log("get", String(key));
+      return Reflect.get(t, key, receiver);
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+class S {
+  count: number = 1;
+}
+type O = { k: number };
+
+const s = traced(new S()) as S;
+const a = s.count++;
+console.log(a);
+const b = ++s.count;
+console.log(b);
+const c = s.count--;
+const d = --s.count;
+console.log(c, d);
+s.count++;
+const o = traced({ k: 10 }) as O;
+const e = o.k++;
+console.log(e, o.k);
+const plain = new S();
+const f = plain.count++;
+console.log(f, ++plain.count);

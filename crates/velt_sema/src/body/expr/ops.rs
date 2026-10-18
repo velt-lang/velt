@@ -8,7 +8,7 @@ use velt_syntax::ast;
 use super::type_tests::LitEq;
 use crate::body::narrow::{is_null, nothing_word, typeof_compare};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 
 /// Literal-ish expression whose type is decided by context (`1`, `-2.5`, `(1 + 2)`).
 pub(crate) fn untyped(e: &ast::Expr) -> bool {
@@ -287,6 +287,15 @@ impl FnCx<'_, '_> {
             Some(LitEq::Operands(l, r)) => (l, r),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
+        // a call, a capture).
+        if self.cx.maybe_dynamic(l.ty) || self.cx.maybe_dynamic(r.ty) {
+            return match op {
+                B::Eq | B::NotEq => self.dynamic_eq(l, r, strict, op == B::NotEq, span),
+                B::Add => self.dynamic_concat(l, r, span),
+                _ => self.dynamic_operator(op_str(op), &l, &r, span),
+            };
+        }
         // Branded values are operands as their primitives.
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
@@ -296,6 +305,26 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        // `a == b` on `T | null | undefined` values: `null == undefined`, as in JavaScript.
+        if !strict && matches!(op, B::Eq | B::NotEq) {
+            let (l, r) = match self.loose_three_state_eq(l, r, op == B::NotEq, span) {
+                Ok(h) => return h,
+                Err(lr) => *lr,
+            };
+            return self.binary_checked(op, l, r, span);
+        }
+        self.binary_checked(op, l, r, span)
+    }
+
+    /// The rest of [`binary`](Self::binary) once the operands are checked and converted.
+    pub(crate) fn binary_checked(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        use ast::BinaryOp as B;
         // Literal types take part in operators as their base type (`c.kind + "!"`).
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))
@@ -369,8 +398,29 @@ impl FnCx<'_, '_> {
         r: hir::Expr,
     ) -> (hir::Expr, hir::Expr) {
         let t = &self.cx.ty;
+        if t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+            return (l, r);
+        }
+        // `T | null | undefined` against a `T | null` or `T | undefined` (or those two against
+        // each other): both as the option holding every nothing either does (#1218).
+        if let (Some(a), Some(b)) = (t.nothing_of(l.ty), t.nothing_of(r.ty)) {
+            if a == b {
+                return (l, r);
+            }
+            let to = if a == Nothing::Both {
+                l.ty
+            } else if b == Nothing::Both {
+                r.ty
+            } else {
+                let core = t.core(l.ty).unwrap_or(l.ty);
+                self.cx.ty.option_of(core, Nothing::Both)
+            };
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            let r = self.try_coerce(r, to).unwrap_or_else(|r| r);
+            return (l, r);
+        }
         let nullable = |x: TyId| t.opt_payload(x).is_some();
-        if nullable(l.ty) == nullable(r.ty) || t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+        if nullable(l.ty) == nullable(r.ty) {
             return (l, r);
         }
         if nullable(l.ty) {
@@ -441,7 +491,7 @@ impl FnCx<'_, '_> {
     /// does (an interface value points at the object itself), so the two compare by identity.
     fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
         let object = |s: &Self, t: TyId| {
-            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            let t = s.cx.ty.core(t).unwrap_or(t);
             s.cx.union_def(t).is_none()
                 && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
         };

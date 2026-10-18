@@ -1,0 +1,130 @@
+// check: no leaks
+// A compound assignment through a setter evaluates its receiver once, before the right-hand
+// side: when the right-hand side assigns another object to the variable, the getter and the
+// setter both use the object the variable named first, as in JS (#1175).
+class Box {
+  #v: string;
+  constructor(v: string) {
+    this.#v = v;
+  }
+  get val(): string {
+    return this.#v;
+  }
+  set val(x: string) {
+    this.#v = x;
+  }
+}
+
+class Counter {
+  #n: number = 0;
+  #name: string | null = null;
+  #on: boolean = true;
+  label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+  get n(): number {
+    return this.#n;
+  }
+  set n(x: number) {
+    this.#n = x;
+  }
+  get name(): string | null {
+    return this.#name;
+  }
+  set name(x: string | null) {
+    this.#name = x;
+  }
+  get on(): boolean {
+    return this.#on;
+  }
+  set on(x: boolean) {
+    this.#on = x;
+  }
+}
+
+// The issue's program.
+let holder = new Box("h1");
+const other = new Box("h2");
+function swap(): string {
+  holder = other;
+  return "!";
+}
+holder.val += swap();
+console.log(holder.val, other.val);
+
+// The old object, still referred to elsewhere, gets the write.
+let a = new Box("a1");
+const keepA = a;
+const nextA = new Box("a2");
+a.val += ((): string => {
+  a = nextA;
+  return "+";
+})();
+console.log(keepA.val, a.val);
+
+// Numbers, `??=`, `||=`, `&&=`, as statements and as values.
+let c = new Counter("c1");
+const c1 = c;
+const c2 = new Counter("c2");
+function toC2(k: number): number {
+  c = c2;
+  return k;
+}
+function back(): void {
+  c = c1;
+}
+c.n += toC2(5);
+console.log(c1.label, c1.n, c2.label, c2.n);
+back();
+c.n *= toC2(3);
+console.log(c1.n, c2.n);
+back();
+c.name ??= ((): string => {
+  c = c2;
+  return "named";
+})();
+console.log(c1.name, c2.name);
+back();
+c.on &&= ((): boolean => {
+  c = c2;
+  return false;
+})();
+console.log(c1.on, c2.on);
+back();
+c.on ||= ((): boolean => {
+  c = c2;
+  return true;
+})();
+console.log(c1.on, c2.on);
+back();
+const v1 = (c.n -= toC2(1));
+console.log(v1, c1.n, c2.n);
+back();
+c1.name = null;
+const v2 = (c.name ??= ((): string => {
+  c = c2;
+  return "again";
+})());
+console.log(v2, c1.name, c2.name);
+
+// A plain assignment through a setter, as a statement and as a value.
+back();
+c.name = ((): string => {
+  c = c2;
+  return "plain";
+})();
+console.log(c1.name, c2.name);
+back();
+const v3 = (c.name = ((): string => {
+  c = c2;
+  return "value";
+})());
+console.log(v3, c1.name, c2.name);
+
+// A right-hand side that leaves the variable alone, and `++` / `--`.
+back();
+c.n += 10;
+c.n++;
+--c.n;
+console.log(c1.n, c2.n);

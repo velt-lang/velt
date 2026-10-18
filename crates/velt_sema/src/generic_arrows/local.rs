@@ -30,6 +30,7 @@ pub(super) fn item_has_local(item: &ast::Item) -> bool {
             .any(block_has),
         I::Var(v) => v.init.as_ref().is_some_and(expr_has),
         I::Augment(a) => a.items.iter().any(item_has_local),
+        I::Namespace(n) => n.items.iter().any(item_has_local),
         I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => false,
     }
 }
@@ -151,6 +152,7 @@ impl Rewriter {
                 }
             }
             I::Augment(a) => a.items.iter_mut().for_each(|i| self.item(i)),
+            I::Namespace(n) => n.items.iter_mut().for_each(|i| self.item(i)),
             I::Import(_) | I::Enum(_) | I::TypeAlias(_) | I::ExternFn(_) => {}
         }
     }

@@ -23,6 +23,22 @@ pub(crate) struct Impure {
     what: String,
     span: Span,
     via: Vec<String>,
+    /// It is async: the value can never be known before `main` runs, so the constant cannot
+    /// be kept as module state either. (One that may throw is kept: an error thrown while the
+    /// module state is initialized ends the process, as in Node.)
+    fatal: bool,
+}
+
+/// One of [`check_init`]'s own diagnostics: why an initializer is not a constant value. The
+/// caller drops them when the constant is kept as module state instead, unless one is `fatal`
+/// (the initializer is async: module state is initialized where nothing can await it). Diagnostics of the functions it calls are never among them.
+pub(crate) struct NotConstant {
+    pub(crate) diag: Diagnostic,
+    pub(crate) fatal: bool,
+}
+
+fn own(out: &mut Vec<NotConstant>, diag: Diagnostic) {
+    out.push(NotConstant { diag, fatal: false });
 }
 
 /// Memoized purity of functions (`None` while being decided: a call back into it is recursion).
@@ -30,17 +46,24 @@ pub(crate) type PurityMemo = HashMap<DefId, Option<Result<(), Impure>>>;
 
 /// Check the initializer of module constant `name` (type `ty`): constant expressions, and calls
 /// of pure named functions with constant arguments.
-pub(crate) fn check_init(cx: &mut Ctx, name: &str, init: &Expr, ty: TyId) {
+pub(crate) fn check_init(
+    cx: &mut Ctx,
+    name: &str,
+    init: &Expr,
+    ty: TyId,
+    out: &mut Vec<NotConstant>,
+) {
     // A table: an array literal as the whole initializer (not inside a struct, a tuple, …).
     if let H::ArrayLit(xs) = &init.kind {
-        table_ok(cx, name, init, xs);
+        table_ok(cx, name, init, xs, out);
         return;
     }
-    if !init_ok(cx, name, init) || !has_call(init) {
+    if !init_ok(cx, name, init, out) || !has_call(init) {
         return;
     }
-    if let Some(what) = reference_part(cx, ty, 0) {
-        cx.error(
+    if let Some(what) = reference_part(cx, value_ty(init, ty), 0) {
+        own(
+            out,
             Diagnostic::error(
                 format!(
                     "module constant `{name}` has type `{}` ({what}): initialized by a call, it would be a new object at each use",
@@ -54,14 +77,31 @@ pub(crate) fn check_init(cx: &mut Ctx, name: &str, init: &Expr, ty: TyId) {
     }
 }
 
+/// The type whose values `init` (of type `ty`) makes: an interface value made from an object
+/// literal (`body/expr/iface_object.rs`) is its struct of functions and values, which a new one
+/// at each use doesn't tell from the last (its fields can't be written through the interface,
+/// and `===` on the constant is rejected: `check_identity`).
+fn value_ty(init: &Expr, ty: TyId) -> TyId {
+    let mut x = init;
+    while let H::WrapSome(i) | H::Upcast(i) | H::Cast(i) = &x.kind {
+        x = i;
+    }
+    match &x.kind {
+        H::ToDyn { expr, .. } if x.ty == ty => expr.ty,
+        _ => ty,
+    }
+}
+
 /// Does `init` compute a new value at each use (a call, a closure or a function reference), so
 /// that a use by value is another reference to it and identity shows?
 pub(crate) fn has_call(e: &Expr) -> bool {
     match &e.kind {
         H::Call { .. } | H::Closure(_) | H::FnRef(..) => true,
-        H::Unary { expr, .. } | H::Cast(expr) | H::WrapSome(expr) | H::Upcast(expr) => {
-            has_call(expr)
-        }
+        H::Unary { expr, .. }
+        | H::Cast(expr)
+        | H::WrapSome(expr)
+        | H::Upcast(expr)
+        | H::ToDyn { expr, .. } => has_call(expr),
         H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => has_call(lhs) || has_call(rhs),
         H::If { cond, then, els } => has_call(cond) || has_call(then) || has_call(els),
         H::AdtLit { fields: xs, .. } | H::Variant { args: xs, .. } | H::Tuple(xs) => {
@@ -87,44 +127,54 @@ pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) ->
 }
 
 /// Is a use by value of module constant `d` another reference to a function it computes? Only
-/// functions: a struct or object constant moved into a variable would be a copy that the
-/// constant doesn't see changes to (TypeScript aliases it), so those keep the move error.
+/// functions, and interface values made from object literals (whose fields can't be written
+/// through the interface: [`value_ty`]): a struct or object constant moved into a variable
+/// would be a copy that the constant doesn't see changes to (TypeScript aliases it), so those
+/// keep the move error.
 pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     let ty = g.ty;
-    let fresh = g.init.as_ref().is_some_and(has_call);
-    fresh && matches!(cx.ty.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_)) && !cx.is_copy(ty)
+    let Some(init) = g.init.as_ref().filter(|i| has_call(i)) else {
+        return false;
+    };
+    let literal = value_ty(init, ty) != ty;
+    let shared = literal || matches!(cx.ty.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_));
+    shared && !cx.is_copy(ty)
 }
 
 /// Report what in `e` is not allowed; false when something was reported.
-fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
+fn init_ok(cx: &mut Ctx, name: &str, e: &Expr, out: &mut Vec<NotConstant>) -> bool {
     match &e.kind {
         H::Lit(_) | H::Global(_) | H::Closure(_) | H::FnRef(..) => true,
         H::Unary { expr, .. }
         | H::Cast(expr)
         | H::WrapSome(expr)
         | H::Upcast(expr)
-        | H::Field { base: expr, .. } => init_ok(cx, name, expr),
+        | H::ToDyn { expr, .. }
+        | H::Field { base: expr, .. } => init_ok(cx, name, expr, out),
         H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
-            init_ok(cx, name, lhs) && init_ok(cx, name, rhs)
+            init_ok(cx, name, lhs, out) && init_ok(cx, name, rhs, out)
         }
         H::If { cond, then, els } => {
-            init_ok(cx, name, cond) && init_ok(cx, name, then) && init_ok(cx, name, els)
+            init_ok(cx, name, cond, out)
+                && init_ok(cx, name, then, out)
+                && init_ok(cx, name, els, out)
         }
         H::AdtLit { fields: xs, .. } | H::Variant { args: xs, .. } | H::Tuple(xs) => {
-            xs.iter().all(|x| init_ok(cx, name, x))
+            xs.iter().all(|x| init_ok(cx, name, x, out))
         }
         H::Call {
             callee: Callee::Def(f, _),
             args,
-        } => call_ok(cx, name, *f, args, e.span),
+        } => call_ok(cx, name, *f, args, e.span, out),
         H::Call {
             callee: Callee::Intrinsic(i),
             args,
         } => match effect_of(*i) {
-            None => args.iter().all(|x| init_ok(cx, name, x)),
+            None => args.iter().all(|x| init_ok(cx, name, x, out)),
             Some(what) => {
-                cx.error(
+                own(
+                    out,
                     Diagnostic::error(
                         format!("cannot initialize module constant `{name}`: it {what}"),
                         e.span,
@@ -138,7 +188,8 @@ fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
             callee: Callee::Indirect(_),
             ..
         } => {
-            cx.error(
+            own(
+            out,
                 Diagnostic::error(
                     format!("cannot initialize module constant `{name}` from a function value: only named functions can be called here"),
                     e.span,
@@ -148,7 +199,8 @@ fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
             false
         }
         _ => {
-            cx.error(
+            own(
+            out,
                 Diagnostic::error(
                     "module-level constants must be constant expressions or pure calls",
                     e.span,
@@ -165,7 +217,7 @@ fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
 /// compiling, so that reading an element, the length or iterating reads data stored once
 /// (lowering emits it; `velt_vir` `table_read`). Reports what in it is not allowed; false when
 /// something was reported.
-fn table_ok(cx: &mut Ctx, name: &str, e: &Expr, xs: &[Expr]) -> bool {
+fn table_ok(cx: &mut Ctx, name: &str, e: &Expr, xs: &[Expr], out: &mut Vec<NotConstant>) -> bool {
     let scalar = match cx.ty.kind(e.ty) {
         TyKind::Array(x) => matches!(
             cx.ty.kind(*x),
@@ -174,7 +226,8 @@ fn table_ok(cx: &mut Ctx, name: &str, e: &Expr, xs: &[Expr]) -> bool {
         _ => false,
     };
     if !scalar {
-        cx.error(
+        own(
+            out,
             Diagnostic::error(
                 format!(
                     "module constant `{name}` is an array of `{}`: only arrays of numbers or booleans can be module constants",
@@ -191,7 +244,8 @@ fn table_ok(cx: &mut Ctx, name: &str, e: &Expr, xs: &[Expr]) -> bool {
         return false;
     }
     if let Some(bad) = xs.iter().find(|x| !table_elem(cx, x, 0)) {
-        cx.error(
+        own(
+            out,
             Diagnostic::error(
                 format!("an element of module constant `{name}` is not a literal"),
                 bad.span,
@@ -227,11 +281,19 @@ fn fix_note(name: &str) -> String {
 }
 
 /// A call `f(args)` in an initializer: constant arguments, pure `f`.
-fn call_ok(cx: &mut Ctx, name: &str, f: DefId, args: &[Expr], span: Span) -> bool {
+fn call_ok(
+    cx: &mut Ctx,
+    name: &str,
+    f: DefId,
+    args: &[Expr],
+    span: Span,
+    out: &mut Vec<NotConstant>,
+) -> bool {
     let fname = short_name(cx, f);
     for (i, a) in args.iter().enumerate() {
         if !matches!(a.kind, H::Call { .. }) && !arg_ok(a) {
-            cx.error(
+            own(
+            out,
                 Diagnostic::error(
                     format!("argument {} of `{fname}` is not constant: module constants take constant expressions, other module constants and closures", i + 1),
                     a.span,
@@ -240,7 +302,7 @@ fn call_ok(cx: &mut Ctx, name: &str, f: DefId, args: &[Expr], span: Span) -> boo
             );
             return false;
         }
-        if !init_ok(cx, name, a) {
+        if !init_ok(cx, name, a, out) {
             return false;
         }
     }
@@ -263,10 +325,11 @@ fn call_ok(cx: &mut Ctx, name: &str, f: DefId, args: &[Expr], span: Span) -> boo
                     .join(" -> ");
                 d = d.with_note(format!("through {chain}"));
             }
-            cx.error(
-                d.with_note("module constants are evaluated at each use, so a call that initializes one must have no effects, no loops or recursion, and must not throw or await")
+            out.push(NotConstant {
+                fatal: imp.fatal,
+                diag: d.with_note("module constants are evaluated at each use, so a call that initializes one must have no effects, no loops or recursion, and must not throw or await")
                     .with_note(fix_note(name)),
-            );
+            });
             false
         }
     }
@@ -314,6 +377,7 @@ pub(crate) fn purity(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
                 what: "calls itself".into(),
                 span: cx.fn_info(f).name_span,
                 via: vec![],
+                fatal: false,
             })
         }
         None => {}
@@ -331,6 +395,15 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
             what: what.into(),
             span,
             via: vec![],
+            fatal: false,
+        })
+    };
+    let fatal = |what: &str, span| {
+        Err(Impure {
+            what: what.into(),
+            span,
+            via: vec![],
+            fatal: true,
         })
     };
     let name_span = info.name_span;
@@ -350,7 +423,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         );
     }
     if info.is_async || info.is_async_gen {
-        return at("is async", name_span);
+        return fatal("is async", name_span);
     }
     if info.is_generator {
         return at("is a generator", name_span);
@@ -434,11 +507,16 @@ struct Walk {
 
 impl Walk {
     fn set(&mut self, what: &str, span: Span) {
+        self.set_as(what, span, false);
+    }
+
+    fn set_as(&mut self, what: &str, span: Span, fatal: bool) {
         if self.found.is_none() {
             self.found = Some(Impure {
                 what: what.into(),
                 span,
                 via: vec![],
+                fatal,
             });
         }
     }
@@ -466,7 +544,7 @@ impl VisitMut for Walk {
                 }
             },
             H::Closure(c) => self.closures.push((*c, e.span)),
-            H::Await(_) => self.set("awaits", e.span),
+            H::Await(_) => self.set_as("awaits", e.span, true),
             H::Throw(_) => self.set("may throw", e.span),
             _ => {}
         }
@@ -511,6 +589,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::HoldsNull
         | I::NullAs
         | I::Truthy
+        | I::IsNull
+        | I::IsNullish
         | I::FnCapturesNothing
         | I::Sqrt
         | I::Floor
@@ -592,7 +672,7 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
             .init
             .as_ref()
             .is_some_and(|i| !matches!(i.kind, H::Lit(_) | H::FnRef(..)));
-        if !fresh || !identity_compared(cx, g.ty, 0) {
+        if !fresh || g.stored || !identity_compared(cx, g.ty, 0) {
             continue;
         }
         let name = g.name.clone();

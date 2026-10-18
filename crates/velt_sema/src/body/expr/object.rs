@@ -64,7 +64,24 @@ impl FnCx<'_, '_> {
                 t
             }
         };
+        // `[x, y]` with `x: A` (narrowed) and `y: A | null`: an `(A | null)[]`, as in TS.
         let elem = match exp_elem {
+            None => self.nullable_elem(elems, &mut out, elem),
+            Some(_) => elem,
+        };
+        let elem = match exp_elem {
+            // `[undefined, 1]`: the elements' union (`number | undefined`), as in TypeScript.
+            None if self.cx.ty.core(elem) == Some(self.cx.ty.never) => {
+                let mut tys = vec![];
+                for (i, e) in elems.iter().enumerate() {
+                    if out[i].is_none() {
+                        out[i] = Some(self.expr(e, None, Want::Move));
+                    }
+                    let t = out[i].as_ref().map_or(elem, |h| self.cx.widened(h.ty));
+                    tys.push(t);
+                }
+                self.cx.union_of(&tys, false, span)
+            }
             None if self.cx.class_of(elem).is_some() => self.common_base(elems, &mut out, elem),
             None if self.cx.ty.promise_payload(elem).is_some() => {
                 self.common_rejection(elems, &mut out, elem)
@@ -81,6 +98,31 @@ impl FnCx<'_, '_> {
         }
         let ty = self.cx.ty.array(elem);
         self.mk(H::ArrayLit(hs), ty, span)
+    }
+
+    /// Element type of an array literal whose first element is of the non-nullable type
+    /// `first`: the nullable type of the first element that is a `first | null` (or `first |
+    /// undefined`), else `first`. Checks the elements into `out`.
+    fn nullable_elem(
+        &mut self,
+        elems: &[ast::Expr],
+        out: &mut [Option<hir::Expr>],
+        first: TyId,
+    ) -> TyId {
+        let t = &self.cx.ty;
+        if t.opt_payload(first).is_some() || t.is_bottom(first) || elems.len() < 2 {
+            return first;
+        }
+        for (i, e) in elems.iter().enumerate() {
+            if out[i].is_none() {
+                out[i] = Some(self.expr(e, Some(first), Want::Move));
+            }
+            let ty = out[i].as_ref().map_or(first, |h| h.ty);
+            if ty != first && self.cx.ty.core(ty) == Some(first) {
+                return ty;
+            }
+        }
+        first
     }
 
     /// Element type of an array literal whose first element is of class `first`: the class of
@@ -262,6 +304,19 @@ impl FnCx<'_, '_> {
         {
             return self.method_object(props, span);
         }
+        if let Some(target) = self.literal_iface(exp) {
+            return self.iface_object(props, target, span);
+        }
+        if let Some(at) = props.iter().find_map(super::iface_object::is_accessor) {
+            self.cx.error(
+                Diagnostic::error(
+                    "getters and setters in object literals are not supported yet where no interface with methods is expected",
+                    at,
+                )
+                .with_note("an object literal of an object type is plain data: its fields hold values; store the value in a field, annotate the literal with an interface that declares the member, or declare a class with the accessor"),
+            );
+            return self.error_expr(span);
+        }
         if let Some(props) = self.local_computed_keys(props) {
             return self.object_lit(&props, exp, span);
         }
@@ -322,6 +377,12 @@ impl FnCx<'_, '_> {
             }
         }
         if super::spread::has_spread(props) {
+            if let Some((d, v)) = self.spread_string_record(props) {
+                // `{ ...r, z: 1 }` of a `Record<string, V>`: TypeScript's type has a string
+                // index signature (`{ [x: string]: V; z: number }`), a `Record<string, V>`.
+                let k = self.cx.ty.str_;
+                return self.record_literal(d, k, v, props, span);
+            }
             return self.spread_object(props, None, None, span);
         }
         let ps = self.props(props);
@@ -338,6 +399,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: hs,
+            converted: hir::Conversion::No,
         };
         self.mk(kind, ty, span)
     }
@@ -520,12 +582,15 @@ impl FnCx<'_, '_> {
     /// declared as (`AB` for `type AB = A & B`), else `d`'s own name.
     fn literal_name(&mut self, d: DefId) -> String {
         let a = self.cx.adt(d).expect("ICE: struct");
-        let name = a.name.clone();
+        let name = crate::namespaces::written(&a.name).into_owned();
         if a.kind != AdtKind::Anon || !a.generics.names.is_empty() {
             return name;
         }
         let t = self.cx.ty.intern(TyKind::Adt(d, vec![]));
-        self.cx.alias_names.get(&t).cloned().unwrap_or(name)
+        match self.cx.alias_names.get(&t) {
+            Some(n) => crate::namespaces::written(n).into_owned(),
+            None => name,
+        }
     }
 
     /// A struct literal from its values by field index (omitted ones take their default).
@@ -584,6 +649,10 @@ impl FnCx<'_, '_> {
                     }
                     h
                 }
+                // `{ b?: any }` left out: the dynamic `undefined`.
+                (None, None) if f.optional && self.cx.dynamic(fty).is_some() => {
+                    self.dynamic_nothing(hir::Nothing::Undefined, fty, span)
+                }
                 // `{ b?: T }` is `{ b: T | null }`: an object literal may leave such a field out.
                 (None, None) if anon && self.cx.ty.opt_payload(fty).is_some() => {
                     self.mk(H::Lit(hir::Lit::Null), fty, span)
@@ -606,6 +675,7 @@ impl FnCx<'_, '_> {
             def: d,
             type_args,
             fields: hs,
+            converted: hir::Conversion::No,
         };
         self.mk(kind, ty, span)
     }
@@ -623,6 +693,14 @@ impl FnCx<'_, '_> {
         let mut values: Vec<Option<hir::Expr>> = fields.iter().map(|_| None).collect();
         for (pname, value) in &ps {
             let Some(i) = fields.iter().position(|f| f.name == pname.name) else {
+                if self.finished_result_value(fields, &pname.name, *value) {
+                    continue;
+                }
+                if crate::collect::exports::def_member_maybe_dropped(self.cx, d, &pname.name) {
+                    // The parser may have dropped its declaration (`Ctx::recovered`).
+                    self.prop_value(pname, *value, None);
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!(
@@ -661,6 +739,25 @@ impl FnCx<'_, '_> {
             values[i] = Some(h);
         }
         values
+    }
+
+    /// `value: undefined` in a literal of a finished iterator result (`{ done: true }`, an object
+    /// type with a field `done: true` and no `value`): TypeScript's `IteratorReturnResult`
+    /// carries the value, Velt's finished result has none, so the property is left out (issue
+    /// #930). Only the `undefined` literal is left out: it has no effect.
+    fn finished_result_value(
+        &mut self,
+        fields: &[FieldInfo],
+        name: &str,
+        value: Option<&ast::Expr>,
+    ) -> bool {
+        let is_undefined =
+            value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("undefined"));
+        name == "value"
+            && is_undefined
+            && fields.iter().any(|f| {
+                f.name == "done" && self.cx.lit_value(f.ty) == Some(hir::LitValue::Bool(true))
+            })
     }
 
     /// `t` when only its error types are unknown (`Error`): a hint, though not a type yet.

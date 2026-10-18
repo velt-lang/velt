@@ -1,0 +1,11 @@
+// A primitive in an `any` passed to a `WeakMap<object, V>` (issue #926), as in JavaScript:
+// `get`, `has` and `delete` find nothing, `set` throws.
+const ids = new WeakMap<object, number>();
+const seen = new WeakSet<object>();
+
+function main(): void {
+  const n: any = 5;
+  const s: any = "text";
+  console.log(ids.get(n) ?? -1, ids.has(n), ids.delete(s), seen.has(s), seen.delete(n));
+  ids.set(n, 1);
+}

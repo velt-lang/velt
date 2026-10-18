@@ -87,7 +87,7 @@ mod tests {
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]

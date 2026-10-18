@@ -103,11 +103,11 @@ impl FnCx<'_, '_> {
     /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one
     /// or may hold one (a union with a `symbol` member, `string | symbol`).
     pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let symbol = |t: &TyId| {
             matches!(
-                self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)),
+                self.cx.ty.kind(self.cx.ty.core(*t).unwrap_or(*t)),
                 TyKind::Symbol
             )
         };
@@ -141,6 +141,9 @@ impl FnCx<'_, '_> {
         {
             let obj = self.expr(rhs, None, Want::Borrow);
             return self.present_test(obj, name, true, span);
+        }
+        if let Some(h) = self.dynamic_in(lhs, rhs, span) {
+            return h;
         }
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
@@ -293,9 +296,9 @@ impl FnCx<'_, '_> {
             let b = self.cx.ty.bool_;
             return self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], b, span);
         }
-        let payload = self.cx.ty.opt_payload(field.ty).unwrap_or(field.ty);
+        let payload = self.cx.ty.core(field.ty).unwrap_or(field.ty);
         let wild = self.pat(P::Wildcard, payload, span);
-        let some = self.pat(P::Some(Box::new(wild)), field.ty, span);
+        let some = self.present_pat(wild, field.ty, span);
         self.bool_match(field, Some(some), span)
     }
 

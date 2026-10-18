@@ -20,9 +20,36 @@ last.
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
 `await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
 
+An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
+that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
+promise settles as the returned one does. The steps are Node's: the promise is adopted after the
+function has left every scope it returns from (`finally` blocks run, `using` values are disposed
+and the iterator of a `for…of` is closed first, and an enclosing `catch` does not see the
+rejection), and one microtask later than `return await` would settle. A `return` that a
+`finally` block cancels (with `continue`, `break` or another `return`) adopts nothing. A plain
+value of a `T | Promise<T>` is returned at once. Without a written result type the function's result is the promise's value type, as in
+TypeScript: `const f = async (n: number) => load(n)` with `load(n): Promise<number>` is a
+`(n: number) => Promise<number>`.
+
+```ts
+async function load(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function viaLoad(n: number): Promise<number> {
+  return load(n);
+}
+
+async function main() {
+  console.log(await viaLoad(21));
+}
+```
+
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
-TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+TypeScript: its body returns `View`. The same holds for such an arrow as the value of a
+module-level constant or a field initializer (`const load: () => number | Promise<number> = async
+() => 1;`). Such a result is told apart with `r instanceof Promise`
 ([unions](types.md#union-types)):
 
 ```ts
@@ -53,8 +80,14 @@ Promises behave like JavaScript's, at Rust's cost:
 
 - A started promise runs on its creator's task, never at the same time as the creator or the
   task's other promises (JavaScript's single-threaded model), so no thread-safety rules apply to
-  it. When it finishes, whoever awaits it resumes at once, like a JS microtask, so output order
-  matches Node. Only `spawn` puts work on another core.
+  it. Only `spawn` puts work on another core.
+- `await` takes Node's steps: the code after it runs one microtask after the promise settles
+  (one microtask later when it already has), behind the callbacks and other `await`s queued before it, so
+  promises started side by side interleave as in Node (`const a = f(); const b = g();` runs `f`
+  and `g` up to their first `await`, then the caller's next line, then their continuations in
+  turn). Awaiting an async call takes its step when the call returns. A program that never
+  starts a promise, chains a callback or settles one with a stored `resolve` can't tell the
+  steps apart, and its `await`s cost what a plain call does.
 - Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
   So the started promises (and the task itself) waiting for timers that are due together resume
   in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
@@ -171,6 +204,80 @@ on later, when that happens. So a loop of combinators that settle at once finish
 as it goes, like Node. A combinator
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
+
+## `then`, `catch` and `finally`
+
+Promises have JavaScript's callback methods. Each takes the promise (it has one owner) and
+returns a new promise, which starts at once like any stored promise:
+
+- `p.then(f)`: `f(value)` once `p` fulfills; a rejection passes through to the new promise.
+- `p.then(f, g)`: `g(reason)` when `p` rejects (both callbacks give the same type).
+  `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
+  `p.then(f)`, as in JS.
+- `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
+  promise's value type (**Planned**: a `catch` that changes the value type, `T | U`).
+- `p.finally(h)`: `h()` either way, then the value or the reason passes through.
+
+A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a
+promise of what `load` resolves to, settled in as many steps as in Node (one to adopt the
+returned promise, one after it settles). The new promise rejects with what `p` rejects with (unless
+it is handled) and with what the callback throws; a callback may throw a different error type
+only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept as a statement
+(`p.then(f);`) is not a floating promise: it runs to completion, and a rejection nobody handles
+is reported as uncaught, like a dropped promise, once the callbacks queued before it have run
+(as in Node). `queueMicrotask(f)` runs `f` the same way. Both need async code around them:
+in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
+starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
+statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
+
+A promise has one consumer, as everywhere in Velt: `then`, `catch`, `finally`, `await` and the
+combinators each take it. TypeScript lets several consumers share a promise (`p.then(f);
+p.then(g);`, or `p.then(f)` and later `await p`); in Velt the second use is ``use of moved
+value``, with a note: chain the calls, or keep the promise `then` returns (**Planned**: shared
+promises, #212).
+
+Callbacks run in Node's order: after the code that is running, in the order they were queued
+(each task has a microtask queue), and before timers and I/O: a `setTimeout` callback never
+runs before the callbacks queued by the task that scheduled it. `finally` passes the value or
+the reason on two steps after its callback, as in Node, and `Promise.allSettled` and
+`Promise.any` settle in the step Node's do. Chains interleave as in Node
+(`a.then(f1).then(f2)` next to `b.then(g1).then(g2)` runs `f1 g1 f2 g2`). Code after an `await`
+goes through the same queue, so `p.then(f); await q;` runs `f` first, as in Node. A `resolve` or
+`reject` called later (kept from `Promise.withResolvers()` or a `new Promise` executor) queues
+the callbacks and `await`s waiting for that promise right away, as Node does.
+
+Where the order still differs from Node's: `Promise.all` and `Promise.race` settle in fewer
+steps (they keep `await` on them fast), which matters only for callbacks and `await`s running
+next to them. Async generators take Node's steps (a `yield` awaits its value, `return()` awaits
+before it closes the body), except for calls queued behind a running one: such a call starts one
+step later than in Node, and the code after an `await` of an earlier call can run after it
+rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
+task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
+`resolve` called later resumes its waiters at the executor's next step.
+
+```ts
+class Failed extends Error {}
+
+async function load(id: number): Promise<string, Failed> {
+  if (id < 0) {
+    throw new Failed(`no item ${id}`);
+  }
+  return `item ${id}`;
+}
+
+async function main() {
+  load(-1)
+    .catch((e) => e.message)
+    .then((m) => console.log(m));
+  const shown = load(1)
+    .then((item) => item.toUpperCase())
+    .finally(() => console.log("loaded"));
+  queueMicrotask(() => console.log("queued"));
+  console.log("first");
+  console.log(await shown);
+  // first, queued, no item -1, loaded, ITEM 1
+}
+```
 
 ## Async iteration
 
@@ -386,6 +493,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     promise (`m.with((f) => f())`) is an error when a synchronous closure of its type captured
     objects: the promise would use them after the lock is released. An async closure there is
     fine, since each call gets its own copy of what it captured.
+  - The callback cannot use module state (module-level `let`s and kept constants), directly
+    or through a function it calls, a field initializer, or a `toString()`, `toJSON()` or
+    `[Symbol.dispose]()` method that std or a drop calls ([Module state](variables.md#module-state)).
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

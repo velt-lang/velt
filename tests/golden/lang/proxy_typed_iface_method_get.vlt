@@ -1,0 +1,30 @@
+// An interface method called on a typed proxy (#823) whose handler has a `get` trap: JavaScript
+// reads the method through the trap first, which needs method values as `any`; the same
+// `TypeError` as a direct call (proxy_typed_method_get) until then, rather than a call that
+// skips the trap.
+function traced(target: any): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      console.log("get", String(key));
+      return Reflect.get(t, key, receiver);
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+interface I {
+  show(): string;
+}
+class C implements I {
+  n: number = 1;
+  show(): string {
+    return `c${this.n}`;
+  }
+}
+
+const i: I = traced(new C()) as C;
+console.log("before");
+console.log(i.show());

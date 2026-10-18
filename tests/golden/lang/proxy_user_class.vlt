@@ -1,0 +1,15 @@
+// check: no leaks
+// A program's own class named `Proxy` is its own class, not the prelude's (#823).
+class Proxy {
+  #target: any;
+  label: string = "mine";
+  constructor(t: any) {
+    this.#target = t;
+  }
+}
+function main(): void {
+  const x: any = new Proxy(5);
+  console.log(x.label);
+  console.log(x);
+  console.log("label" in x);
+}

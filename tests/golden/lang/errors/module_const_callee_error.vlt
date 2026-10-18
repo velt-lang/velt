@@ -1,0 +1,10 @@
+// A constant kept as module state (`X` is an array from a call) still reports the errors of the
+// function that computes it.
+function helper(): number[] {
+  const s: string = 5;
+  return [s.length];
+}
+const X = helper();
+function main() {
+  console.log(X.length);
+}

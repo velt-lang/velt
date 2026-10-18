@@ -1,0 +1,12 @@
+object_copies_dynamic_keys.vlt:7:14: error: a value of type `AB` converts to `A` by copying its fields, and this program uses `any` values as keys compared by identity: two copies of one object are different keys
+object_copies_dynamic_keys.vlt:9:1: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+= note: build the new object explicitly, `{ a: s.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_dynamic_keys.vlt:15:15: error: a value of type `WX` converts to `W` by copying its fields, and this program uses `W` values as keys compared by identity: two copies of one object are different keys
+object_copies_dynamic_keys.vlt:18:1: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `W` made from a `WX` value is a new object with the same field values
+= note: build the new object explicitly, `{ w: sw.w }` (a new object in TypeScript too), or declare the parameter or variable as `WX`
+object_copies_dynamic_keys.vlt:16:15: error: a value of type `WX` converts to `W` by copying its fields, and this program uses `W` values as keys compared by identity: two copies of one object are different keys
+object_copies_dynamic_keys.vlt:18:1: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `W` made from a `WX` value is a new object with the same field values
+= note: build the new object explicitly, `{ w: sw.w }` (a new object in TypeScript too), or declare the parameter or variable as `WX`

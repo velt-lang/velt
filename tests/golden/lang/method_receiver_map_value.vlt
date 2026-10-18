@@ -1,0 +1,38 @@
+// check: no leaks
+// A method called on an object reached through a Map value, whose body replaces it in the map,
+// deletes the entry or reassigns the map (#1188): a class method, an overridden method called
+// through the base class, and an interface method. Identical to Node.
+interface Named { name(): string; }
+class Val implements Named {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  drop(): string { byName.delete("k"); return this.label + " dropped"; }
+  over(): string { byName.set("k", new Val("over")); return this.label + " overwritten"; }
+  inner(): string { boxes.get("b")!.val = new Val("inner2"); return this.label + " inner"; }
+  name(): string { named.get("n")!.item = new Val("named2"); return this.label + " named"; }
+}
+class Base { label: string = "base"; run(): string { return this.label; } }
+class Runner extends Base {
+  constructor(l: string) { super(); this.label = l; }
+  override run(): string { runners = new Map<string, RBox>(); return this.label + " ran"; }
+}
+class Box { val: Val; constructor(v: Val) { this.val = v; } }
+class RBox { r: Base; constructor(r: Base) { this.r = r; } }
+class NBox { item: Named; constructor(n: Named) { this.item = n; } }
+const byName = new Map<string, Val>();
+const boxes = new Map<string, Box>();
+let runners = new Map<string, RBox>();
+const named = new Map<string, NBox>();
+
+function main(): void {
+  byName.set("k", new Val("v" + String(1)));
+  console.log(byName.get("k")!.drop(), byName.size);
+  byName.set("k", new Val("v" + String(2)));
+  console.log(byName.get("k")!.over(), byName.get("k")!.label);
+  boxes.set("b", new Box(new Val("b" + String(1))));
+  console.log(boxes.get("b")!.val.inner(), boxes.get("b")!.val.label);
+  runners.set("r", new RBox(new Runner("r" + String(1))));
+  console.log(runners.get("r")!.r.run(), runners.size);
+  named.set("n", new NBox(new Val("n" + String(1))));
+  console.log(named.get("n")!.item.name(), named.get("n")!.item.name());
+}

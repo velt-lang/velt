@@ -1,7 +1,9 @@
 //! Items: imports, functions, `declare function`, type aliases and variables, plus the blank-line
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
-use velt_syntax::ast::{Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl};
+use velt_syntax::ast::{
+    Augment, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl, VarKind,
+};
 
 use super::lists::delimited;
 use super::script::{blank_before, Top};
@@ -53,6 +55,7 @@ impl<'a> Printer<'a> {
                 cat!["declare ", asyncness, sig, ";"]
             }
             ItemKind::Augment(a) => self.augment(a, item.span.hi),
+            ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
     }
@@ -69,7 +72,22 @@ impl<'a> Printer<'a> {
         if a.items.is_empty() {
             return cat![head, " {}"];
         }
-        let entries: Vec<Top> = a.items.iter().map(Top::Item).collect();
+        self.block_items(head, &a.items, end)
+    }
+
+    /// `[declare] namespace N { … }` (the item ends at `end`).
+    fn namespace(&mut self, n: &Namespace, end: u32) -> Doc {
+        let declare = if n.declare { "declare " } else { "" };
+        let head = cat![declare, "namespace ", n.name.name.clone()];
+        if n.items.is_empty() {
+            return cat![head, " {}"];
+        }
+        self.block_items(head, &n.items, end)
+    }
+
+    /// `head { items }`, the block ending at `end`.
+    fn block_items(&mut self, head: Doc, items: &[Item], end: u32) -> Doc {
+        let entries: Vec<Top> = items.iter().map(Top::Item).collect();
         let body = self.lines(
             &entries,
             end.saturating_sub(1),
@@ -124,15 +142,22 @@ impl<'a> Printer<'a> {
     /// `type X = T;` — a union too long for one line gets one `| member` per line.
     fn type_alias(&mut self, alias: &TypeAlias) -> Doc {
         // An interface with an index signature, which the parser gives as an alias.
-        if let TypeExprKind::IndexSig {
-            fields,
-            key,
-            value,
-            readonly,
-        } = &alias.ty.kind
-        {
+        let members = match &alias.ty.kind {
+            TypeExprKind::IndexSig {
+                fields,
+                key,
+                value,
+                readonly,
+            } => Some(super::types::index_sig_members(
+                fields, key, value, *readonly,
+            )),
+            TypeExprKind::Callable { sigs, members } => {
+                Some(super::types::callable_members(sigs, members))
+            }
+            _ => None,
+        };
+        if let Some(members) = members {
             if slice(self.src, alias.ty.span).starts_with("interface") {
-                let members = super::types::index_sig_members(fields, key, value, *readonly);
                 let body = self.index_sig_lines(&members, alias.ty.span.hi);
                 let head = cat![
                     "interface ",
@@ -165,7 +190,39 @@ impl<'a> Printer<'a> {
 
     /// `const pattern: T = init` without the semicolon (also used by `for` initializers).
     pub(super) fn var_decl(&mut self, var: &VarDecl) -> Doc {
-        cat![var.kind.keyword(), " ", self.declarator(var)]
+        cat![self.var_keyword(var), " ", self.declarator(var)]
+    }
+
+    /// The keyword of `var`: `var` when the source has it (the AST reads `var` as `let`),
+    /// also for a further declarator of a `var` (whose span starts at its pattern): the one
+    /// before its comma was a `var` declarator. Decided from the declaration's own position.
+    fn var_keyword(&mut self, var: &VarDecl) -> &'static str {
+        if var.kind != VarKind::Let {
+            return var.kind.keyword();
+        }
+        let written = crate::source::slice(self.src, var.span);
+        let starts = |kw: &str| {
+            written
+                .strip_prefix(kw)
+                .is_some_and(|rest| rest.starts_with(|c: char| c.is_whitespace()))
+        };
+        let is_var = starts("var") || (!starts("let") && self.follows_var(var.span.lo));
+        if is_var {
+            self.var_ends.insert(var.span.hi);
+            "var"
+        } else {
+            "let"
+        }
+    }
+
+    /// Is the declarator starting at `lo` a further declarator (after a comma) of a `var`?
+    fn follows_var(&self, lo: u32) -> bool {
+        let before = self.src[..lo as usize].trim_end();
+        let Some(before) = before.strip_suffix(',') else {
+            return false;
+        };
+        let prev_end = before.trim_end().len() as u32;
+        self.var_ends.contains(&prev_end)
     }
 
     /// `pattern: T = init`: a declaration without its keyword (`for (let a = 1, b = 2; …)`).

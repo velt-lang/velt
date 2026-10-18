@@ -1,0 +1,42 @@
+// check: no leaks
+// `k!` of a nullable variable passed for a borrowed parameter stays in the variable, as `k`
+// does (issue #1196): a fresh `WeakRef`, weak key or set member made from it keeps its target
+// while the variable lives.
+class K {
+  n = 1;
+}
+class Holder {
+  k: K | null = new K();
+}
+function keep(o: object): WeakRef<object> {
+  return new WeakRef(o);
+}
+function keepK(o: K): WeakRef<K> {
+  return new WeakRef(o);
+}
+function main(): void {
+  let k: K | null = new K();
+  const r = new WeakRef(k!);
+  console.log(r.deref() != null);
+  let o: object | null = new K();
+  const r2 = new WeakRef(o!);
+  console.log(r2.deref() !== undefined);
+  let k3: K | null = new K();
+  const r3 = keep(k3!);
+  console.log(r3.deref() !== undefined);
+  let k5: K | null = new K();
+  const r5 = keepK(k5!);
+  console.log(r5.deref() != null);
+  const h = new Holder();
+  const r6 = new WeakRef(h.k!);
+  console.log(r6.deref() != null);
+  let k4: K | null = new K();
+  const r4 = new WeakRef(k4!);
+  const ws = new WeakSet<K>();
+  ws.add(k4!);
+  let k6: K | null = new K();
+  const r7 = new WeakRef(k6!);
+  const wm = new WeakMap<K, number>();
+  wm.set(k6!, 1);
+  console.log(ws.has(r4.deref()!), wm.get(r7.deref()!), r.deref()!.n);
+}

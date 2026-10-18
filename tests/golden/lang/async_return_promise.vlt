@@ -1,0 +1,45 @@
+// An async function returning a promise adopts it, as in JS (issue #1148): `return p` is
+// `return await p`, also for a `T | Promise<T>` and in a `catch` block.
+async function f(): Promise<number> {
+  return Promise.resolve(1);
+}
+async function g(): Promise<number> {
+  return Promise.reject(new Error("e"));
+}
+async function later(n: number): Promise<number> {
+  return n * 2;
+}
+async function viaCall(n: number): Promise<number> {
+  return later(n);
+}
+async function h<T>(fn: () => T | Promise<T>): Promise<T> {
+  return fn();
+}
+async function k(fn: () => number | Promise<number>): Promise<number> {
+  return fn();
+}
+async function checked(n: number, fn: () => Promise<number>): Promise<number> {
+  try {
+    if (n < 0) {
+      throw new Error("negative");
+    }
+    return await fn();
+  } catch (e) {
+    console.log("falling back after", (e as Error).message);
+    return fn();
+  }
+}
+async function main() {
+  console.log(await f());
+  try {
+    await g();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  console.log(await viaCall(21));
+  console.log(await k(() => 5));
+  console.log(await k(async () => 6));
+  console.log(await checked(-1, async () => 8));
+  console.log(await h<number>(() => 7));
+  console.log(await h<string>(async () => "x"));
+}

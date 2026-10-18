@@ -1,0 +1,17 @@
+// A call through a generic interface value read as the same interface with `unknown` arguments
+// checks each argument against the value's own type argument (#1153): a wrong type stops the
+// program with a `TypeError`. TypeScript accepts the call, and Node runs `n * 2` on the string
+// (printing 42) without a check.
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+const double: Handler<number, number> = { name: "double", serialize: (n) => n * 2 };
+
+function main(): void {
+  const all: Handler[] = [double];
+  console.log(all[0].name, all[0].serialize(4));
+  console.log(all[0].serialize("21"));
+  console.log("not reached");
+}

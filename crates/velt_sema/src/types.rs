@@ -103,8 +103,28 @@ impl Types {
         self.intern(TyKind::Param(n))
     }
 
-    /// Payload of `T | null` (or `T | undefined`).
+    /// Payload of `T | null` (or `T | undefined`): what `WrapSome` / `UnwrapSome` hold. For
+    /// `T | null | undefined` that is `T | null` (`TyTable::payload`); `core` is `T` itself.
     pub fn opt_payload(&self, t: TyId) -> Option<TyId> {
+        self.table.payload(t)
+    }
+
+    /// `undefined` alone as a type: an option of `never`, so its one value is the option's
+    /// nothing (hir_encodings.md "Undefined").
+    pub fn undefined(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Undefined)
+    }
+
+    /// `null` alone as a type (a field that is always `null` in one member of a discriminated
+    /// union): an option of `never`, like `undefined` alone.
+    pub fn null_alone(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Null)
+    }
+
+    /// `T` of `T | null`, `T | undefined` and `T | null | undefined`.
+    pub fn core(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {
             TyKind::Option(p, _) => Some(*p),
             _ => None,
@@ -204,7 +224,10 @@ impl Types {
             TyKind::Error => true,
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
-            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
+            TyKind::Adt(_, args)
+            | TyKind::Dyn(_, args)
+            | TyKind::Tuple(args)
+            | TyKind::Op(_, args) => any(args),
             TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
@@ -247,6 +270,7 @@ impl Types {
         let nk = match k {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
@@ -318,7 +342,7 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
-        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
+        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) | TyKind::Op(_, a) => a.clone(),
         TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
@@ -385,5 +409,20 @@ pub(crate) fn int_range(i: IntTy) -> String {
         format!("{}..={}", -m, m - 1)
     } else {
         format!("0..={}", (1u128 << bits) - 1)
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

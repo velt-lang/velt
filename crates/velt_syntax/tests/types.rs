@@ -147,7 +147,7 @@ fn index_signatures() {
     };
     assert_eq!(a.name.name, "D");
     assert_eq!(a.generics.len(), 1);
-    assert_eq!(ty(&a.ty), "{n: (T | null); readonly [string]: T}");
+    assert_eq!(ty(&a.ty), "{n: (T | undefined); readonly [string]: T}");
     assert_eq!(
         errors("interface W { [k: string]: i64; size(): i64; }"),
         ["an interface with an index signature and methods is not supported yet (#937)"]
@@ -225,4 +225,72 @@ fn function_type_parameters_may_be_patterns() {
         alias_ty("([i64, string]) => void"),
         "fn([i64, string]) => void"
     );
+}
+
+#[test]
+fn conditional_types_nest_to_the_right() {
+    assert_eq!(
+        alias_ty("T extends string ? 1 : T extends number ? 2 : 3"),
+        "(T extends string ? 1 : (T extends number ? 2 : 3))"
+    );
+    // The `extends` type has no conditional type of its own; unions bind tighter.
+    assert_eq!(
+        alias_ty("A | B extends C | D ? X : Y"),
+        "((A | B) extends (C | D) ? X : Y)"
+    );
+    assert_eq!(
+        alias_ty("[T] extends [never] ? 1 : 2"),
+        "([T] extends [never] ? 1 : 2)"
+    );
+    assert_eq!(
+        alias_ty("(x: T extends A ? B : C) => void"),
+        "fn((T extends A ? B : C)) => void"
+    );
+}
+
+#[test]
+fn infer_in_patterns() {
+    assert_eq!(
+        alias_ty("T extends Box<infer V> | undefined ? V : never"),
+        "(T extends (Box<infer V> | undefined) ? V : never)"
+    );
+    assert_eq!(
+        alias_ty("T extends { a?: infer M } ? M : {}"),
+        "(T extends {a: (infer M | undefined)} ? M : {})"
+    );
+    // `infer` alone is a type named `infer`.
+    assert_eq!(alias_ty("infer"), "infer");
+}
+
+#[test]
+fn mapped_types() {
+    assert_eq!(
+        alias_ty("{ [K in keyof T]: T[K] }"),
+        "{[K in keyof T]: T[K]}"
+    );
+    assert_eq!(
+        alias_ty("{ readonly [K in keyof T]-?: T[K] }"),
+        "{+readonly [K in keyof T]-?: T[K]}"
+    );
+    assert_eq!(
+        alias_ty("{ -readonly [K in Keys as `on${K}`]+?: () => void; }"),
+        "{-readonly [K in Keys as `on${K}`]+?: fn() => void}"
+    );
+    // An index signature is not a mapped type.
+    assert_eq!(alias_ty("{ [k: string]: i64 }"), "{[string]: i64}");
+}
+
+#[test]
+fn template_literal_types() {
+    assert_eq!(alias_ty("`plain`"), "`plain`");
+    assert_eq!(alias_ty("`${infer F}${infer R}`"), "`${infer F}${infer R}`");
+    assert_eq!(alias_ty("`model:${string & K}`"), "`model:${(string & K)}`");
+}
+
+#[test]
+fn indexed_access_with_any_key() {
+    assert_eq!(alias_ty("T[K]"), "T[K]");
+    assert_eq!(alias_ty("T[number]"), "T[number]");
+    assert_eq!(alias_ty("{ a: 1 }[keyof T]"), "{a: 1}[keyof T]");
+    assert_eq!(alias_ty("T[K][]"), "T[K][]");
 }

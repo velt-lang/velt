@@ -1,0 +1,6 @@
+destructure_method_note.vlt:23:11: error: method `map` cannot be used as a function value
+  = note: a generic method, or one with a rest parameter, has no single function type
+  = note: wrap it in an arrow function: `(f) => m.map(f)`
+destructure_method_note.vlt:24:11: error: method `map` cannot be used as a function value
+  = note: a generic method, or one with a rest parameter, has no single function type
+  = note: wrap it in an arrow function: `(f) => obj.map(f)`

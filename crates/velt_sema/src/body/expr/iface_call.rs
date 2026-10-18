@@ -103,6 +103,7 @@ impl FnCx<'_, '_> {
             ret: s.method.ret,
             slot_names,
             bounds,
+            constraints: vec![],
             js_numbers: false,
             positions: false,
             js_api: false,

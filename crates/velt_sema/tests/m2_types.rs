@@ -501,26 +501,25 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    // A pure call may initialize a module constant (#383); one with effects may not.
+    // A pure call may initialize a module constant (#383); one with effects makes it module
+    // state, evaluated once (#802), and so does an array that is not a table.
     ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    let r = err_src(
-        "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
-    );
-    assert!(
-        r.contains("`f` cannot initialize module constant `X`"),
-        "{r}"
-    );
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() { console.log(X); }");
     // An array of number or boolean literals is a table (read-only data).
     ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
-    let r = err_src("const X: string[] = [\"a\"]; function main() {}");
-    assert!(r.contains("only arrays of numbers or booleans"), "{r}");
-    // Only as the whole initializer: an array inside a struct constant is not a table.
-    let r = err_src(
+    ok_src("const X: string[] = [\"a\"]; function main() { X.push(\"b\"); }");
+    ok_src(
         "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
     );
-    assert!(r.contains("constant expressions or pure calls"), "{r}");
-    let r = err_src("const X: i64[] = [1 + 1]; function main() {}");
-    assert!(r.contains("is not a literal"), "{r}");
+    ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
+    // An initializer that may throw makes the constant module state; one whose type is an
+    // error reports only that error.
+    ok_src("function f(n: i64): i64 { if (n < 0) { throw new Error(\"x\"); } return n; } const D = f(1); function main() { console.log(D); }");
+    let r = err_src("const BAD = JSON.parse(\"{bad\"); function main() { console.log(BAD); }");
+    assert!(r.contains("cannot infer type parameter"), "{r}");
+    assert!(!r.contains("may throw"), "{r}");
+    // A module-level `let` is module state; an imported one is read-only where imported.
+    ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
     let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
     assert!(r.contains("module-level constant `X`"), "{r}");
     let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
@@ -640,11 +639,19 @@ fn interface_fields_through_values_and_generics() {
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
          function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4i64 })); }",
     );
+    // A writable field is written through the setter slot after the getters (#1112).
+    let p = ok_src(
+        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; }
+         function main() { const x = { age: 2i64 }; f(x); console.log(x.age); }",
+    );
+    assert!(calls(func(&p, "f"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
     let r = err_src(
-        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
+        "interface Aged { readonly age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
     );
     assert!(
-        r.contains("cannot modify `age` through an interface or generic value"),
+        r.contains("cannot assign to `age`: it is a readonly field"),
         "{r}"
     );
 }

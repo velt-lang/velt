@@ -1,0 +1,39 @@
+// Module-level constants and field initializers holding an `async` arrow (or an arrow with a
+// declared result) where the function type returns a union with a promise, or `void` (#1163).
+// Outside any body the adapter calls the arrow in place; each call gives what the arrow gives.
+
+type Res = { v: number };
+
+const one: () => number | Promise<number> = async () => 1;
+const greet: (name: string) => string | Promise<string> = async (name) => `hello ${name}`;
+const twice: (x: number, y: number) => number | Promise<number> = async (x, y) => {
+  await Promise.resolve();
+  return (x + y) * 2;
+};
+const sync: (x: number) => Res | Promise<Res> = (x): Res => ({ v: x * 10 });
+const fire: (x: number) => void = async (x) => {
+  console.log("fire", x);
+};
+
+class Hooks {
+  setup: () => string | Promise<string> = async () => "setup ran";
+  count: (n: number) => number | Promise<number> = async (n) => n + 1;
+}
+
+async function settle<T>(r: T | Promise<T>): Promise<T> {
+  return r instanceof Promise ? await r : r;
+}
+
+async function main() {
+  console.log(await one());
+  console.log(await greet("velt"));
+  console.log(await twice(2, 3));
+  const r = await sync(4);
+  console.log(r.v);
+  console.log(await settle(one()));
+  fire(7);
+  await Promise.resolve();
+  const h = new Hooks();
+  console.log(await h.setup());
+  console.log(await h.count(41));
+}

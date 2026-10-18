@@ -246,7 +246,10 @@ fn not_declared_before<'a>(
             .chain(std::iter::once(&**ret))
             .chain(throws.as_deref())
             .find_map(|a| not_declared_before(a, rest)),
-        K::GenericFunction { ty, .. } | K::Construct(ty) => not_declared_before(ty, rest),
+        K::GenericFunction { ty, .. }
+        | K::Construct(ty)
+        | K::TupleRest(ty)
+        | K::TupleOptional(ty) => not_declared_before(ty, rest),
         K::Object(fields) => fields.iter().find_map(|f| not_declared_before(&f.ty, rest)),
         K::IndexSig {
             fields, key, value, ..
@@ -255,7 +258,31 @@ fn not_declared_before<'a>(
             .map(|f| &f.ty)
             .chain([&key.ty, &**value])
             .find_map(|a| not_declared_before(a, rest)),
+        K::Callable { sigs, members } => sigs
+            .iter()
+            .flat_map(|s| {
+                let sig = &s.sig;
+                let bounds = sig
+                    .generics
+                    .iter()
+                    .flat_map(|g| g.bounds.iter().chain(&g.default));
+                bounds
+                    .chain(sig.params.iter().map(|p| &p.ty))
+                    .chain(&sig.ret)
+                    .chain(&sig.throws)
+            })
+            .chain(std::iter::once(&**members))
+            .find_map(|a| not_declared_before(a, rest)),
         K::KeyOf(t) => not_declared_before(t, rest),
+        K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
+            .into_iter()
+            .find_map(|a| not_declared_before(a, rest)),
+        K::Mapped(m) => std::iter::once(&m.source)
+            .chain(m.name.as_ref())
+            .chain(std::iter::once(&m.value))
+            .find_map(|a| not_declared_before(a, rest)),
+        K::TemplateLiteral { types, .. } => types.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Infer(_) => None,
         K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
         K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => None,
     }

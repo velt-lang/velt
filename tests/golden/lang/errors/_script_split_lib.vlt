@@ -1,0 +1,9 @@
+console.log("s1");
+const { x } = { x: 1 };
+let y: number;
+export const b = (() => {
+  console.log("b");
+  return 2;
+})();
+y = 5;
+console.log("s2", x, y, b);

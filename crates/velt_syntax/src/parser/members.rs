@@ -150,7 +150,7 @@ impl<'a> Parser<'a> {
         if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
         }
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         Ok(Member::Method(Method {
             decl: FnDecl {
                 sig,
@@ -376,9 +376,10 @@ impl<'a> Parser<'a> {
             throws,
             is_async: false,
             is_generator: false,
+            this_param: None,
             span: self.span_from(lo),
         };
-        let mut body = self.parse_block()?;
+        let mut body = self.parse_fn_body()?;
         self.store_param_props(&mut body, &fields);
         Ok((
             FnDecl {
@@ -420,12 +421,12 @@ impl<'a> Parser<'a> {
         if self.at(Tok::Question) && matches!(self.nth(1), Tok::LParen | Tok::Lt) {
             // `m?(x: T): R`: an optional member of function type, `m?: (x: T) => R`.
             self.bump();
-            let ty = self.parse_method_sig_type(lo, &name, true)?;
+            let ty = self.parse_method_sig_type(lo, &name)?;
             let span = self.span_from(lo);
             self.expect_member_end()?;
             decl.fields.push(Field {
                 name,
-                ty: super::types::or_null(ty),
+                ty: super::types::or_undefined(ty),
                 default: None,
                 readonly: false,
                 optional: true,
@@ -458,7 +459,7 @@ impl<'a> Parser<'a> {
         let sig = self.parse_sig_rest(lo, name, mods.is_async)?;
         self.check_accessor(&sig, &mods);
         let body = if self.at(Tok::LBrace) {
-            Some(self.parse_block()?)
+            Some(self.parse_fn_body()?)
         } else {
             self.expect_member_end()?;
             None

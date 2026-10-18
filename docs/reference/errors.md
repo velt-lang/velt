@@ -19,7 +19,8 @@ compiler knows exactly what each function and each `try` block can throw.
   (`get name() { … }`), which `toString()` then reads. A union of error classes
   (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
   `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
-  concatenation (`null` for `null`, `undefined` for `undefined`). Arrays of errors are written as
+  concatenation (`null` for `null`, `undefined` for `undefined`); so is an error held by an `any`
+  or an `unknown` (`` `${e}` `` is `Error: boom`, or a subclass's own `toString()`). Arrays of errors are written as
   JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
   `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
   `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
@@ -72,6 +73,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - In `catch (e)`, `e` has the **exact union** of what the `try` block can throw
   (`NotFound | Forbidden`; `never` when nothing can throw). Narrow it with `instanceof`,
   `typeof`, `==` or `switch` like any [union](types.md#union-types).
+- As in TypeScript, the binding may be annotated `unknown` or `any` (`catch (e: unknown)`); `e`
+  still has the union of what the block can throw. Any other annotation is TypeScript's error
+  TS1196.
 - An `if`/`else if` chain whose branches leave handles every member, so no code is needed after
   it.
 - `throw e;` rethrows; a narrowed `e` rethrows just that member.
@@ -132,7 +136,9 @@ nothing; `null` means success).
 
 ## Inference limits
 
-A closure created inside a recursive function that it calls, and a `catch` or promise whose
+A closure created inside a recursive function that it calls throws what the function's body
+throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
+`xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
 clause (``` the error type of this function is not known yet ```); when the recursion goes
 through an interface value, the `throws` clause goes on the interface method. Error types of

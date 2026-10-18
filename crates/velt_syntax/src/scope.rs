@@ -85,7 +85,8 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Extend(_)
-            | ItemKind::Augment(_) => {}
+            | ItemKind::Augment(_)
+            | ItemKind::Namespace(_) => {}
         }
     }
 
@@ -139,6 +140,7 @@ impl<'a> Walker<'a, '_> {
             }
             ItemKind::Interface(i) => {
                 i.fields.iter().for_each(|f| self.ty(&f.ty));
+                i.call_sigs.iter().for_each(|s| self.signature(&s.sig));
                 for m in &i.methods {
                     match &m.body {
                         Some(body) => self.body(&m.sig, body, None),
@@ -160,6 +162,7 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Var(v) => self.var(v),
             ItemKind::TypeAlias(a) => self.ty(&a.ty),
             ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
+            ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ItemKind::ExternFn(sig) => self.signature(sig),
             ItemKind::Import(_) => {}
         }
@@ -195,7 +198,9 @@ impl<'a> Walker<'a, '_> {
                 }
             }
             T::Named { args, .. } => args.iter().for_each(|a| self.ty(a)),
-            T::Array(x) | T::Construct(x) | T::KeyOf(x) => self.ty(x),
+            T::Array(x) | T::Construct(x) | T::KeyOf(x) | T::TupleRest(x) | T::TupleOptional(x) => {
+                self.ty(x)
+            }
             T::GenericFunction { ty, .. } => self.ty(ty),
             T::Tuple(xs) | T::Union(xs) | T::Intersection(xs) => {
                 xs.iter().for_each(|x| self.ty(x));
@@ -223,7 +228,24 @@ impl<'a> Walker<'a, '_> {
                 self.ty(value);
             }
             T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
-            T::Literal(_) | T::Null | T::Undefined | T::Void => {}
+            T::Callable { sigs, members } => {
+                sigs.iter().for_each(|s| self.signature(&s.sig));
+                self.ty(members);
+            }
+            // `infer X` and a mapped type's key bind type names, not values: the sub-types are
+            // walked for type queries as everywhere else.
+            T::Conditional(c) => {
+                for x in [&c.check, &c.extends, &c.then, &c.else_] {
+                    self.ty(x);
+                }
+            }
+            T::Mapped(m) => {
+                self.ty(&m.source);
+                m.name.iter().for_each(|x| self.ty(x));
+                self.ty(&m.value);
+            }
+            T::TemplateLiteral { types, .. } => types.iter().for_each(|x| self.ty(x)),
+            T::Infer(_) | T::Literal(_) | T::Null | T::Undefined | T::Void => {}
         }
     }
 
@@ -571,6 +593,24 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(6)]);
+    }
+
+    #[test]
+    fn type_queries_in_type_level_forms_are_found() {
+        // Conditional, mapped and template literal types (#934): `infer X` and a mapped type's
+        // key bind type names, not values.
+        let src = "type A<T> = T extends typeof __DEV__ ? T : never;
+                   type B<T> = T extends { v: infer X } ? [X, typeof __DEV__] : typeof __DEV__;
+                   type C = { [K in \"a\" as `p${K}`]: typeof __DEV__ };
+                   type D = `x${typeof __DEV__}`;
+";
+        let lo = |n: usize| {
+            src.match_indices("__DEV__")
+                .nth(n)
+                .map(|(i, _)| i as u32)
+                .unwrap()
+        };
+        assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(3), lo(4)]);
     }
 
     #[test]

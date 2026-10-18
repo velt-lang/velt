@@ -1,0 +1,76 @@
+// A sigx-style reactive state behind a typed proxy (#823): a `get` trap that tracks the key and
+// a `set` trap that re-runs the effects reading it. Run as TypeScript by Node 22 too
+// (bench/proxy/run.sh); both print the same.
+type Form = { title: string; done: boolean };
+type State = { count: number; total: number; form: Form };
+
+let active: (() => void) | null = null;
+const deps: Map<string, (() => void)[]> = new Map();
+let tracked = 0;
+
+function track(key: string): void {
+  tracked++;
+  const e = active;
+  if (e === null) return;
+  const list = deps.get(key);
+  if (list == null) {
+    deps.set(key, [e]);
+  } else if (!list.includes(e)) {
+    list.push(e);
+  }
+}
+
+function trigger(key: string): void {
+  const list = deps.get(key);
+  if (list == null) return;
+  for (const e of list) e();
+}
+
+function effect(fn: () => void): void {
+  active = fn;
+  fn();
+  active = null;
+}
+
+function reactive(target: any, path: string): any {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      const k = path + String(key);
+      track(k);
+      const v = Reflect.get(t, key, receiver);
+      if (typeof v === "object" && v !== null) return reactive(v, k + ".");
+      return v;
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      const old = Reflect.get(t, key, receiver);
+      const ok = Reflect.set(t, key, value, receiver);
+      if (old !== value) trigger(path + String(key));
+      return ok;
+    },
+  });
+}
+
+function signal(target: State): State {
+  return reactive(target, "") as State;
+}
+
+const raw: State = { count: 0, total: 0, form: { title: "a", done: false } };
+const s = signal(raw);
+let seen = 0;
+effect(() => {
+  seen += s.count;
+});
+// Writes that trigger the effect, reads in a loop, and nested reads.
+for (let i = 0; i < 200000; i++) {
+  s.count++;
+}
+let sum = 0;
+for (let i = 0; i < 200000; i++) {
+  sum += s.count + s.total;
+}
+let titles = 0;
+for (let i = 0; i < 50000; i++) {
+  titles += s.form.title.length;
+  s.form.done = i % 2 == 0;
+}
+console.log(raw.count, seen, sum, titles, raw.form.done, tracked);

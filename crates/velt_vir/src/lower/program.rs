@@ -24,6 +24,7 @@ impl<'h> Cx<'h> {
             native_inits: vec![],
             uses_placement: false,
             cell_checks: false,
+            no_await_steps: false,
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),
@@ -34,6 +35,9 @@ impl<'h> Cx<'h> {
             externs: vec![],
             extern_map: HashMap::new(),
             statics: vec![],
+            module_desc: None,
+            reassigned_slots: None,
+            prelude_error: None,
             static_map: HashMap::new(),
             tables: HashMap::new(),
             funcs: vec![],
@@ -236,6 +240,7 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::Poll(d, _)
         | Work::AsyncDrop(d, _)
         | Work::AsyncCloseStart(d, _)
+        | Work::GenThrow(d, _)
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
         | Work::HandlerInit(d, _)

@@ -42,8 +42,8 @@ A program starts at `function main()` (or `async function main()`) in its root f
 a TS or JS file, at its top-level statements: when the root file has statements outside
 declarations, they run in order in a generated `main` (`async` when one of them awaits). A
 top-level `const` or `let` moves into that `main` with them, unless a function, class, struct,
-`extend` block or module constant refers to it; then it stays a module constant (with the
-rules of [module state](variables.md#no-mutable-module-state)).
+`extend` block or module constant refers to it; then it stays at module level
+([module state](variables.md#module-state)).
 
 ```ts
 const GREETING = "hello";               // a function uses it: a module constant
@@ -59,8 +59,30 @@ for (const n of names) {
 }
 ```
 
-A file with top-level statements cannot also declare `main`, and only the root file runs them:
-an imported module's top-level statements are an error (put the code in a function).
+A file with top-level statements cannot also declare `main`.
+
+An imported module's top-level statements run once, when the module is evaluated, as in Node:
+the modules are evaluated before the root file's statements run, each after the modules it
+imports (in the order of its `import`s, depth first) and before the module that imports it. A
+circular import finds the module that is still being evaluated and goes on without it. A
+module imported only for its types (`import type { … }`, or an import whose every name is
+`type`) is not evaluated: neither its statements nor its variables' initializers run. A
+module's statements run in source order with its module-level variables
+([module state](variables.md#module-state)): each after the initializers above it and before
+those below it (a variable that statements on both sides of a module-level variable use must
+be declared with one name and an initializer, for now). An error they throw and don't catch prints `Uncaught …` and ends the program
+with exit code 1. Top-level `await` is only allowed in the root file, and an imported module's
+statements can't start asynchronous work yet (a timer, a promise chain, `queueMicrotask`,
+`spawn`): they run before the scheduler starts (#846).
+
+```ts
+// registry.ts
+export const registry: string[] = [];
+export function register(name: string): void {
+  registry.push(name);
+}
+register("trim"); // runs when a module imports registry.ts
+```
 
 ## Re-exports
 
@@ -68,6 +90,51 @@ Re-exports make one module the public face of others: `export { x, y as z } from
 `export type { T } from "…"`, and `export * from "…"` (every export of that module; a name the
 module exports itself or lists by name wins). Re-exports bind nothing in the re-exporting
 module; importers get the original declaration, and go-to-definition lands there too.
+
+## Namespaces
+
+A `namespace` groups types under one name, as in TypeScript: its members are written `N.T`
+outside it and `T` inside it (a type parameter of the same name hides a member). Namespaces
+nest (`A.B.T`), `namespace A.B { … }` declares `A` holding `B`, blocks with the same name are
+one namespace, and a namespace may share its name with an interface or a type
+(`interface Shape` and `Shape.Circle` are different types).
+
+```ts
+namespace Geo {
+  export interface Point {
+    x: number;
+    y: number;
+  }
+  type Pair = [Point, Point]; // without `export`: only inside `Geo`
+  export type Segment = { ends: Pair; length: number };
+}
+
+const a: Geo.Point = { x: 0, y: 0 };
+const b: Geo.Point = { x: 3, y: 4 };
+const s: Geo.Segment = { ends: [a, b], length: 5 };
+console.log(s.ends[1].x, s.length); // 3 5
+```
+
+- Only members declared with `export` are visible outside (`Geo.Pair` is TypeScript's TS2694,
+  ``namespace `Geo` has no exported member `Pair` ``); in a `declare namespace` every member is.
+  A member declared without `export` is visible only in its own block, not in another block
+  of the same namespace; two blocks may each declare their own unexported member of the same
+  name (two interfaces declared so do not merge).
+- Inside a namespace, a name used as a type means a type or interface (a nested namespace of
+  the same name does not hide an outer type), and the first part of `B.T` a namespace.
+- A namespace named like an imported type or value merges with it, as in TypeScript: the bare
+  name is the import, `N.T` the namespace's member (`import { N } from "./lib"` with
+  `export type N = number` there, next to `namespace N { export type T = string }`). A
+  namespace can't share its name with an imported namespace, `import * as N` or the import of
+  another module's `namespace N` (TypeScript's TS2440: ``import declaration conflicts with
+  local declaration of `N` ``).
+- An exported namespace is imported and re-exported by its name, like a type
+  (`import { type Geo } from "./geo"`, `export type { Geo } from "./geo"`), and through
+  `import * as m` as `m.Geo.Point`.
+- `declare global { namespace JSX { … } }` declares the namespace in its module, as a
+  `declare namespace` (a global visible in other modules is not supported yet).
+- A namespace holds type aliases, interfaces and namespaces. Values in a namespace (`const`,
+  `function`, `class`, `enum`: a run-time object in TypeScript) are not supported yet.
 
 ## Module specifiers
 

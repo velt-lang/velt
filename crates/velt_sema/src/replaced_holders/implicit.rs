@@ -84,14 +84,14 @@ impl Reach {
 
 /// The implicit calls of the program: the hooks of each class, its generator functions and the
 /// initializers that run code.
-pub(super) struct Implicit {
+pub(crate) struct Implicit {
     /// Each class with a hook, and the hooks of its family (bases and subclasses, which a value
     /// of it may be or inherit from): `[Symbol.dispose]()`, and the glue hooks.
     hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
     /// Each class's subclasses (transitively).
     family: HashMap<DefId, Vec<DefId>>,
     /// Every generator function (4).
-    pub(super) generators: Vec<DefId>,
+    pub(crate) generators: Vec<DefId>,
     /// The types of the values closures capture.
     captures: Vec<TyId>,
     /// Some closure captures a value whose type may reach a hook.
@@ -108,7 +108,7 @@ pub(super) struct Implicit {
 
 impl Implicit {
     /// `weak_entries`: [`weak_entries`] of the program.
-    pub(super) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
+    pub(crate) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
         let mut own: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
         let mut bases: Vec<(DefId, DefId)> = Vec::new();
         for (i, info) in cx.info.iter().enumerate() {
@@ -257,6 +257,13 @@ impl Implicit {
                     self.reach_in(cx, x, env, stack, out);
                 }
             }
+            // A deferred type is made of its arguments, and may hold functions of them.
+            TyKind::Op(_, args) => {
+                for &x in args {
+                    self.reach_in(cx, x, env, stack, out);
+                }
+                out.fns = true;
+            }
             TyKind::Adt(d, args) => {
                 let (d, args) = (*d, args.clone());
                 if stack.contains(&d) {
@@ -331,6 +338,28 @@ impl Implicit {
         }
     }
 
+    /// Every hook a value of type `t` may run when it is dropped, formatted, serialised or
+    /// copied, with no type arguments known: a type parameter may run any class's. A function
+    /// value's captures are left to the closure that captures them (module_state.rs counts what
+    /// a closure's body handles where the closure is made).
+    pub(crate) fn hooks_reached(&self, cx: &Ctx, t: TyId) -> Vec<DefId> {
+        let r = self.reach(cx, t);
+        if r.param {
+            let mut all: Vec<DefId> = self
+                .hooks
+                .values()
+                .flat_map(|(d, g)| d.iter().chain(g))
+                .copied()
+                .collect();
+            all.sort();
+            all.dedup();
+            return all;
+        }
+        let mut v = self.hooks_of(&r, true);
+        v.extend(self.hooks_of(&r, false));
+        v
+    }
+
     /// The `[Symbol.dispose]()` hooks (`dispose`) or glue hooks of the classes in `r`.
     pub(super) fn hooks_of(&self, r: &Reach, dispose: bool) -> Vec<DefId> {
         let pick = |h: &(Vec<DefId>, Vec<DefId>)| if dispose { h.0.clone() } else { h.1.clone() };
@@ -380,7 +409,7 @@ impl Implicit {
 /// The key and value types of every `new WeakMap<K, V>()` in the program (8), also of a
 /// subclass (`new Cache()` with `class Cache extends WeakMap<K, V>`); a key `None` for one that
 /// mentions a type parameter.
-pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
+pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     struct Find<'a, 'm> {
         cx: &'a Ctx<'m>,
         map: DefId,
@@ -470,10 +499,26 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MutexWith
         | I::PromiseAll
         | I::PromiseRace
-        | I::PromiseAny => true,
+        | I::PromiseAny
+        // A member access, call or write through `any` may run any getter, method or setter of
+        // the value held, and formats nothing itself; counted like a hook call on its arguments.
+        | I::AnyGet
+        | I::AnyIndex
+        | I::AnyCall
+        | I::AnyApply
+        | I::AnySet
+        | I::AnySetIndex
+        // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
+        | I::AnyHas => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::AnyTo
+        | I::AnyTypeof
+        | I::AnyIsArray
+        | I::AnyTruthy
+        | I::AnyStrictEq
+        | I::AnyLooseEq
         | I::StrLen
         | I::Exit
         | I::Panic
@@ -498,7 +543,10 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::HoldsNull
         | I::NullAs
         | I::Truthy
+        | I::IsNull
+        | I::IsNullish
         | I::FnCapturesNothing
+        | I::ClosureSibling(_)
         | I::Sqrt
         | I::Floor
         | I::Ceil
@@ -524,6 +572,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::GeneratorResume
         | I::GeneratorValue
         | I::GeneratorReturn
+        | I::GeneratorResumeWith
+        | I::GeneratorThrow
+        | I::YieldDelegate
         | I::GeneratorEmbed
         | I::AsyncGeneratorResume
         | I::AsyncGeneratorValue
@@ -544,11 +595,14 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
 }
 
 /// Does intrinsic `i` resume a generator (4)?
-pub(super) fn resumes(i: Intrinsic) -> bool {
+pub(crate) fn resumes(i: Intrinsic) -> bool {
     matches!(
         i,
         Intrinsic::GeneratorResume
             | Intrinsic::GeneratorReturn
+            | Intrinsic::GeneratorResumeWith
+            | Intrinsic::GeneratorThrow
+            | Intrinsic::YieldDelegate
             | Intrinsic::AsyncGeneratorResume
             | Intrinsic::AsyncGeneratorReturn
             | Intrinsic::AsyncGeneratorDispose

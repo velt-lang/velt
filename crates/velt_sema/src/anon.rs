@@ -47,15 +47,44 @@ impl ShapeField {
 impl Ctx<'_> {
     /// Replace `Param(i)` by `args[i]` in `t`, keeping anonymous object types canonical.
     pub fn subst(&mut self, t: TyId, args: &[TyId]) -> TyId {
-        let t = self.ty.subst(t, args);
-        self.canon(t)
+        let s = self.ty.subst(t, args);
+        if s != t && !self.type_level.op_sites.is_empty() {
+            self.carry_op_sites(t, &mut |cx, o| cx.ty.subst(o, args));
+        }
+        self.canon(s)
     }
 
     /// [`Types::subst_known`](crate::types::Types::subst_known), keeping anonymous object
     /// types canonical.
     pub fn subst_known(&mut self, t: TyId, slots: &[Option<TyId>]) -> TyId {
-        let t = self.ty.subst_known(t, slots);
-        self.canon(t)
+        let s = self.ty.subst_known(t, slots);
+        if s != t && !self.type_level.op_sites.is_empty() {
+            self.carry_op_sites(t, &mut |cx, o| cx.ty.subst_known(o, slots));
+        }
+        self.canon(s)
+    }
+
+    /// Gives each deferred type in `t`, as `sub` substitutes it, the site and module of the one
+    /// written (`TypeLevel::op_sites`), so a reduction reports where the type was written.
+    pub(crate) fn carry_op_sites(&mut self, t: TyId, sub: &mut dyn FnMut(&mut Self, TyId) -> TyId) {
+        let mut stack = vec![t];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(x) = stack.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            let k = self.ty.kind(x).clone();
+            if let TyKind::Op(..) = k {
+                if let Some(&site) = self.type_level.op_sites.get(&x) {
+                    let to = sub(self, x);
+                    self.type_level.op_sites.entry(to).or_insert(site);
+                    if let Some(&m) = self.type_level.op_modules.get(&x) {
+                        self.type_level.op_modules.entry(to).or_insert(m);
+                    }
+                }
+            }
+            stack.extend(crate::types::children(&k));
+        }
     }
 
     /// `t` with every anonymous object type in its canonical form: the def of its substituted
@@ -78,6 +107,28 @@ impl Ctx<'_> {
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Op(o, args) => {
+                // A deferred type whose arguments are all known now is evaluated (#934).
+                let args: Vec<TyId> = args.iter().map(|a| c(self, *a)).collect();
+                let op = self.ty.intern(TyKind::Op(o, args));
+                let mut ps = vec![];
+                crate::types::collect_params(&self.ty, op, &mut ps);
+                let out = if ps.is_empty() {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
+                if op != t {
+                    if let Some(&s) = self.type_level.op_sites.get(&t) {
+                        self.type_level.op_sites.entry(op).or_insert(s);
+                    }
+                    if let Some(&m) = self.type_level.op_modules.get(&t) {
+                        self.type_level.op_modules.entry(op).or_insert(m);
+                    }
+                }
+                self.canon_memo.insert(t, out);
+                return out;
+            }
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(a, b) => TyKind::Map(c(self, a), c(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| c(self, *a)).collect()),
@@ -175,7 +226,7 @@ impl Ctx<'_> {
     /// (`interface List<T> { tail?: List<T> }`, #376)? Such an instance stays as it is:
     /// canonicalizing it would canonicalize its own fields without end, and no written object
     /// type spells its shape without naming it.
-    fn reaches_itself(&self, d: DefId) -> bool {
+    pub(crate) fn reaches_itself(&self, d: DefId) -> bool {
         let object = |x: DefId| {
             self.adt(x)
                 .is_some_and(|a| a.kind == AdtKind::Anon || self.field_only_of.contains_key(&x))
@@ -322,6 +373,29 @@ impl Ctx<'_> {
         (d, params)
     }
 
+    /// A struct no source names, with fields `fields` (types over the type params `T0..Tn`), for
+    /// a value sema builds itself: an object literal implementing an interface
+    /// (`body/expr/iface_object.rs`). Unlike [`Self::anon_def`]'s it is never shared with
+    /// another shape, so an implementation added for it belongs to it alone.
+    pub(crate) fn hidden_struct_def(
+        &mut self,
+        name: &str,
+        fields: &[(String, TyId)],
+        n: usize,
+        module: usize,
+    ) -> DefId {
+        let norm: Vec<ShapeField> = fields
+            .iter()
+            .map(|(f, t)| ShapeField::plain(f, *t))
+            .collect();
+        let d = self.new_anon_def(&norm, n, module);
+        let a = self.adt_mut(d);
+        a.kind = AdtKind::Struct;
+        a.name = name.to_string();
+        a.qual_name = name.to_string();
+        d
+    }
+
     /// A fresh anonymous object def with fields `norm` (over `n` type params).
     fn new_anon_def(&mut self, norm: &[ShapeField], n: usize, module: usize) -> DefId {
         let name = {
@@ -364,19 +438,25 @@ impl Ctx<'_> {
         let fields = norm
             .iter()
             .map(|f| {
-                // An optional field reads as `T | null` and may be left out, like a class's
-                // (`body::driver`): its default is `null`, which lowering's JSON and printing
-                // glue reads as "absent".
-                let ty = if f.optional {
-                    self.ty.option(f.ty)
+                // An optional field reads as `T | undefined` and may be left out, like a class's
+                // (`body::driver`): its default is `undefined`, which lowering's JSON and
+                // printing glue reads as "absent".
+                // `q?: any` holds the dynamic `undefined` itself (`collect::shapes`).
+                let dynamic = f.optional && self.dynamic(f.ty).is_some();
+                let ty = if f.optional && !dynamic {
+                    self.ty.option_of(f.ty, crate::hir::Nothing::Undefined)
                 } else {
                     f.ty
                 };
-                let default = f.optional.then_some(crate::hir::Expr {
-                    kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
-                    ty,
-                    span: Span::DUMMY,
-                });
+                let default = if dynamic {
+                    self.dynamic_undefined(ty, Span::DUMMY)
+                } else {
+                    f.optional.then_some(crate::hir::Expr {
+                        kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
+                        ty,
+                        span: Span::DUMMY,
+                    })
+                };
                 FieldInfo {
                     name: f.name.clone(),
                     ty,
@@ -445,15 +525,17 @@ pub(crate) fn shape_field(f: &FieldInfo) -> ShapeField {
     }
 }
 
-/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present `null`
-/// (`hir::FieldDef::presence`): an optional field whose declared type is nullable
-/// (`a?: T | null`), in an object type or struct (P2b, deferred-types.md).
+/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present value
+/// (`hir::FieldDef::presence`): an optional field (`a?: T`, read as `T | undefined`) of an
+/// object type or struct, so that an absent key and one holding `undefined` stay apart, as in
+/// JavaScript (`"a" in o`, printing, spread; issue #930). A class's optional field is an own
+/// property holding `undefined` until set, and `a?: any` holds its own `undefined`.
 pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
-    f.optional && kind != AdtKind::Class && ty.opt_payload(f.declared).is_some()
+    f.optional && kind != AdtKind::Class && ty.nothing_of(f.ty).is_some()
 }
 
-/// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): a
-/// `null` in it stands for "absent", so it cannot hold a present `undefined`
+/// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): an
+/// `undefined` in it stands for "absent", so it cannot hold a present `undefined`
 /// (`crate::absent_fields`).
 pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
     f.optional && kind != AdtKind::Class && !has_presence(ty, kind, f)

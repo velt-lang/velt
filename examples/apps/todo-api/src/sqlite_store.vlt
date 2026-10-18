@@ -154,7 +154,7 @@ export class SqliteTodoStore {
     const values: RowPatch = {
       id,
       title: title != null ? validTitle(title) : null,
-      done: patch.done,
+      done: patch.done ?? null,
       priority: priority != null ? parsePriority(priority) : null,
     };
     let row: TodoRow | null = null;

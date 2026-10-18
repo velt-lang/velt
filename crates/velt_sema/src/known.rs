@@ -313,7 +313,7 @@ impl Ctx<'_> {
         let Some((d, mut args)) = self.generator_result(t) else {
             return t;
         };
-        if args.len() != 2 {
+        if args.len() < 2 {
             return t;
         }
         args[1] = e;
@@ -323,11 +323,43 @@ impl Ctx<'_> {
         }
     }
 
-    /// `Generator<t, e>`.
-    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+    /// `Generator<t, e, n>`: `n` is the type of `next(value)`'s argument (`never`: none).
+    pub fn generator_ty_next(&mut self, t: TyId, e: TyId, n: TyId) -> TyId {
         match self.generator_class() {
-            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e, n])),
             None => self.ty.error,
+        }
+    }
+
+    /// The type arguments of class `d` as diagnostics show them: a `Generator<T, E, never>` is
+    /// `Generator<T, E>`.
+    pub(crate) fn shown_args<'a>(&self, d: DefId, args: &'a [TyId]) -> &'a [TyId] {
+        match args {
+            [_, _, n] if Some(d) == self.generator_class() && *n == self.ty.never => &args[..2],
+            _ => args,
+        }
+    }
+
+    /// Are `a` and `b` `Generator<T, E, N>` types that differ only in `N`, one of them `never`?
+    pub(crate) fn generator_next_differs(&self, a: TyId, b: TyId) -> bool {
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Adt(da, x), TyKind::Adt(db, y))
+                if da == db && Some(*da) == self.generator_class() && x.len() == 3 =>
+            {
+                x[..2] == y[..2] && (x[2] == self.ty.never || y[2] == self.ty.never)
+            }
+            _ => false,
+        }
+    }
+
+    /// The `next(value)` type `N` of a `Generator<T, E, N>` value type (`never`: none, also
+    /// for any other type).
+    pub fn generator_next_ty(&self, t: TyId) -> TyId {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() && args.len() == 3 => {
+                args[2]
+            }
+            _ => self.ty.never,
         }
     }
 

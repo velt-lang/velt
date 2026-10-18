@@ -33,6 +33,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
         defs,
         impls,
         counted_objects,
+        type_level,
         ..
     } = cx;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
@@ -99,6 +100,10 @@ pub(crate) fn erase(cx: &mut Ctx) {
     for t in counted_objects.iter_mut() {
         *t = e(*t);
     }
+    type_level.reduced = std::mem::take(&mut type_level.reduced)
+        .into_iter()
+        .map(|(k, v)| (e(k), e(v)))
+        .collect();
     for imp in impls.iter_mut() {
         imp.ty = e(imp.ty);
         for a in &mut imp.iface_args {
@@ -139,6 +144,7 @@ pub(crate) fn erase_ty(
             }
         }
         TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| sub(ty, cache, *a)).collect()),
+        TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| sub(ty, cache, *a)).collect()),
         TyKind::Array(x) => TyKind::Array(sub(ty, cache, x)),
         TyKind::Map(a, b) => TyKind::Map(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Tuple(xs) => TyKind::Tuple(xs.iter().map(|a| sub(ty, cache, *a)).collect()),
