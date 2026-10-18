@@ -94,6 +94,89 @@ impl Ctx<'_> {
         op
     }
 
+    /// `t` with each deferred intersection in the form it has under the bounds of the function
+    /// being checked: its parts flattened and deduplicated, and its `object` parts dropped when
+    /// a part is a type parameter whose values are objects (`object_params`, `T extends
+    /// object`), so `T & object` is `T` there, as in TypeScript.
+    pub(crate) fn bounded_form(&mut self, t: TyId, object_params: &[u32], depth: u32) -> TyId {
+        if depth > MAX_DEPTH {
+            return t;
+        }
+        let m = |cx: &mut Self, x: TyId| cx.bounded_form(x, object_params, depth + 1);
+        let k = match self.ty.kind(t).clone() {
+            TyKind::Op(TyOp::Intersect, parts) => {
+                let mut flat: Vec<TyId> = vec![];
+                for p in parts {
+                    let p = m(self, p);
+                    let ps = match self.ty.kind(p) {
+                        TyKind::Op(TyOp::Intersect, ps) => ps.clone(),
+                        _ => vec![p],
+                    };
+                    for q in ps {
+                        if !flat.contains(&q) {
+                            flat.push(q);
+                        }
+                    }
+                }
+                let objects = |cx: &Self, p: TyId| matches!(cx.ty.kind(p), TyKind::Param(n) if object_params.contains(n));
+                if flat.iter().any(|&p| objects(self, p)) {
+                    use crate::any::Dynamic;
+                    flat.retain(|&p| self.dynamic(p) != Some(Dynamic::Object));
+                }
+                if let [one] = flat[..] {
+                    return one;
+                }
+                TyKind::Op(TyOp::Intersect, flat)
+            }
+            TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Adt(d, args) => {
+                let anon = self.adt(d).filter(|a| a.kind == AdtKind::Anon);
+                if let Some(module) = anon.map(|a| a.module) {
+                    if args.is_empty() || self.reaches_itself(d) {
+                        return t;
+                    }
+                    let mut fields = self.public_fields(t);
+                    for f in &mut fields {
+                        f.ty = m(self, f.ty);
+                    }
+                    return self.anon_type_with(&fields, module);
+                }
+                TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect())
+            }
+            TyKind::Array(e) => TyKind::Array(m(self, e)),
+            TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
+            TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
+            TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
+            TyKind::Promise(v, e) => TyKind::Promise(m(self, v), m(self, e)),
+            TyKind::Shared(e) => TyKind::Shared(m(self, e)),
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+            } => TyKind::FnPtr {
+                params: params.iter().map(|a| m(self, *a)).collect(),
+                ret: m(self, ret),
+                throws: m(self, throws),
+            },
+            _ => return t,
+        };
+        self.ty.intern(k)
+    }
+
+    /// Is every value of `t` an object: an intersection with an `object` part, or with a type
+    /// parameter part in `object_params` (`T extends object`)?
+    pub(crate) fn holds_objects(&self, t: TyId, object_params: &[u32]) -> bool {
+        use crate::any::Dynamic;
+        match self.ty.kind(t) {
+            TyKind::Op(TyOp::Intersect, parts) => {
+                parts.iter().any(|&p| self.holds_objects(p, object_params))
+            }
+            TyKind::Param(n) => object_params.contains(n),
+            _ => self.dynamic(t) == Some(Dynamic::Object),
+        }
+    }
+
     /// Is `t` a union with a member that is a type parameter (`T | string`)?
     fn has_type_params_at_head(&mut self, t: TyId) -> bool {
         self.union_members(t)
@@ -230,6 +313,27 @@ impl Ctx<'_> {
         {
             return Some(any);
         }
+        // `object & X` keeps the values of `X` that are objects: `(string | { a: number } |
+        // null) & object` is `{ a: number }`, and `number & object` (`T & object` at a
+        // primitive `T`) has no value, `never`.
+        let never = self.ty.never;
+        if operands.iter().any(|&(o, _)| o == never) {
+            return Some(never);
+        }
+        if operands
+            .iter()
+            .any(|&(o, _)| matches!(self.dynamic(o), Some(Dynamic::Object)))
+        {
+            for op in operands.iter_mut() {
+                if self.dynamic(op.0).is_none() {
+                    match self.object_values(op.0) {
+                        Some(t) if t == never => return Some(never),
+                        Some(t) => op.0 = t,
+                        None => {}
+                    }
+                }
+            }
+        }
         let others_are_objects = |cx: &Self, ops: &[(TyId, Span)]| {
             ops.iter().any(|&(o, _)| cx.dynamic(o).is_none())
                 && ops
@@ -251,6 +355,35 @@ impl Ctx<'_> {
             }
         }
         (operands.len() == 1).then(|| operands[0].0)
+    }
+
+    /// The values of `t` that are objects, when `t` has values that are not (a primitive, a
+    /// union with primitive members, `null` or `undefined`): `never` when it has none. `None`
+    /// when every value of `t` is an object, or when `t` is not known yet.
+    fn object_values(&mut self, t: TyId) -> Option<TyId> {
+        let never = self.ty.never;
+        let core = self.ty.core(t);
+        let c = core.unwrap_or(t);
+        if matches!(self.ty.kind(c), TyKind::Param(_) | TyKind::Op(..)) {
+            return None;
+        }
+        let Some(members) = self.union_members(c) else {
+            return match self.is_object_ty(c) {
+                true => core,
+                false => Some(never),
+            };
+        };
+        let kept: Vec<TyId> = members
+            .iter()
+            .copied()
+            .filter(|&m| self.is_object_ty(m))
+            .collect();
+        match kept.as_slice() {
+            [] => Some(never),
+            [one] => Some(*one),
+            _ if kept.len() == members.len() => core,
+            _ => Some(self.union_of(&kept, false, Span::DUMMY)),
+        }
     }
 
     /// Record where each field of the intersection `t` is written (for editors: go to

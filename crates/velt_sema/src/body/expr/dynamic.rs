@@ -70,6 +70,15 @@ impl FnCx<'_, '_> {
             let bounds = self.bounds.clone();
             return self.cx.satisfies(t, &b, &bounds);
         }
+        // `T & object` (or `T & …` at a `T extends object`) holds objects at every instance.
+        if d == Dynamic::Object {
+            if let TyKind::Op(crate::hir::TyOp::Intersect, _) = self.cx.ty.kind(t) {
+                let objects = self.object_params();
+                if self.cx.holds_objects(t, &objects) {
+                    return true;
+                }
+            }
+        }
         self.cx.dynamic_takes(iface, t).unwrap_or(false)
     }
 
