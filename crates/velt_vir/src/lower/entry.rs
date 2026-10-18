@@ -191,13 +191,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// A thrown value that is not an `Error` as Node reports it: as `console.log` prints it
-    /// (`throw "a string"` reports `a string`, an object `{ code: 1 }`).
+    /// (`throw "a string"` reports `a string`, an object `{ code: 1 }`), a number as `String(x)`.
     fn write_thrown_value(&mut self, stream: &Operand, ep: &Place, err: TyId) {
         const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
         let buf = self.temp(STR);
         let bp = self.addr(Place::local(buf));
         self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);
-        self.log_top(&bp, ep, err);
+        // A thrown number is written as `String(x)` writes it (Node prints `0` for `throw -0`).
+        let number = match self.cx.kind(err) {
+            TyKind::Float(_) => true,
+            TyKind::Option(e, _) => matches!(self.cx.kind(e), TyKind::Float(_)),
+            _ => false,
+        };
+        if number {
+            self.format_top(&bp, ep, err);
+        } else {
+            self.log_top(&bp, ep, err);
+        }
         let text = self.temp(STR);
         let tp = self.addr(Place::local(text));
         self.call_rt(Rt::StrbufFinish, vec![bp, tp.clone()], None);
@@ -239,15 +249,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.drop_glue(text, ty);
     }
 
-    /// Is `err` the prelude's `JsonError` (what `JSON.parse` throws)?
+    /// Is `err` the prelude's `JsonError` (what `JSON.parse` throws), not a class of that name?
     fn is_json_error(&mut self, err: TyId) -> bool {
         let TyKind::Adt(d, _) = self.cx.kind(err) else {
             return false;
         };
-        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
-            return false;
-        };
-        a.name == "JsonError" || a.name.ends_with("::JsonError") || a.name.ends_with(".JsonError")
+        self.cx.json_error_def() == Some(d)
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.

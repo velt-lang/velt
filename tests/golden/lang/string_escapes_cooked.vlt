@@ -24,4 +24,9 @@ two");
 z \` \$ \${x}`;
   console.log(t, t.length);
   console.log(`\x41\u{42}\0|\b|`.length);
+  // A pair is one character whichever form each half is written in.
+  const pairs = ["\u{D83D}\u{DE00}", "\uD83D\u{DE00}", "\u{D83D}\uDE00", `\u{d83d}\u{de00}`];
+  for (const p of pairs) {
+    console.log(p, p.length, p == "😀");
+  }
 }

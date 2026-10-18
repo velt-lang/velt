@@ -65,6 +65,14 @@ fn string_escapes_ecmascript() {
     assert_eq!(sx(&e), format!("{:?}", "abcde"));
     let e = expr(r#""\uD83D\uDE00\u0041""#);
     assert_eq!(sx(&e), format!("{:?}", "\u{1F600}A"));
+    for pair in [
+        r#""\u{D83D}\u{DE00}""#,
+        r#""\uD83D\u{DE00}""#,
+        r#""\u{D83D}\uDE00""#,
+    ] {
+        assert_eq!(sx(&expr(pair)), format!("{:?}", "\u{1F600}"), "{pair}");
+    }
+    assert!(errors(r#"const s = "\u{D83D}x";"#)[0].contains("lone surrogate"));
     let e = expr(
         r#"`\d${x}\q\
 z`"#,

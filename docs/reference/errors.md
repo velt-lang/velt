@@ -129,7 +129,8 @@ nothing; `null` means success).
   into it. This holds for `async function main()` too, and for an error a spawned task threw
   that `main` awaited. A thrown value that is not an `Error` is written as Node writes it, the
   way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`
-  `Uncaught 42`, and an object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
+  `Uncaught 42` (a number as `String(x)` writes it: `throw -0` reports `Uncaught 0`), and an
+  object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
   `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws.
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code

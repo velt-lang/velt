@@ -40,7 +40,7 @@ const CASES: &[(&str, i32, &str)] = &[
     (
         "panic_uncaught",
         1,
-        "Uncaught ParseError: bad digit: x at tests/golden/lang/panic_uncaught.vlt:13:3",
+        "Uncaught ParseError { message: 'bad digit: x' } at tests/golden/lang/panic_uncaught.vlt:13:3",
     ),
     (
         "panic_uncaught_async",

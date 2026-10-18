@@ -141,23 +141,16 @@ impl<'a> Lexer<'a> {
                 None => return,
             }
         };
-        if (0xD800..0xDC00).contains(&value)
-            && self.at(0) == b'\\'
-            && self.at(1) == b'u'
-            && self.at(2) != b'{'
-        {
-            // A surrogate pair written as two `\uHHHH` escapes is one character.
-            let save = self.pos;
-            self.pos += 2;
-            let low = self.peek_hex4();
-            if let Some(low @ 0xDC00..=0xDFFF) = low {
-                self.pos += 4;
+        if (0xD800..0xDC00).contains(&value) {
+            // A surrogate pair written as two escapes, in either form (`😀`,
+            // `\u{D83D}\u{DE00}`, `\uD83D\u{DE00}`), is one character.
+            if let Some((low @ 0xDC00..=0xDFFF, len)) = self.peek_unicode_escape() {
+                self.pos += len;
                 out.extend(char::from_u32(
                     0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00),
                 ));
                 return;
             }
-            self.pos = save;
         }
         match char::from_u32(value) {
             Some(ch) => out.push(ch),
@@ -184,8 +177,22 @@ impl<'a> Lexer<'a> {
         Some(value)
     }
 
-    /// Four hex digits at `self.pos`, not consumed.
-    fn peek_hex4(&self) -> Option<u32> {
-        (0..4).try_fold(0u32, |v, i| Some(v * 16 + hex_val(self.at(i))? as u32))
+    /// The value and length of a well-formed `\uHHHH` or `\u{H..}` escape at `self.pos`, not
+    /// consumed.
+    fn peek_unicode_escape(&self) -> Option<(u32, usize)> {
+        if self.at(0) != b'\\' || self.at(1) != b'u' {
+            return None;
+        }
+        if self.at(2) != b'{' {
+            let v = (2..6).try_fold(0u32, |v, i| Some(v * 16 + hex_val(self.at(i))? as u32))?;
+            return Some((v, 6));
+        }
+        let mut v: u32 = 0;
+        let mut i = 3;
+        while let Some(d) = hex_val(self.at(i)) {
+            v = v.saturating_mul(16).saturating_add(d as u32);
+            i += 1;
+        }
+        (i > 3 && self.at(i) == b'}').then_some((v, i + 1))
     }
 }
