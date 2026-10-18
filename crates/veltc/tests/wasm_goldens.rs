@@ -188,8 +188,10 @@ const SHARDS: usize = 8;
 
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
-/// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there.
+/// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
+/// and the std code written with them.
 const WASI_STD: &[&str] = &[
+    "bytes_search",
     "simd_floats",
     "simd_generic",
     "simd_ints",
@@ -199,6 +201,7 @@ const WASI_STD: &[&str] = &[
     "simd_positions",
     "simd_store_range",
     "simd_values",
+    "utf8_valid",
 ];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a
