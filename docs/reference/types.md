@@ -744,7 +744,10 @@ the nullable type; `void` cannot be a member.
   implementing an interface member) converts to the union, and a union converts to a wider
   union. An array literal with no type from context whose elements have different types
   is an array of their union, as in TypeScript (`[1, "a"]` is a `(number | string)[]`, and
-  `[a, d]` of a `number | undefined` and a `string | null` holds all four). A literal takes the member it belongs to; add a suffix (`5i32`) when several number
+  `[a, d]` of a `number | undefined` and a `string | null` holds all four). `null` and
+  `undefined` elements make it allow them (`[1, null]` is a `(number | null)[]`), a nested
+  array literal keeps its own type (`[[1], ["a"]]` is a `(number[] | string[])[]`), and
+  `[...xs, true]` adds `boolean` to the spread arrays' element type. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
   members match.
 - **Narrowing**: using a member's fields or methods needs that member, except `x.toString()`,
   which every member has: it gives what `String(x)` does (a class's own `toString()`, a
