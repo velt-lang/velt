@@ -1128,8 +1128,11 @@ show();
   ``type annotation needed for `c`: a closure in its initializer uses it``.
 - A closure reading the constant while its initializer is still running (it is called from
   the initializer) stops the program with JavaScript's error, `ReferenceError: Cannot access
-  'c' before initialization`. Each statement of the closure that reads the constant checks
-  this before it runs (an expression-bodied arrow checks when it is called). In Velt this is a
+  'c' before initialization`. A read of the value checks this where it happens, so a read
+  on a path that does not run checks nothing (`ready ? x : 1`); a use of the object in place (a
+  field read, a method call) checks at the start of its statement (in an expression-bodied
+  arrow, when the arrow is called). A closure created inside such a closure shares the
+  constant too. In Velt this is a
   panic, which `catch` does not intercept.
 - An object holding a closure that captures the object is a reference cycle, which reference
   counting does not free: each such object stays allocated until the program exits (one per

@@ -8,10 +8,12 @@
 //! initializer has run. A closure that keeps the capture assigns it after the capture, so the
 //! variable lives in a shared cell (`crate::ownership::cells`), which the closure reads when it
 //! runs, as in JavaScript. A hidden flag (`<ready x>`, also captured) is set after the
-//! assignment; each statement of a closure reading the constant first checks it and panics with
-//! JavaScript's message (`ReferenceError: Cannot access 'x' before initialization`) while the
-//! initializer is still running (the temporal dead zone). An expression-bodied arrow checks at
-//! its start. Closures created once the constant is assigned capture its value as usual.
+//! assignment; a closure reading the constant checks it and panics with JavaScript's message
+//! (`ReferenceError: Cannot access 'x' before initialization`) while the initializer is still
+//! running (the temporal dead zone): a value read right before it, a use in place at the start
+//! of its statement (of an expression-bodied arrow's body). Closures created inside such a
+//! closure capture the cells by value too (`FnCx::capture_modes`, `crate::moves`), so they all
+//! share them. Closures created once the constant is assigned capture its value as usual.
 //!
 //! An object that holds a closure capturing the object is a reference cycle, which counting
 //! does not free: one object per such constant created stays allocated (documented in
