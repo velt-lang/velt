@@ -109,6 +109,14 @@ impl FnCx<'_, '_> {
                 return Some(h);
             }
         }
+        if name == "hasOwn" {
+            if let Some(h) = self.any_has_own(args, span) {
+                return Some(h);
+            }
+        }
+        if name == "getPrototypeOf" && self.first_arg_dynamic(args) {
+            return Some(self.get_prototype_of(args, span));
+        }
         if let Some(h) = self.reject_dynamic_args(&format!("Object.{name}"), args, span) {
             return Some(h);
         }

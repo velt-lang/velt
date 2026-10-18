@@ -6,7 +6,8 @@
 //! - a proxy: its `has` trap (`Proxy.__has`, std/prelude/zz_proxy.vlt), or the target's answer;
 //! - class instances and object types: their fields, methods and accessors, and what every
 //!   object has from `Object.prototype` (an optional field, which may be absent, comes later);
-//! - a `Record<string, V>`: its keys;
+//! - a `Record<string, V>`: its keys, and what every object has from `Object.prototype` (unless
+//!   `Object.create(null)` made it);
 //! - arrays: `length` (indexes come later).
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
@@ -177,7 +178,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `key in r` for a `Record<string, V>`: its `__has`.
+    /// `key in r` for a `Record<string, V>`: its `__inAny` (its entries, and what it inherits
+    /// from `Object.prototype` unless `Object.create(null)` made it).
     fn any_has_record(&mut self, data: vir::Local, key: vir::Local, ty: TyId) {
         let (k, _) = self
             .prelude_record(ty)
@@ -185,7 +187,7 @@ impl FnLower<'_, '_> {
         let has = self.plain_adt(ty).and_then(|(d, _)| {
             self.dyn_members_of(d)
                 .into_iter()
-                .find(|m| m.name == "__has" && m.kind == DynMemberKind::Method)
+                .find(|m| m.name == "__inAny" && m.kind == DynMemberKind::Method)
         });
         let ready = has.and_then(|m| self.ready(ty, &m));
         let Some(r) = ready.filter(|_| matches!(self.cx.kind(k), TyKind::Str)) else {

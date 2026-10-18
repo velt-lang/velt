@@ -2115,6 +2115,15 @@ function main(): void {
 }
 ```
 
+`Object.hasOwn(x, k)` and `Object.prototype.hasOwnProperty.call(x, k)` of an `any` or `object`
+test the keys `Object.keys(x)` lists (and an array's or string's `length`).
+`Object.getPrototypeOf(x)` gives the prototype of the class of the value held (`C.prototype`),
+`Object.prototype` for an object or a record (`null` for one made by `Object.create(null)`) and
+`Array.prototype` for an array, so `proto === Object.prototype || proto === null` tells a plain
+object apart; a value whose prototype Velt doesn't name (a number, a function, a `Date`) stops with
+a `TypeError` naming #924. `Object.prototype.toString.call(x)` gives the `[object Tag]` of the
+value held.
+
 `JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
 `unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
 `toJSON()`: `undefined`, functions and symbols are left out as object members and written as
@@ -2130,7 +2139,8 @@ written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
-`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+`Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
+an array its `length`. A `null` or `undefined` value stops with
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
 

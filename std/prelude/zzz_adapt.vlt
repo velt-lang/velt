@@ -151,10 +151,11 @@ export function __anyPrototype(v: any): ObjectPrototype | null {
 
 /** `Object.getPrototypeOf(r)` of an `any` holding a record: `null` for `Object.create(null)`'s. */
 export function __anyRecordPrototype(r: any): ObjectPrototype | null {
-  if (r.__isNullProto() as boolean) {
-    return null;
+  // A record made by `Object.create(null)` inherits nothing, `__proto__` included.
+  if ("__proto__" in r) {
+    return Object.prototype;
   }
-  return Object.prototype;
+  return null;
 }
 
 /** `Object.getPrototypeOf(v)` of an `any` holding an instance of class `name`, which Velt doesn't name. */
