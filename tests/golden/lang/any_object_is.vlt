@@ -1,5 +1,5 @@
 // check: no leaks
-// `Object.is` with an `any` operand (#924): SameValue, which is `===` except that `NaN` is
+// `Object.is` with an `any` or `unknown` operand (#924): SameValue, which is `===` except that `NaN` is
 // itself and `0` is not `-0`.
 class Point {
   x: number = 1;
@@ -17,4 +17,6 @@ function main(): void {
   console.log(same(p, p), same(p, q), Object.is(p as any, p), Object.is(2, 2 as any));
   const r: Record<string, any> = { k: NaN };
   console.log(Object.is(r["k"], NaN), Object.is(r["k"], 0));
+  const u: unknown = -0;
+  console.log(Object.is(u, -0), Object.is(u, 0), Object.is(u, u));
 }

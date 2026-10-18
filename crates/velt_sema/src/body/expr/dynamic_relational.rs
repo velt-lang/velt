@@ -290,7 +290,7 @@ impl FnCx<'_, '_> {
         self.mk(kind, ty, span)
     }
 
-    /// `Object.is(a, b)` where an operand is an `any` (`None`: neither is): SameValue, which is
+    /// `Object.is(a, b)` where an operand is an `any` or an `unknown` (`None`: neither is): SameValue, which is
     /// `===` except that `NaN` is itself and `0` is not `-0`. Both operands are evaluated once,
     /// in order.
     pub(crate) fn object_is_dynamic(
@@ -302,8 +302,9 @@ impl FnCx<'_, '_> {
             return None;
         };
         let dynamic = [a, b].iter().any(|e| {
-            self.trial_type(e)
-                .is_some_and(|t| self.cx.dynamic(t) == Some(Dynamic::Any))
+            self.trial_type(e).is_some_and(|t| {
+                matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
+            })
         });
         if !dynamic {
             return None;
@@ -317,7 +318,7 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
             let h = self.unbrand(h);
-            let h = if self.cx.dynamic(h.ty).is_some() {
+            let h = if matches!(self.cx.dynamic(h.ty), Some(Dynamic::Any | Dynamic::Unknown)) {
                 self.share_if_place(h)
             } else {
                 self.coerce(h, any)

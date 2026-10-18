@@ -2079,8 +2079,8 @@ function main(): void {
 }
 ```
 
-`Object.is(a, b)` with an `any` operand is SameValue, as in JavaScript: `===`, except that `NaN`
-is itself and `0` is not `-0`.
+`Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
+except that `NaN` is itself and `0` is not `-0`.
 
 `for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
 the length before each step as JavaScript's array iterator does. Another value (a string, a
