@@ -17,7 +17,7 @@ impl FnLower<'_, '_> {
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
         if self.cx.is_dynamic(ty) {
-            return self.any_same_places(a, b, false);
+            return self.any_same_places(a, b, self.key_mode);
         }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
@@ -34,9 +34,23 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `Intrinsic::KeyEq` (JS SameValueZero, `Map` and `Set` keys): `same_values` with floats
+    /// compared so that `NaN` equals itself and `0` equals `-0` (Bool operand).
+    pub(super) fn key_same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.key_mode, true);
+        let r = self.same_values(a, b, ty);
+        self.key_mode = outer;
+        r
+    }
+
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-        self.call_glue(Glue::Same, ty, vec![pa, pb])
+        let g = if self.key_mode {
+            Glue::KeySame
+        } else {
+            Glue::Same
+        };
+        self.call_glue(g, ty, vec![pa, pb])
     }
 
     /// Identity of two objects of type `ty`.
@@ -80,6 +94,12 @@ impl FnLower<'_, '_> {
     pub(super) fn same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
         self.same_mode = true;
         self.eq_body(pa, pb, ty);
+    }
+
+    /// `Glue::KeySame`: `same_body` with floats compared by SameValueZero.
+    pub(super) fn key_same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
+        self.key_mode = true;
+        self.same_body(pa, pb, ty);
     }
 }
 

@@ -1,6 +1,6 @@
-// Floats inside content keys (arrays, tuples, object types) and `deepEqual` compare by
-// SameValueZero too (#335): the same rule as a float key, with a hash that agrees. (JS compares
-// array keys by identity; Velt compares them by content, docs/std/prelude.md.)
+// Floats inside tuple keys and `deepEqual` compare by SameValueZero too (#335): the same rule as
+// a float key, with a hash that agrees. Array, object and map keys compare by identity, as in JS
+// (#1257).
 
 interface Point {
   x: number;
@@ -9,17 +9,20 @@ interface Point {
 
 function main() {
   const byArray = new Map<number[], string>();
-  byArray.set([0, NaN], "a");
+  const a = [0, NaN];
+  byArray.set(a, "a");
   byArray.set([-0, 0 / 0], "b");
-  console.log(byArray.size, byArray.get([0, NaN]), byArray.has([-0, NaN]));
+  console.log(byArray.size, byArray.get(a), byArray.has([-0, NaN]));
 
   const byTuple = new Map<[number, string], i64>();
   byTuple.set([NaN, "x"], 1);
-  console.log(byTuple.get([NaN, "x"]), byTuple.get([NaN, "y"]));
+  byTuple.set([-0, "z"], 2);
+  console.log(byTuple.get([NaN, "x"]), byTuple.get([NaN, "y"]), byTuple.get([0, "z"]));
 
   const byPoint = new Map<Point, string>();
-  byPoint.set({ x: -0, y: NaN }, "p");
-  console.log(byPoint.get({ x: 0, y: NaN }), byPoint.size);
+  const pt: Point = { x: -0, y: NaN };
+  byPoint.set(pt, "p");
+  console.log(byPoint.get(pt), byPoint.has({ x: 0, y: NaN }), byPoint.size);
 
   const nested = new Map<Map<number, number>, string>();
   const k = new Map<number, number>();
@@ -27,7 +30,7 @@ function main() {
   nested.set(k, "map");
   const k2 = new Map<number, number>();
   k2.set(NaN, 0);
-  console.log(nested.get(k2));
+  console.log(nested.get(k), nested.has(k2));
 
   console.log(deepEqual([NaN], [NaN]), deepEqual([0], [-0]), deepEqual([1, NaN], [NaN, 1]));
   const p: Point = { x: NaN, y: 1 };
@@ -35,4 +38,20 @@ function main() {
   console.log(deepEqual(p, q), p == q);
   assertEq([NaN, -0], [NaN, 0]);
   console.log("assertEq ok");
+
+  // `deepEqual` of maps keyed by objects pairs keys by content, as Node's `isDeepStrictEqual`.
+  const shared: Point = { x: 9, y: 9 };
+  const m1 = new Map<Point, number>();
+  m1.set({ x: 1, y: NaN }, 1);
+  m1.set(shared, 2);
+  const m2 = new Map<Point, number>();
+  m2.set(shared, 2);
+  m2.set({ x: 1, y: NaN }, 1);
+  const m3 = new Map<Point, number>();
+  m3.set({ x: 1, y: NaN }, 1);
+  m3.set({ x: 1, y: NaN }, 1);
+  const m4 = new Map<Point, number>();
+  m4.set({ x: 1, y: NaN }, 1);
+  m4.set({ x: 2, y: 0 }, 1);
+  console.log(deepEqual(m1, m2), deepEqual(m3, m4), deepEqual(m3, m3));
 }

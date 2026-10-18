@@ -1,0 +1,107 @@
+// check: no leaks
+// `Map` and `Set` keys that are objects compare by identity, as in Node (#1257): an object
+// literal, a class instance or an array finds only itself, an equal object is another key, and
+// changing a key in place keeps its entry. Numbers and strings compare by value.
+type A = { a: number };
+const s = new Set<A>();
+s.add({ a: 1 });
+console.log(s.has({ a: 1 }), s.size);
+const m = new Map<A, string>();
+const k: A = { a: 2 };
+m.set(k, "x");
+console.log(m.get({ a: 2 }) ?? "none", m.size);
+m.set({ a: 2 }, "y");
+console.log(m.size, m.get(k), m.has(k));
+
+// A key changed after it was inserted stays where it is.
+type B = { b: number };
+const kb: B = { b: 1 };
+const mb = new Map<B, number>();
+mb.set(kb, 10);
+kb.b = 99;
+console.log(mb.get(kb), mb.has({ b: 1 }), mb.has({ b: 99 }), mb.size);
+
+// Class instances.
+class C {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+const c1 = new C(1);
+const sc = new Set<C>([c1, new C(1)]);
+console.log(sc.size, sc.has(c1), sc.has(new C(1)));
+
+// Arrays, also when one grows after it was added.
+const arr = [1, 2];
+const sa = new Set<number[]>();
+sa.add(arr);
+sa.add([1, 2]);
+arr.push(3);
+console.log(sa.size, sa.has(arr), sa.has([1, 2]), sa.has([1, 2, 3]));
+
+// Passing a key on is the same object; a spread or a literal with the same fields is not.
+type P = { x: number; y: number };
+function has(set: Set<P>, p: P): boolean {
+  return set.has(p);
+}
+const p: P = { x: 1, y: 2 };
+const sp = new Set<P>();
+sp.add(p);
+const q = p;
+console.log(has(sp, p), has(sp, { ...p }), has(sp, { x: 1, y: 2 }), sp.has(q));
+
+// Keys read back from the collection are the stored objects.
+const ps: P[] = [p, { x: 3, y: 4 }];
+const s2 = new Set<P>(ps);
+console.log(s2.has(ps[0]), s2.has(ps[1]), s2.size, ps.indexOf(p), ps.includes({ x: 1, y: 2 }));
+for (const e of s2) {
+  console.log(e.x, s2.has(e));
+}
+s2.forEach((e) => {
+  console.log(e.y, sp.has(e));
+});
+
+// Nested objects: the outer object is the key, the inner one another key.
+type Holder = { inner: P; tag: string };
+const h: Holder = { inner: p, tag: "t" };
+const mh = new Map<Holder, number>();
+mh.set(h, 1);
+console.log(mh.get(h), mh.has({ inner: p, tag: "t" }));
+const mi = new Map<P, string>();
+mi.set(h.inner, "inner");
+console.log(mi.get(p), mi.has({ x: 1, y: 2 }));
+console.log(JSON.stringify(p), JSON.stringify([...s2]));
+
+// Two equal objects are two entries; deleting by an equal object finds nothing.
+const md = new Map<P, number>();
+const k1: P = { x: 0, y: 0 };
+const k2: P = { x: 0, y: 0 };
+md.set(k1, 1);
+md.set(k2, 2);
+console.log(md.size, md.get(k1), md.get(k2));
+console.log(md.delete({ x: 0, y: 0 }), md.delete(k1), md.size, md.get(k2));
+for (const [key, v] of md) {
+  console.log(key, v, key === k2);
+}
+
+// A map as a key, and `null` next to objects.
+const mm = new Map<Map<string, number>, number>();
+const inner = new Map<string, number>();
+mm.set(inner, 1);
+mm.set(new Map<string, number>(), 2);
+console.log(mm.size, mm.get(inner));
+const mn = new Map<A | null, number>();
+mn.set(null, 1);
+mn.set(k, 2);
+console.log(mn.get(null), mn.get(k), mn.get({ a: 2 }) ?? "none");
+
+// Numbers and strings by value: `NaN` finds itself and `0` is `-0`.
+const sn = new Set<number>([NaN, 0, -0, NaN]);
+const ss = new Set<string>(["a", "b", "a"]);
+console.log(sn.size, sn.has(NaN), sn.has(-0), ss.size, ss.has("a"));
+
+// Weak keys are unchanged.
+const wm = new WeakMap<P, number>();
+wm.set(p, 7);
+console.log(wm.get(p), wm.has({ x: 1, y: 2 }));

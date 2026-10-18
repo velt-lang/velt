@@ -246,7 +246,8 @@ fn generic_impl_and_structured_hash_print() {
     ];
     pb.add_main(f.build(body));
     let out = run(&pb.finish());
-    assert_eq!(out.stdout, "1\n[ 1, 'a' ] Box { v: 'k' }\ntrue false\n");
+    // An object hashes its identity (`Map` keys, #1257): an equal object is another key.
+    assert_eq!(out.stdout, "1\n[ 1, 'a' ] Box { v: 'k' }\nfalse false\n");
 }
 
 /// `dispose()` hooks run before the fields drop: on scope exit, for class objects, and for
