@@ -60,7 +60,7 @@ impl FnLower<'_, '_> {
                 let o = self.make_dyn_any(v, t, ty);
                 self.assign(out.clone(), Rvalue::Use(o));
             }
-            _ if self.is_union(t) => {
+            _ if self.cx.is_union(t) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
                 self.for_each_variant(&p, t, |lw, k, parts| match parts.as_slice() {
@@ -101,13 +101,5 @@ impl FnLower<'_, '_> {
         };
         let t = self.cx.intern(k);
         self.any_box_into(v, t, out);
-    }
-
-    /// Is `t` a union type (`A | B`, hir_encodings.md "Union types")?
-    fn is_union(&self, t: TyId) -> bool {
-        match self.cx.kind(t) {
-            TyKind::Adt(d, _) if self.is_enum(t) => self.cx.enum_def(d).is_union,
-            _ => false,
-        }
     }
 }
