@@ -66,9 +66,48 @@ impl FnCx<'_, '_> {
                 .with_note(format!("only `T | {word}` values can be {word}")),
             );
         }
+        // An option of a type parameter that allows `undefined` (`x?: T`): which nothings the
+        // value can hold depends on the instantiation (`T = string | null` holds `null` too), so
+        // the test is made there. (A `T | null` keeps its one test: its `null` is `T`'s too.)
+        if self.param_payload(s.ty) {
+            match (strict, word, self.cx.ty.nothing_of(s.ty)) {
+                (true, "null", Some(Nothing::Undefined)) => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (false, _, Some(n)) if n.has_undefined() => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                _ => {}
+            }
+        }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
-            // A `T | undefined` is never `null`: still evaluated, then constant.
-            (true, "null", Some(Nothing::Undefined)) => self.constant_test(s, !is_eq, span),
+            // A `T | undefined` is never `null`: still evaluated, then constant. TypeScript
+            // accepts it; a warning says so, since an optional parameter or field left out is
+            // `undefined`, not `null` (code written when it was `null` tests the wrong one).
+            (true, "null", Some(Nothing::Undefined)) => {
+                if !self.cx.scopes[self.module].is_std {
+                    let tn = self.cx.display(s.ty);
+                    let (op, value, loose) = match is_eq {
+                        true => ("===", "false", "=="),
+                        false => ("!==", "true", "!="),
+                    };
+                    let mut d = Diagnostic::error(
+                        format!("this `{op} null` is always {value}: `{tn}` is never `null`"),
+                        span,
+                    )
+                    .with_note("an optional parameter or field left out is `undefined`, not `null`")
+                    .with_note(format!(
+                        "write `{loose} null` to test for either, or `{op} undefined`"
+                    ));
+                    d.severity = velt_common::Severity::Warning;
+                    self.cx.error(d);
+                }
+                self.constant_test(s, !is_eq, span)
+            }
             // The `null` of a `T | null` may stand for JavaScript's `undefined` in this phase
             // (an absent optional field, `Map.get`, `find`): which one is not known.
             (true, "undefined", Some(Nothing::Null)) => {
@@ -113,6 +152,21 @@ impl FnCx<'_, '_> {
             }
             _ => self.null_test(s, is_eq, span),
         }
+    }
+
+    /// Is `t` an option whose value type is a type parameter, or a union with one among its
+    /// members (`T | undefined`, `T | string | undefined`)?
+    fn param_payload(&self, t: TyId) -> bool {
+        let Some(core) = self.cx.ty.core(t) else {
+            return false;
+        };
+        let members = match self.cx.union_def(core) {
+            Some((_, members)) => members,
+            None => vec![core],
+        };
+        members
+            .iter()
+            .any(|m| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_)))
     }
 
     /// `s`, evaluated, then `value`.
@@ -268,6 +322,7 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_nullish(s, rhs, span);
         }
+        s = self.flatten_chain(s);
         let Some(payload) = self.present_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);
@@ -286,9 +341,12 @@ impl FnCx<'_, '_> {
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }
-        // An untyped default (`n ?? 0`) takes the payload's type.
-        let hint = match exp {
-            Some(e) if !super::ops::untyped(rhs) => e,
+        // An untyped default (`n ?? 0`) takes the payload's type; `x ?? null` and
+        // `x ?? undefined` give the payload's option with that nothing (`string | undefined`
+        // `?? null` is a `string | null`, as in TypeScript).
+        let hint = match (nothing_lit(rhs), exp) {
+            (Some(n), _) if !self.is_three_state(s.ty) => self.cx.ty.option_of(payload, n),
+            (_, Some(e)) if !super::ops::untyped(rhs) => e,
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
@@ -325,9 +383,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
         let mut v = self.mk(H::Local(l, mode), payload, span);
-        let (ty, d) = if d.ty == opt {
-            v = self.mk(H::WrapSome(Box::new(v)), opt, span);
-            (opt, d)
+        let two_state = |cx: &crate::ctx::Ctx, t: TyId| {
+            cx.ty.core(t) == Some(payload) && cx.ty.nothing_of(t) != Some(Nothing::Both)
+        };
+        let (ty, d) = if d.ty == opt || two_state(self.cx, d.ty) {
+            let dty = d.ty;
+            v = self.mk(H::WrapSome(Box::new(v)), dty, span);
+            (dty, d)
         } else {
             let (value, d, ty) = self.nullish_join(v, d, payload);
             v = value;
@@ -382,7 +444,8 @@ impl FnCx<'_, '_> {
         (v, d, union)
     }
 
-    /// `object?.<rest>`: apply `f` to the non-null payload; null short-circuits to `null`.
+    /// `object?.<rest>`: apply `f` to the present payload; `null` or `undefined` short-circuits
+    /// to `undefined`.
     pub(crate) fn optional_chain(
         &mut self,
         object: &ast::Expr,
@@ -390,6 +453,7 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let s = self.expr(object, None, Want::Borrow);
+        let s = self.flatten_chain(s);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         if self
             .cx
@@ -426,7 +490,7 @@ impl FnCx<'_, '_> {
         self.chain_match(s, l, mode, payload, r, span)
     }
 
-    /// `match (s) { l => r (wrapped as `T | null`), null => null }`: the null short-circuit of
+    /// `match (s) { l => r (wrapped as `T | undefined`), nothing => undefined }`: the short-circuit of
     /// an optional chain whose rest `r` was checked on the payload bound to `l`.
     pub(super) fn chain_match(
         &mut self,
@@ -440,12 +504,9 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
-        // On an object that may be `undefined`, the short-circuit gives `undefined`, as in
-        // JavaScript (issue #930; on a `T | null` one it is still `null` in this phase).
-        let nothing = match self.cx.ty.nothing_of(s.ty) {
-            Some(Nothing::Null) | None => Nothing::Null,
-            _ => Nothing::Undefined,
-        };
+        // The short-circuit gives `undefined`, on a `T | null` object too, as in JavaScript
+        // (issue #930).
+        let nothing = Nothing::Undefined;
         let (ty, body) = if nothing == Nothing::Undefined
             && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null)
         {
@@ -494,5 +555,15 @@ fn moves_out(e: &hir::Expr) -> bool {
         H::UnwrapVariant { mode, .. } => *mode == UseMode::Move,
         H::Downcast(x) => moves_out(x),
         _ => false,
+    }
+}
+
+/// The nothing `e` is written as (`null`, `undefined`), if it is one of those literals.
+fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),
+        ast::ExprKind::Paren(inner) => nothing_lit(inner),
+        _ => None,
     }
 }

@@ -23,9 +23,23 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   so it is the function's own default whichever way it is called: through an interface whose
   method takes `x?: any`, through a base class whose method the class overrides, through a
   function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
-- An optional parameter `q?: T` is `q: T | null = null`. Left out, it is `undefined`: for
-  `q?: any` or `q?: unknown`, `q === undefined` is true and `typeof q` is `"undefined"`, as in
-  JavaScript.
+- An optional parameter `q?: T` is `q: T | undefined = undefined`, as in TypeScript. Left out,
+  it is `undefined`: it prints `undefined`, `typeof q` is `"undefined"`, `q === undefined` is
+  true and `q === null` false. A call may also pass `undefined` for it (or a value that may be
+  `undefined`). `q?: T | null` is `T | null | undefined`: left out it is `undefined`, and a call
+  may pass `null`, which stays `null`. Passing `null` for a `q?: T` is an error (TS2322), as in
+  TypeScript: leave the argument out or pass `undefined`.
+
+  ```ts
+  function show(z?: string, n?: number | null): string {
+    return `${z} ${typeof z} ${n} ${n === null}`;
+  }
+  console.log(show());           // undefined undefined undefined false
+  console.log(show("a", null));  // a string null true
+  ```
+
+  `q === null` on such a parameter is always `false`: tsc accepts it, and Velt warns, since an
+  omitted argument is `undefined`. Write `q == null` to test for either nothing.
 - A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
   not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
   parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
@@ -860,7 +874,7 @@ async function main() {
   parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
   which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
-  type is `Options | null`, as for a function's optional parameter, and a required parameter
+  type is `Options | undefined`, as for a function's optional parameter, and a required parameter
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
   now; leaving the optional one out (`install(app)`) is not supported yet.
 

@@ -496,8 +496,8 @@ console.log(p.len(), q.len());  // 4 4
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
   object literal implementing such an interface with `get f()` must give `set f(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
-  (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
-  null`), and a caller writes `o.m?.(x)`.
+  (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
+  `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value
   (``generic method `apply` cannot be called on an interface value``): make the calling

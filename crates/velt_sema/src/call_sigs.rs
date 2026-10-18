@@ -133,9 +133,9 @@ fn interface_alias(
         .into_iter()
         .map(|f| ast::ObjectTypeField {
             name: f.name,
-            // An object type's optional field has the `| null` an interface's leaves out.
+            // An object type's optional field has the `| undefined` an interface's leaves out.
             ty: match f.optional {
-                true => or_null(f.ty),
+                true => or_undefined(f.ty),
                 false => f.ty,
             },
             optional: f.optional,
@@ -174,18 +174,22 @@ fn interface_alias(
     }
 }
 
-/// `T | null` for the written type of an optional field.
-fn or_null(ty: ast::TypeExpr) -> ast::TypeExpr {
+/// `T | undefined` for the written type of an optional field (the added `undefined` is
+/// zero-width, as `velt_syntax` `or_undefined` adds it).
+fn or_undefined(ty: ast::TypeExpr) -> ast::TypeExpr {
     let span = ty.span;
-    let null = ast::TypeExpr {
-        kind: ast::TypeExprKind::Null,
+    let undefined = ast::TypeExpr {
+        kind: ast::TypeExprKind::Undefined,
         span: Span::new(span.file, span.hi, span.hi),
     };
     match ty.kind {
-        ast::TypeExprKind::Null => ty,
+        ast::TypeExprKind::Undefined => ty,
         ast::TypeExprKind::Union(mut ms) => {
-            if !ms.iter().any(|m| matches!(m.kind, ast::TypeExprKind::Null)) {
-                ms.push(null);
+            if !ms
+                .iter()
+                .any(|m| matches!(m.kind, ast::TypeExprKind::Undefined))
+            {
+                ms.push(undefined);
             }
             ast::TypeExpr {
                 kind: ast::TypeExprKind::Union(ms),
@@ -193,7 +197,7 @@ fn or_null(ty: ast::TypeExpr) -> ast::TypeExpr {
             }
         }
         _ => ast::TypeExpr {
-            kind: ast::TypeExprKind::Union(vec![ty, null]),
+            kind: ast::TypeExprKind::Union(vec![ty, undefined]),
             span,
         },
     }

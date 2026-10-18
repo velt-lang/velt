@@ -382,11 +382,11 @@ impl FnCx<'_, '_> {
                 let over = self.nullish_exprs(h, prev, span);
                 match still {
                     true => (over, true),
-                    false => (self.jsx_coerce(over, p.attr_value, &note), false),
+                    false => (self.attr_coerce(over, p.attr_value, &note), false),
                 }
             }
             None if maybe_absent => (h, true),
-            _ => (self.jsx_coerce(h, p.attr_value, &note), false),
+            _ => (self.attr_coerce(h, p.attr_value, &note), false),
         };
         filled.given.push((n.to_string(), given));
         let extra = Extra {

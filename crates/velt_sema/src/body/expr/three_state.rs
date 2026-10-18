@@ -275,4 +275,44 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, exp, span)
     }
+
+    /// A two-state option value `h` (`T | undefined` or `T | null`) as the option of the same
+    /// `T` with nothing `to`: its nothing becomes the other one. For places where both mean "no
+    /// value" and the target keeps only one, such as a JSX attribute (`title={props.title}`
+    /// with `title?: string` leaves the attribute out either way).
+    pub(crate) fn with_nothing(&mut self, mut h: hir::Expr, to: Nothing) -> hir::Expr {
+        let span = h.span;
+        let core = self
+            .cx
+            .ty
+            .core(h.ty)
+            .expect("ICE: an option without a payload");
+        let exp = self.cx.ty.option_of(core, to);
+        let (l, mode) = self.option_binding(&h, core, "<nothing>", true);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let v = self.mk(H::Local(l, mode), core, span);
+        let present = self.mk(H::WrapSome(Box::new(v)), exp, span);
+        let none = self.mk(H::Lit(hir::Lit::Null), exp, span);
+        let bind = self.pat(P::Binding(l, mode), core, span);
+        let hty = h.ty;
+        let arms = vec![
+            hir::Arm {
+                pat: self.pat(P::Some(Box::new(bind)), hty, span),
+                guard: None,
+                body: present,
+            },
+            hir::Arm {
+                pat: self.pat(P::None, hty, span),
+                guard: None,
+                body: none,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, exp, span)
+    }
 }

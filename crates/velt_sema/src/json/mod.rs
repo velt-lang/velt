@@ -407,7 +407,7 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
             }
             stack.extend(children(cx.ty.kind(t)));
             if let TyKind::Adt(d, _) = cx.ty.kind(t) {
-                stack.extend(raw_field_tys(cx, *d));
+                stack.extend(parsed_field_tys(cx, *d));
             }
         }
         return None;
@@ -479,6 +479,19 @@ fn with_subclasses(cx: &mut Ctx, d: DefId, args: &[TyId]) -> Vec<(DefId, Vec<TyI
 }
 
 /// The declared field types of struct / class `d` (and the payloads of enum `d`'s variants).
+/// The field types `JSON.parse` decodes into: an optional field's declared type, whose own
+/// `undefined` stands for an absent key (`a?: T` is a `T | undefined`).
+fn parsed_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a
+            .fields
+            .iter()
+            .map(|f| if f.optional { f.declared } else { f.ty })
+            .collect(),
+        _ => raw_field_tys(cx, d),
+    }
+}
+
 fn raw_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
     match cx.info.get(d.0 as usize) {
         Some(DefInfo::Adt(a)) => a.fields.iter().map(|f| f.ty).collect(),

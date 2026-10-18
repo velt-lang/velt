@@ -1,5 +1,5 @@
-2 null
-3 null
+2 undefined
+3 undefined
 3
 2
 true
@@ -15,18 +15,18 @@ box in
 outer
 2
 15
-null
-null
-null
+undefined
+undefined
+undefined
 0
 none
-null
-null
-null
-null
-null
-null
+undefined
+undefined
+undefined
+undefined
+undefined
+undefined
 nobody
 anon
-null
-null
+undefined
+undefined

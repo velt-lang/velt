@@ -367,7 +367,7 @@ export class MemoryStorage implements ActorStorage {
     const id = `${type}\u0000${key}`;
     const current = this.records.get(id);
     const currentEtag = current?.etag;
-    if (currentEtag != expectedEtag) {
+    if ((currentEtag ?? null) != expectedEtag) {
       return { conflict: true, etag: currentEtag ?? "" };
     }
     this.next += 1;
@@ -499,8 +499,8 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
   while (slot.queue.length > 0) {
     if (slot.act == null) {
       const rec = await shard.storage.load(slot.type, slot.key);
-      const stored = rec?.state;
-      slot.etag = rec?.etag;
+      const stored = rec?.state ?? null;
+      slot.etag = rec?.etag ?? null;
       const failure = activateSlot(shard, slot, stored);
       if (failure != null) {
         // Every queued caller fails; the next call tries again.

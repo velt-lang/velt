@@ -130,7 +130,7 @@ fn definition_and_hover_on_tags_and_attributes() {
             .to_string()
     };
     let attr = hover(&mut client, "href=", 1);
-    assert!(attr.contains("href: string | null"), "{attr}");
+    assert!(attr.contains("href: string | undefined"), "{attr}");
     let prop = hover(&mut client, "title=\"Hello", 1);
     assert!(prop.contains("title: string"), "{prop}");
     let component = hover(&mut client, "<Card title", 2);

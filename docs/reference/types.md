@@ -485,13 +485,16 @@ console.log(later, [1, undefined]); // undefined [ 1, undefined ]
 
 `x == null` and `x == undefined` match either nothing; `x === undefined` tests a
 `T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
-and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
+and narrows nothing, as in Node. tsc accepts it; Velt warns (``this `=== null` is always false:
+`string | undefined` is never `null` ``), since it is usually a test of an optional parameter or
+field written for `null`, which is `undefined` when left out: write `x == null` to test for
+either nothing, or `x === undefined`. `switch` compares like `===`. `typeof x === "undefined"`
 narrows, `?.` on a value that may be `undefined` gives `undefined` (a `T | null` result
 becomes `T | null | undefined`), and `JSON.stringify` leaves out a field
 holding `undefined` and writes an array element as `null`. A destructuring default applies where
 the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
-the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
+the `null` of a field `a: T | null`, and of an optional `a?: T | null` that holds `null`. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
 those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `T | void` is
 `T | undefined` (a `void` function's value is `undefined`), so a callback typed
@@ -516,22 +519,16 @@ alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | unde
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
 `T | null | undefined`. Also not supported yet, although TypeScript accepts them:
 
-- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
-  parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
-  leave the argument out;
-- `undefined` as the value of an optional field (`{ a: undefined }` for `a?: number`): leave the
-  field out (also for a conditional with an `undefined` branch, `c ? v : undefined`, given
-  for either);
+- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for a parameter
+  with a default (`f(undefined)` for `function f(x = 5)`): leave the argument out (an optional
+  parameter, `f(x?: number)`, takes `undefined`);
 - a `T | null` from the standard library where a `T | undefined` is expected
   (`return m.get(k);` in a function returning `number | undefined`): write `m.get(k) ?? undefined`;
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
   reach the comparator;
 - `JSON.stringify` of a value holding a class whose `toJSON()` may return `undefined` (its
-  own or a subclass's);
-- a destructuring default for an optional **class** field declared `T | null`
-  (`class C { b?: number | null }`, `const { b = 6 } = c`): a class does not keep an unset field
-  apart from one set to `null`.
+  own or a subclass's).
 
 ### Silent differences until phase 3
 
@@ -543,46 +540,57 @@ These compile and print or test differently from Node, with no error, until late
   `Map<string, number | null>`);
 - a missing key of a `Record`: `r["z"]` on a `Record<string, number>` or
   `Record<string, number | null>` is `null` likewise;
-- an absent optional field or a left-out optional parameter (`a?: T`), `?.` on a `T | null`
-  and the rest of the standard library (`find`, `at`, `shift`, …) give `null` where Node gives
-  `undefined` (phases 2 and 3); `a?: T | undefined` is reported as a type with both nothings.
+- the rest of the standard library (`find`, `at`, `pop`, `shift`, …) gives `null` where Node
+  gives `undefined`.
 
 `x == null` tests for either nothing and `x ?? d` treats both alike, so code written with them
 behaves as in Node.
 
-### Optional values and `null`
+### Optional values
 
-Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the standard library use
-`null` for now:
+Optional fields and parameters (`a?: T`) hold `undefined` when left out, as in TypeScript; the
+standard library still gives `null` (see above). `??`, `?.`, `!` and `x != null` treat both
+nothings alike:
 
-- `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
+- `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result may be `undefined`),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
-  when `d` converts to it, else `d`'s type when `x`'s non-null type converts to that, else
-  their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
+  see below); `switch` supports `case null` and `case undefined`. The type of `x ?? d` is `x`'s
+  non-null type when `d` converts to it, else `d`'s type when `x`'s non-null type converts to
+  that, else their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
   `number | string`.
-- `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
-  The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
-- `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
-  checks it: a `null` panics with `non-null assertion failed`.
-- `a?: T` reads as `T | null`: an optional parameter `b?: T` is `b: T | null = null` (callers
-  may leave it out or pass `null`; it cannot also have a default), and an optional field of a
-  class, interface or object type starts as `null`, meaning absent: `JSON.stringify` leaves it
-  out, and so does `console.log` in an object type, as JavaScript leaves out a missing key (a
-  class shows it, as Node shows a class's optional field); a spread (`{ ...a, ...b }`) doesn't
-  copy it over an earlier value. A `b: T | null` field holding `null` is written.
-- A field declared `a?: T | null` in an object type keeps an absent key apart from a present
-  `null`, as JavaScript does: it prints and serializes `null` when present, `JSON.parse` keeps
-  the difference, and a spread copies a present `null` (`update(u, { deletedAt: null })`
-  clears the field). In a class, such a field is still absent while it is `null`.
-- An object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+- `x ??= d` assigns `d` when `x` is `null` or `undefined` and narrows `x` (likewise `x ||= d`
+  and `x &&= d`). The target may not call a function yet (`m[key()] ??= v`): store the key in a
+  variable first.
+- `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
+  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`.
+- `a?: T` reads as `T | undefined`, and `a?: T | null` as `T | null | undefined`. An optional
+  parameter `b?: T` is `b: T | undefined = undefined` ([Functions](functions.md)): callers may
+  leave it out or pass `undefined` (or a value that may be `undefined`), but not `null`
+  (TS2322), and it cannot also have a default.
+- An optional field of a class without an initializer is an own property holding `undefined`,
+  as in Node with ES2022 class fields: `console.log` shows `a: undefined`, `JSON.stringify`
+  leaves it out, and `"a" in o` is `true`. It can be set to `null` only when declared
+  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`.
+- An optional field of an object type or of an interface with only fields keeps an absent key
+  apart from a key holding `undefined`, as Node does. An absent field is not printed by
+  `console.log`, and `"a" in o` is `false`; `{ a: undefined }` is allowed, prints
+  `{ a: undefined }`, and `"a" in o` is `true`. `JSON.stringify` leaves out both, and writes a
+  present `null` (of an `a?: T | null`). A spread (`{ ...a, ...b }`) copies a field `b` has over
+  an earlier value, also one holding `undefined` or `null`, and keeps the earlier value where `b`
+  lacks the field (`update(u, { deletedAt: undefined })` below clears `deletedAt`, as in Node).
+  Where the target field is required and cannot hold `undefined` (a `Partial<U>` spread back into
+  a `U`), a source that lacks the field keeps the earlier value, and one that holds `undefined`
+  stops the program with a `TypeError` (``a spread copies `undefined` into a field of type
+  `string` ``): Node would copy the `undefined`, which the field's type can't hold.
+- An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
+  `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
+  then `null`.
 - In an object type, `?` is part of the type, as in TypeScript: `{ a?: string }` and
-  `{ a: string | null }` read alike but are different types (the first may be absent), with no
-  implicit conversion between them; copy with `{ ...x }`.
-  Difference from TypeScript: TypeScript also accepts a `{ a: F | null }` where a
-  `{ a?: F | null }` is expected; in Velt the two are different types (the second keeps a
-  presence flag), so copy with `{ ...x }` there too.
+  `{ a: string | undefined }` read alike but are different types (the first may be absent),
+  with no implicit conversion between them; copy with `{ ...x }`.
+  Difference from TypeScript: TypeScript also accepts a `{ a: F | undefined }` where a
+  `{ a?: F }` is expected; in Velt the two are different types (the second keeps a presence
+  flag), so copy with `{ ...x }` there.
 
 ```ts
 type User = { name: string; deletedAt?: string | null };
@@ -594,16 +602,25 @@ function update(u: User, patch: Partial<User>): User {
 const u: User = { name: "ann", deletedAt: "2026-01-01" };
 console.log(JSON.stringify(update(u, {}))); // {"name":"ann","deletedAt":"2026-01-01"}
 console.log(JSON.stringify(update(u, { deletedAt: null }))); // {"name":"ann","deletedAt":null}
+console.log(update(u, { deletedAt: undefined })); // { name: 'ann', deletedAt: undefined }
 const v: User = { name: "bo" };
-console.log(JSON.stringify(v)); // {"name":"bo"}
+console.log(JSON.stringify(v), "deletedAt" in v); // {"name":"bo"} false
 console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 ```
 
-- `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
-  missing), except for an `a?: T | null` field of an object type, which records whether the key
-  was there. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
-- `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
-  never evaluated). Parentheses end a chain: `(x?.a).b` needs `x?.a` to be non-null.
+- `JSON.parse<T>`: an absent key leaves an optional field absent (`undefined`). An explicit
+  `null` for an `a?: T` field, whose type has no `null`, leaves it absent too (a Velt rule: the
+  type cannot hold the `null`); for an `a?: T | null` field it is a present `null`. The
+  TypeScript forms that take the type from the context, `JSON.parse(text) as T` and
+  `const t: T = JSON.parse(text)`, reject that `null` instead (`expected string at $.a`), as
+  they reject a value of another type. A field
+  declared `a: T | null` (not optional) may be missing, and is then `null`, as for an explicit
+  `null`. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
+- `x?.a.b` short-circuits the rest of the chain like TypeScript (`undefined` when `x` is `null`
+  or `undefined`; `.b` is never evaluated). This holds for a `T | null` `x` too, as in
+  JavaScript: with `u: User | null`, `u?.name` is a `string | undefined`, and a rest of type
+  `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
+  be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
   TypeScript; assigning a non-null value narrows too. After an `if`, what holds is what each
   branch that does not leave ends with: the facts of the condition it started from unless it
@@ -637,11 +654,11 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 ```ts
 class User {
   name: string = "ann";
-  nickname?: string;              // starts as null
+  nickname?: string;              // starts as undefined
 }
 
 function greet(name: string, greeting?: string): string {
-  return `${greeting ?? "Hello"}, ${name}`;   // greet("ann") works: greeting is null
+  return `${greeting ?? "Hello"}, ${name}`;   // greet("ann") works: greeting is undefined
 }
 
 function first(xs: i64[]): i64 | null {
@@ -1241,8 +1258,8 @@ console.log(b.v); // hi
   ([Iterable object literals](#iterable-object-literals)).
 - **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
-  `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
-  left out as `null`; call it as `o.label?.(p)`). A generic method signature
+  `label?(p: string): string` an optional one (`((p: string) => string) | undefined`, absent
+  when left out; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
   optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
   type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
@@ -1403,10 +1420,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
-  a field or element declared `T | null` keeps its `null`, and so does an optional field of an
-  object type declared `a?: T | null` when it is present (for a class field declared that way a
-  default is [not supported yet](#null-and-undefined)). Defaults in `for...of` patterns and parameter patterns
-  are not supported.
+  a field or element declared `T | null` keeps its `null`, and so does an optional field
+  declared `a?: T | null` that holds `null`. Defaults in `for...of` patterns and parameter
+  patterns are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:
   `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
@@ -1494,7 +1510,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not ES private `#x` fields, static fields or methods). A struct's optional field is
-  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  listed only when it is present. On a class with subclasses it lists the fields of the
   object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
   interface value those of the class it holds (an interface also implemented by a struct is an
   error: struct values carry no class). On an `any` it lists the fields of the class instance
@@ -1571,11 +1587,11 @@ or accessor its object type, class (or a base class) or interface declares is al
 one it doesn't declare is not. A setter makes its name a member (`"w" in o` for `set w(v)`);
 static members are the class's, not its instances', and a `#private` name is never a string key
 (`"#p" in o` is `false`). An optional field of an object type or interface (`b?: T`) is tested
-at run time: it is there once the object has it, also holding `null`, where the type keeps that
-apart. A class's optional field is always there (TypeScript-compiled classes define it). A value
-whose class is known only at run time is tested for it: a `Base` holding a `Sub` has the members
-`Sub` declares, and an interface value has those of the class it holds, an optional field the
-interface declares included. The members every object inherits from `Object.prototype`
+at run time: it is there once the object has it, also holding `undefined` or `null`
+(`"b" in { b: undefined }` is `true`, as in Node). A class's optional field is always there
+(TypeScript-compiled classes define it). A value whose class is known only at run time is
+tested for it: a `Base` holding a `Sub` has the members `Sub` declares, and an interface value
+has those of the class it holds, an optional field the interface declares included. The members every object inherits from `Object.prototype`
 (`"toString"`, `"constructor"`, `"hasOwnProperty"`, …) are there on every object, as in Node. A
 `Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
 then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
@@ -1592,15 +1608,13 @@ may hold (structs carry no class to tell them apart), and a string key on a buil
 library value (an array, a `Map`). A value converted to a narrower object type by copying its
 fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
 tests it for a key the copy left out, since Node would find it on the original. An optional
-field (`b?: T`) is its value or nothing, while Node also finds a key that holds `undefined`
-(`"b" in { b: undefined }` is `true`). So a program that tests such a field with `in` and
-somewhere stores a value that may be `undefined` in a field of that name (`{ kind, b }` with an
-optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, a spread of a `b: T | null` field) is
-an error (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the
-first such store and says how many others there are): store the value only
-when there is one (`if (v != null) o.b = v`), or test the value (`o.b != null`). Leaving the
-field out, a value that cannot be null and a spread of an object with the same optional field
-are fine. A primitive
+field of a dynamic type (`b?: any`, `b?: unknown`) holds its own `undefined` and keeps no
+presence flag, while Node also finds a key that holds `undefined`. So a program that tests such
+a field with `in` and somewhere stores a value that may be `undefined` in a field of that name
+(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`) is an error
+(``` cannot tell an absent `b` from one holding `undefined` ```, which points at the first such
+store and says how many others there are): store the value only when there is one
+(`if (v !== undefined) o.b = v`), or test the value (`o.b !== undefined`). A primitive
 right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
 possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
 symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under
@@ -1678,7 +1692,7 @@ Where an interface with methods is expected (an annotation, a parameter, a retur
   (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
   interface can't be written through the interface value yet (`x.f = v` is an error), so a
   setter given for a field never runs: declare a setter method in the interface instead.
-- A method with a default body and an optional field may be left out (the field is `null`);
+- A method with a default body and an optional field may be left out (the field is `undefined`);
   every other member must be given, and a member the interface doesn't declare is an error.
 - The value is an interface value: its members are read and called through the interface.
 - Such a literal may be a module constant, exported or not (`export const upper: Handler = {
@@ -1775,9 +1789,8 @@ Differences from Node: `null` and `undefined` converted to `T | null` both give 
 (a `T | null` has no `undefined`; convert to `T | undefined` to keep it); `==` between an
 object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object
 with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
-convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
-optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
-today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
+convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
+function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
 
 Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
 `string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,

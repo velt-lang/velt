@@ -342,7 +342,7 @@ export class RegExp {
   }
 
   /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
-  __split(s: string, limit: number | null): string[] {
+  __split(s: string, limit: number | null | undefined): string[] {
     if (limit == null) {
       return this.split(s);
     }

@@ -88,9 +88,12 @@ fn is_readonly_array(t: &ast::TypeExpr) -> bool {
             path.len() == 1 && path[0].name == "ReadonlyArray" && args.len() == 1
         }
         ast::TypeExprKind::Union(ms) => {
-            let mut non_null = ms
-                .iter()
-                .filter(|m| !matches!(m.kind, ast::TypeExprKind::Null));
+            let mut non_null = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
             matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_array(m))
         }
         _ => false,

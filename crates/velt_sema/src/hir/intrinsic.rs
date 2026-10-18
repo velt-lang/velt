@@ -101,6 +101,14 @@ pub enum Intrinsic {
     /// per instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`,
     /// `0`, `-0`, `NaN` and `""` are falsy, a union by its member, objects always truthy.
     Truthy,
+    /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, `x === null` on a value
+    /// whose type is an option of a type parameter (`x?: T`, issue #930): whether it holds the
+    /// `null` of the type it is instantiated with (the inner nothing of a `X | null | undefined`,
+    /// the nothing of a `X | null`); `false` for a type without `null`.
+    IsNull,
+    /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
+    /// either nothing once instantiated.
+    IsNullish,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values
