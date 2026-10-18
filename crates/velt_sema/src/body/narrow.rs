@@ -577,6 +577,10 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
+        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none() && pred(self.cx, u) {
+            // A test every value passes (`typeof x === "string"` on a `string`, which may be a
+            // `string | bigint`): nothing is left where it fails, as in TypeScript.
+            f.push(Fact::Members(l, vec![]));
         }
         if nullable {
             if null_matches {

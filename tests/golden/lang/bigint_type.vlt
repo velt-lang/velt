@@ -1,6 +1,7 @@
 // `bigint` as a type before `BigInt` values exist (#1088): a union naming it is its other
 // members, a conditional type testing it never takes that branch, and a type bound naming it
 // still chooses overloads by the bound (`signal({...})` takes the object signature).
+// `typeof x === "bigint"` and `case "bigint"` are always false.
 // check: no leaks
 type Primitive = string | number | boolean | symbol | bigint | null | undefined;
 type Widen<T> = T extends boolean
@@ -46,3 +47,31 @@ console.log(size(21));
 const n: Widen<5> = 7;
 const s: Widen<"x"> = "seven";
 console.log(n, s);
+
+function kind(x: string | bigint): string {
+  if (typeof x === "string") return "string " + x;
+  if (typeof x === "bigint") return "bigint";
+  const rest: never = x;
+  return rest;
+}
+
+function next(x: number | bigint): number {
+  if (typeof x === "bigint") return -1;
+  return x + 1;
+}
+
+function describe(x: string | number | bigint): string {
+  switch (typeof x) {
+    case "bigint":
+      return "bigint";
+    case "number":
+      return "number " + x;
+    default:
+      return "string " + x;
+  }
+}
+
+function isBig(a: any): boolean {
+  return typeof a === "bigint";
+}
+console.log(kind("a"), next(2), describe(3), describe("s"), isBig(1), isBig("x"));

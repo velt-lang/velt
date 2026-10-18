@@ -39,6 +39,9 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         let to = self.cx.dynamic(exp);
         let from = self.cx.dynamic(h.ty);
+        if from.is_some() && exp == self.cx.ty.never {
+            return Ok(self.dynamic_to_never(h));
+        }
         match (from, to) {
             (None, None) => Err(h),
             (None, Some(d)) if !self.dynamic_takes_static(d, h.ty) => Err(h),
@@ -48,6 +51,22 @@ impl FnCx<'_, '_> {
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
+    }
+
+    /// An `any` / `unknown` where a `never` is expected (`bigint` is `never`, #1088): no value
+    /// converts, as in TypeScript (TS2322).
+    fn dynamic_to_never(&mut self, h: hir::Expr) -> hir::Expr {
+        let f = self.cx.display(h.ty);
+        self.cx.error(
+            Diagnostic::error(
+                format!("an `{f}` value cannot be a `never` or a `bigint`"),
+                h.span,
+            )
+            .with_note(
+                "no value has type `never`, and a `bigint` has no values in Velt yet (#1088)",
+            ),
+        );
+        self.error_expr(h.span)
     }
 
     /// Does the dynamic type `d` take a value of the static type `t`? `object` takes

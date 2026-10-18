@@ -1,7 +1,14 @@
 // `bigint` has no values yet (#1088): a value of another type is not a `bigint`, as in
-// TypeScript (TS2322, TS2345).
+// TypeScript (TS2322, TS2345). An `any` or `unknown` cannot become one either; TypeScript
+// accepts those (lines 11-14), a Velt program has no `bigint` to give them.
 function f(x: bigint): number {
   return 1;
 }
 const a: bigint = 5;
 console.log(f(1), a);
+const n: any = 1;
+const u: unknown = 2;
+console.log(f(n));
+const b: bigint = n;
+const c = n as bigint;
+const d: bigint = u as bigint;

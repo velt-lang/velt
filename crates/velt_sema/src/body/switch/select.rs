@@ -197,6 +197,8 @@ impl FnCx<'_, '_> {
     fn typeof_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let tag = match &l.lit {
             ast::Lit::Str(t) if TYPEOF_TAGS.contains(&t.as_str()) => t.clone(),
+            // No value is a `bigint` yet (#1088): the case never matches.
+            ast::Lit::Str(t) if t == "bigint" => return self.never_sel(s, span),
             _ => {
                 let tags: Vec<String> = TYPEOF_TAGS.iter().map(|t| format!("\"{t}\"")).collect();
                 self.cx.error(

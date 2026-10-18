@@ -131,6 +131,12 @@ impl FnCx<'_, '_> {
             let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &undef, span);
             return self.negated(test.expr, negate, span);
         }
+        if tag == "bigint" {
+            // No value is a `bigint` yet (#1088): always false, as for the types TypeScript
+            // allows here.
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &|_| false, span);
+            return self.negated(test.expr, negate, span);
+        }
         if !TYPEOF_TAGS.contains(&tag) {
             let tags: Vec<String> = TYPEOF_TAGS.iter().map(|t| format!("\"{t}\"")).collect();
             self.cx.error(

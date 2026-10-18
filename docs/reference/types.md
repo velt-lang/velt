@@ -1766,8 +1766,12 @@ function main(): void {
 }
 ```
 
-A value given where a `bigint` is expected is an error, as in TypeScript; the message names the
-type `never`.
+`typeof x === "bigint"` and `case "bigint":` in a `switch (typeof x)` are always false, and a
+test the remaining type always passes leaves nothing behind (`if (typeof x === "string") return;`
+on a `string | bigint`, then `x` is `never`). A value given where a `bigint` is expected is an
+error, as in TypeScript; the message names the type `never`. So is an `any` or `unknown` given
+there (`const b: bigint = a`, `a as bigint`), which TypeScript accepts: no value in a Velt program
+is a `bigint`.
 
 ## any and unknown
 
