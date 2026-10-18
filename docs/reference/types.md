@@ -919,7 +919,11 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
   expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
-  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`).
+  Keys compared by identity count as `===`: a `WeakMap`, `WeakSet` or `WeakRef` of the
+  expected type. So does a value holding the expected type converted to `any`, `unknown` or
+  `object` when the program compares such values (`(a as any) === (ab as any)`, a `Set<any>`
+  or `Map<object, V>` key, a weak collection), or prints, spreads or lists the keys of one. An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -1855,7 +1859,7 @@ function main(): void {
 ```
 
 **Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
-operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
+operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,

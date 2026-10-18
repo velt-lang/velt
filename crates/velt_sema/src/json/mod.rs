@@ -88,6 +88,11 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         .iter()
         .enumerate()
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
+    let std_fns: HashSet<DefId> = uses
+        .iter()
+        .map(|(f, _)| *f)
+        .filter(|f| is_std_fn(cx, *f))
+        .collect();
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
     let mut needs: Needs = HashMap::new();
@@ -107,7 +112,10 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                     grew = true;
                 }
             } else if let Need::Seen(how) = parse {
-                if checked.insert((t, span, parse)) {
+                // The standard library's own looks at its concrete types (`any` in its proxy
+                // code) never see a user's object types, which reach it only as type
+                // arguments, nor whether the user's code runs them.
+                if !std_fns.contains(f) && checked.insert((t, span, parse)) {
                     cx.object_copies.observe(t, span, how);
                 }
             } else if let Need::Json(parse) = parse {
@@ -155,6 +163,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
+    let any_impl = cx.any.and_then(|a| a.imp);
+    let proxy = cx.prelude_adt("Proxy");
+    let tys = &cx.ty;
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
@@ -178,6 +189,14 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                 }
             }
             uses_of(&mut u, e, looks);
+            if looks {
+                identity_uses(
+                    &mut u,
+                    e,
+                    any_impl,
+                    |t| matches!(tys.kind(t), TyKind::Adt(d, _) if Some(*d) == proxy),
+                );
+            }
         });
         out.push((DefId(i as u32), u));
     }
@@ -223,6 +242,75 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
         E::Closure(c) => u.closures.push(*c),
         _ => {}
     }
+}
+
+/// How an expression shows an object's identity apart from `===` ([`crate::object_copies`]):
+/// a value converted to a dynamic type (`any_impl`: `Program::any_impl`), compared through
+/// one, a `Map` key (which compares a dynamic key's objects by identity) and the key of a
+/// weak operation. A `Proxy` object (`is_proxy`) made an `any` shows its target, which is an
+/// `any` already, and never its handler.
+fn identity_uses(u: &mut Uses, e: &Expr, any_impl: Option<u32>, is_proxy: impl Fn(TyId) -> bool) {
+    match &e.kind {
+        E::ToDyn { expr, impl_index } if Some(*impl_index) == any_impl && !is_proxy(expr.ty) => {
+            u.direct.push((expr.ty, e.span, Need::Seen(Seen::Dynamic)));
+        }
+        E::Call {
+            callee: Callee::Intrinsic(i),
+            args,
+        } => {
+            let how = match i {
+                Intrinsic::AnyStrictEq | Intrinsic::AnyLooseEq => Seen::Identity,
+                Intrinsic::WeakMapSet
+                | Intrinsic::WeakMapGet
+                | Intrinsic::WeakMapHas
+                | Intrinsic::WeakMapDelete => Seen::Key { weak: true },
+                Intrinsic::WeakRefNew => Seen::Key { weak: true },
+                // Hashing a key of std's `Map` (and so `Set`).
+                Intrinsic::Hash => Seen::Key { weak: false },
+                _ => return,
+            };
+            let keys = match how {
+                // The map's id comes first.
+                Seen::Key { weak: true } if !matches!(i, Intrinsic::WeakRefNew) => args.get(1..),
+                _ => Some(&args[..]),
+            };
+            for a in keys.into_iter().flatten() {
+                u.direct.push((a.ty, a.span, Need::Seen(how)));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `JSON.parse` into, or `JSON.stringify` of, a dynamic type `name` (in `tn` unless `whole`):
+/// not supported yet (#924).
+fn report_dynamic(cx: &mut Ctx, name: &str, whole: bool, tn: &str, span: Span, parse: bool) {
+    let within = match whole {
+        true => String::new(),
+        false => format!(" (in `{tn}`)"),
+    };
+    let d = match parse {
+        true => Diagnostic::error(
+            format!("`JSON.parse` into `{name}`{within} is not supported yet (#924)"),
+            span,
+        )
+        .with_note("TypeScript gives an `any` holding whatever the text has; Velt decodes into a type and checks the data against it")
+        .with_note("name the type the JSON must have: `JSON.parse(text) as User`, `JSON.parse<User>(text)` or `const u: User = JSON.parse(text)`, or use `JSON.parseValue(text)` (a `JsonValue`) for data of unknown shape"),
+        false => Diagnostic::error(
+            format!("`JSON.stringify` of `{name}`{within} is not supported yet (#924)"),
+            span,
+        )
+        .with_note("convert the value to its type first: `JSON.stringify(x as User)` (checked at run time)"),
+    };
+    cx.error(d);
+}
+
+/// Is `f` a function (or closure) of the standard library?
+fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
+    let Some(DefInfo::Fn(info)) = cx.info.get(f.0 as usize) else {
+        return false;
+    };
+    cx.modules.get(info.module).is_some_and(|m| m.is_std)
 }
 
 fn has_param(cx: &Ctx, t: TyId) -> bool {
@@ -288,6 +376,10 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
                 "TypeScript allows this (`JSON.stringify` writes a generator as `{}`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with `for...of`)",
             ),
         );
+        return true;
+    }
+    if let Some(d) = cx.dynamic(bad) {
+        report_dynamic(cx, d.name(), t == bad, &tn, span, parse);
         return true;
     }
     let private = private_field(cx, bad, parse);

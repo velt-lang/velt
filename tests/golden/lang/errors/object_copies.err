@@ -74,7 +74,7 @@ object_copies.vlt:96:8: error: a value of type `{ name: string; age: f64 }` conv
 object_copies.vlt:24:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Named` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ name: both.name }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
-object_copies.vlt:97:20: error: a value of type `{ name: string; age: f64 }` converts to `Aged` by copying its fields, and this program lists the keys of a `Aged`: Node would show the original object's fields, in its order
+object_copies.vlt:97:20: error: a value of type `{ name: string; age: f64 }` converts to `Aged` by copying its fields, and this program lists the keys of an `Aged`: Node would show the original object's fields, in its order
 object_copies.vlt:28:10: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Aged` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ age: both.age }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
@@ -82,7 +82,7 @@ object_copies.vlt:98:26: error: a value of type `{ name: string; age: f64 }` con
 object_copies.vlt:24:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Named` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ name: both.name }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
-object_copies.vlt:101:22: error: a value of type `Row` converts to `Id` by copying its fields, and this program serializes a `Id[]`: Node would show the original object's fields, in its order
+object_copies.vlt:101:22: error: a value of type `Row` converts to `Id` by copying its fields, and this program serializes an `Id[]`: Node would show the original object's fields, in its order
 object_copies.vlt:102:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Id` made from a `Row` value is a new object with the same field values
   = note: build the new object explicitly, `{ id: row.id }` (a new object in TypeScript too), or declare the parameter or variable as `Row`
