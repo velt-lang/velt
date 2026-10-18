@@ -314,13 +314,19 @@ impl FnCx<'_, '_> {
             if let Some(AssignTarget::Dynamic(obj)) = checked {
                 return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
             }
+            // A record key has rules of its own (a key may be missing; `record_logical.rs`).
+            if let Some(AssignTarget::Record(obj)) = checked {
+                let (object, key) = super::record::record_parts(target);
+                let e = self.record_logical(obj, object, key, op, value, as_value, span);
+                return (e, as_value);
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
         }
     }
 
-    /// `a ??= b` on a place or record key (`checked` is the target as resolved).
+    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     fn logical_assign(
         &mut self,
         op: ast::BinaryOp,
@@ -343,19 +349,15 @@ impl FnCx<'_, '_> {
             self.expr(value, None, Want::Borrow);
             return self.error_expr(span);
         }
-        // A record key has rules of its own (a key may be missing): the record path handles
-        // every compound form. A target in error is reported once, here.
+        // A target in error is reported once, here.
         match checked {
-            Some(AssignTarget::Record(obj)) => {
-                let (object, key) = super::record::record_parts(target);
-                return self.record_assign(obj, object, key, Some(op), target, value, span);
-            }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
             Some(
                 AssignTarget::Place(_)
+                | AssignTarget::Record(_)
                 | AssignTarget::Setter(_)
                 | AssignTarget::Indexer(_)
                 | AssignTarget::Dynamic(_),
