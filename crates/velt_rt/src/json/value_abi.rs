@@ -8,6 +8,7 @@
 //! All accessors accept a null handle (the result of a failed `get`/`at`).
 
 use super::error::syntax_message;
+use super::node_syntax::node_syntax_message;
 use super::text::stringify_into;
 use super::value::{parse, Value};
 use crate::handle::Handle;
@@ -73,9 +74,9 @@ pub unsafe extern "C" fn velt_rt_json_parse_value_with(
         }
         Err((e, path)) => {
             out_handle.write(Handle::NULL);
-            out_err.write(VeltStr::from_vec(
-                syntax_message(bytes, e, &path, limit).into_bytes(),
-            ));
+            let message = node_syntax_message(bytes)
+                .unwrap_or_else(|| syntax_message(bytes, e, &path, limit));
+            out_err.write(VeltStr::from_vec(message.into_bytes()));
             0
         }
     }

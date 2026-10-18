@@ -7,6 +7,7 @@
 //! an opening bracket.
 
 use super::error::{mismatch_message, syntax_message, unknown_message};
+use super::node_syntax::node_syntax_message;
 use super::rows_reader::RowReader;
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
@@ -435,11 +436,12 @@ impl Reader {
         if let Some(rows) = &self.rows {
             return rows.message(expected, path);
         }
-        match self.error {
+        // Text that is not JSON fails as in Node, wherever the decoder stopped.
+        node_syntax_message(self.sc.src).unwrap_or_else(|| match self.error {
             Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
             Some(ReadError::Unknown) => unknown_message(path),
             _ => mismatch_message(expected, path),
-        }
+        })
     }
 
     /// A string token as a `VeltStr`: borrowed from the source if it had no escapes, unless it

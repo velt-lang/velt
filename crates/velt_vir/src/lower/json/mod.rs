@@ -175,7 +175,8 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(out), t)
     }
 
-    /// A `JsonError` with the owned `message`; any other field is zero.
+    /// A `JsonError` with the owned `message`, named `SyntaxError` (as the prelude's
+    /// constructor names it); any other field is zero.
     fn json_error_value(&mut self, message: Operand) -> Operand {
         let et = self.cx.json_error_ty();
         let TyKind::Adt(d, _) = self.cx.kind(et) else {
@@ -184,10 +185,16 @@ impl FnLower<'_, '_> {
         let adt = self.cx.adt_def(d);
         let msg = adt.fields.iter().position(|f| f.name == "message");
         let msg = msg.unwrap_or_else(|| ice("JsonError has no `message` field")) as u32;
+        let name_field = adt.fields.iter().position(|f| f.name == "#name");
         if adt.kind == AdtKind::Class {
             let obj = self.alloc_object_raw(et);
             let p = self.field_place(&obj, et, msg);
             self.store(p, message);
+            if let Some(n) = name_field {
+                let name = self.str_lit("SyntaxError");
+                let p = self.field_place(&obj, et, n as u32);
+                self.store(p, name);
+            }
             return Operand::Copy(obj);
         }
         let Ty::Agg(a) = self.cx.ty(et) else {

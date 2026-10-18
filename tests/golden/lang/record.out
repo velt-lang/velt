@@ -18,4 +18,4 @@ EDITOR vi
 expected field "mem" at $.limits
 expected string at $.env.a
 expected i64 at $.limits.cpu
-invalid JSON at $.limits.gpu: unexpected character '}' (byte 45)
+Unexpected token '}', ...","gpu":[1,}],"prices"... is not valid JSON

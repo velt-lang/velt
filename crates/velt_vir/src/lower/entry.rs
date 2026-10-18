@@ -214,7 +214,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             TyKind::Adt(d, _) => self.cx.has_header(d),
             _ => false,
         };
-        let cls = if dynamic {
+        let cls = if self.is_json_error(err) {
+            // `JSON.parse`'s error stands for the `SyntaxError` Node throws: `SyntaxError: <m>`.
+            let s = self.str_lit("SyntaxError");
+            Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
+        } else if dynamic {
             let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
             let p = self.dispatch(vt, SLOT_NAME);
             let pp = self.operand_place(p, Ty::Ptr);
@@ -233,6 +237,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let a = self.addr(text.clone());
         self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
         self.drop_glue(text, ty);
+    }
+
+    /// Is `err` the prelude's `JsonError` (what `JSON.parse` throws)?
+    fn is_json_error(&mut self, err: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(err) else {
+            return false;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return false;
+        };
+        a.name == "JsonError" || a.name.ends_with("::JsonError") || a.name.ends_with(".JsonError")
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.

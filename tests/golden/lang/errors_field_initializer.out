@@ -2,10 +2,10 @@
 1
 5
 1
-derived: invalid JSON at $[1]: unexpected end of input (byte 2)
+derived: Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)
 i 5
 5 h
 1
 struct: risky failed
-nested: invalid JSON at $: unexpected character 'x' (byte 0)
+nested: Unexpected token 'x', "x" is not valid JSON
 1
