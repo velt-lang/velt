@@ -16,6 +16,9 @@ impl FnLower<'_, '_> {
     /// Append JS's `String(x)` of the object (or `null`) at `place` (of type `ty`) to the
     /// builder at `buf`; false (nothing written) if `ty` is not an object written that way.
     pub(super) fn push_js_object(&mut self, buf: &Operand, place: &Place, ty: TyId) -> bool {
+        if self.cx.is_dynamic(ty) {
+            return self.push_dyn_error(buf, place, ty);
+        }
         if let TyKind::Option(e, n) = self.cx.kind(ty) {
             if !self.js_object(e) {
                 return false;
@@ -82,6 +85,32 @@ impl FnLower<'_, '_> {
         true
     }
 
+    /// `String(x)` of the `any` / `unknown` at `place` (of type `ty`) when it may hold an error
+    /// (#1242): an instance of the prelude's `Error` (or of a subclass) through its `toString()`
+    /// (`Error: boom`, or a subclass's own), anything else as the format glue writes it. False
+    /// (nothing written) in a program without the prelude's `Error`.
+    fn push_dyn_error(&mut self, buf: &Operand, place: &Place, ty: TyId) -> bool {
+        let Some(err) = self.cx.prelude_error() else {
+            return false;
+        };
+        let ety = self.cx.intern(TyKind::Adt(err, vec![]));
+        if self.hook(ety, Hook::ToString).is_none() {
+            return false;
+        }
+        let (err_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        let is_err = self.instance_test(place, ty, err);
+        self.branch(is_err, err_bb, other_bb);
+        self.switch_to(err_bb);
+        let obj = self.downcast_place(place.clone(), ty);
+        self.push_to_string(buf, &obj, ety);
+        self.goto(done);
+        self.switch_to(other_bb);
+        self.format_top(buf, place, ty);
+        self.goto(done);
+        self.switch_to(done);
+        true
+    }
+
     /// Is `ty` a class, struct or object type that `String(x)` writes as JS does (not a
     /// `JsonValue`)?
     fn js_object(&mut self, ty: TyId) -> bool {
@@ -107,5 +136,17 @@ impl FnLower<'_, '_> {
             let p = self.cx.subst(p, &args);
             self.js_object(p)
         })
+    }
+}
+
+/// The name of the prelude's `Error` class.
+const PRELUDE_ERROR: &str = "std/prelude/error::Error";
+
+impl super::Cx<'_> {
+    /// The prelude's `Error` class, if the program has it.
+    pub(super) fn prelude_error(&self) -> Option<hir::DefId> {
+        (0..self.hir.defs.len() as u32)
+            .map(hir::DefId)
+            .find(|&d| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_ERROR))
     }
 }

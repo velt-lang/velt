@@ -1,0 +1,30 @@
+// check: no leaks
+// String(e), `${e}` and string concatenation of an error held by an `any` or an `unknown`
+// write it as Error.prototype.toString does (#1242), also for subclasses with their own name.
+// Expected output: Node's.
+class MyErr extends Error {
+  constructor(m: string) { super(m); this.name = "MyErr"; }
+}
+function f(): any { return new Error("boom"); }
+function g(): unknown { return new MyErr("bad"); }
+function h(): any { return new TypeError("tt"); }
+const e = f();
+console.log(String(e), `${e}`, "" + e, e + "!");
+const u = g();
+console.log(String(u), `${u}`);
+const t = h();
+console.log(String(t), `${t}`);
+const err: Error = new MyErr("typed");
+console.log(String(err), `${err}`, "" + err);
+const re = new RangeError("r");
+console.log(String(re));
+const empty: any = new Error("");
+console.log(String(empty));
+try {
+  throw new MyErr("caught");
+} catch (x) {
+  console.log(String(x), `${x}`);
+}
+const n: any = 5;
+const s: any = "str";
+console.log(String(n), `${s}`, "x" + n, s + "!");
