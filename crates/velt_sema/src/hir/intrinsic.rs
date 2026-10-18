@@ -65,6 +65,9 @@ pub enum Intrinsic {
     /// class instances, arrays, object types, interface and function values — by identity;
     /// `T | null`, unions and tuples part by part; strings and numbers by value
     Same,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Object.is` (SameValue): `Same`, except that
+    /// floats compare by value with `NaN` equal to itself and `0` unequal to `-0`
+    SameValue,
     /// `x.clone()` (user-visible, every type): deep copy
     Clone,
     /// `(x: borrow T) -> T`: another reference to the same value (JS reference copy; semantics

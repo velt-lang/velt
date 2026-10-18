@@ -155,6 +155,9 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The program calls `Object.create(null)`: a record may have no prototype (its map is
+    /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
+    pub null_proto_records: bool,
     /// The program's module state (module-level `let`s), `None` when it has none
     /// (hir_encodings.md "Module state").
     pub module_state: Option<ModuleState>,

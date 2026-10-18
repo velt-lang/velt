@@ -97,7 +97,10 @@ impl FnCx<'_, '_> {
                 ..
             } => match self.dynamic_is_array_facts(callee, args) {
                 Some(facts) => facts,
-                None => self.predicate_facts(callee, args, cond.span),
+                None => match self.is_array_test(callee, args) {
+                    Some(arg) => self.is_array_facts(arg),
+                    None => self.predicate_facts(callee, args, cond.span),
+                },
             },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
@@ -473,11 +476,15 @@ impl FnCx<'_, '_> {
                 return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        let Some((l, nullable, u)) = self.local_with_members(operand) else {
-            return (vec![], vec![]);
+        let (l, nullable, u, nothing) = match self.local_with_members(operand) {
+            Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
+            // A field path of a local (`typeof node.text === "string"`).
+            None => match self.field_with_members(operand) {
+                Some(found) => found,
+                None => return (vec![], vec![]),
+            },
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let nothing = self.cx.ty.nothing_of(self.local_ty(l));
         // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
         // its `undefined`; the false branch rules that nothing out.
         if nothing == Some(Nothing::Both) {
@@ -556,6 +563,15 @@ impl FnCx<'_, '_> {
         (t, f)
     }
 
+    /// Facts for `Array.isArray(e)`: its array members.
+    fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        let Some((l, nullable, u)) = self.local_with_members(e) else {
+            return (vec![], vec![]);
+        };
+        let pred = crate::body::expr::object_builtins::is_array_ty;
+        self.split_facts(l, nullable, u, &pred, false)
+    }
+
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff
     /// `null_matches`).
     pub(super) fn split_facts(
@@ -572,6 +588,14 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
+        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+            && crate::unions::typeof_exact(self.cx, u)
+            && pred(self.cx, u)
+        {
+            // A test every value passes (`typeof x === "string"` on a `string`, which may be a
+            // `string | bigint`): nothing is left where it fails, as in TypeScript. Only for
+            // types whose `typeof` the static type fixes.
+            f.push(Fact::Members(l, vec![]));
         }
         if nullable {
             if null_matches {

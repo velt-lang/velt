@@ -107,6 +107,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep process information out of code shared with TypeScript",
     ),
     (
+        "ObjectPrototype",
+        "compare prototypes with `===` without naming their type (`Object.getPrototypeOf(v) === Object.prototype`)",
+    ),
+    (
         "Mutex",
         "keep thread-shared state out of code shared with TypeScript",
     ),
@@ -327,7 +331,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "parseInt",
         ],
     ),
-    ("Object", &["entries", "keys", "values"]),
+    ("Object", &["entries", "fromEntries", "keys", "values"]),
     ("Reflect", &["get", "has", "set"]),
     ("String", &["fromCharCode"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
@@ -395,6 +399,19 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "Date",
         &[("compareTo", "compare `a.getTime()` with `b.getTime()`")],
+    ),
+    (
+        "ObjectPrototype",
+        &[
+            (
+                "toJSON",
+                "compare prototypes with `===`; don't serialize them",
+            ),
+            (
+                "toString",
+                "compare prototypes with `===`; don't convert them",
+            ),
+        ],
     ),
     (
         "JSON",

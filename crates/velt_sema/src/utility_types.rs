@@ -277,6 +277,10 @@ impl Ctx<'_> {
         k: TyId,
         span: Span,
     ) -> Option<Vec<String>> {
+        // `never` lists no names (`Omit<T, never>` is `T`).
+        if k == self.ty.never {
+            return Some(vec![]);
+        }
         let members = self.union_members(k).unwrap_or_else(|| vec![k]);
         let keys: Option<Vec<String>> = members
             .iter()

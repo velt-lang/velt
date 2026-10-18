@@ -213,6 +213,31 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
+    /// A union member read of a field that a `typeof` test narrowed (an `UnwrapVariant` not
+    /// rooted at a local): a call since the test may have changed the field, so its variant is
+    /// checked again, as `check_narrowed_field` checks a narrowed nullable field.
+    fn check_narrowed_variant(&mut self, inner: &hir::Expr, p: &Place, ety: TyId, at: VariantAt) {
+        let VariantAt::Index(i) = at else {
+            return;
+        };
+        if unwrap_root(inner).is_some() || self.dead() {
+            return;
+        }
+        let fail = self.new_block();
+        self.test_variant(i, &[], p, ety, fail);
+        let ok = self.new_block();
+        self.goto(ok);
+        self.switch_to(fail);
+        let msg = format!(
+            "a narrowed field was set to a value of another type before this read{}",
+            self.panic_suffix()
+        );
+        let msg = self.str_lit(&msg);
+        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        self.call_rt(super::rt::Rt::Panic, vec![a], None);
+        self.switch_to(ok);
+    }
+
     /// Payload of the (flow-narrowed) union value `inner` known to be in `variant`.
     pub(super) fn unwrap_variant(
         &mut self,
@@ -233,6 +258,7 @@ impl FnLower<'_, '_> {
         }
         let v = self.expr(inner);
         let p = self.place_of(v, ety);
+        self.check_narrowed_variant(inner, &p, ety, at);
         let (payload, pty) = match at {
             VariantAt::Index(i) => self.variant_part(&p, ety, i, 0),
             // The union collapsed to this member: the value itself.
@@ -357,7 +383,9 @@ impl FnLower<'_, '_> {
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
-                match self.variant_at(expr.ty, *variant, ety) {
+                let at = self.variant_at(expr.ty, *variant, ety);
+                self.check_narrowed_variant(expr, &p, ety, at);
+                match at {
                     VariantAt::Index(i) => self.variant_part(&p, ety, i, 0).0,
                     VariantAt::Whole => p,
                 }

@@ -1,0 +1,20 @@
+// check: no leaks
+// Array.isArray of a tuple and of an `any` / `unknown` expression of any shape, as in Node
+// (#925).
+
+const t: [number, string] = [1, "a"];
+console.log(Array.isArray(t));
+const tu: [number, number] | string = Math.random() > 2 ? "s" : [1, 2];
+console.log(Array.isArray(tu) ? tu[1] : tu);
+
+function g(): any {
+  return [1];
+}
+function g2(): any {
+  return 1;
+}
+console.log(Array.isArray(g()), Array.isArray(g2()));
+const arr: any[] = [[1], 2];
+console.log(Array.isArray(arr[0]), Array.isArray(arr[1]));
+const m = new Map<string, unknown>([["x", [1]], ["y", "z"]]);
+console.log(Array.isArray(m.get("x")), Array.isArray(m.get("y")));

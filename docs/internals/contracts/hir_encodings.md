@@ -909,3 +909,18 @@ entry is an `ICE:`.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any` and `JSON.parse` into one, iteration.
+
+## Object built-ins (issue #925)
+
+- `Intrinsic::SameValue(a, b)` (additive), `(borrow T, borrow T) -> bool`, is JavaScript's
+  `Object.is`: `Intrinsic::Same`, except that a float compares by value with `NaN` equal to
+  itself and `0` unequal to `-0`, part by part through `T | null`, unions and tuples. Sema emits it
+  with both operands of one type, also in generic code; lowering resolves it per instantiation
+  (`Glue::SameValue`).
+- `Program::null_proto_records` (additive): the program calls `Object.create(null)` (sema's scan
+  of the user modules, `null` in any parentheses; sema accepts the call only when the scan found
+  it). Such a call is an empty `Record<string, V>` whose map is marked with the top bit of its
+  `edits` counter (`__markNullProto`, std/prelude/map.vlt). Only when the flag is set does sema
+  test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
+  has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
+  other programs are unchanged.

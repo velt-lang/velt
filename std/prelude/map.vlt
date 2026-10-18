@@ -62,6 +62,11 @@ const POS_MASK: u64 = 0xffffffff;
 // at most 2^32 slots, so home slots (`shift` >= 32) come from the tag half of a slot word.
 const MAX_ENTRIES: usize = 0x80000000;
 
+// The top bit of `edits` marks the entries of a record made by `Object.create(null)`, which has
+// no prototype (`__markNullProto`). `edits` is only ever compared for equality and incremented,
+// which keeps the bit; no map reaches 2^63 edits.
+const NULL_PROTO: u64 = 0x8000000000000000;
+
 /**
  * A collection of key/value pairs that remembers insertion order, with JS `Map` semantics:
  * re-setting a key keeps its position, and float keys compare like JS (`NaN` finds itself, `0`
@@ -288,6 +293,16 @@ export class Map<K, V> {
       }
     }
     return out;
+  }
+
+  /** Marks this map as a prototype-less record's entries (`Object.create(null)`). */
+  __markNullProto() {
+    this.edits = this.edits | NULL_PROTO;
+  }
+
+  /** Was this map marked by `__markNullProto`? */
+  __isNullProto(): bool {
+    return (this.edits & NULL_PROTO) != 0;
   }
 
   /**

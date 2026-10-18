@@ -13,7 +13,7 @@
 //! fields in the same order, so they lay out alike (`velt_vir` maps both to one type), and
 //! `assigned_fields.rs` makes them agree on `AdtDef::assigned`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
@@ -42,6 +42,18 @@ impl ShapeField {
             optional: false,
         }
     }
+}
+
+/// What the `Object` built-ins (`body::expr::object_builtins`) make, program-wide.
+#[derive(Default)]
+pub(crate) struct ObjectState {
+    /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
+    /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).
+    pub frozen: HashMap<DefId, DefId>,
+    /// The values of `frozen`.
+    pub frozen_defs: HashSet<DefId>,
+    /// The program calls `Object.create(null)`: records may have no prototype.
+    pub null_proto_records: bool,
 }
 
 impl Ctx<'_> {
@@ -226,7 +238,7 @@ impl Ctx<'_> {
     /// (`interface List<T> { tail?: List<T> }`, #376)? Such an instance stays as it is:
     /// canonicalizing it would canonicalize its own fields without end, and no written object
     /// type spells its shape without naming it.
-    fn reaches_itself(&self, d: DefId) -> bool {
+    pub(crate) fn reaches_itself(&self, d: DefId) -> bool {
         let object = |x: DefId| {
             self.adt(x)
                 .is_some_and(|a| a.kind == AdtKind::Anon || self.field_only_of.contains_key(&x))
@@ -371,6 +383,66 @@ impl Ctx<'_> {
             self.readonly_twins.insert(d, (twin, None));
         }
         (d, params)
+    }
+
+    /// The type of `Object.freeze(o)` for `o` of concrete anonymous object type `t`: its fields
+    /// all readonly, in a def of its own (`Ctx::frozen`; one per frozen shape) that lowering
+    /// sees as `t`'s. `None`: `t` is not such a type.
+    pub(crate) fn frozen_type(&mut self, t: TyId, module: usize) -> Option<TyId> {
+        let TyKind::Adt(d, args) = self.ty.kind(t).clone() else {
+            return None;
+        };
+        let a = self.adt(d)?;
+        if a.kind != AdtKind::Anon || !args.is_empty() || a.generics.len() != 0 {
+            return None;
+        }
+        if let Some(&f) = self.objects.frozen.get(&d) {
+            return Some(self.ty.intern(TyKind::Adt(f, vec![])));
+        }
+        let fields: Vec<ShapeField> = a
+            .fields
+            .iter()
+            .map(|f| ShapeField {
+                readonly: true,
+                ..shape_field(f)
+            })
+            .collect();
+        let plain: Vec<ShapeField> = fields
+            .iter()
+            .map(|f| ShapeField {
+                readonly: false,
+                ..f.clone()
+            })
+            .collect();
+        let f = self.new_anon_def(&fields, 0, module);
+        let (twin, _) = self.anon_def_with(&plain, module);
+        self.readonly_twins.insert(f, (twin, None));
+        self.objects.frozen.insert(d, f);
+        self.objects.frozen_defs.insert(f);
+        Some(self.ty.intern(TyKind::Adt(f, vec![])))
+    }
+
+    /// Would converting a value of type `from` to `to` let a field of an `Object.freeze`
+    /// result be written (`to`, or a member of it, an object type with a field that is not
+    /// readonly)?
+    pub(crate) fn unfreezes(&mut self, from: TyId, to: TyId) -> bool {
+        if self.objects.frozen_defs.is_empty() || from == to {
+            return false;
+        }
+        let from = self.ty.opt_payload(from).unwrap_or(from);
+        if !matches!(self.ty.kind(from), TyKind::Adt(d, _) if self.objects.frozen_defs.contains(d))
+        {
+            return false;
+        }
+        let to = self.ty.opt_payload(to).unwrap_or(to);
+        let members = self.union_members(to).unwrap_or_else(|| vec![to]);
+        members.iter().any(|m| match self.ty.kind(*m) {
+            TyKind::Adt(d, _) => self
+                .adt(*d)
+                .is_some_and(|a| a.fields.iter().any(|f| !f.readonly)),
+            TyKind::Dyn(..) => true,
+            _ => false,
+        })
     }
 
     /// A struct no source names, with fields `fields` (types over the type params `T0..Tn`), for

@@ -57,12 +57,21 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        if self.cx.unfreezes(h.ty, exp) {
+            return Err(h);
+        }
         if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
             return self.coerce_dynamic(h, exp, self.adapting);
         }
         // Two forms of one anonymous object type (a generic shape at concrete arguments and the
         // written shape, crate::anon): the same values, so only the type changes.
         if self.cx.canon(h.ty) == self.cx.canon(exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
+        // `T & object` and `T` at a `T extends object` (crate::intersections).
+        if self.same_under_bounds(h.ty, exp) {
             let mut h = h;
             h.ty = exp;
             return Ok(h);
@@ -337,6 +346,16 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.cx.unfreezes(found.ty, expected) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
+                    found.span,
+                )
+                .with_note("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling: pass it where a `Readonly<T>` is expected"),
+            );
+            return;
+        }
         if let (Some(have), Some(want)) = (
             self.cx.ty.nothing_of(found.ty),
             self.cx.ty.nothing_of(expected),
