@@ -55,6 +55,9 @@ pub struct Reader {
     /// Options (`JSON.parse` options): fail on unknown object keys; the deepest nesting allowed
     /// (`usize::MAX`: no limit), and the containers open now.
     reject_unknown: bool,
+    /// A JSON `null` for an optional field whose type has no `null` (`a?: string`) is an error,
+    /// not an absent field (`FLAG_NULL_NOT_ABSENT`: `JSON.parse(text) as T`).
+    pub(crate) null_not_absent: bool,
     max_depth: usize,
     depth: usize,
     /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
@@ -73,6 +76,9 @@ pub struct Reader {
 
 /// `velt_rt_json_reader_new_with` flags.
 pub const FLAG_REJECT_UNKNOWN: u32 = 1;
+/// A JSON `null` for an optional field whose type has no `null` fails the decode
+/// (`velt_rt_json_reader_null_absent` answers 0).
+pub const FLAG_NULL_NOT_ABSENT: u32 = 2;
 
 /// Bits of a mark: position, open containers, `after_open`.
 const MARK_DEPTH_BITS: u32 = 21;
@@ -98,6 +104,7 @@ impl Reader {
             after_open: false,
             error: None,
             reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
+            null_not_absent: flags & FLAG_NULL_NOT_ABSENT != 0,
             max_depth: if max_depth == 0 {
                 usize::MAX
             } else {

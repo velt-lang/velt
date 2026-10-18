@@ -92,7 +92,7 @@ export class ExecResult {
   }
 }
 
-function stdioBits(mode: string | null, shift: u32): u32 {
+function stdioBits(mode: string | null | undefined, shift: u32): u32 {
   if (mode == null || mode == "inherit") {
     return 0;
   }
@@ -105,7 +105,7 @@ function stdioBits(mode: string | null, shift: u32): u32 {
   panic(`child_process: stdio must be "pipe", "inherit" or "ignore", got "${mode}"`);
 }
 
-function envPairs(env: Map<string, string> | null): string[] {
+function envPairs(env: Map<string, string> | null | undefined): string[] {
   const flat: string[] = [];
   if (env != null) {
     for (const [name, value] of env) {
@@ -119,8 +119,8 @@ function envPairs(env: Map<string, string> | null): string[] {
 function specOf(
   program: string,
   args: string[],
-  cwd: string | null,
-  env: Map<string, string> | null,
+  cwd: string | null | undefined,
+  env: Map<string, string> | null | undefined,
   clearEnv: bool,
   stdio: u32,
 ): CommandSpec {

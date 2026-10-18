@@ -239,14 +239,49 @@ impl FnCx<'_, '_> {
         tag: &str,
     ) -> hir::Expr {
         let h = match fty {
-            Some(t) => self.jsx_coerce(h, t, &format!("in attribute '{name}' of <{tag}>")),
+            Some(t) => {
+                let h = self.same_absence(h, t);
+                self.jsx_coerce(h, t, &format!("in attribute '{name}' of <{tag}>"))
+            }
             None => h,
         };
         let note = format!(
             "attribute values are passed to the JSX provider '{}' as `JSX.AttrValue`",
             p.source
         );
-        self.jsx_coerce(h, p.attr_value, &note)
+        self.attr_coerce(h, p.attr_value, &note)
+    }
+
+    /// `h` converted to `JSX.AttrValue` (`to`). An `undefined` value leaves the attribute out,
+    /// as a `null` does: a provider whose `JSX.AttrValue` has only `null` gets that.
+    pub(super) fn attr_coerce(&mut self, h: hir::Expr, to: TyId, note: &str) -> hir::Expr {
+        let h = self.same_absence(h, to);
+        self.jsx_coerce(h, to, note)
+    }
+
+    /// `h` with the nothing `to` keeps, when `h` is a `T | null` and `to` a `T | undefined` or
+    /// the reverse: an attribute is left out for either (`title={maybe}` with `maybe: string |
+    /// null` for an optional `title?: string`).
+    fn same_absence(&mut self, h: hir::Expr, to: TyId) -> hir::Expr {
+        match (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(to)) {
+            (Some(hir::Nothing::Undefined), Some(hir::Nothing::Null)) => {
+                self.with_nothing(h, hir::Nothing::Null)
+            }
+            (Some(hir::Nothing::Null), Some(hir::Nothing::Undefined)) => {
+                self.with_nothing(h, hir::Nothing::Undefined)
+            }
+            _ => h,
+        }
+    }
+
+    /// Is `t` a `T | undefined` (not also `null`)?
+    pub(super) fn undefined_only(&self, t: TyId) -> bool {
+        self.cx.ty.nothing_of(t) == Some(hir::Nothing::Undefined)
+    }
+
+    /// Is `t` a `T | null` (not also `undefined`)?
+    pub(super) fn null_only(&self, t: TyId) -> bool {
+        self.cx.ty.nothing_of(t) == Some(hir::Nothing::Null)
     }
 }
 

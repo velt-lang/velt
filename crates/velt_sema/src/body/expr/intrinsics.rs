@@ -172,7 +172,9 @@ impl FnCx<'_, '_> {
             | I::MayAlias
             | I::HoldsNull
             | I::FnCapturesNothing
-            | I::Truthy => (vec![(t, B)], bool_, true),
+            | I::Truthy
+            | I::IsNull
+            | I::IsNullish => (vec![(t, B)], bool_, true),
             I::NullAs => (vec![], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {

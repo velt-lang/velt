@@ -336,8 +336,8 @@ fn an_optional_function_field_keeps_its_unparenthesized_form() {
     assert_eq!(out, "type H = { g?: (x: i64) => i64 };\n");
 }
 
-/// `p?: T | null | undefined` keeps its written `null` (#930): without it the parameter would
-/// be a `T | undefined`.
+/// `p?: T | null | undefined` and `p?: T | null` keep their written `null` (#930): without it the
+/// parameter would be a `T | undefined`.
 #[test]
 fn optional_parameters_with_both_nothings() {
     holds(

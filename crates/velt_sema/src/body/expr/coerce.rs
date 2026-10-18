@@ -328,7 +328,8 @@ impl FnCx<'_, '_> {
             return;
         }
         let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
-        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span) {
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
+        {
             return;
         }
         let e = self.cx.display(expected);
@@ -414,7 +415,7 @@ impl FnCx<'_, '_> {
         }
         if self.only_optional_differs(expected, found.ty) {
             d = d.with_note(
-                "an optional field (`a?: T`) may be absent, so it is not a `T | null` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
+                "an optional field (`a?: T`) may be absent, so it is not a `T | undefined` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
             );
         } else if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
             // Instances are canonical (crate::anon), except a generic union whose members are

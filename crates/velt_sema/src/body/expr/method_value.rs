@@ -357,16 +357,16 @@ impl FnCx<'_, '_> {
                 // the enclosing generic definition's (`options: RendererOptions<N>` in
                 // `createRenderer<N>`), in scope for the arrow too.
                 let ret = self.cx.subst(method.ret, &iface_args);
-                // An interface method's only defaults are the `null` of its optional
+                // An interface method's only defaults are the `undefined` of its optional
                 // parameters (`anchor?: N | null`), which the function value takes too, as a
-                // class method's (the parser gives `x?: T` the default `null`).
+                // class method's (the parser gives `x?: T` the default `undefined`, #930).
                 let defaults = method
                     .params
                     .iter()
                     .map(|p| {
                         p.default
                             .as_ref()
-                            .map(|_| synth(ast::ExprKind::Lit(ast::Lit::Null), span))
+                            .map(|_| synth(ast::ExprKind::Lit(ast::Lit::Undefined), span))
                     })
                     .collect();
                 Some(Sig {

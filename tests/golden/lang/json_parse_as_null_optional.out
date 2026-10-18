@@ -1,0 +1,5 @@
+{ b: 1 } undefined {"b":1}
+{ b: 2 } false
+wrong: expected string at $.a
+null: expected string at $.a
+annotated: expected string at $.a
