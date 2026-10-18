@@ -37,8 +37,10 @@ extend<T> (T | null) {
   }
 }
 
-// The same helpers on `T | undefined` (what `Map.get`, `find`, `pop` and other standard library
-// lookups give when nothing is there).
+/**
+ * The same helpers on `T | undefined` (what `Map.get`, `find`, `pop` and other standard library
+ * lookups give when nothing is there).
+ */
 extend<T> (T | undefined) {
   /** Whether the value is undefined (`x == null`); borrows it. */
   isNull(): bool {
@@ -71,7 +73,7 @@ extend<T> (T | undefined) {
   }
 }
 
-// And on `T | null | undefined` (`Map.get` of a `Map<K, V | null>`).
+/** The same helpers on `T | null | undefined` (`Map.get` of a `Map<K, V | null>`). */
 extend<T> (T | null | undefined) {
   /** Whether the value is null or undefined (`x == null`); borrows it. */
   isNull(): bool {

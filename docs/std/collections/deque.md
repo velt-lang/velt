@@ -24,5 +24,6 @@ function main() {
 }
 ```
 
-Notes: don't store a nullable `T` (`Deque<i64 | null>`), because a stored null reads as an empty
-slot.
+An element type may allow `null` or `undefined` (`Deque<i64 | null>`): a stored `null` reads as
+`null`, and a stored `undefined` reads as `undefined`, as an empty deque's `popFront()` does, the
+same as with an array's `shift()`.
