@@ -1,7 +1,8 @@
 //! The exported entry `velt_main() -> i32`: calls the user `main` and returns its `i32` result,
-//! or 0 for a `void` main. An error escaping a throwing `main` prints
-//! `Uncaught <Type>` (plus `: <message>` when the type has a `message: string` field) to stderr,
-//! is dropped, and makes the process exit with 1. An `async main` runs its state machine with
+//! or 0 for a `void` main. An error escaping a throwing `main` prints `Uncaught <Name>: <message>`
+//! for an `Error` (Node's first line), or `Uncaught <value>` for any other thrown value as
+//! `console.log` prints it (Node prints `a string` for `throw "a string"`), to stderr, is dropped,
+//! and makes the process exit with 1. An `async main` runs its state machine with
 //! `velt_rt_block_on` (state on `velt_main`'s stack) and reads the result at `state + 0`.
 //!
 //! Before anything else, `velt_main` initializes the native libraries of packages
@@ -157,8 +158,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// `Uncaught <Type>[: message]` on stderr for the error value at `ep` (for a union, of the
-    /// member it holds).
+    /// `Uncaught <Name>: <message>` (an `Error`) or `Uncaught <value>` (anything else) on stderr
+    /// for the error value at `ep` (for a union, of the member it holds).
     pub(super) fn report_uncaught(&mut self, ep: &Place, err: TyId) {
         if self.cx.is_union(err) {
             let done = self.new_block();
@@ -179,13 +180,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if let Some(root) = self.error_root(err) {
             self.write_error_header(&stream, ep, err, root);
         } else {
-            self.write_error_name(&stream, ep, err);
-        }
-        if let (None, Some(i)) = (self.error_root(err), self.message_field(err)) {
-            self.write_text(&stream, ": ");
-            let mp = self.field_place(ep, err, i);
-            let a = self.addr(mp);
-            self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+            self.write_thrown_value(&stream, ep, err);
         }
         self.write_throw_loc(&stream);
         self.call_rt(
@@ -195,21 +190,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
     }
 
-    /// The name of the error's type; for a class with subclasses, of its dynamic class (read from
-    /// its vtable), so an `IoError` thrown as an `Error` reports `IoError`.
-    fn write_error_name(&mut self, stream: &Operand, ep: &Place, err: TyId) {
-        let dynamic = match self.cx.kind(err) {
-            TyKind::Adt(d, _) => self.cx.is_class(err) && self.cx.has_header(d),
-            _ => false,
-        };
-        if !dynamic {
-            let name = self.cx.type_name(err);
-            self.write_text(stream, &name);
-            return;
-        }
-        let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
-        let name = self.dispatch(vt, SLOT_NAME);
-        self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
+    /// A thrown value that is not an `Error` as Node reports it: as `console.log` prints it
+    /// (`throw "a string"` reports `a string`, an object `{ code: 1 }`).
+    fn write_thrown_value(&mut self, stream: &Operand, ep: &Place, err: TyId) {
+        const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
+        let buf = self.temp(STR);
+        let bp = self.addr(Place::local(buf));
+        self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);
+        self.log_top(&bp, ep, err);
+        let text = self.temp(STR);
+        let tp = self.addr(Place::local(text));
+        self.call_rt(Rt::StrbufFinish, vec![bp, tp.clone()], None);
+        self.call_rt(Rt::WriteStr, vec![stream.clone(), tp.clone()], None);
+        self.call_rt(Rt::StrDrop, vec![tp], None);
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
@@ -283,18 +276,5 @@ impl<'c, 'h> FnLower<'c, 'h> {
             && root.fields[0].name == "message"
             && root.fields[1].name == "#name";
         is_error.then_some(d)
-    }
-
-    /// Index of a `message: string` field of a struct/class error type.
-    fn message_field(&mut self, err: TyId) -> Option<u32> {
-        let TyKind::Adt(d, _) = self.cx.kind(err) else {
-            return None;
-        };
-        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
-            return None;
-        };
-        let i = a.fields.iter().position(|f| f.name == "message")?;
-        let fty = self.cx.adt_field_tys(err)[i];
-        matches!(self.cx.kind(fty), TyKind::Str).then_some(i as u32)
     }
 }

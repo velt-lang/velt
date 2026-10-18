@@ -127,7 +127,9 @@ nothing; `null` means success).
   reports `IoError`), and the location is where it was thrown;
   for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
-  that `main` awaited.
+  that `main` awaited. A thrown value that is not an `Error` is written as Node writes it, the
+  way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`
+  `Uncaught 42`, and an object `Uncaught { code: 503 }`.
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
   101. They cannot be caught.
