@@ -53,7 +53,8 @@ function maps() {
   console.log(deepEqual(nested1, nested2));
   inner2.set("k", [2, 1]);
   console.log(deepEqual(nested1, nested2));
-  // Array keys match by content, as `get` matches them.
+  // Array keys are objects, compared by identity in a map; `deepEqual` pairs them by content,
+  // as Node's `isDeepStrictEqual` does.
   const k1 = new Map<i64[], bool>();
   k1.set([1], true);
   const k2 = new Map<i64[], bool>();
@@ -77,10 +78,10 @@ function mixed() {
   y.m.set("a", 1);
   console.log(deepEqual(x, y), deepEqual(x, x), deepEqual(x.m, y.m));
   assertEq(r1, r2);
-  // A map used as a map key matches by content too.
+  // A record used as a map key is itself, as in JS (#1257): an equal record is another key.
   const byMap = new Map<Record<string, i64>, string>();
   byMap.set(r1, "found");
-  console.log(byMap.get(r2), byMap.get({ a: 1 }));
+  console.log(byMap.get(r1), byMap.has(r2), byMap.has({ a: 1 }));
 }
 
 function main() {

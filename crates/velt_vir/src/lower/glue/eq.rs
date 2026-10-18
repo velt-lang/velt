@@ -1,18 +1,19 @@
-//! Structural equality (`Intrinsic::Eq`, `==` on non-scalar types) and hashing
-//! (`Intrinsic::Hash`). Class objects, interface values and function values compare and hash by
-//! identity (JS reference semantics: an interface value by its data pointer, a function value by
-//! its code and environment); everything else structurally. The prelude `Map` and
-//! `Record` classes are the exception: they compare by content in any key order (Node's
-//! `isDeepStrictEqual`) through `Map.__deepEquals`, and hash their size and keys through
-//! `Map.__deepHash` (std/prelude/map.vlt); a record compares its map. Hashes combine parts
-//! FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`; strings hash their bytes with
-//! `velt_rt_str_hash`.
+//! Structural equality (`Intrinsic::Eq`: `deepEqual`, `assertEq`) and the hash of `Map` and
+//! `Set` keys (`Intrinsic::Hash`). Structural equality compares class objects, interface values
+//! and function values by identity (JS reference semantics: an interface value by its data
+//! pointer, a function value by its code and environment), everything else by content; the
+//! prelude `Map` and `Record` classes compare by content in any key order (Node's
+//! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
+//! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
+//! instances, object types, arrays, interface and function values) hash their identity, the rest
+//! by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
+//! strings hash their bytes with `velt_rt_str_hash`.
 //!
-//! `Intrinsic::Eq` (the `Map` key comparison and `deepEqual`) compares floats with JS's
-//! SameValueZero, as JS compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash
-//! agrees: it hashes `-0` as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue
-//! a key comparison calls (`Glue::KeyEq`, built in `key_mode`) is separate from `==`'s
-//! (`Glue::Eq`).
+//! `Intrinsic::Eq` and `Intrinsic::KeyEq` compare floats with JS's SameValueZero, as JS
+//! compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash agrees: it hashes `-0`
+//! as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue these call
+//! (`Glue::KeyEq` / `Glue::KeySame`, built in `key_mode`) is separate from `==`'s (`Glue::Eq` /
+//! `Glue::Same`).
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -41,10 +42,14 @@ impl FnLower<'_, '_> {
 
     /// The equality glue for the current mode.
     fn eq_glue(&self) -> Glue {
-        if self.key_mode {
-            Glue::KeyEq
-        } else {
-            Glue::Eq
+        if self.value_mode {
+            return Glue::SameValue;
+        }
+        match (self.same_mode, self.key_mode) {
+            (false, false) => Glue::Eq,
+            (false, true) => Glue::KeyEq,
+            (true, false) => Glue::Same,
+            (true, true) => Glue::KeySame,
         }
     }
 
@@ -135,11 +140,10 @@ impl FnLower<'_, '_> {
                 Operand::Copy(Place::local(r))
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
-            _ if self.dictionary_content(ty) => {
-                let a = self.addr(place.clone());
-                self.call_glue(Glue::Hash, ty, vec![a])
-            }
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
+            _ if self.cx.is_object(ty) && !self.cx.is_fn_or_dyn(ty) => {
+                self.identity_hash(place, ty)
+            }
             TyKind::Dyn(..) => {
                 self.cx.note_identity(ty);
                 let p = Operand::Copy(proj(place, Proj::Field(0)));
@@ -175,7 +179,24 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The prelude `Map` or `Record` class, which compares and hashes by content.
+    /// Hash of the object of type `ty` at `place` (a class instance, an object type or an array),
+    /// agreeing with `same_values`: its identity. A key must keep it while the map moves it, so
+    /// an object type or array hashed is counted (its pointer is the object); until lowering
+    /// counts it (the next pass), the address of the place stands in.
+    fn identity_hash(&mut self, place: &Place, ty: TyId) -> Operand {
+        if self.cx.copied_object(ty) {
+            self.cx.note_identity(ty);
+            self.cx.note_share(ty);
+        }
+        let x = match self.cx.ty(ty) {
+            Ty::Ptr => Operand::Copy(place.clone()),
+            _ => self.addr(place.clone()),
+        };
+        let x = self.cast_to(x, Ty::Ptr, Ty::U64);
+        self.fx_combine(cint(0, Ty::U64), x)
+    }
+
+    /// The prelude `Map` or `Record` class, which compares by content (`deepEqual`).
     fn is_dictionary(&mut self, ty: TyId) -> bool {
         self.prelude_map(ty).is_some() || self.prelude_record(ty).is_some()
     }
@@ -396,12 +417,7 @@ impl FnLower<'_, '_> {
             lw.assign(Place::local(h), Rvalue::Use(n));
         };
         match self.cx.kind(ty) {
-            TyKind::Adt(..) if self.is_dictionary(ty) => {
-                let (map_ty, m) = self.dictionary_map(&place, ty);
-                let v = self.call_map_method(map_ty, "__deepHash", vec![Operand::Copy(m)], Ty::U64);
-                add(self, v);
-            }
-            TyKind::Adt(..) | TyKind::Tuple(_) if !self.is_enum(ty) => {
+            TyKind::Tuple(_) => {
                 for (x, _, t) in self.struct_parts(&place, &place, ty) {
                     let v = self.hash_value(&x, t);
                     add(self, v);
@@ -429,21 +445,6 @@ impl FnLower<'_, '_> {
                 add(self, v);
                 self.goto(done);
                 self.switch_to(done);
-            }
-            TyKind::Array(e) => {
-                let place = self.content(&place, ty);
-                let len = self.rvalue_temp(
-                    Ty::U64,
-                    Rvalue::Use(Operand::Copy(proj(&place, Proj::Field(1)))),
-                );
-                add(self, len.clone());
-                let k = self.temp(Ty::U64);
-                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-                self.count_loop(k, len, |lw, k| {
-                    let x = lw.elem_place(&place, k, e);
-                    let v = lw.hash_value(&x, e);
-                    add(lw, v);
-                });
             }
             k => crate::lower::ice(format_args!("no hash glue for {k:?}")),
         }

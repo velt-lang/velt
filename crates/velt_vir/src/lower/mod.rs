@@ -513,8 +513,9 @@ struct FnLower<'c, 'h> {
     /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare
     /// with JS's SameValue, `NaN` equal to itself and `0` unequal to `-0` (same.rs).
     value_mode: bool,
-    /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
-    /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
+    /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`; `Intrinsic::Eq`:
+    /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
+    /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
     /// Lowering the module state's initializer (module_state.rs): the locals of each global's
     /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and

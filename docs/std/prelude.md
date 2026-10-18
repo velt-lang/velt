@@ -114,7 +114,7 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `at(i): T \| null` | a negative `i` counts from the end |
 | `forEach`, `map`, `filter`, `reduce(f, init)` | callbacks get `(x, i)` (`reduce`: `(acc, x, i)`) and may take fewer |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | likewise |
-| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `NaN` is never found (JS's `includes` finds it) |
+| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `indexOf` never finds `NaN`; `includes` also finds the number `NaN`, as in JS (SameValueZero; tuples still compare part by part) |
 | `slice(start = 0, end?)`, `concat(other)` | |
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted). A member access chained on the call reads the changed array, as in JS: `xs.sort().join(",")`, `xs.reverse()[0]`, `s.split(",").sort().map(f)`. Such a chain changes the array, so it can't be an argument of a call that also reads the array (`console.log(xs.sort().join(), xs)` is an error, like any call that changes an argument another one reads): sort on its own line first. Any other use of the result (`return xs.sort()`, `const ys = xs.sort()`, `f(xs.sort())`) is an error: call the method on its own line and then use `xs`, or use `toSorted()` / `toReversed()` for a changed copy |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
@@ -139,30 +139,29 @@ the decoded size for `base64`/`base64url` and `hex`.
 
 ## Map
 
-`Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances, interface and function values (compared by identity, as `==` compares them), and
-structs, object types, tuples, arrays, maps and records (compared by content, as `deepEqual`
-compares them).
+`Map<K, V>` is an insertion-ordered hash map. Keys compare as in JavaScript (SameValueZero):
+numbers, `bool` and strings by value, and objects (class instances, object types, structs,
+arrays, maps, records, interface and function values) by identity, as `===` compares them. An
+object literal finds only itself: an equal object is another key, and changing an object after
+using it as a key keeps its entry where it is. A copy (`{ ...key }`, `key.clone()`) is another
+object, so it is another key.
 
-Float keys compare like JavaScript's (SameValueZero): `0` and `-0` are one key, and `NaN` is a
-key that finds itself (`m.get(NaN)`). Floats inside content keys (arrays, tuples, object types)
-compare the same way. `==` keeps IEEE comparison (`NaN == NaN` is `false`).
-
-One difference from JavaScript's keys:
-
-- **Content keys are hashed when they are inserted.** Changing an array, object, `Map` or
-  `Record` after using it as a key leaves its entry unreachable: `get` finds it neither by the
-  new content nor by the old (it still counts in `size` and shows up when iterating). Don't
-  change a key while it is in a map; insert a copy, or delete the entry and insert it again.
+Float keys compare like JavaScript's: `0` and `-0` are one key, and `NaN` is a key that finds
+itself (`m.get(NaN)`). `==` keeps IEEE comparison (`NaN == NaN` is `false`).
 
 ```ts
 const key: i64[] = [1];
 const m = new Map<i64[], string>();
 m.set(key, "one");
-console.log(m.get([1])); // one
 key.push(2);
-console.log(m.get(key), m.get([1]), m.size); // null null 1
+console.log(m.get(key), m.has([1]), m.has([1, 2]), m.size); // one false false 1
 ```
+
+One difference from JavaScript's keys:
+
+- **Tuples compare part by part**, as `===` compares them: `[1, "x"]` finds an entry set with
+  another `[1, "x"]` (in JavaScript a tuple is an array, another key). A tuple key is hashed
+  when it is inserted, so don't change one while it is in a map.
 
 | Member | Notes |
 |---|---|
@@ -374,7 +373,8 @@ console.log(abort.code == DOMException.ABORT_ERR); // true
   it returns normally.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
-  a deeply equal value, in any order (a key is matched as `get` matches it). Other class
+  a deeply equal value, in any order (a key is matched as `get` matches it, and an object key
+  that isn't a key of the other map pairs with a deeply equal key there). Other class
   instances compare by identity; `==` compares every object by identity. This is Node's
   `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
   `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
