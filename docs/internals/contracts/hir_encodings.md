@@ -9,7 +9,10 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
   root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
-  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
+  `Lit(Unit)` when no ancestor has a constructor. `super.m(args)` in a method is a
+  `Callee::Def` call of the base implementation with `this` (upcast) as `args[0]`; the call
+  expression's span is in `Program::super_calls` (#823: JavaScript does not read `m` from
+  `this` there, so a typed proxy's `get` trap does not run). Field defaults (`FieldDef::default`) run
   in JavaScript's order: a constructor evaluates those of its class's fields that its base
   constructor's class does not have, right after the `super(args)` call (when no ancestor has
   a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
@@ -179,14 +182,26 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   only creates the generator; lowering builds a `Generator` object and, for an interface
   `ret`, the interface value of it. Params are `Owned` or `Copy` (methods: `this` too), as for
   async functions.
-- In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
-  `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
-  own (a `Block` expression holding the desugared `for...of` that yields each value). No
+- `Generator<T, E, N>`: `N` (`never`: none) is the type `next(value)` passes in. In the body:
+  `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`; in a generator
+  with an `N` whose value is used, the call has type `N` and may have a second argument (owned,
+  evaluated only when resumed by a `next()` without a value: `undefined` as an `N`; without
+  it such a resume panics). `Return(None)` ends the generator (no `Return(Some)` occurs);
+  `yield* src` has no form of its own: a `Block` expression holding the desugared `for...of`
+  that yields each value or, in a generator with an `N` or a program with
+  `Program::generator_throw`, for a `src` of type `Generator<T, E2, N | never>`, `Block { Let
+  <yield-gen@N> = src (or GeneratorEmbed(src)); If { cond: GeneratorResume(<yield-gen@N>),
+  then: [While { cond: YieldDelegate(<yield-gen@N>), body: [] }] } }`. With
+  `Program::generator_throw`, a `Yield` or `yield*` inside a `try` with a `catch` may throw an
+  `any` (what `throw()` passes in), and the catch types include it. No
   `finally` block of a generator contains a `Yield`, can throw, or contains a `Break` /
   `Continue` whose target loop is outside it (sema).
 - The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
-  `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
-  `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
+  `E`), `GeneratorResumeWith` (`next(value)`; the value `Borrow`), `GeneratorThrow` (`u32`
+  code, the error an `any`, `Borrow`), `GeneratorValue` (`T`, moved out; only after a resume
+  returned true) and `GeneratorReturn` (close), each taking the `Generator<T, E, N>` operand
+  `BorrowMut`. `Program::generator_throw` says whether a user module calls a `throw()`
+  method; without it lowering emits no code for errors thrown in.
 - `for...of` over a direct generator call (`gen(a)`, or the generator `[Symbol.iterator]()`
   method it would call) is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
   [call] } : Generator<T, E>; While { cond: GeneratorResume(<generator@N>), body: [LetPat
@@ -614,7 +629,8 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 `TyKind::Op(TyOp, args)` appears only in generic definitions (signatures, fields, bodies): a type
 alias applied to arguments that mention type parameters, whose body (a conditional, mapped,
 indexed access or template literal type) can't be evaluated until they are known
-(`TyOp::Alias`). Lowering never lays one out: when its substitution makes the arguments concrete,
+(`TyOp::Alias`), or an intersection with a part that is a type parameter (`T & { $set: … }`,
+`TyOp::Intersect`, its arguments the parts in written order, #350). Lowering never lays one out: when its substitution makes the arguments concrete,
 it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else with canonical
 arguments), the reduced type sema computed for every instantiation the program reaches. A missing
 entry is an `ICE:`.
@@ -817,7 +833,35 @@ entry is an `ICE:`.
   (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
   with one read, and assignment-as-value blocks (`{ s.f = v; s.f }`) with none (the value is
   `v`); a field read on a proxiable type counts as running user code when lowering orders
-  operands (`sequence.rs`). Without proxiable types nothing changes. No HIR form was added.
+  operands (`sequence.rs`). Without proxiable types nothing changes. Method calls through a proxy whose handler has a `get` trap
+  (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
+  name on a class object gives the method read as a value, a function value whose code is the
+  method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
+  a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
+  the receiver, before the other arguments) and checks that the answer is the method about to
+  run read as a value (for a virtual call, the instance in the target's vtable entry); the call
+  then runs with `this` the proxy. A `super.m()` call (`Program::super_calls`) does not read
+  through the proxy, as in JavaScript. An
+  async method, or one that owns its receiver, cannot be read as a value yet: a call of one
+  through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
+  type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
+  `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
+  arguments boxed, its result converted to the field's result type (velt_vir
+  `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
+  `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
+  source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
+  another object type whose fields it has (in another order, or only some of them) is an
+  `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the
+  source place (`Field` of it, possibly under `Share`) or are absent (`null` for an optional
+  field the source lacks); a source that is not a place is bound to a `let` first. Every other
+  `AdtLit` has `Conversion::No`. Lowering builds the literal, except that when the source's type
+  is proxiable (typed proxies, above) and the source holds a proxy, the value is that proxy (a
+  new reference, the bit kept): decision 2 of #823. A conversion whose copy the program could
+  tell from the original (`object_copies.rs`: a later write, `===`, ...) is a compile error,
+  except in a program whose own code constructs a `Proxy` when no `AdtLit` in the program builds
+  the source type: then it is `Conversion::ProxyOnly`, and a plain source throws a `TypeError`
+  naming #823 instead of being copied (a proxy is still shared).
 - Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
   an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
   or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the

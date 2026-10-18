@@ -97,8 +97,15 @@ impl FnCx<'_, '_> {
         let last = cases.len().saturating_sub(1);
         let mut incoming: Option<Vec<usize>> = None;
         let name = s.local.map(|l| self.f.locals[l.0 as usize].name.clone());
+        // The state where the previous body fell through into this one.
+        let mut fell: Option<super::locals::NarrowState> = None;
         for (i, (c, (sel, _))) in cases.iter().zip(sels).enumerate() {
             self.restore_narrowing(&before);
+            // Reached from the `switch` or by falling through: what holds on both ways in
+            // (`case 1: x = null;` falling into `case 2:` undoes the narrowing of `x` there).
+            if let Some(st) = fell.take() {
+                self.meet_narrowing(&st);
+            }
             let mut reach: Vec<usize> = match &sel {
                 Some(sel) => sel.touched.clone(),
                 None => (0..s.slots.len())
@@ -112,6 +119,7 @@ impl FnCx<'_, '_> {
             }
             let mut stmts = vec![];
             self.stmts_into(&c.body, &mut stmts);
+            let end_facts = self.scope_end_facts();
             self.pop_scope();
             let body = hir::Block {
                 stmts,
@@ -130,8 +138,17 @@ impl FnCx<'_, '_> {
             // also held before the `switch` are kept (`before` is met below).
             let breaks_here = breaks_out(&body);
             breaks |= breaks_here;
+            // A body that runs to its end passes on what still holds there (its own assignments
+            // win over the case's facts). One with a `break` anywhere (also a labelled one in a
+            // nested loop) may leave earlier and passes on none of them.
+            if !c.body.iter().any(has_break) {
+                end_facts.iter().for_each(|f| self.narrow(f));
+            }
             if breaks_here || (falls && i == last) {
                 exits.push(self.narrow_state());
+            }
+            if falls {
+                fell = Some(self.narrow_state());
             }
             out.push(Case { sel, body, falls });
         }
@@ -430,4 +447,36 @@ fn breaks_out(b: &hir::Block) -> bool {
         }
         _ => false,
     })
+}
+
+/// Does `s` contain a `break` statement at any depth (within this function)?
+fn has_break(s: &ast::Stmt) -> bool {
+    use ast::StmtKind as A;
+    match &s.kind {
+        A::Break(_) => true,
+        A::If { then, els, .. } => {
+            then.stmts.iter().any(has_break) || els.as_deref().is_some_and(has_break)
+        }
+        A::While { body, .. }
+        | A::DoWhile { body, .. }
+        | A::For { body, .. }
+        | A::ForOf { body, .. } => body.stmts.iter().any(has_break),
+        A::Block(b) => b.stmts.iter().any(has_break),
+        A::Labeled { body, .. } => has_break(body),
+        A::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(has_break)),
+        A::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            body.stmts.iter().any(has_break)
+                || catch
+                    .as_ref()
+                    .is_some_and(|(_, b)| b.stmts.iter().any(has_break))
+                || finally
+                    .as_ref()
+                    .is_some_and(|b| b.stmts.iter().any(has_break))
+        }
+        _ => false,
+    }
 }

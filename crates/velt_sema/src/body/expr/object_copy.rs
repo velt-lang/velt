@@ -93,6 +93,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: values,
+            converted: hir::Conversion::Copy,
         };
         let lit = self.mk(lit, exp, span);
         if posts.is_empty() {

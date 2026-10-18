@@ -369,6 +369,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: hs,
+            converted: hir::Conversion::No,
         };
         self.mk(kind, ty, span)
     }
@@ -644,6 +645,7 @@ impl FnCx<'_, '_> {
             def: d,
             type_args,
             fields: hs,
+            converted: hir::Conversion::No,
         };
         self.mk(kind, ty, span)
     }

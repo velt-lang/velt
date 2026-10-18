@@ -239,6 +239,7 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::Poll(d, _)
         | Work::AsyncDrop(d, _)
         | Work::AsyncCloseStart(d, _)
+        | Work::GenThrow(d, _)
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
         | Work::HandlerInit(d, _)

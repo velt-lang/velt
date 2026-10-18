@@ -79,6 +79,10 @@ pub(crate) struct Copies {
     /// The optional fields without a presence flag an object literal's property gives a value
     /// that may be null, by name (`crate::absent_fields`).
     pub null_literals: Vec<(String, Span)>,
+    /// The program's own code constructs a `Proxy` (#823): a conversion that would be reported
+    /// but whose source type no object literal builds is `Conversion::ProxyOnly` instead (a
+    /// proxy keeps its identity through it, a plain value throws a `TypeError`).
+    pub proxies: bool,
 }
 
 impl Copies {
@@ -126,14 +130,58 @@ pub(crate) fn check(cx: &mut Ctx) {
         writes,
         seen,
         in_keys,
+        proxies,
         ..
     } = std::mem::take(&mut cx.object_copies);
+    let built = match proxies {
+        true => built_types(cx),
+        false => vec![],
+    };
+    // Conversions allowed only for proxies: a plain source throws instead of being copied.
+    let mut strict = vec![];
     for c in &copies {
+        let proxy_only = proxies && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, c, &writes) {
-            report_write(cx, c, w);
+            match proxy_only {
+                true => strict.push((c.span, c.to)),
+                false => report_write(cx, c, w),
+            }
         } else if let Some(&(t, span, how)) = seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys))
         {
-            report_seen(cx, c, t, span, how, &in_keys);
+            match proxy_only {
+                true => strict.push((c.span, c.to)),
+                false => report_seen(cx, c, t, span, how, &in_keys),
+            }
+        }
+    }
+    if !strict.is_empty() {
+        mark_proxy_only(cx, &strict);
+    }
+}
+
+/// Mark the conversions at `strict` (span and converted-to type) `Conversion::ProxyOnly`.
+fn mark_proxy_only(cx: &mut Ctx, strict: &[(Span, TyId)]) {
+    struct Mark<'a>(&'a [(Span, TyId)]);
+    impl crate::visit::VisitMut for Mark<'_> {
+        fn expr(&mut self, e: &mut crate::hir::Expr) {
+            if let crate::hir::ExprKind::AdtLit { converted, .. } = &mut e.kind {
+                if *converted == crate::hir::Conversion::Copy && self.0.contains(&(e.span, e.ty)) {
+                    *converted = crate::hir::Conversion::ProxyOnly;
+                }
+            }
+        }
+    }
+    let mut v = Mark(strict);
+    for d in cx.defs.iter_mut().flatten() {
+        if let crate::hir::Def::Fn(f) = d {
+            crate::visit::block(&mut f.body.block, &mut v);
+        }
+    }
+    for i in cx.info.iter_mut() {
+        if let crate::defs::DefInfo::Global(g) = i {
+            if let Some(e) = &mut g.init {
+                crate::visit::expr(e, &mut v);
+            }
         }
     }
 }
@@ -285,4 +333,30 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     .with_note(format!(
         "build the new object explicitly, {fields} (a new object in TypeScript too), or declare the parameter or variable as `{from}`"
     ))
+}
+
+/// The types of the object literals (`AdtLit`) in the program's bodies and constants.
+fn built_types(cx: &mut Ctx) -> Vec<TyId> {
+    struct Lits(HashSet<TyId>);
+    impl crate::visit::VisitMut for Lits {
+        fn expr(&mut self, e: &mut crate::hir::Expr) {
+            if let crate::hir::ExprKind::AdtLit { .. } = e.kind {
+                self.0.insert(e.ty);
+            }
+        }
+    }
+    let mut v = Lits(HashSet::new());
+    for d in cx.defs.iter_mut().flatten() {
+        if let crate::hir::Def::Fn(f) = d {
+            crate::visit::block(&mut f.body.block, &mut v);
+        }
+    }
+    for i in cx.info.iter_mut() {
+        if let crate::defs::DefInfo::Global(g) = i {
+            if let Some(e) = &mut g.init {
+                crate::visit::expr(e, &mut v);
+            }
+        }
+    }
+    v.0.into_iter().collect()
 }

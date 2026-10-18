@@ -1,0 +1,3 @@
+_script_async_work_lib.vlt:5:1: error: an imported module's top-level statements cannot start asynchronous work yet (`setTimeout`)
+_script_async_work_lib.vlt:6:1: error: an imported module's top-level statements cannot start asynchronous work yet (a promise)
+  = note: they run while the modules are evaluated, before the scheduler starts: a timer would fire out of Node's order, and a promise callback would never run (#846)

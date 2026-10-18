@@ -222,7 +222,9 @@ pub enum Intrinsic {
 
     // Generators (hir_encodings.md "Generators")
     /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield
-    /// type) → unit. Suspends the generator with `v` in its value slot.
+    /// type) → unit. Suspends the generator with `v` in its value slot. In a `Generator<T, E,
+    /// N>` the call has type `N`: the value `next(value)` resumes it with, and its second
+    /// argument (owned, evaluated only then) is the value when `next()` passes none.
     Yield,
     /// std only: `__intrinsic_generator_resume<T, E>(g: Generator<T, E> (modified)): bool`,
     /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
@@ -235,6 +237,25 @@ pub enum Intrinsic {
     /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
     /// values as if the `yield` were a `return`; then it is done.
     GeneratorReturn,
+    /// std only: `__intrinsic_generator_resume_with<T, E, N>(g: Generator<T, E, N> (modified),
+    /// value: N (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the
+    /// paused `yield` evaluates to (a copy of) `value`; a generator that has not started
+    /// ignores it.
+    GeneratorResumeWith,
+    /// std only: `__intrinsic_generator_throw<T, E, N>(g: Generator<T, E, N> (modified), error:
+    /// any (borrowed)): u32`, throws `E` — `throw(error)`: resume the body with `error` thrown
+    /// at the paused `yield`. 1: the body caught it and yielded again (the value is in the
+    /// slot); 0: it caught it and finished; 3: nothing caught it (the generator is closed, as
+    /// by `return()`, or it had not started or was finished), and the caller throws it. An
+    /// error the body throws (after catching) is thrown here.
+    GeneratorThrow,
+    /// Compiler-internal: `(g: Generator<T, E, N> (modified)): bool`, throws `E` — one step of
+    /// `yield* g` in a generator that takes `next(value)` or may be thrown into (after a first
+    /// `GeneratorResume(g)` returned true): yield `g`'s value; then resume `g` the way this
+    /// generator is resumed (`next(value)` passes the value on, `throw(e)` throws `e` into `g`
+    /// and, if `g` did not catch it, at the `yield*`, closing closes `g`). True when `g` yielded
+    /// again.
+    YieldDelegate,
     /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
     /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
     /// the generator's state inline in that local instead of a heap object.

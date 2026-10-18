@@ -156,6 +156,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         BodyState::Unchecked => {}
     }
     let (module, qual, owner, mutable) = (g.module, g.qual_name.clone(), g.src.owner, g.mutable);
+    // A `const` kept in module state from the start (`module_chunks`), like a `let`.
+    let kept = g.stored;
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
     cx.literal_hosts.in_constants += 1;
@@ -182,8 +184,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
-    let mut stored = mutable;
-    if let (Some(i), false) = (&init, mutable) {
+    let mut stored = mutable || kept;
+    if let (Some(i), false) = (&init, stored) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
         let cycles = cx.global_cycles;
         let mut own = Vec::new();
@@ -378,6 +380,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     let mut frame = Frame::new(f.kind, frame_ret);
     frame.is_async = f.is_async || f.is_async_gen;
     frame.yield_ty = yield_ty;
+    if yield_ty.is_some() {
+        let n = cx.generator_next_ty(f.ret);
+        frame.next_ty = (!cx.ty.is_bottom(n)).then_some(n);
+    }
     let enclosing_locals = cx
         .nested_locals
         .get(&def)

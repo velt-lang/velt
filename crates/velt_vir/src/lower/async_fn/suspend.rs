@@ -35,7 +35,11 @@ impl FnLower<'_, '_> {
         }
         if let hir::ExprKind::Call { callee, args } = &inner.kind {
             match callee {
-                hir::Callee::Def(d, targs) if self.cx.is_async_fn(*d) => {
+                // A method of a proxiable class goes through `call_def`, which checks for a
+                // proxy receiver with a `get` trap (proxy_method.rs).
+                hir::Callee::Def(d, targs)
+                    if self.cx.is_async_fn(*d) && !self.proxiable_receiver(*d, args) =>
+                {
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                     if let Some(info) = self.cx.async_info(*d, &targs) {
                         return self.await_child(*d, targs, info, args);

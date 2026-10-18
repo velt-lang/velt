@@ -67,6 +67,13 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // `Generator<T, E, N>` to `Generator<T, E>` or back: `N` only types `next(value)`,
+        // and one side takes no value (the other never reads one).
+        if self.cx.generator_next_differs(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         if self.widens_promise(h.ty, exp) {
             let span = h.span;
             let call = H::Call {

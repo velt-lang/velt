@@ -127,6 +127,8 @@ impl FnCx<'_, '_> {
         frame.escaping = true;
         frame.is_async = sig.is_async;
         frame.yield_ty = Some(t);
+        let n = self.cx.generator_next_ty(ret);
+        frame.next_ty = (!self.cx.ty.is_bottom(n)).then_some(n);
         frame.fn_expr_name = Some(sig.name.name.clone()).filter(|n| !n.is_empty());
         let defaults = sig.params.iter().filter_map(|p| p.default.as_ref());
         let assigned = crate::body::assigned::assigned_by_closures(&d.body.stmts, defaults);

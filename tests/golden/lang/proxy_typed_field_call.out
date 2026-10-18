@@ -1,0 +1,5 @@
+arg
+$set 5
+get count
+get label
+5 x5 10

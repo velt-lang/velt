@@ -227,6 +227,11 @@ impl FnLower<'_, '_> {
         ty: TyId,
         transfer: bool,
     ) -> Operand {
+        if !transfer {
+            if let Some(v) = self.proxy_field_call(f, args, ty) {
+                return v;
+            }
+        }
         let fty = self.sub(f.ty);
         let throws = match self.cx.kind(fty) {
             TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),

@@ -618,9 +618,13 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
   be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
-  so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed.
+  TypeScript; assigning a non-null value narrows too. After an `if`, what holds is what each
+  branch that does not leave ends with: the facts of the condition it started from unless it
+  reassigned the variable, and what its own statements established (`if (x == null) { x = d; }`
+  narrows `x` after it; `if (x == null) return; else x = null;` does not). A narrowed field
+  is re-checked when read, so a call that set it to `null` in between panics instead of
+  reading `null`. Inside a closure, a variable narrowed where the closure is created stays
+  narrowed.
 - A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
   `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
   may run the closure, and then the variable no longer holds what was checked. Test a `const`
@@ -720,6 +724,30 @@ the nullable type; `void` cannot be a member.
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
+- A union alias may name itself behind an indirection: as an array's element, an index
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
+  give such a type a nominal member, such as an interface or a class.
+
+```ts
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+type Tree = number | Tree[];
+
+function depth(t: Tree): number {
+  if (typeof t === "number") {
+    return 0;
+  }
+  let max = 0;
+  for (const k of t) {
+    max = Math.max(max, depth(k));
+  }
+  return max + 1;
+}
+
+const v: Json = { a: [1, "x", { b: null }] };
+console.log(JSON.stringify(v)); // {"a":[1,"x",{"b":null}]}
+console.log(depth([1, [2, [3]]])); // 3
+```
 
 ```ts
 class NotFound {
@@ -790,9 +818,9 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
-- Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
-  to itself.
+- A discriminated union may name itself behind an indirection
+  (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
+  [Union types](#union-types)).
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
@@ -934,6 +962,42 @@ const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
 console.log(t.kids[0].v); // 2
 ```
 
+A part may be a **type parameter** (`T & { $set: (v: T) => void }`, `TMain & TSub`), in a
+generic alias or written in a generic signature: the intersection is worked out where the type
+arguments are known, so a caller sees the object type with both parts' fields, and a type
+argument that can't be a part (a class, say) is reported there. A type argument inferred
+through such a parameter comes from the fields the object part names (`T = { n: number }` for a
+`Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
+for a value declared `A & { id: string }`), else from the whole argument
+(`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
+TypeScript. `any`, `unknown` and
+`object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
+`object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+function stamp<T>(x: T & { id: string }): T & { id: string } {
+  return x;
+}
+
+let last = 0;
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v.n;
+  },
+};
+const r = relay(s); // Signal<{ n: number }>: `n` and `$set`
+r.$set({ n: r.n + 1 });
+const t = stamp({ a: 1, id: "x" });
+console.log(last, t.a, t.id); // 2 1 x
+```
+
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
@@ -942,8 +1006,14 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
   `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
-- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
-  yet (#350). A generic alias works, since each use has concrete type arguments.
+- In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
+  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
+  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+- An intersection is the same type as the object type with its fields written out, so where a
+  program has both forms, inference through `T & { id: string }` treats them alike: an object
+  literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type
+  `A & { id: string }` (TypeScript: `{ a: number; id: string }`). It differs only where code
+  depends on `T` itself, such as `JSON.parse(s)` returned as a `T`.
 - Interface declarations merge as in TypeScript
   ([declaration merging](classes.md#declaration-merging)).
 
@@ -1319,7 +1389,30 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
   (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
-  is called (`const { area } = rect;`).
+  is called (`const { area } = rect;`). A method or function-typed member destructured out of
+  an object or interface value is a function value (`const { insert, remove } = options;`),
+  bound to the object it was read from (in JS it is unbound, so the two differ only where JS
+  would throw a `TypeError` for a method that uses `this`).
+- **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
+  next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
+  other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
+  type or an interface of fields, the object type of the other fields (`Omit<P, "children">`;
+  an optional field is copied only while present); on a class instance, the other fields (its
+  methods and getters live on the prototype, so the rest has none, nor `#private` fields); on a `Record<string, V>`,
+  a `Record<string, V>` of the other keys. The rest is a new object: its fields are copied
+  (a nested object or array is shared, as in JS). Not supported yet (each is an error): the rest of a value
+  whose type is a type parameter, an interface with methods, a record with a closed key
+  type, or a class with a TypeScript `private` field the pattern doesn't take (JS copies it,
+  but the rest's type leaves it out), and `...rest` in `for...of` patterns.
+
+  ```ts
+  interface Props { id: number; title: string; hidden?: boolean }
+  function main() {
+    const props: Props = { id: 1, title: "t" };
+    const { id, ...rest } = props;
+    console.log(id, rest); // 1 { title: 't' }
+  }
+  ```
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
@@ -1910,7 +2003,19 @@ converting it back to `any` see one object, and `console.log(s)` prints the targ
 read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
 on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
 target whose `get` trap answers every key). A method called through a typed proxy runs with
-`this` the proxy, so its reads and writes of `this` run the traps too. `s.count++` used as a
+`this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
+`get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
+trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
+the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
+stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
+(Where a copy of a plain object could be told from the original, such a conversion is a compile
+error in a program without proxies; in one that creates proxies, a plain object there throws a
+`TypeError` naming #823 instead of being copied.)
+Calling a function-typed field of a typed proxy (`s.$set(v)`) reads it through the `get` trap
+before the arguments, then calls the function the trap answered, whatever its own parameter
+types (a closure taking `any`), and checks its result against the field's result type.
+`s.count++` used as a
 value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
 in JavaScript. A field read through a typed proxy runs after the operands before it, as any
 call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
@@ -1954,11 +2059,12 @@ function main(): void {
 
 **Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
 `defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
-as an array or a `Record`, and `in` on a typed proxy; a typed proxy passed where an object type
-with other fields is expected (it is copied there); a function the `get` trap returns, called
-as a method of a typed proxy; `Array.isArray` of an array proxy; proxies of functions (`apply`,
-`construct`); a method call through a proxy whose handler has a `get` trap (`p.m()`, where
-JavaScript reads `m` through the trap first); `Reflect.get` / `Reflect.set` with a receiver
+as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
+as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
+of a class; an async method called through a proxy with a `get` trap; a method call through an
+interface value holding a proxy whose handler has a `get` trap; a method read as a value through
+`any` and called on its own; `Array.isArray` of an array proxy; proxies of functions (`apply`,
+`construct`); `Reflect.get` / `Reflect.set` with a receiver
 that is neither the target nor a proxy; destructuring a typed proxy
 (`const { n, label } = s`) and `JSON.stringify` of one. Until then each is a compile error or a `TypeError`
 naming #823. A method call through an `any` proxy whose handler has no traps is the call on

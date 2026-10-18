@@ -444,17 +444,51 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `IterableIterator<T>` or `IteratorObject<T>`, where `T` is the type of the yielded values; a
   call has that type, with the generator's error type as `E`.
   `return;` ends the generator; there is no `TReturn`, so `return value` is an error. A bare
-  `yield` is allowed in a `Generator<void>` only, and a `yield` has no value (`const x = yield
-  1` is an error: there is no `next(value)`), so it is a statement of its own (also as a
-  branch of `c ? yield a : yield b`).
-- TypeScript's spellings `Generator<T, void>`, `Generator<T, void, unknown>` (any `TNext`) and
-  the same with `undefined`, `unknown` or `any` as `TReturn` mean `Generator<T>`, so TS
-  signatures compile as they are; so do `Iterator`, `Iterable` and their async twins. Any other
-  second type argument is the error type `E` and must be one (a class extending `Error`, a union
-  of them, an interface or a type parameter): `Generator<number, string>` is an error naming the
-  fix, since there it can only be TS's return type.
+  `yield` is allowed in a `Generator<void>` only.
+- TypeScript's spellings `Generator<T, void>` and the same with `undefined`, `unknown` or `any`
+  as `TReturn` mean `Generator<T>`, so TS signatures compile as they are; so do `Iterator`,
+  `Iterable` and their async twins. Any other second type argument is the error type `E` and
+  must be one (a class extending `Error`, a union of them, an interface or a type parameter):
+  `Generator<number, string>` is an error naming the fix, since there it can only be TS's
+  return type.
+- **`next(value)`**: the third type argument of `Generator<T, X, N>` is TypeScript's `TNext`,
+  the type of a `yield` expression's value and of `next(value)`'s argument
+  (`Generator<number, void, string>`: `const s = yield 1` is a `string`). The first `next()`
+  starts the body, so its value is ignored, as in JS. A `next()` without a value resumes a
+  `yield` with `undefined` when `N` holds it (`unknown`, `any`, `T | undefined`); for another
+  `N`, a `yield` whose value is used then panics (TS gives it `undefined` whatever `N` says).
+  Without `N` (`Generator<T>`, also `void`, `undefined` or `never` as `N`), `next(value)` and
+  using the value of a `yield` are errors, so a `yield` is a statement of its own (also as a
+  branch of `c ? yield a : yield b`). The other protocol types (`Iterator<T, X, N>`, …) and
+  async generators ignore `N`.
+- **`throw(e)`** resumes the body with `e` thrown at the paused `yield`: a `try`/`catch` around
+  it catches it (`e` is an `any` there, as `throw(e: any)` takes it) and the body goes on to
+  its next `yield` or its end, which is what `throw()` returns; otherwise the generator is
+  closed (its `finally` blocks run, as for `return()`) and `throw()` throws `e`. A generator
+  that has not started, or has finished, throws `e` at once (and is done), as in JS. Only a
+  program that calls `throw()` gets the code that handles it; there the `catch` of a `try`
+  around a `yield` also catches an `any`.
+
+  ```ts
+  function* worker(): Generator<string, void, number> {
+    try {
+      const n = yield "ready";
+      yield `got ${n}`;
+    } catch (e) {
+      yield `stopped: ${(e as Error).message}`;
+    }
+  }
+
+  const w = worker();
+  console.log(w.next().value, w.next(7).value);        // ready got 7
+  const v = worker();
+  v.next();
+  console.log(v.throw(new Error("cancelled")).value);   // stopped: cancelled
+  ```
 - `yield* src` yields every value of `src`: another generator, an array, or any iterable
-  `for...of` takes.
+  `for...of` takes. In a generator that takes `next(value)` (or in a program that calls
+  `throw()`), `yield*` of a generator of the same `T` (and `N`, or none) passes `next(value)`,
+  `throw(e)` and closing on to it; an error it does not catch is thrown at the `yield*`.
 - **Errors**: `E` is what the body throws, inferred like a function's `throws` (or written:
   `Generator<T, E>`, also through a type alias such as `type Gen = Generator<i64, A>`, or
   `throws E` after the return type). `next()` throws it, and so does
@@ -488,10 +522,10 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `async () => (await chunks.next()).value`). Behind an
   interface value (`Iterator<T>`) the compiler cannot see it, and handing it to another thread
   stops the program instead. Pass the arguments and create the generator where it is used.
-- Not supported: `next(value)` (TS's `TNext`), `throw()`, and `await` in a (sync) generator
-  (write an [async generator](#async-generators)). `return()` returns `{ done: true }`, as in
-  TS (where it may carry a value). Arrow functions cannot be generators (as in
-  TS).
+- Not supported: a return value (TS's `TReturn`), `return(value)`, `await` in a (sync)
+  generator (write an [async generator](#async-generators)), and `next(value)` / `throw()` on
+  an async generator. `return()` returns `{ done: true }`, as in TS (where it may carry a
+  value). Arrow functions cannot be generators (as in TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the

@@ -1,0 +1,50 @@
+// check: no leaks
+// A server renderer's shape: a sync generator walks a tree and suspends on promises; an
+// async driver awaits them and resumes the walk with the value, or throws an error into it.
+type Suspend = { p: Promise<any>; fail: boolean };
+
+function* leaf(name: string, buf: string[]): Generator<Suspend, void, unknown> {
+  let text: any = name;
+  if (name.startsWith("async")) {
+    text = (yield { p: Promise.resolve(name.toUpperCase()), fail: false }) as any;
+  }
+  buf.push(`<${text}>`);
+}
+
+function* failing(buf: string[]): Generator<Suspend, void, unknown> {
+  try {
+    yield { p: Promise.resolve(""), fail: true };
+    buf.push("<unreached>");
+  } catch (e) {
+    buf.push("<fallback>");
+  }
+}
+
+function* tree(buf: string[]): Generator<Suspend, void, unknown> {
+  buf.push("<root>");
+  yield* leaf("a", buf);
+  yield* leaf("async-b", buf);
+  yield* failing(buf);
+  yield* leaf("async-c", buf);
+  buf.push("</root>");
+}
+
+async function render(): Promise<string> {
+  const buf: string[] = [];
+  const gen = tree(buf);
+  let result = gen.next();
+  while (!result.done) {
+    const suspend = result.value;
+    const v = await suspend.p;
+    if (suspend.fail) {
+      result = gen.throw(new Error("nope"));
+    } else {
+      result = gen.next(v);
+    }
+  }
+  return buf.join("");
+}
+
+async function main(): Promise<void> {
+  console.log(await render());
+}

@@ -83,10 +83,8 @@ pub(crate) struct Ctx<'m> {
     pub checking_unused_aliases: bool,
     /// The state of type-level evaluation (`crate::type_level`).
     pub(crate) type_level: crate::type_level::State,
-    /// The program (not std) writes `undefined`, as a type or a value. The checks that only
-    /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
-    /// skipped otherwise; the type table alone cannot tell, since the prelude declares
-    /// `Array<T | undefined>.sort`.
+    /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
+    /// a `toJSON()` returning `undefined`) are skipped (the prelude uses `T | undefined` itself).
     pub writes_undefined: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
     /// a utility type in a field type shapes the type it reads first, whatever the order.
@@ -96,15 +94,17 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: HashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: HashMap<TyId, TyId>,
-    /// Object types the replaced-holder check (`crate::replaced_holders`) accepted assignments
-    /// for because they are shared: lowering counts them from its first pass
-    /// (`hir::Program::counted_objects`).
+    /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
+    /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
+    pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
+    pub promoted_consts: HashSet<Span>, // `const`s kept in module state (module_chunks.rs)
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
+    pub recursive_unions: HashMap<u32, Option<TyId>>, // by alias (crate::recursive_unions)
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
     pub alias_names: HashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
@@ -140,9 +140,8 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
-    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
-    /// error type is inferred: it must turn out `never`, since the interface's iterator type
-    /// is fixed before bodies are checked (throws/checks.rs).
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
+    /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
@@ -173,6 +172,8 @@ pub(crate) struct Ctx<'m> {
     pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
@@ -202,8 +203,7 @@ pub(crate) struct Ctx<'m> {
     pub symbol_keys: crate::symbols::KeyNames,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
-    /// Function bodies being checked, outermost first (a return type inferred from a body that
-    /// is on this stack refers to itself: `body::returns`).
+    /// Bodies being checked, outermost first (inferring one on it is recursion: `body::returns`).
     pub checking: Vec<DefId>,
     /// Signature comparisons waiting for inferred result types (`body::returns`).
     pub ret_checks: Vec<crate::defs::RetCheck>,
@@ -230,12 +230,13 @@ pub(crate) struct Ctx<'m> {
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Where `Object.keys` of an `any` is called (`crate::any_keys`).
     pub any_keys: Vec<velt_common::Span>,
-    /// Object values converted by copying their fields, and the field assignments that could
-    /// tell the copy from the original (`crate::object_copies`).
+    /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
+    pub super_calls: std::collections::HashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
-    /// Second arguments of protocol types written before base classes were known (`ts_protocol`).
+    /// Protocol types' second arguments written before base classes were known (`ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
@@ -303,8 +304,11 @@ impl<'m> Ctx<'m> {
             canon_memo: HashMap::new(),
             counted_objects: Vec::new(),
             module_slots: Vec::new(),
+            module_scripts: Vec::new(),
+            promoted_consts: HashSet::new(),
             global_cycles: 0,
             unions: HashMap::new(),
+            recursive_unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
             display_params: vec![],
@@ -334,6 +338,7 @@ impl<'m> Ctx<'m> {
             group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
+            gen_throw: false,
             overloaded_methods: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
@@ -361,6 +366,7 @@ impl<'m> Ctx<'m> {
             fresh_checks: vec![],
             any_keys: vec![],
             object_copies: Default::default(),
+            super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
@@ -754,7 +760,7 @@ impl<'m> Ctx<'m> {
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
-                DefInfo::Adt(a) => with_args(self, &a.name, args),
+                DefInfo::Adt(a) => with_args(self, &a.name, self.shown_args(*d, args)),
                 DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
