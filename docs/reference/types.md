@@ -750,6 +750,11 @@ the nullable type; `void` cannot be a member.
   - `x == literal` / `x != literal` selects the literal's member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
+  - `typeof` tests narrow a field path of a local too (`typeof node.text === "string"`,
+    `this.label`, `h.node.text`), as in TypeScript, until the path or a part of it is
+    assigned. A call between the test and a read may change the field, so each read checks
+    the member again and stops the program if the field now holds another member (Node would
+    go on with the new value).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `a || b` narrows to the members either side allows
     (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
@@ -1022,6 +1027,13 @@ for a value declared `A & { id: string }`), else from the whole argument
 TypeScript. `any`, `unknown` and
 `object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
 `object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+`object & X` keeps only the members of `X` that are objects, and has no value (`never`) when
+none is: `T & object` at `number` is `never`, so sigx's `PrimitiveSignal<T> | Signal<T & object>`
+at a `number` is `PrimitiveSignal<number>`; `never & X` is `never`. In a generic body,
+`T & object` is `T` under a `T extends object` bound (an overload returning `Signal<T>` fits an
+implementation returning `Signal<T & object>`), and a value of `T & object` (or of an
+intersection with such a part) is an `object`, so it can be a `WeakMap` key. `Omit<T, never>`
+and `Pick<T, never>` name no fields.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };
