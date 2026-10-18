@@ -16,6 +16,13 @@
 //! becomes, so they instantiate the method of every implementation of the interface (its
 //! owner's parameters come from inside `S`, which does not grow them; its own from the call's
 //! type arguments).
+//!
+//! A growing edge is allowed when its call lies in the `then` block of an `if` whose type
+//! predicate rules out objects for the edge's own source parameter (`if (isPrimitive(x))`,
+//! `x: T`; hir_encodings.md "Type predicates on a type parameter") and the grown argument is an
+//! object type (issue #1251): such a branch is not lowered for an instance whose `T` is an
+//! object, so the edge only fires from types that may be primitives, and a growing edge never
+//! makes one. If every growing edge of a component is allowed, its instantiations are finite.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -53,6 +60,9 @@ struct Edge {
     callee: DefId,
     targs: Vec<TyId>,
     span: Span,
+    /// The call is only lowered for instances whose source parameter may hold a primitive and
+    /// it makes the target an object type (module docs).
+    allowed: bool,
 }
 
 /// Reports every call that instantiates a generic function with ever-growing type arguments
@@ -68,7 +78,7 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
     let mut reported: HashSet<Span> = HashSet::new();
     for (i, e) in edges.iter().enumerate() {
         let (a, b) = (graph.index[&e.from], graph.index[&e.to]);
-        if e.grows && comp[a] == comp[b] && reported.insert(e.span) {
+        if e.grows && !e.allowed && comp[a] == comp[b] && reported.insert(e.span) {
             let back = graph.path(&edges, b, a, &comp);
             report(cx, &edges, i, &back);
         }
@@ -78,15 +88,27 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
 
 /// The instantiation sites of every generic function body (a function without type parameters
 /// cannot be part of a growing cycle).
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span)>)> {
+/// The instantiation sites of each generic body, with the type parameters whose primitive guard
+/// encloses each (a bit each).
+type Sites = Vec<(DefId, Vec<(Site, Span, u64)>)>;
+
+/// Each site comes with its guard bits ([`Sites`]).
+fn collect(cx: &mut Ctx) -> Sites {
     let mut out = vec![];
+    let tys = &cx.ty;
+    let param_of = |t: TyId| match tys.kind(t) {
+        TyKind::Param(p) => Some(*p),
+        _ => None,
+    };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         if f.generics == 0 {
             continue;
         }
         let mut sites = vec![];
+        let guards = visit::primitive_guards(&mut f.body.block, &param_of);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             let site = match &e.kind {
                 E::Call {
                     callee: Callee::Def(d, targs),
@@ -115,18 +137,18 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span)>)> {
                 }
                 _ => return,
             };
-            sites.push((site, e.span));
+            sites.push((site, e.span, guard));
         });
         out.push((DefId(i as u32), sites));
     }
     out
 }
 
-fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span)>)>) -> Vec<Edge> {
+fn edges(cx: &mut Ctx, sites: Sites) -> Vec<Edge> {
     let mut dispatch = Dispatch::default();
     let mut out = vec![];
     for (f, list) in sites {
-        for (site, span) in list {
+        for (site, span, guard) in list {
             let calls = match site {
                 Site::Call(g, targs) => vec![(g, targs)],
                 Site::Closure(c) => {
@@ -137,7 +159,7 @@ fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span)>)>) -> Vec<Edge> {
                 Site::Param(p) => param_calls(cx, &p),
             };
             for (g, targs) in calls {
-                call_edges(cx, f, g, &targs, span, &mut out);
+                call_edges(cx, (f, g), &targs, span, guard, &mut out);
             }
         }
     }
@@ -185,12 +207,23 @@ fn param_calls(cx: &mut Ctx, p: &ParamCall) -> Vec<(DefId, Vec<TyId>)> {
     out
 }
 
-fn call_edges(cx: &Ctx, f: DefId, g: DefId, targs: &[TyId], span: Span, out: &mut Vec<Edge>) {
+/// The edges of a call from `f` to `g` (`guard`: the bits of the parameters whose primitive
+/// guard encloses it).
+fn call_edges(
+    cx: &Ctx,
+    (f, g): (DefId, DefId),
+    targs: &[TyId],
+    span: Span,
+    guard: u64,
+    out: &mut Vec<Edge>,
+) {
     for (j, t) in targs.iter().enumerate() {
         let mut ps = vec![];
         collect_params(&cx.ty, *t, &mut ps);
+        let object = cx.object_only(*t);
         for p in ps {
             let bare = matches!(cx.ty.kind(*t), TyKind::Param(q) if *q == p);
+            let guarded = 1u64.checked_shl(p).is_some_and(|b| guard & b != 0);
             out.push(Edge {
                 from: (f, p),
                 to: (g, j as u32),
@@ -198,6 +231,7 @@ fn call_edges(cx: &Ctx, f: DefId, g: DefId, targs: &[TyId], span: Span, out: &mu
                 callee: g,
                 targs: targs.to_vec(),
                 span,
+                allowed: !bare && guarded && object,
             });
         }
     }

@@ -141,6 +141,10 @@ impl FnLower<'_, '_> {
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::IsNull, [a]) => self.null_intrinsic(a, false),
             (I::IsNullish, [a]) => self.null_intrinsic(a, true),
+            (I::MayHoldPrimitive, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
+            }
             (I::AnyTo, [a]) => self.any_to(a, ty),
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),

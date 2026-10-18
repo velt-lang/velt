@@ -16,7 +16,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{Dispatch, Rounds};
 use crate::hir::{DefId, TyId, TyKind};
-use crate::inst_sites::{self, resolve_param_calls, ParamCall};
+use crate::inst_sites::{self, carry_guard, resolve_param_calls, ParamCall};
 use crate::types::{children, collect_params};
 
 /// Reduces every deferred type an instantiation reaches. Nothing to do (and no cost) in a
@@ -39,19 +39,22 @@ pub(crate) fn reach(cx: &mut Ctx) {
         .enumerate()
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
     let mut rounds = Rounds::new(uses.len(), reads);
-    // The generic deferred types each function's instances need.
-    let mut needs: HashMap<DefId, Vec<TyId>> = HashMap::new();
+    // The generic deferred types each function's instances need, with their guard bits
+    // (`inst_sites::carry_guard`).
+    let mut needs: HashMap<DefId, Vec<(TyId, u64)>> = HashMap::new();
     // The param calls whose receiver is generic in each function.
     let mut pneeds: HashMap<DefId, Vec<ParamCall>> = HashMap::new();
     // Concrete deferred types reduced so far.
     let mut reduced: HashSet<TyId> = HashSet::new();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
-        let mut found: Vec<TyId> = vec![];
+        let mut found: Vec<(TyId, u64)> = vec![];
         let mut pending: Vec<ParamCall> = u.param_calls.iter().map(|(p, _)| p.clone()).collect();
-        for (d, targs, _) in &u.calls {
-            for k in needs.get(d).into_iter().flatten() {
-                found.push(at(cx, *k, targs));
+        for ((d, targs, _), site) in u.calls.iter().zip(&u.guards) {
+            for (k, need) in needs.get(d).into_iter().flatten() {
+                if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                    found.push((at(cx, *k, targs), g));
+                }
             }
             for p in pneeds.get(d).into_iter().flatten() {
                 pending.push(p.subst(cx, targs));
@@ -62,11 +65,12 @@ pub(crate) fn reach(cx: &mut Ctx) {
             pending.extend(pneeds.get(c).into_iter().flatten().cloned());
         }
         for (m, args, _) in &u.dyn_calls {
-            for k in needs.get(m).into_iter().flatten() {
+            for (k, need) in needs.get(m).into_iter().flatten() {
                 let mut ps = vec![];
                 collect_params(&cx.ty, *k, &mut ps);
-                if ps.iter().all(|p| (*p as usize) < args.len()) {
-                    found.push(at(cx, *k, args));
+                let g = carry_guard(cx, *need, args, 0);
+                if let Some(g) = g.filter(|_| ps.iter().all(|p| (*p as usize) < args.len())) {
+                    found.push((at(cx, *k, args), g));
                 }
             }
             for p in pneeds.get(m).into_iter().flatten() {
@@ -74,8 +78,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         let generic = resolve_param_calls(cx, &mut rounds, i, pending, &mut |cx, m, args| {
-            for k in needs.get(&m).into_iter().flatten() {
-                found.push(at(cx, *k, args));
+            for (k, _) in needs.get(&m).into_iter().flatten() {
+                found.push((at(cx, *k, args), 0));
             }
             let ps = pneeds.get(&m).into_iter().flatten();
             ps.map(|p| p.subst(cx, args)).collect()
@@ -89,20 +93,24 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         let mut walked = HashSet::new();
+        let mut own = vec![];
         for (t, _) in &u.types {
-            ops_in(cx, *t, &mut walked, &mut found);
+            ops_in(cx, *t, &mut walked, &mut own);
         }
-        while let Some(k) = found.pop() {
+        found.extend(own.into_iter().map(|k| (k, 0)));
+        while let Some((k, guard)) = found.pop() {
             if has_params(cx, k) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&k) {
-                    n.push(k);
+                if !n.contains(&(k, guard)) {
+                    n.push((k, guard));
                     grew = true;
                 }
             } else if reduced.insert(k) {
                 // Reduced, and what the reduced type holds walked in turn.
                 let r = cx.reduce_op(k);
-                ops_in(cx, r, &mut walked, &mut found);
+                let mut held = vec![];
+                ops_in(cx, r, &mut walked, &mut held);
+                found.extend(held.into_iter().map(|k| (k, 0)));
             }
         }
         if grew {
