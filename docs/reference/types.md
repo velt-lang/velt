@@ -472,7 +472,9 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 `===` tells the nothings apart and `==` does not, as in Node. A conditional with both a `null`
 and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
 A generic union whose type argument brings a nothing (`T | string | undefined` at
-`T = number | null`) holds it like the union written out (`number | string | null | undefined`). `undefined` alone is a type too (its only value is `undefined`), and an
+`T = number | null`) holds it like the union written out (`number | string | null | undefined`):
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
