@@ -368,10 +368,12 @@ impl FnCx<'_, '_> {
         if let Some(def) = self.plain_enum(exp) {
             return self.dynamic_to_enum(h, def, exp);
         }
-        if let Some(payload) = self.cx.ty.opt_payload(exp) {
-            if self.cx.union_def(payload).is_some()
-                || self.cx.lit_value(payload).is_some()
-                || self.plain_enum(payload).is_some()
+        if let (Some(payload), Some(core)) =
+            (self.cx.ty.opt_payload(exp), self.present_payload(exp))
+        {
+            if self.cx.union_def(core).is_some()
+                || self.cx.lit_value(core).is_some()
+                || self.plain_enum(core).is_some()
             {
                 return self.dynamic_to_optional(h, exp, payload);
             }
@@ -400,10 +402,28 @@ impl FnCx<'_, '_> {
         let init = self.share_if_place(h);
         let tmp = self.new_local("<any>", dty, false, span, LocalKind::Temp);
         let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
-        let nil = self.dynamic_null_compare(read, "null", false, true, span);
+        let three = self.is_three_state(exp);
+        // On `T | null | undefined`, `undefined` and `null` are its two nothings.
+        let word = if three { "undefined" } else { "null" };
+        let nil = self.dynamic_null_compare(read, word, three, true, span);
         let none = self.mk(H::Lit(hir::Lit::Null), exp, span);
         let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
-        let value = self.unbox_dynamic(read, payload);
+        let value = match self.present_payload(exp).filter(|_| three) {
+            Some(core) => {
+                let v = self.unbox_dynamic(read, core);
+                let v = self.present_value(v, exp, span);
+                let read = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
+                let is_null = self.dynamic_null_compare(read, "null", true, true, span);
+                let null = self.nothing_value(Nothing::Null, exp, span);
+                let kind = H::If {
+                    cond: Box::new(is_null),
+                    then: Box::new(null),
+                    els: Box::new(v),
+                };
+                self.mk(kind, exp, span)
+            }
+            None => self.unbox_dynamic(read, payload),
+        };
         let some = self.coerce(value, exp);
         let kind = H::If {
             cond: Box::new(nil),
