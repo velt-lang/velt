@@ -545,6 +545,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Truthy
         | I::IsNull
         | I::IsNullish
+        | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
         | I::Sqrt

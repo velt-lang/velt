@@ -109,6 +109,13 @@ pub enum Intrinsic {
     /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
     /// either nothing once instantiated.
     IsNullish,
+    /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
+    /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
+    /// type, array, tuple, map or function type; `true` for anything else, unions and `any`
+    /// included)? The probe is not evaluated. Only as the right operand of `g(x) && _` in the
+    /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
+    /// (hir_encodings.md "Type predicates on a type parameter").
+    MayHoldPrimitive,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

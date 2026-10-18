@@ -408,6 +408,30 @@ function nest<T>(x: T, n: i64): i64 {
 Recurse with a fixed type instead: a non-generic helper, or a `JsonValue` for data whose
 shape is only known at run time.
 
+One growing call is allowed: in the `then` branch of `if (g(x))`, where `g` is a type predicate
+whose type has only primitive members (`v is string | number | null`) and `x` has the type of
+the parameter that grows, when the grown argument is an object type (an object type, class,
+array, tuple, map or function type). An instantiation whose argument is such an object type
+does not compile that branch (`g(x)` still runs; if it returns `true`, which its type rules
+out, the program stops with a `TypeError`), so the recursion ends there. An argument that may
+hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch.
+
+```ts
+type Primitive = string | number | boolean | null | undefined;
+function isPrimitive(v: unknown): v is Primitive {
+  return v === null || (typeof v !== "object" && typeof v !== "function");
+}
+function depth<T>(x: T): number {
+  // `depth<{ value: T }>` has no `then` branch here: its argument is an object.
+  if (isPrimitive(x)) return depth({ value: x }) + 1;
+  return 0;
+}
+
+function main() {
+  console.log(depth(3), depth([1])); // 1 0
+}
+```
+
 ## Generators
 
 ```ts

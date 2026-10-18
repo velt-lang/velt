@@ -93,6 +93,20 @@ impl super::Cx<'_> {
         }
     }
 
+    /// Is every value of `t` an object, never a primitive (a struct, class, object type,
+    /// array, tuple, map or function type)? `Intrinsic::MayHoldPrimitive` is its negation.
+    pub(super) fn object_only(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
+            _ => false,
+        }
+    }
+
     /// Is `t` an object type whose values a share copies unless it is counted (an array or an
     /// object type, not a class, interface or function value)?
     pub(super) fn copied_object(&self, t: TyId) -> bool {

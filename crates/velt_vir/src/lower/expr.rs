@@ -422,6 +422,13 @@ impl FnLower<'_, '_> {
                     velt_sema::hir::TyKind::Option(..)
                 ))
             }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(!self.cx.object_only(t))
+            }
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,
                 expr,
@@ -435,6 +442,27 @@ impl FnLower<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// The test `g(x)` of a condition `g(x) && MayHoldPrimitive(x)` whose `MayHoldPrimitive`
+    /// is `false` in this instantiation (sema `primitive_guard`).
+    pub(super) fn ruled_out_guard<'e>(&mut self, cond: &'e hir::Expr) -> Option<&'e hir::Expr> {
+        let hir::ExprKind::Logical {
+            op: hir::LogicOp::And,
+            lhs,
+            rhs,
+        } = &cond.kind
+        else {
+            return None;
+        };
+        let guard = matches!(
+            rhs.kind,
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
+                ..
+            }
+        );
+        (guard && self.const_cond(rhs) == Some(false)).then_some(&**lhs)
     }
 
     /// Value-producing `if` (ternary): each branch stores its (owned) value into a join temp.

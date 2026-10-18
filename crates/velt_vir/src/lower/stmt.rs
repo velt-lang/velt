@@ -218,6 +218,26 @@ impl FnLower<'_, '_> {
             }
             return;
         }
+        if let Some(test) = self.ruled_out_guard(cond) {
+            // `g(x) && MayHoldPrimitive(x)` with `x` an object here (hir_encodings.md "Type
+            // predicates on a type parameter"): `g(x)` still runs, and only the `else` does.
+            self.push_scope(ScopeKind::Temps);
+            let c = self.expr(test);
+            self.pop_scope();
+            let fail = self.new_block();
+            let join = self.new_block();
+            self.branch(c, fail, join);
+            self.switch_to(fail);
+            self.panic_msg(
+                "TypeError: a type predicate returned true for an object, which its type rules out",
+            );
+            self.goto(join);
+            self.switch_to(join);
+            if let Some(els) = els {
+                self.block(els);
+            }
+            return;
+        }
         self.push_scope(ScopeKind::Temps);
         let c = self.expr(cond);
         self.pop_scope();

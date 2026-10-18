@@ -591,6 +591,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Truthy
         | I::IsNull
         | I::IsNullish
+        | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::Sqrt
         | I::Floor

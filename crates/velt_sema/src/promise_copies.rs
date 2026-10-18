@@ -20,6 +20,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId, TyKind};
+use crate::inst_sites::{carry_guard, guards_of};
 use crate::types::collect_params;
 use crate::visit::{self, VisitMut};
 
@@ -38,6 +39,8 @@ pub(crate) struct Facts {
     copies: Vec<Copy>,
     /// Generic calls: callee, type arguments, span of the call.
     pub(crate) calls: Vec<(DefId, Vec<TyId>, Span)>,
+    /// The guard bits of each of `calls` (`inst_sites::carry_guard`).
+    pub(crate) guards: Vec<u64>,
     pub(crate) closures: Vec<DefId>,
     /// Class values whose methods are called dynamically (virtual calls, interface values).
     pub(crate) dispatch: Vec<(TyId, Span)>,
@@ -56,6 +59,16 @@ struct Collect<'a> {
     /// subclass as its base: counting it would give every subclass constructor its overrides'
     /// copies.
     super_receivers: HashSet<Span>,
+    /// Guard bits per expression (`inst_sites::guards_of`).
+    guards: HashMap<*const Expr, u64>,
+}
+
+impl Collect<'_> {
+    fn call(&mut self, e: &Expr, d: DefId, targs: Vec<TyId>) {
+        self.facts.calls.push((d, targs, e.span));
+        let guard = self.guards.get(&(e as *const Expr)).copied().unwrap_or(0);
+        self.facts.guards.push(guard);
+    }
 }
 
 impl VisitMut for Collect<'_> {
@@ -90,7 +103,8 @@ impl VisitMut for Collect<'_> {
                     }
                 }
                 if !targs.is_empty() {
-                    self.facts.calls.push((*d, targs.clone(), e.span));
+                    let (d, targs) = (*d, targs.clone());
+                    self.call(e, d, targs);
                 }
             }
             // A constructor copies from its arguments (`new Map(entries)`); without any (only
@@ -100,14 +114,16 @@ impl VisitMut for Collect<'_> {
                 type_args,
                 args,
             } if !type_args.is_empty() && !args.iter().all(is_empty_array) => {
-                if let Some(ctor) = self.ctors.get(def) {
-                    self.facts.calls.push((*ctor, type_args.clone(), e.span));
+                if let Some(&ctor) = self.ctors.get(def) {
+                    let targs = type_args.clone();
+                    self.call(e, ctor, targs);
                 }
             }
             E::Closure(c) => self.facts.closures.push(*c),
             // A generic function used as a value: its copies happen wherever it is called.
             E::FnRef(d, targs) if !targs.is_empty() => {
-                self.facts.calls.push((*d, targs.clone(), e.span));
+                let (d, targs) = (*d, targs.clone());
+                self.call(e, d, targs);
             }
             // Dynamic dispatch: the methods a class value's vtable can reach.
             E::ToDyn { expr, .. } => self.facts.dispatch.push((expr.ty, e.span)),
@@ -149,7 +165,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut rounds = Rounds::new(facts.len(), reads);
     let mut work = dispatch.work;
     // The generic types each function copies (types that mention its type parameters).
-    let mut needs: HashMap<DefId, Vec<Copy>> = HashMap::new();
+    let mut needs: HashMap<DefId, Vec<(Copy, u64)>> = HashMap::new();
     // Concrete promise-holding copies found at calls: (caller, call span) -> (copied type, callee).
     let mut found: Vec<(DefId, Span, TyId, DefId)> = vec![];
     let mut found_at: HashSet<(DefId, Span)> = HashSet::new();
@@ -157,11 +173,11 @@ pub(crate) fn check(cx: &mut Ctx) {
         let (f, fx) = &facts[i];
         work += (fx.copies.len() + fx.calls.len() + fx.dyn_calls.len() + fx.closures.len()) as u64;
         let mut grew = false;
-        for ((t, deep), at) in requirements(cx, fx, &needs) {
+        for ((t, deep), guard, at) in requirements(cx, fx, &needs) {
             if is_generic(cx, t) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(t, deep)) {
-                    n.push((t, deep));
+                if !n.contains(&((t, deep), guard)) {
+                    n.push(((t, deep), guard));
                     grew = true;
                 }
             } else if let Some((span, callee)) = at {
@@ -187,29 +203,34 @@ pub(crate) fn check(cx: &mut Ctx) {
 
 /// The types function `fx` copies: its own copies, and those of the generic functions it calls
 /// (substituted, with the call), the methods it calls dynamically (instantiated) and the
-/// closures it creates.
+/// closures it creates; with their guard bits (`inst_sites::carry_guard`).
 fn requirements(
     cx: &mut Ctx,
     fx: &Facts,
-    needs: &HashMap<DefId, Vec<Copy>>,
-) -> Vec<(Copy, Option<(Span, DefId)>)> {
-    let mut reqs: Vec<(Copy, Option<(Span, DefId)>)> =
-        fx.copies.iter().map(|c| (*c, None)).collect();
-    for (d, targs, span) in &fx.calls {
-        for (t, deep) in needs.get(d).into_iter().flatten() {
-            reqs.push(((cx.subst(*t, targs), *deep), Some((*span, *d))));
+    needs: &HashMap<DefId, Vec<(Copy, u64)>>,
+) -> Vec<(Copy, u64, Option<(Span, DefId)>)> {
+    let mut reqs: Vec<(Copy, u64, Option<(Span, DefId)>)> =
+        fx.copies.iter().map(|c| (*c, 0, None)).collect();
+    for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
+        for ((t, deep), need) in needs.get(d).into_iter().flatten() {
+            if let Some(guard) = carry_guard(cx, *need, targs, *site) {
+                reqs.push(((cx.subst(*t, targs), *deep), guard, Some((*span, *d))));
+            }
         }
     }
     for (m, args, span) in &fx.dyn_calls {
-        for (t, deep) in needs.get(m).into_iter().flatten() {
+        for ((t, deep), need) in needs.get(m).into_iter().flatten() {
+            let Some(guard) = carry_guard(cx, *need, args, 0) else {
+                continue;
+            };
             if let Some(t) = instantiate(cx, *t, args) {
-                reqs.push(((t, *deep), Some((*span, *m))));
+                reqs.push(((t, *deep), guard, Some((*span, *m))));
             }
         }
     }
     for c in &fx.closures {
-        for copy in needs.get(c).into_iter().flatten() {
-            reqs.push((*copy, None));
+        for (copy, need) in needs.get(c).into_iter().flatten() {
+            reqs.push((*copy, *need, None));
         }
     }
     reqs
@@ -233,6 +254,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut facts = Facts::default();
+        let guards = guards_of(&cx.ty, &mut f.body.block);
         // A capture that shares the enclosing variable copies it, without an intrinsic.
         for c in &f.captures {
             if c.share {
@@ -248,6 +270,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
                 ctors: &ctors,
                 ctor_fns: &ctor_fns,
                 super_receivers: HashSet::new(),
+                guards,
             },
         );
         out.push((DefId(i as u32), facts));
