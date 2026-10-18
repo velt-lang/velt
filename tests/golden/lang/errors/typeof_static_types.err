@@ -1,0 +1,2 @@
+typeof_static_types.vlt:5:23: error: mismatched types
+  = note: expected never, found T

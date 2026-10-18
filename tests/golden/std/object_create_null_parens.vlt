@@ -1,0 +1,5 @@
+// check: no leaks
+// `Object.create((null))`: `null` in parentheses makes a record without a prototype, too (#925).
+const d: Record<string, number> = Object.create((null));
+d.a = 1;
+console.log("toString" in d, "a" in d, d);

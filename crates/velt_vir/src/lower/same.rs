@@ -34,9 +34,22 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `Object.is(a, b)` for the values of concrete type `ty` at two places: `same_values` with
+    /// floats compared by SameValue (Bool operand).
+    pub(super) fn same_value_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.value_mode, true);
+        let r = self.same_values(a, b, ty);
+        self.value_mode = outer;
+        r
+    }
+
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-        self.call_glue(Glue::Same, ty, vec![pa, pb])
+        let g = match self.value_mode {
+            true => Glue::SameValue,
+            false => Glue::Same,
+        };
+        self.call_glue(g, ty, vec![pa, pb])
     }
 
     /// Identity of two objects of type `ty`.
@@ -80,6 +93,17 @@ impl FnLower<'_, '_> {
     pub(super) fn same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
         self.same_mode = true;
         self.eq_body(pa, pb, ty);
+    }
+
+    /// `Glue::SameValue`: `Glue::Same` with floats compared by SameValue.
+    pub(super) fn same_value_body(
+        &mut self,
+        pa: crate::vir::Local,
+        pb: crate::vir::Local,
+        ty: TyId,
+    ) {
+        self.value_mode = true;
+        self.same_body(pa, pb, ty);
     }
 }
 

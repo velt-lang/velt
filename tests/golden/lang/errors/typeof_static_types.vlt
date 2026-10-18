@@ -1,0 +1,8 @@
+// A `typeof` test on a type parameter's value leaves the value where the test fails: it may be
+// any type at run time (TS2322 for reading it as `never`).
+function g<T>(x: T): number {
+  if (typeof x === "object") return 1;
+  const rest: never = x;
+  return rest;
+}
+console.log(g("s"));

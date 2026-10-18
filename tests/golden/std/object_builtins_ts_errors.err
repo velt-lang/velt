@@ -1,0 +1,4 @@
+cannot assign to `name`: it is a readonly field
+`Object.is` expects 2 argument(s), but got 1 (TypeScript's TS2554)
+`Array.isArray` expects 1 argument(s), but got 0 (TypeScript's TS2554)
+`Object.hasOwn` expects 2 argument(s), but got 1 (TypeScript's TS2554)
