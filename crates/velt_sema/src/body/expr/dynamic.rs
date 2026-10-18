@@ -647,24 +647,6 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// `l + r` with an `any` operand: when the other operand is a string, the `any` is written
-    /// as `String(x)` writes it (`"" + e` of an error is `Error: boom`, #1242); any other `+`
-    /// is [`Self::dynamic_operator`]'s.
-    pub(crate) fn dynamic_concat(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
-        let s = self.cx.ty.str_;
-        let is_any = |cx: &mut Self, t: TyId| cx.cx.dynamic(t) == Some(Dynamic::Any);
-        let (lw, rw) = (self.cx.widened(l.ty), self.cx.widened(r.ty));
-        if lw == s && is_any(self, r.ty) {
-            let r = self.js_text(r, "a string concatenation");
-            return self.concat(l, r, span);
-        }
-        if rw == s && is_any(self, l.ty) {
-            let l = self.js_text(l, "a string concatenation");
-            return self.concat(l, r, span);
-        }
-        self.dynamic_operator("+", &l, &r, span)
-    }
-
     /// The enum of `t` when it is a declared enum without payloads (`enum Color { Red }`), whose
     /// values are numbers or strings in JavaScript.
     fn plain_enum(&self, t: TyId) -> Option<hir::DefId> {

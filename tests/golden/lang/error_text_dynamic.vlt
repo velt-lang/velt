@@ -28,3 +28,13 @@ try {
 const n: any = 5;
 const s: any = "str";
 console.log(String(n), `${s}`, "x" + n, s + "!");
+function plus(): any { return new Error("plus"); }
+let acc = "s";
+acc += n;
+acc += plus();
+class Row { out = ""; }
+const row = new Row();
+row.out += plus();
+const cells: string[] = ["a"];
+cells[0] += n;
+console.log(acc, row.out, cells);

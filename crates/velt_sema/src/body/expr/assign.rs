@@ -474,7 +474,12 @@ impl FnCx<'_, '_> {
             self.hoist_indices(&mut place, &mut stmts);
             // `s += n`: the number is appended as `String(n)` writes it (#740).
             let v = self.expr(value, Some(lty), Want::Borrow);
-            let v = self.concat_operand(v);
+            // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
+            // conversion to `string`).
+            let v = match self.any_to_source(v) {
+                Ok(a) => self.js_text(a, "a string concatenation"),
+                Err(v) => self.concat_operand(v),
+            };
             let v = self.coerce(v, lty);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
