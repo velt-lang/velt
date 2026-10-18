@@ -79,8 +79,8 @@ code, from `bench/simd_bytes/cases.sh`:
 
 | benchmark | was | x86-64: before | now |
 |---|---|---:|---:|
-| bytes_search | `memchr` | 1,080.4 M | 919.5 M |
-| utf8_decode | Velt byte loop | 7,768.4 M | 7,768.5 M |
+| bytes_search | `memchr` | 1,080.4 M | 957.3 M |
+| utf8_decode | Velt byte loop | 7,768.4 M | 7,768.4 M |
 | utf8_valid | `str::from_utf8` | 3,850.8 M | 3,850.8 M |
 
 `indexOf` and `includes` (`bytes_search`) are Velt code on `u8x16` when at most 208 bytes are
