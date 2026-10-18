@@ -36,6 +36,7 @@ mod body;
 mod brands;
 mod call_sigs;
 mod collect;
+mod creation_notes;
 mod ctx;
 mod defs;
 mod discriminants;
@@ -245,6 +246,9 @@ fn check_on_current_thread(
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
+    let null_proto = modules
+        .iter()
+        .any(|m| !m.is_std && calls_object_create_null(&m.ast));
     let new_cx = |held_borrows: bool| {
         let mut cx = ctx::Ctx::new(modules, root);
         cx.stack_budget = stack_budget;
@@ -259,6 +263,7 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
+        cx.objects.null_proto_records = null_proto;
         cx.recovered = (recovered.iter())
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();
@@ -295,6 +300,7 @@ fn check_on_current_thread(
         diags,
         impls,
         counted_objects,
+        objects,
         any,
         gen_throw,
         super_calls,
@@ -312,6 +318,7 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        null_proto_records: objects.null_proto_records,
         module_state,
         type_ops,
         any_impl: any.and_then(|a| a.imp),
@@ -505,4 +512,31 @@ pub(crate) fn reserved_prefixes(name: &str) -> &'static str {
         true => "`#`, `[Symbol.` and U+FFFF",
         false => "`#` and `[Symbol.`",
     }
+}
+
+/// Does `module` call `Object.create(null)`? Then records may have no prototype, which `in`,
+/// printing and cloning test at run time (`hir::Program::null_proto_records`); other programs
+/// get none of that code.
+fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            let E::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            let (E::Member { object, prop, .. }, [arg]) = (&callee.kind, args.as_slice()) else {
+                return;
+            };
+            if prop.name == "create"
+                && matches!(&object.kind, E::Ident(o) if o.name == "Object")
+                && matches!(arg.kind, E::Lit(ast::Lit::Null))
+            {
+                self.0 = true;
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
 }

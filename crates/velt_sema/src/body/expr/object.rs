@@ -338,9 +338,10 @@ impl FnCx<'_, '_> {
         if self.reserved_keys(props) {
             return self.error_expr(span);
         }
-        if super::record_literal::has_computed_entry(props) {
-            // `{ [k]: v }` with a key known only at run time: TypeScript's type has a string
-            // index signature (`{ [x: string]: V }`), which is a `Record<string, V>`.
+        if super::record_literal::has_computed_entry(props) || self.spreads_record(props) {
+            // `{ [k]: v }` with a key known only at run time, or `{ ...r }` of a record:
+            // TypeScript's type has a string index signature (`{ [x: string]: V }`), which is a
+            // `Record<string, V>`.
             if let Some(d) = self.cx.prelude_adt("Record") {
                 let error = self.cx.ty.error;
                 return self.record_literal(d, error, error, props, span);
@@ -372,6 +373,16 @@ impl FnCx<'_, '_> {
             converted: hir::Conversion::No,
         };
         self.mk(kind, ty, span)
+    }
+
+    /// Does an object literal with `props` spread a record (`{ ...r, a: 1 }`)?
+    fn spreads_record(&mut self, props: &[ast::ObjectProp]) -> bool {
+        props.iter().any(|p| match p {
+            ast::ObjectProp::Spread(e) => self
+                .trial_type(e)
+                .is_some_and(|t| self.record_args(t).is_some()),
+            _ => false,
+        })
     }
 
     /// `props` with each `[x]: v` whose `x` is a local (a key known only at run time, not a

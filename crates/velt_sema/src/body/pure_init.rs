@@ -579,6 +579,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Hash
         | I::Eq
         | I::Same
+        | I::SameValue
         | I::Clone
         | I::Share
         | I::FieldAbsent

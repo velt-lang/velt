@@ -168,6 +168,11 @@ impl FnLower<'_, '_> {
                 let (pa, pb) = self.two_places(a, b);
                 self.same_values(&pa, &pb, t)
             }
+            (I::SameValue, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.same_value_values(&pa, &pb, t)
+            }
             (I::Hash, [a]) => {
                 let t = self.sub(a.ty);
                 let v = self.expr(a);

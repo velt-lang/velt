@@ -62,9 +62,13 @@ mod names;
 mod namespaces;
 mod numbers;
 mod object;
+mod object_assign;
+mod object_builtins;
 mod object_copy;
 mod object_keys;
 mod object_method;
+mod object_own;
+mod object_prototypes;
 mod ops;
 mod ordering;
 mod overload_call;
@@ -208,7 +212,10 @@ impl FnCx<'_, '_> {
                 object,
                 prop,
                 optional,
-            } => self.member(object, prop, *optional, exp, want, span),
+            } => match self.prototype_read(object, prop, *optional, span) {
+                Some(h) => h,
+                None => self.member(object, prop, *optional, exp, want, span),
+            },
             A::Index {
                 object,
                 index,
