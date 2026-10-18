@@ -201,16 +201,14 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
 }
 
+/// A copy a function makes, its guard bits and the call it comes through.
+type Req = (Copy, u64, Option<(Span, DefId)>);
+
 /// The types function `fx` copies: its own copies, and those of the generic functions it calls
 /// (substituted, with the call), the methods it calls dynamically (instantiated) and the
 /// closures it creates; with their guard bits (`inst_sites::carry_guard`).
-fn requirements(
-    cx: &mut Ctx,
-    fx: &Facts,
-    needs: &HashMap<DefId, Vec<(Copy, u64)>>,
-) -> Vec<(Copy, u64, Option<(Span, DefId)>)> {
-    let mut reqs: Vec<(Copy, u64, Option<(Span, DefId)>)> =
-        fx.copies.iter().map(|c| (*c, 0, None)).collect();
+fn requirements(cx: &mut Ctx, fx: &Facts, needs: &HashMap<DefId, Vec<(Copy, u64)>>) -> Vec<Req> {
+    let mut reqs: Vec<Req> = fx.copies.iter().map(|c| (*c, 0, None)).collect();
     for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
         for ((t, deep), need) in needs.get(d).into_iter().flatten() {
             if let Some(guard) = carry_guard(cx, *need, targs, *site) {

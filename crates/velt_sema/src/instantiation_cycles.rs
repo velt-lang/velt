@@ -88,8 +88,12 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
 
 /// The instantiation sites of every generic function body (a function without type parameters
 /// cannot be part of a growing cycle).
-/// Each site comes with the type parameters whose primitive guard encloses it (a bit each).
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span, u64)>)> {
+/// The instantiation sites of each generic body, with the type parameters whose primitive guard
+/// encloses each (a bit each).
+type Sites = Vec<(DefId, Vec<(Site, Span, u64)>)>;
+
+/// Each site comes with its guard bits ([`Sites`]).
+fn collect(cx: &mut Ctx) -> Sites {
     let mut out = vec![];
     let tys = &cx.ty;
     let param_of = |t: TyId| match tys.kind(t) {
@@ -140,7 +144,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Vec<(Site, Span, u64)>)> {
     out
 }
 
-fn edges(cx: &mut Ctx, sites: Vec<(DefId, Vec<(Site, Span, u64)>)>) -> Vec<Edge> {
+fn edges(cx: &mut Ctx, sites: Sites) -> Vec<Edge> {
     let mut dispatch = Dispatch::default();
     let mut out = vec![];
     for (f, list) in sites {
