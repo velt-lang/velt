@@ -366,6 +366,9 @@ impl FnCx<'_, '_> {
             return self.concat(l, r, span);
         }
         if matches!(op, B::Eq | B::NotEq) && !self.primitive_eq(t) {
+            if self.prototype_operands(l.ty, r.ty) {
+                return self.prototype_eq(l, r, op == B::NotEq, span);
+            }
             crate::body::pure_init::check_identity(self.cx, [&l, &r]);
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
@@ -461,7 +464,7 @@ impl FnCx<'_, '_> {
     /// and `number`, #741): the member side converts to the union, so the two compare like two
     /// union values: equal only when they hold the same member with equal values, as `===` in
     /// JS (no coercion: the string `"3"` never equals the number `3`).
-    fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+    pub(super) fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
         let union = |s: &Self, t: TyId| s.cx.union_def(t).is_some();
         if l.ty == r.ty || self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return (l, r);
@@ -489,7 +492,11 @@ impl FnCx<'_, '_> {
     /// `a === b` between an interface value and a class or struct value (or a base and a
     /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
     /// does (an interface value points at the object itself), so the two compare by identity.
-    fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+    pub(super) fn identity_operands(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
         let object = |s: &Self, t: TyId| {
             let t = s.cx.ty.core(t).unwrap_or(t);
             s.cx.union_def(t).is_none()

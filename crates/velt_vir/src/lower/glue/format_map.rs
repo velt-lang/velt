@@ -157,6 +157,65 @@ impl FnLower<'_, '_> {
             Entries::Record => (None, "[Object]"),
             Entries::Set => (Some("Set"), "[Set]"),
         };
+        let parts = (map, map_ty, kt, vt, entries);
+        if entries == Entries::Record && self.cx.hir.null_proto_records {
+            // A record made by `Object.create(null)` (its map is marked): Node's
+            // `[Object: null prototype] { ... }`, and `[Object: null prototype]` past the depth
+            // limit.
+            let np = self.null_proto_mark(&parts.0, map_ty);
+            let (np_bb, plain_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(np, np_bb, plain_bb);
+            self.switch_to(np_bb);
+            let prefix = "[Object: null prototype] ";
+            let np_cut = "[Object: null prototype]";
+            self.format_entries(buf, obj, ty, depth, parts.clone(), (name, prefix, np_cut));
+            self.goto(done);
+            self.switch_to(plain_bb);
+            self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+            self.goto(done);
+            self.switch_to(done);
+            return true;
+        }
+        self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+        true
+    }
+
+    /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
+    /// entries (the top bit of its `edits`, std/prelude/map.vlt `__markNullProto`)? A Bool
+    /// operand.
+    fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
+        let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {
+            crate::lower::ice("the prelude `Map` is a class");
+        };
+        let at = self
+            .cx
+            .adt_def(d)
+            .fields
+            .iter()
+            .position(|f| f.name == "edits");
+        let at = at.unwrap_or_else(|| crate::lower::ice("the prelude `Map` has `edits`")) as u32;
+        let edits = Operand::Copy(self.field_place(map, map_ty, at));
+        let bit = cint(0x8000_0000_0000_0000_i128, Ty::U64);
+        let marked = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, edits, bit));
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, marked, cint(0, Ty::U64)),
+        )
+    }
+
+    /// The entries of a collection (`parts`: its `Map`, the map's type, key and value types,
+    /// how they print) in braces, after `prefix` and the collection's `name`; `cut` past node's
+    /// depth limit.
+    fn format_entries(
+        &mut self,
+        buf: &Operand,
+        obj: &Place,
+        ty: TyId,
+        depth: &Operand,
+        parts: (Place, TyId, TyId, TyId, Entries),
+        (name, prefix, cut): (Option<&str>, &str, &str),
+    ) {
+        let (map, map_ty, kt, vt, entries) = parts;
         let mtys = self.cx.adt_field_tys(map_ty);
         let size_ty = mtys[SIZE as usize];
         let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
@@ -168,12 +227,16 @@ impl FnLower<'_, '_> {
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(empty, empty_bb, full_bb);
         self.switch_to(empty_bb);
-        self.push_text(buf, &name.map_or("{}".into(), |n| format!("{n}(0) {{}}")));
+        let shown = name.map_or("{}".into(), |n| format!("{n}(0) {{}}"));
+        self.push_text(buf, &format!("{prefix}{shown}"));
         self.goto(done);
         self.switch_to(full_bb);
         let p = Operand::Copy(obj.clone());
         self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
             lw.format_once(buf, p, |lw| {
+                if !prefix.is_empty() {
+                    lw.push_text(buf, prefix);
+                }
                 if let Some(n) = name {
                     lw.push_text(buf, &format!("{n}("));
                     lw.push_scalar(buf, size.clone(), size_ty);
@@ -192,7 +255,6 @@ impl FnLower<'_, '_> {
         });
         self.goto(done);
         self.switch_to(done);
-        true
     }
 
     /// A record key: a string at run time, or the text of a literal / string enum member.

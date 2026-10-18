@@ -23,9 +23,52 @@ enum Uncloneable {
 }
 
 impl FnCx<'_, '_> {
+    /// Does a value of type `t` hold a `Record` (at any depth looked into)?
+    fn holds_record(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > MAX_DEPTH {
+            return false;
+        }
+        if self.record_args(t).is_some() {
+            return true;
+        }
+        let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Array(e) => vec![e],
+            TyKind::Option(p, _) => vec![p],
+            TyKind::Tuple(ts) => ts,
+            TyKind::Adt(d, args) => {
+                let fields = match self.cx.adt(d) {
+                    Some(a) if a.kind == AdtKind::Anon => {
+                        a.fields.iter().map(|f| f.ty).collect::<Vec<_>>()
+                    }
+                    _ => vec![],
+                };
+                let fields = fields.into_iter().map(|f| self.cx.subst(f, &args));
+                let mut parts: Vec<TyId> = fields.collect();
+                parts.extend(args);
+                parts.extend(self.cx.union_members(t).unwrap_or_default());
+                parts
+            }
+            _ => vec![],
+        };
+        parts.into_iter().any(|p| self.holds_record(p, depth + 1))
+    }
+
     /// Report an error if a value of type `t` (`structuredClone`'s argument, at `span`) holds
     /// something JS's structured clone throws for or copies as a plain object.
     pub(super) fn check_structured_clone(&mut self, t: TyId, span: Span) {
+        if self.cx.objects.null_proto_records && self.holds_record(t, 0) {
+            // A copy keeps the record's mark (`Object.create(null)`), where JS's copy has
+            // `Object.prototype`.
+            let tn = self.cx.display(t);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`structuredClone` of a `{tn}`, which holds a record, is not supported yet in a program that calls `Object.create(null)`"),
+                    span,
+                )
+                .with_note("JS's copy of a prototype-less object has `Object.prototype`; copy the record with `{ ...r }`"),
+            );
+            return;
+        }
         let Some((found, at)) = self.uncloneable(t, 0) else {
             return;
         };

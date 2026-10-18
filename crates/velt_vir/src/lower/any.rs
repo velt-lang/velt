@@ -40,7 +40,7 @@ pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 
 /// `typeof` text of each tag.
-const TYPEOF: [&str; 8] = [
+pub(super) const TYPEOF: [&str; 8] = [
     "undefined",
     "object",
     "boolean",
@@ -348,6 +348,9 @@ impl FnLower<'_, '_> {
 
     /// `typeof x`.
     pub(super) fn any_typeof(&mut self, a: &hir::Expr) -> Operand {
+        if let Some(tag) = self.typeof_folded(a) {
+            return tag;
+        }
         let t = self.sub(a.ty);
         let v = self.expr(a);
         let (_, desc) = self.any_parts(v, t);

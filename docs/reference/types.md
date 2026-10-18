@@ -9,6 +9,7 @@
 | `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
 | `u8x16`, `i32x4`, `f32x4`, `f64x2`, …; `mask8x16`, … | 128-bit SIMD vectors and the masks comparing them gives ([SIMD vectors](#simd-vectors)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
+| `bigint` | no values yet: `never` until Velt has `BigInt` values, so `string \| bigint` is `string` and `T extends bigint ? A : B` is `B` ([bigint](#bigint)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
 | `Map<K, V>` | insertion-ordered hash map |
@@ -749,7 +750,13 @@ the nullable type; `void` cannot be a member.
   primitive's text), also as `x?.toString()` on a union that may be `null`.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
-    `"object"`; closures are `"function"`. An impossible tag is an error.
+    `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
+    not a union, a test it always passes leaves it `never` where the test fails, when its type
+    fixes the answer (numbers, strings, booleans, symbols, functions, classes, structs, arrays,
+    maps); not for `object`, which may hold a function, nor for interfaces with methods or
+    enums. On a value whose type is a type parameter (also `T | undefined`), `typeof` tells the
+    instantiation's value at run time, and `x === undefined` / `x == null` too (`T` may be
+    `undefined` or `null`); for a variable, neither boxes the value.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
@@ -1643,6 +1650,77 @@ const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
 ```
 
+### `Object` built-ins
+
+JavaScript's `Object` functions that work on Velt's objects behave as in Node. Each one is
+compiled against the static types of its arguments; what a fixed object layout cannot do as Node
+does is an error saying it is not supported yet, never a quiet difference.
+
+- `Object.is(a, b)` is JavaScript's SameValue: `===`, except that `NaN` is itself and `0` is not
+  `-0`, in generic code too (`Object.is(oldValue, newValue)` with `T` a number compares numbers
+  that way). Values of unrelated types are never the same.
+- `Array.isArray(x)` tests for the array members of `x`'s type and narrows `x` like `typeof`
+  (`Array.isArray(x) ? x.length : x` on a `number | number[]`); a tuple is an array. An `any`
+  or `unknown` value is tested at run time; a type parameter's value is not supported yet. On a `JsonValue` it is
+  `x.isArray()`.
+- `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
+  (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
+  and one holding `undefined` where the target can't hold it is a `TypeError`)
+  and returns `target` itself. A `Record` target takes any keys; an object or class target only
+  fields its type declares (adding one is not supported yet). Assigning onto a function (#921) or
+  from a value that may hold another class is not supported yet.
+- `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
+  writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
+  object's field is written through any reference, so a frozen object converts only to types
+  whose fields are all readonly (`Readonly<T>`); passing it where a field could be written is not
+  supported yet, and so is freezing anything but a new literal.
+- `Object.fromEntries(pairs)` builds a `Record<string, V>` from `[key, value]` pairs: an array,
+  a `Map` or any iterable.
+- `Object.hasOwn(o, k)` and `Object.prototype.hasOwnProperty.call(o, k)` test `o`'s own keys: a
+  record's entries, or the keys `Object.keys(o)` lists (methods and accessors are on the
+  prototype, so they are not own keys).
+- `Object.prototype.toString.call(v)` gives `"[object Array]"`, `"[object Map]"`,
+  `"[object Null]"` and so on, for each type `v` may have.
+- `Object.getPrototypeOf(v)` returns an `ObjectPrototype`, which `===` compares with
+  `Object.prototype`, `C.prototype` for a class `C`, `Array.prototype`, `Map.prototype`,
+  `Set.prototype`, `WeakMap.prototype`, `WeakSet.prototype`, `Promise.prototype` and `null`. A
+  value of a class with subclasses gives the prototype of the class it holds. Prototypes print,
+  convert to strings and to JSON as in Node; reading their members (`Object.prototype.toString`
+  as a value) is not supported yet, and neither are the prototypes of other built-in values
+  (`Date.prototype`, `String.prototype`) or of classes extending them.
+- `Object.create(null)` makes an empty `Record<string, V>` without a prototype, where one is
+  expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
+  `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
+  `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
+  `structuredClone` of a record in a program that calls `Object.create(null)`, are not
+  supported yet.
+
+The other `Object` functions (`defineProperty`, `seal`, `isFrozen`, `setPrototypeOf`, ...) are not
+supported yet.
+
+```ts
+class Point {
+  x = 0;
+  y = 0;
+}
+
+function describe(v: number | number[]): string {
+  return Array.isArray(v) ? `${v.length} numbers` : `${v}`;
+}
+
+const p = Object.assign(new Point(), { x: 3 });
+const inert = Object.freeze({ state: "idle" });
+const counts: Record<string, number> = Object.create(null);
+counts.a = 1;
+console.log(Object.is(NaN, NaN), Object.is(0, -0)); // true false
+console.log(describe([1, 2]), describe(5)); // 2 numbers 5
+console.log(p, inert.state); // Point { x: 3, y: 0 } idle
+console.log(Object.getPrototypeOf(p) === Point.prototype); // true
+console.log(Object.fromEntries([["a", 1], ["b", 2]])); // { a: 1, b: 2 }
+console.log(counts, "toString" in counts); // [Object: null prototype] { a: 1 } false
+console.log(Object.prototype.toString.call([1])); // [object Array]
+```
+
 ### The `in` operator
 
 `"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects
@@ -1798,6 +1876,40 @@ console.log(c.count); // 5
 - `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
   interface values).
 
+## bigint
+
+TypeScript's `bigint` is a type name in Velt, but there are no `BigInt` values yet (no `10n`
+literals, no `BigInt()`; arbitrary-precision integers are [`velt:bigint`](../std/bigint.md)).
+Until there are, `bigint` is `never`: the type no value has. So types written for TypeScript
+that mention it work for every value a Velt program holds: a union naming it is its other
+members, a conditional type testing it never takes that branch, and a type bound naming it
+still chooses overloads by its other members, as TypeScript does for those values.
+
+```ts
+type Primitive = string | number | boolean | bigint | null;
+type Widen<T> = T extends number ? number : T extends bigint ? bigint : T;
+
+function wrap<T extends Primitive>(target: T): { value: T };
+function wrap<T extends object>(target: T): T;
+function wrap<T>(target: T): { value: T } | T {
+  return String(target) === "[object Object]" ? target : { value: target };
+}
+
+function main(): void {
+  const state = wrap({ st: "idle" }); // the object signature
+  state.st = "ready";
+  const n: Widen<5> = 7;
+  console.log(state.st, n); // ready 7
+}
+```
+
+`typeof x === "bigint"` and `case "bigint":` in a `switch (typeof x)` are always false, and a
+test the remaining type always passes leaves nothing behind (`if (typeof x === "string") return;`
+on a `string | bigint`, then `x` is `never`). A value given where a `bigint` is expected is an
+error, as in TypeScript; the message names the type `never`. So is an `any` or `unknown` given
+there (`const b: bigint = a`, `a as bigint`), which TypeScript accepts: no value in a Velt program
+is a `bigint`.
+
 ## any and unknown
 
 `any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
@@ -1844,7 +1956,11 @@ twice), and one object converted twice is one value (`u1 === u2`, one `Set<unkno
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
-a left-out optional field `q?: any` holds `undefined`. An enum value is its number or string
+a left-out optional field `q?: any` holds `undefined`. A value whose type is a type parameter
+converts to `any` and `unknown` too (`const a: any = t` with `t: T`, `t as unknown as X`): the
+value of the instantiation goes in as above, so a `T` that is `number | null` holding `null`
+gives the dynamic `null`, a union the member it holds and a literal type its value (an
+instantiation with an enum stops with a `TypeError` for now, #1241). An enum value is its number or string
 in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
 value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
 `a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
