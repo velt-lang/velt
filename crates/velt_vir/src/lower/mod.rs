@@ -437,6 +437,10 @@ enum ScopeKind {
     },
     /// Inside a `try` with `finally`: the block runs on every exit (taken while being lowered).
     Finally(Option<Rc<hir::Block>>),
+    /// A module state initializer: an error thrown in it and not caught there prints
+    /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
+    /// evaluates a module (module_state.rs).
+    Uncaught,
 }
 
 struct Scope {
