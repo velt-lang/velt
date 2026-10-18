@@ -2,18 +2,58 @@
 //! the target in order, through its setters (synthesized assignments `target.k = source.k`, so
 //! the usual checks apply), and the target itself as the result. A record target takes any keys
 //! (a record source through `__extend`); an object or class target only the fields its type
-//! declares, since Velt objects can't gain fields.
+//! declares, since Velt objects can't gain fields. A variable or field path target is written in
+//! place and is the result itself; an optional source field is copied only while present.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::setters::synth;
+use crate::body::places::is_path;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, AdtKind, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `Object.assign(target, ...sources)`.
-    pub(super) fn object_assign(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
+    /// Is `callee` the built-in `Object.assign`?
+    pub(super) fn object_assign_callee(&mut self, callee: &ast::Expr) -> bool {
+        match &callee.kind {
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } if prop.name == "assign" => match &object.kind {
+                ast::ExprKind::Ident(ns) => self.is_prelude_object(ns),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// `Object.assign(...)` (`object_assign_callee`), its value used as `want` says.
+    pub(super) fn object_assign_call(
+        &mut self,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        if !type_args.is_empty() {
+            self.cx
+                .err("`Object.assign` takes no type arguments".to_string(), span);
+        }
+        if let Some(h) = self.reject_dynamic_args("Object.assign", args, span) {
+            return h;
+        }
+        self.object_assign(args, want, span)
+    }
+
+    /// `Object.assign(target, ...sources)`; `want`: how a target written in place is used.
+    pub(super) fn object_assign(
+        &mut self,
+        args: &[ast::Expr],
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         let Some((target, sources)) = args.split_first() else {
             return self.arity_error("Object.assign", 1, args, span);
         };
@@ -24,6 +64,10 @@ impl FnCx<'_, '_> {
         }
         let tty = t.ty;
         let record = self.record_args(tty).is_some();
+        // A record whose values can't be `undefined` takes only defined values.
+        let record_defined_only = self
+            .record_args(tty)
+            .is_some_and(|(_, v)| !self.cx.ty.nothing_of(v).is_some_and(|n| n.has_undefined()));
         let fields = match record {
             true => None,
             false => match self.assign_target_fields(tty, target.span) {
@@ -37,7 +81,13 @@ impl FnCx<'_, '_> {
         self.push_scope();
         let mut lets = vec![];
         let tname = format!("<assign@{}>", span.lo);
-        let t_read = self.named_temp(&tname, t, &mut lets);
+        // A variable or a field path is written in place: a temporary would be a copy of an
+        // object stored inline (one of numbers and booleans only), and the writes would miss it.
+        let in_place = (!record && is_place(target) && is_path(&t)).then(|| target.clone());
+        let t_read = match in_place {
+            Some(_) => t,
+            None => self.named_temp(&tname, t, &mut lets),
+        };
         for (i, src) in sources.iter().enumerate() {
             let exp = record.then_some(tty);
             let s = self.expr(src, exp, Want::Borrow);
@@ -95,9 +145,13 @@ impl FnCx<'_, '_> {
                     },
                     span,
                 );
+                let target_read = match &in_place {
+                    Some(e) => e.clone(),
+                    None => read(&tname),
+                };
                 let place = match record {
                     true => ast::ExprKind::Index {
-                        object: Box::new(read(&tname)),
+                        object: Box::new(target_read),
                         index: Box::new(synth(
                             ast::ExprKind::Lit(ast::Lit::Str(key.clone())),
                             span,
@@ -105,7 +159,7 @@ impl FnCx<'_, '_> {
                         optional: false,
                     },
                     false => ast::ExprKind::Member {
-                        object: Box::new(read(&tname)),
+                        object: Box::new(target_read),
                         prop: ast::Ident {
                             name: key.clone(),
                             span,
@@ -121,33 +175,71 @@ impl FnCx<'_, '_> {
                     },
                     span,
                 );
-                // An optional field that is absent is not an own property: not copied.
-                let stmt = match optional {
-                    false => assign,
+                // An optional field that is absent is not an own property: not copied
+                // (`if ("k" in source) target.k = source.k;`). A place that can't hold
+                // `undefined` doesn't take a present `undefined` either.
+                let present = synth(
+                    ast::ExprKind::Binary {
+                        op: ast::BinaryOp::In,
+                        lhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Str(key.clone())), span)),
+                        rhs: Box::new(read(&sname)),
+                    },
+                    span,
+                );
+                let defined_only = match record {
+                    true => record_defined_only,
+                    false => !self.slot_takes_undefined(tty, &key),
+                };
+                let cond = match defined_only {
+                    false => present,
                     true => synth(
-                        ast::ExprKind::Cond {
-                            cond: Box::new(synth(
+                        ast::ExprKind::Binary {
+                            op: ast::BinaryOp::And,
+                            lhs: Box::new(present),
+                            rhs: Box::new(synth(
                                 ast::ExprKind::Binary {
-                                    op: ast::BinaryOp::NotEq,
-                                    lhs: Box::new(field),
-                                    rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
+                                    op: ast::BinaryOp::StrictNotEq,
+                                    lhs: Box::new(field.clone()),
+                                    rhs: Box::new(synth(
+                                        ast::ExprKind::Lit(ast::Lit::Undefined),
+                                        span,
+                                    )),
                                 },
                                 span,
                             )),
-                            then: Box::new(synth(ast::ExprKind::Paren(Box::new(assign)), span)),
-                            els: Box::new(read(&tname)),
                         },
                         span,
                     ),
                 };
-                let h = self.expr(&stmt, None, Want::Move);
-                lets.push(hir::Stmt {
-                    span,
-                    kind: hir::StmtKind::Expr(h),
-                });
+                let stmt = match optional {
+                    false => ast::Stmt {
+                        kind: ast::StmtKind::Expr(assign),
+                        span,
+                    },
+                    true => ast::Stmt {
+                        kind: ast::StmtKind::If {
+                            cond,
+                            then: ast::Block {
+                                stmts: vec![ast::Stmt {
+                                    kind: ast::StmtKind::Expr(assign),
+                                    span,
+                                }],
+                                span,
+                            },
+                            els: None,
+                        },
+                        span,
+                    },
+                };
+                self.stmt(&stmt, &mut lets);
             }
         }
         self.pop_scope();
+        // The place itself, read after the writes, as the consumer wants it.
+        let t_read = match &in_place {
+            Some(e) => self.expr(e, None, want),
+            None => t_read,
+        };
         self.with_lets(lets, t_read)
     }
 
@@ -229,6 +321,24 @@ impl FnCx<'_, '_> {
         Some(names)
     }
 
+    /// Can field `key` of the object type `t` hold `undefined` (`false` for a setter's key)?
+    fn slot_takes_undefined(&mut self, t: TyId, key: &str) -> bool {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(t) else {
+            return false;
+        };
+        let Some(a) = self.cx.adt(*d) else {
+            return false;
+        };
+        a.fields.iter().find(|f| f.name == key).is_some_and(|f| {
+            f.optional
+                || self
+                    .cx
+                    .ty
+                    .nothing_of(f.ty)
+                    .is_some_and(|n| n.has_undefined())
+        })
+    }
+
     /// The own keys an `Object.assign` source of type `t` gives, each with whether it is an
     /// optional field (copied only while present), or `None` (reported at `span`).
     pub(super) fn assign_source_keys(
@@ -252,17 +362,25 @@ impl FnCx<'_, '_> {
         let class = a.kind == AdtKind::Class;
         let mut out = vec![];
         for k in keys {
-            let f = a.fields.iter().find(|f| f.name == k.name)?;
-            if k.optional && crate::anon::has_presence(&self.cx.ty, a.kind, f) {
-                let tn = self.cx.display(t);
-                self.cx.err(
-                    format!("`Object.assign` from a `{tn}`, whose optional field `{}` may hold `null`, is not supported yet", k.name),
-                    span,
-                );
+            if !a.fields.iter().any(|f| f.name == k.name) {
                 return None;
             }
             out.push((k.name, k.optional && !class));
         }
         Some(out)
+    }
+}
+
+/// Is `e` a variable, `this` or a path of fields of one (read again without effects)?
+fn is_place(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => is_place(inner),
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => is_place(object),
+        _ => false,
     }
 }

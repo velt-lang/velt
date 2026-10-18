@@ -1626,7 +1626,8 @@ does is an error saying it is not supported yet, never a quiet difference.
   `-0`, in generic code too (`Object.is(oldValue, newValue)` with `T` a number compares numbers
   that way). Values of unrelated types are never the same.
 - `Array.isArray(x)` tests for the array members of `x`'s type and narrows `x` like `typeof`
-  (`Array.isArray(x) ? x.length : x` on a `number | number[]`). On a `JsonValue` it is
+  (`Array.isArray(x) ? x.length : x` on a `number | number[]`); a tuple is an array. A value of
+  a type parameter, `any` or `unknown` is tested at run time. On a `JsonValue` it is
   `x.isArray()`.
 - `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied)

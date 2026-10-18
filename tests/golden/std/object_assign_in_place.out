@@ -1,0 +1,11 @@
+42 42 true
+{ a: 42, b: false }
+{ a: 7 }
+{ a: 9, b: false }
+{ s: 'x', n: 2 } true
+3 4
+{ inner: { v: 2, ok: true } }
+{ name: 'x', color: 'blue' }
+{ name: 'y' } false
+{ name: 'x', color: 'blue' }
+{ n: 2, on: true } true

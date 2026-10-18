@@ -109,7 +109,7 @@ impl FnCx<'_, '_> {
         }
         Some(match name {
             "is" => self.object_is(args, span),
-            "assign" => self.object_assign(args, span),
+            "assign" => self.object_assign(args, Want::Borrow, span),
             "freeze" => self.object_freeze(args, span),
             "fromEntries" => self.object_from_entries(callee, type_args, args, exp, span)?,
             "hasOwn" => self.has_own(args, "Object.hasOwn", span),
@@ -268,8 +268,27 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
-        let pred = |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), TyKind::Array(_));
-        self.type_test(s, &pred, &|_| false, span).expr
+        let b = self.cx.ty.bool_;
+        if self.cx.dynamic(s.ty).is_some() {
+            // An `any` / `unknown` of any expression shape: whether the value held is an array.
+            return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![s], b, span);
+        }
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let mut members = self.cx.union_members(core).unwrap_or_default();
+        members.push(core);
+        if let Some(&p) = members
+            .iter()
+            .find(|&&m| matches!(self.cx.ty.kind(m), TyKind::Param(_)))
+        {
+            // Which type argument it holds is known only per instantiation.
+            let tn = self.cx.display(p);
+            self.cx.err(
+                format!("`Array.isArray` of a value of the type parameter `{tn}` is not supported yet: test a value of a concrete type, or of type `unknown`"),
+                arg.span,
+            );
+            return self.error_expr(span);
+        }
+        self.type_test(s, &is_array_ty, &|_| false, span).expr
     }
 
     /// `Object.is(a, b)`.
@@ -500,4 +519,9 @@ pub(super) fn strip_parens(e: &ast::Expr) -> &ast::Expr {
         ast::ExprKind::Paren(inner) => strip_parens(inner),
         _ => e,
     }
+}
+
+/// Is `t` an array type (a tuple is an array in JavaScript)?
+pub(crate) fn is_array_ty(cx: &crate::ctx::Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Array(_) | TyKind::Tuple(_))
 }

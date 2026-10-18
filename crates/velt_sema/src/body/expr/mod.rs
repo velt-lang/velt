@@ -66,7 +66,7 @@ mod never_null;
 mod numbers;
 mod object;
 mod object_assign;
-mod object_builtins;
+pub(crate) mod object_builtins;
 mod object_copy;
 mod object_keys;
 mod object_method;
@@ -202,6 +202,16 @@ impl FnCx<'_, '_> {
                     && matches!(&callee.kind, A::Ident(i) if i.name == super::pattern_defaults::UNDEFINED_OR) =>
             {
                 self.undefined_or(&args[0], &args[1], exp, span)
+            }
+            // `Object.assign` onto a variable or field path gives that place itself, used as
+            // the consumer wants it (`const r = Object.assign(t, s)` names `t`'s object).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional: false,
+            } if self.object_assign_callee(callee) => {
+                self.object_assign_call(type_args, args, want, span)
             }
             A::Call {
                 callee,

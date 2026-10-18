@@ -564,8 +564,7 @@ impl FnCx<'_, '_> {
         let Some((l, nullable, u)) = self.local_with_members(e) else {
             return (vec![], vec![]);
         };
-        let pred =
-            |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), crate::hir::TyKind::Array(_));
+        let pred = crate::body::expr::object_builtins::is_array_ty;
         self.split_facts(l, nullable, u, &pred, false)
     }
 
