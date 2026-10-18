@@ -881,4 +881,4 @@ entry is an `ICE:`.
   identity whichever dynamic type a value went through.
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
-  an `any`, iteration.
+  an `any` and `JSON.parse` into one, iteration.

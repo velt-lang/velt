@@ -1,0 +1,19 @@
+// Keys compared by identity show a copy made by a conversion (#1240): a `Set` or `Map` keyed by
+// a dynamic type, and every weak collection (`WeakMap`, `WeakSet`, `WeakRef`). Node finds each
+// key.
+type A = { a: number };
+type AB = { a: number; b: number };
+const s: AB = JSON.parse('{"a":1,"b":2}');
+const v: A = s;
+const seen = new Set<any>();
+seen.add(v);
+console.log(seen.has(s));
+
+type W = { w: number };
+type WX = { w: number; x: number };
+const sw: WX = JSON.parse('{"w":1,"x":2}');
+const vw: W = sw;
+const ww: W = sw;
+const weak = new WeakMap<W, string>();
+weak.set(vw, "found");
+console.log(weak.get(ww));
