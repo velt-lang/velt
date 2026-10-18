@@ -41,4 +41,4 @@ instead (46x faster reading). Of the remaining time, about 40% is regex capture 
 | `src/report.vlt` | percentiles, formatting, sorting |
 | `src/analyze.vlt` | the streaming loop |
 | `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | 5000-line golden (`cargo test -p veltc --test golden`); Node prints the same |
+| `demo.vlt` / `demo.out` | 5000-line golden (`cargo test --workspace --test golden`); Node prints the same |

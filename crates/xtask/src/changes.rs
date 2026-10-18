@@ -60,7 +60,7 @@ pub fn changes(root: &Path, base: &str) -> Result<Changes, String> {
     })
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(args)
         .current_dir(root)

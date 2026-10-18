@@ -35,11 +35,17 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | Command | What it runs |
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
-| `cargo test -p veltc --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
+| `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
 | `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
+| `cargo xtask precheck` | the fast mechanical checks on the changed files only (below) |
+
+Run the end-to-end tests with `--workspace`, not `-p veltc`: `-p` resolves the crates' features
+differently from the gate's `--workspace` build (`velt_opt` loses `interp`), so switching between
+the two rebuilds `velt_opt` and everything above it. (`--workspace --test golden` also runs
+`velt_syntax`'s parser goldens, which take a second.)
 
 The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substrings),
 `VELT_GOLDEN_MODES=debug` or `release` (one build mode only), `VELT_GOLDEN_JOBS=<n>` (default
@@ -50,6 +56,16 @@ directory fail the run too). The debug runs use the runtime's checking allocator
 pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`, and a captured
 variable's cell used by two tasks (a closure assigning it reached another task or HTTP request
 without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects").
+
+velt_syntax's robustness test (`prefixes_never_panic_*`) cuts the goldens and parses what comes
+before and after each cut, which must never panic. It cuts the kitchen sink and the goldens in
+`VELT_ROBUSTNESS_FILES` at every character (comma-separated paths such as
+`tests/golden/lang/foo.vlt`; `cargo xtask check` sets it to the goldens you changed), and the
+other goldens where each token starts or ends plus a fixed sample of characters.
+`VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
+nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
+when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
+or when the changes can't be told.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
@@ -77,7 +93,24 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
-binary at a time. Local runs keep incremental compilation on (CI turns it off).
+binary at a time (over ten minutes; the gate prints a warning). Local runs keep incremental
+compilation on (CI turns it off).
+
+**Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
+files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
+`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
+anything under `std/` or `examples/` changed or the formatter (`velt_fmt`) or a crate it depends on
+did, the file-size rule (below) on the changed Rust files, and clippy with
+`-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
+it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
+well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
+before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
+replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as
+`pre-push.orig`), and `git push --no-verify` skips it. The hook checks the **working tree**, not
+the commits being pushed: uncommitted and untracked files count, so commit or stash your work in
+progress first, or a scratch file can block an unrelated push and an uncommitted fix can hide a
+bad commit. (With a relative `core.hooksPath`, git looks for hooks in each worktree, so install
+them in each.)
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
@@ -176,11 +209,14 @@ velt/
 ```sh
 cd velt/main && git pull
 git worktree add ../branches/<task> -b <task> origin/main   # start a task
+cargo xtask install-hooks                                   # once per clone: precheck before each push
 # ... work, commit, push, open a pull request ...
 git worktree remove ../branches/<task> && git branch -d <task>   # after it merged
 ```
 
-Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout.
+Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout,
+and the `pre-push` hook from `cargo xtask install-hooks` covers all of them: each push runs
+`cargo xtask precheck` in the worktree it comes from.
 Never edit `main/` itself; it only ever fast-forwards. Give each worktree its own build
 directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLDEN_WORK` on a
 bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
