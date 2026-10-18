@@ -60,6 +60,7 @@ mod member_keys;
 mod method;
 mod method_call;
 mod method_value;
+mod mixed_array;
 mod names;
 mod namespaces;
 mod narrowing_casts;

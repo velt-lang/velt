@@ -88,6 +88,9 @@ impl FnCx<'_, '_> {
             }
             _ => elem,
         };
+        if exp_elem.is_none() && !self.is_fn_elem(elem) {
+            return self.mixed_array(elems, out, elem, span);
+        }
         let mut hs = vec![];
         for (i, e) in elems.iter().enumerate() {
             let h = match out[i].take() {

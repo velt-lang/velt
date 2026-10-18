@@ -740,9 +740,13 @@ the nullable type; `void` cannot be a member.
 
 - **Widening** is implicit: a member value (also a subclass of a class member, or a value
   implementing an interface member) converts to the union, and a union converts to a wider
-  union. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
+  union. An array literal with no type from context whose elements have different types
+  is an array of their union, as in TypeScript (`[1, "a"]` is a `(number | string)[]`, and
+  `[a, d]` of a `number | undefined` and a `string | null` holds all four). A literal takes the member it belongs to; add a suffix (`5i32`) when several number
   members match.
-- **Narrowing**: using a member's fields or methods needs that member.
+- **Narrowing**: using a member's fields or methods needs that member, except `x.toString()`,
+  which every member has: it gives what `String(x)` does (a class's own `toString()`, a
+  primitive's text), also as `x?.toString()` on a union that may be `null`.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
     `"object"`; closures are `"function"`. An impossible tag is an error.

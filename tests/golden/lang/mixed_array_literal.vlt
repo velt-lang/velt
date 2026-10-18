@@ -1,0 +1,25 @@
+// check: no leaks
+// An array literal with no type from context whose elements have different types is an array
+// of their union, as TypeScript infers it (#1275): generic results, nullable values and
+// literals mixed.
+function pick<T>(x: T, i: number): T | string | undefined {
+  return i === 0 ? x : i === 1 ? "s" : undefined;
+}
+
+function k(i: number): void {
+  const a = pick(1, i);
+  const c: number | string | undefined = i === 2 ? undefined : 3;
+  const d: string | null = i > 0 ? "d" : null;
+  const e = pick(true, i);
+  console.log(JSON.stringify([a, c, d, e]));
+  const mixed = [1, "a", i > 0];
+  console.log(mixed, mixed.length, typeof mixed[0], typeof mixed[1]);
+  const w = [a, d];
+  for (const x of w) console.log(x ?? "none");
+}
+
+function main(): void {
+  k(0);
+  k(1);
+  k(2);
+}
