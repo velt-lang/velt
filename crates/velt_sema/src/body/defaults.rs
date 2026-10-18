@@ -71,8 +71,8 @@ pub(crate) fn in_callee(cx: &mut Ctx, e: &ast::Expr, ty: TyId) -> bool {
 }
 
 /// The value of an optional parameter (`p?: T`) a call leaves out: `undefined`, as in
-/// JavaScript. The parser gives it the default `null` (`T | null`, whose `null` reads as
-/// `undefined`); a dynamic type (`any`, `unknown`) holds its own `undefined` instead, so that
+/// JavaScript. The parser gives it the default `undefined` (`T | undefined`, #930); a dynamic
+/// type (`any`, `unknown`) holds its own `undefined` instead, so that
 /// `p === undefined`, `typeof p` and printing see `undefined`. A parameter whose function
 /// applies its default itself (`in_callee`) is passed `undefined` too.
 fn optional_default(
