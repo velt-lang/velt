@@ -467,7 +467,9 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
-`undefined`.
+`undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
+number }`).
 
 ```ts
 function show(x: string | null | undefined): string {

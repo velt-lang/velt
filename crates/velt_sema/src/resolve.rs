@@ -143,10 +143,7 @@ impl Ctx<'_> {
                     }
                 }
             }
-            ast::TypeExprKind::Null => {
-                self.err("`null` alone is not a type; write `T | null`", t.span);
-                self.ty.error
-            }
+            ast::TypeExprKind::Null => self.ty.null_alone(),
             ast::TypeExprKind::Undefined => {
                 self.writes_undefined = true;
                 self.ty.undefined()
