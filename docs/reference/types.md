@@ -740,8 +740,10 @@ the nullable type; `void` cannot be a member.
     `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
     not a union, a test it always passes leaves it `never` where the test fails, when its type
     fixes the answer (numbers, strings, booleans, symbols, functions, classes, structs, arrays,
-    maps); not for `object`, which may hold a function, nor for interfaces or enums. On a value
-    whose type is a type parameter, `typeof` tells the instantiation's value at run time.
+    maps); not for `object`, which may hold a function, nor for interfaces with methods or
+    enums. On a value whose type is a type parameter (also `T | undefined`), `typeof` tells the
+    instantiation's value at run time, and `x === undefined` / `x == null` too (`T` may be
+    `undefined` or `null`); for a variable, neither boxes the value.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the

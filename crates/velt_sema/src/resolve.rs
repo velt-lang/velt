@@ -336,7 +336,7 @@ impl Ctx<'_> {
                 .is_some_and(|item| self.is_type_item(item));
         // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
         // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
-        let bigint = (name == "bigint").then_some(self.ty.never);
+        let bigint = (name == "bigint").then(|| self.ty.bigint());
         if let Some(p) = bigint.or_else(|| {
             self.ty
                 .primitive(name)

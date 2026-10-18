@@ -56,6 +56,12 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
+        // A type parameter's value (`T = undefined`, `T = string | null`): tested as the
+        // instantiation's value, like `typeof` (#1036).
+        if matches!(self.cx.ty.kind(s.ty), hir::TyKind::Param(_)) && self.any_ty().is_some() {
+            let s = self.param_as_any(s);
+            return self.dynamic_null_compare(s, word, strict, is_eq, span);
+        }
         if self.never_nullish(s.ty) {
             // TS accepts a test of a value that is never nullish (a defensive check).
             return self.never_null_compare(other, s, is_eq, span);

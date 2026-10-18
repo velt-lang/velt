@@ -53,19 +53,16 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An `any` / `unknown` where a `never` is expected (`bigint` is `never`, #1088): no value
-    /// converts, as in TypeScript (TS2322).
+    /// An `any` / `unknown` where a `never` is expected (also a `bigint`, which is `never`,
+    /// #1088): no value converts.
     fn dynamic_to_never(&mut self, h: hir::Expr) -> hir::Expr {
         let f = self.cx.display(h.ty);
-        self.cx.error(
-            Diagnostic::error(
-                format!("an `{f}` value cannot be a `never` or a `bigint`"),
-                h.span,
-            )
-            .with_note(
-                "no value has type `never`, and a `bigint` has no values in Velt yet (#1088)",
-            ),
-        );
+        let mut d = Diagnostic::error(format!("an `{f}` value cannot be a `never`"), h.span)
+            .with_note("no value has type `never`");
+        if self.cx.ty.bigint_named {
+            d = d.with_note("a `bigint` is a `never` too: it has no values in Velt yet (#1088)");
+        }
+        self.cx.error(d);
         self.error_expr(h.span)
     }
 

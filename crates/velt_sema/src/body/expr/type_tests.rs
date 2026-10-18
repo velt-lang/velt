@@ -86,11 +86,13 @@ impl FnCx<'_, '_> {
     }
 
     /// A value whose type is a type parameter as an `any` (a share of a variable), so `typeof`
-    /// tells the instantiation's value at run time (#1036); other values as they are.
-    fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+    /// tells the instantiation's value at run time (#1036); also a `T | undefined` / `T | null`
+    /// (its nothing, or the payload's tag); other values as they are.
+    pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
         let Some(any) = self
             .any_ty()
-            .filter(|_| matches!(self.cx.ty.kind(s.ty), TyKind::Param(_)))
+            .filter(|_| matches!(self.cx.ty.kind(core), TyKind::Param(_)))
         else {
             return s;
         };

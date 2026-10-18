@@ -37,3 +37,9 @@ const h = new Holder<string | null>();
 h.add("x");
 h.add(null);
 console.log(h.items.length, h.items[0], h.items[1]);
+
+function boxed<T>(v: T): any {
+  const a: any = v;
+  return a;
+}
+console.log(boxed<undefined>(undefined), boxed<null>(null), boxed(undefined) === undefined);

@@ -4,10 +4,12 @@
 //! unknown"): an option holds its payload or the dynamic `null` / `undefined`, `void` is
 //! `undefined`, a union the member it holds, a literal type its value.
 
-use velt_sema::hir::{FloatTy, LitValue, Nothing, TyId, TyKind};
+use velt_sema::hir::{self, FloatTy, LitValue, Nothing, TyId, TyKind};
+
+use super::any::TYPEOF;
 
 use crate::lower::FnLower;
-use crate::vir::{Const, Operand, Place, Rvalue, Terminator, Ty};
+use crate::vir::{Const, Operand, Place, Rvalue, Terminator, Ty, UnOp, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// Does a value of the concrete type `t` need unpacking on its way into `any`: one sema
@@ -41,6 +43,10 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(t) {
             TyKind::Literal(l) => self.any_literal_into(&l, out),
+            // `undefined` or `null` alone (an option of `never`): always its nothing.
+            TyKind::Option(inner, n) if matches!(self.cx.kind(inner), TyKind::Never) => {
+                self.any_nothing_into(n, out)
+            }
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
@@ -102,4 +108,119 @@ impl FnLower<'_, '_> {
         let t = self.cx.intern(k);
         self.any_box_into(v, t, out);
     }
+
+    /// `typeof` of a variable whose type is a type parameter, boxed only to ask it (sema's
+    /// `param_as_any`): the instantiation's tag without boxing, tested at run time only for an
+    /// option (its nothing or its payload). `None` when the box must be asked.
+    pub(super) fn typeof_folded(&mut self, a: &hir::Expr) -> Option<Operand> {
+        let local = boxed_local(a)?;
+        let t = self.sub(local.ty);
+        let TyKind::Option(inner, n) = self.cx.kind(t) else {
+            let tag = self.static_typeof(t)?;
+            return Some(self.str_lit(tag));
+        };
+        if n == Nothing::Both {
+            return None;
+        }
+        let nothing = if n.has_null() { "object" } else { "undefined" };
+        if matches!(self.cx.kind(inner), TyKind::Never) {
+            return Some(self.str_lit(nothing));
+        }
+        let some_tag = self.static_typeof(inner)?;
+        let v = self.expr(local);
+        let p = self.place_of(v, t);
+        let some = self.option_is_some(&p, t);
+        let out = Place::local(self.temp(Ty::Agg(STR_AGG)));
+        let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(some, yes, no);
+        for (b, tag) in [(yes, some_tag), (no, nothing)] {
+            self.switch_to(b);
+            let s = self.str_lit(tag);
+            self.assign(out.clone(), Rvalue::Use(s));
+            self.goto(done);
+        }
+        self.switch_to(done);
+        Some(Operand::Copy(out))
+    }
+
+    /// `a === b` / `a == b` (`loose`) of an `any` boxed from a variable (sema's
+    /// `param_as_any`) and the dynamic `undefined` or `null`: answered from the instantiation
+    /// without boxing, tested at run time only for an option. `None` when the boxes must be
+    /// compared.
+    pub(super) fn nothing_eq_folded(
+        &mut self,
+        a: &hir::Expr,
+        b: &hir::Expr,
+        loose: bool,
+    ) -> Option<Operand> {
+        let (local, lit) = match (boxed_local(a), boxed_local(b)) {
+            (Some(l), None) => (l, b),
+            (None, Some(l)) => (l, a),
+            _ => return None,
+        };
+        let lit = match &lit.kind {
+            hir::ExprKind::ToDyn { expr, .. } => expr.as_ref(),
+            _ => lit,
+        };
+        let hir::ExprKind::Lit(hir::Lit::Null) = lit.kind else {
+            return None;
+        };
+        let lt = self.sub(lit.ty);
+        let want = match self.cx.kind(lt) {
+            // The dynamic nothing is a `null` literal of an option type (`dynamic_nothing_ty`).
+            TyKind::Option(_, n) if n != Nothing::Both => n,
+            _ => return None,
+        };
+        let t = self.sub(local.ty);
+        let constant = |b| Some(Operand::Const(Const::Bool(b), Ty::Bool));
+        let TyKind::Option(inner, n) = self.cx.kind(t) else {
+            // `void` is `undefined`; any other value is not a nothing.
+            return match self.static_typeof(t)? {
+                "undefined" => constant(loose || want == Nothing::Undefined),
+                _ => constant(false),
+            };
+        };
+        if n == Nothing::Both {
+            return None;
+        }
+        if !loose && n != want {
+            return constant(false);
+        }
+        if matches!(self.cx.kind(inner), TyKind::Never) {
+            return constant(true);
+        }
+        self.static_typeof(inner)?;
+        let v = self.expr(local);
+        let p = self.place_of(v, t);
+        let some = self.option_is_some(&p, t);
+        Some(self.rvalue_temp(Ty::Bool, Rvalue::Unary(UnOp::Not, some)))
+    }
+
+    /// The `typeof` of every value of the concrete type `t`, if the type fixes it.
+    fn static_typeof(&self, t: TyId) -> Option<&'static str> {
+        match self.cx.kind(t) {
+            TyKind::Option(..) | TyKind::Dyn(..) | TyKind::Op(..) | TyKind::Param(_) => None,
+            _ if self.cx.is_union(t) => None,
+            _ if self.is_enum(t) => Some(match self.enum_strings(t) {
+                Some(_) => "string",
+                None => "number",
+            }),
+            _ => Some(TYPEOF[self.cx.any_tag(t) as usize]),
+        }
+    }
+}
+
+/// The variable `a` boxes, when `a` is an `any` made of a variable or a share of one.
+fn boxed_local(a: &hir::Expr) -> Option<&hir::Expr> {
+    let hir::ExprKind::ToDyn { expr, .. } = &a.kind else {
+        return None;
+    };
+    let local = match &expr.kind {
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+            args,
+        } if args.len() == 1 => &args[0],
+        _ => expr.as_ref(),
+    };
+    matches!(local.kind, hir::ExprKind::Local(..)).then_some(local)
 }
