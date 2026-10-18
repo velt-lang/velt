@@ -87,7 +87,7 @@ fn type_parameter_keys_cannot_start_empty_or_shrink() {
     }
     ok_src(
         "function copy<K>(r: Record<K, i64>): Record<K, i64> { return { ...r }; }
-         function get<K>(r: Record<K, i64>, k: K): i64 | null { return r[k]; }
+         function get<K>(r: Record<K, i64>, k: K): i64 | undefined { return r[k]; }
          function main() {}",
     );
 }

@@ -312,7 +312,7 @@ impl FnCx<'_, '_> {
         ))
     }
 
-    /// Is `h` the result of a standard library function or method (`Map.get`, `find`)?
+    /// Is `h` the result of a standard library function or method (`Channel.receive`)?
     pub(crate) fn std_result(&self, h: &hir::Expr) -> bool {
         match &h.kind {
             H::Call {
@@ -362,17 +362,6 @@ impl FnCx<'_, '_> {
         ) {
             if !have.within(want) {
                 let (x, y) = (have.word(), want.word());
-                if want.has_undefined() && self.std_result(found) {
-                    // TypeScript accepts it: the library gives `undefined` there (phase 3).
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("a `{f}` from the standard library where a `{e}` is expected is not supported yet (#930)"),
-                            found.span,
-                        )
-                        .with_note("the standard library still gives `null` where Node gives `undefined`; convert it with `?? undefined`"),
-                    );
-                    return;
-                }
                 self.cx.error(
                     Diagnostic::error(
                         format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),

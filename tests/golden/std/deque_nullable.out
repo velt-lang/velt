@@ -1,0 +1,12 @@
+null null [ null, 'a' ] 2
+null a undefined undefined
+[ 2, undefined ] undefined 2
+each 2
+each undefined
+[
+  null,      undefined,
+  's2',      null,
+  undefined, 's5',
+  null,      undefined,
+  's8',      null
+] null null undefined 7

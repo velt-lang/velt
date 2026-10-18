@@ -111,7 +111,7 @@ export class Db {
     if (v == null && this.kind(key) !== "none") {
       throw wrongType();
     }
-    return v;
+    return v ?? null;
   }
 
   /// SET: replaces whatever `key` held; `keepTtl` keeps its expiry.

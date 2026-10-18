@@ -68,15 +68,12 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("declare-fn", Claim::Behaviour),
     ("jsx-pragma-comment", Claim::Behaviour),
     ("int-division", Claim::Behaviour),
-    ("strict-null-eq", Claim::Behaviour),
     ("object-in-template", Claim::Behaviour),
-    ("nullable-in-template", Claim::Behaviour),
     ("default-sort", Claim::Behaviour),
     ("json-map", Claim::Behaviour),
     ("map-iter-as-array", Claim::Rejected),
     ("velt-global", Claim::Rejected),
     ("velt-member", Claim::Rejected),
-    ("undefined-into-null", Claim::Rejected),
     ("catch-unknown", Claim::Rejected),
 ];
 

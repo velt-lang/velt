@@ -13,7 +13,7 @@ class Res {
   }
 }
 
-function keep(m: Map<string, Res>): Res | null {
+function keep(m: Map<string, Res>): Res | undefined {
   return m.get("a");
 }
 

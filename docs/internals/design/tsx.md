@@ -152,7 +152,6 @@ Errors where `tsc` rejects the code:
 | `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |
 | `velt-member` | members TypeScript doesn't have: `xs.isEmpty()`, `m.upsert(…)`, `x.unwrapOr(d)`, `a.compareTo(b)`, `x.clone()`, `JSON.parse<T>(…)`, `Promise.withResolvers()` (ES2024), … | a hint per member | |
 | `map-iter-as-array` | `m.keys()`, `values()`, `entries()` used as an array (a member, an index, a declared type, a return value) | `[...m.keys()]` (a fix) | |
-| `undefined-into-null` | a value that is `undefined` in JavaScript (below) where a `T \| null` is declared: an annotated variable, a return value, an argument, a field | `?? null` (a fix) | |
 | `catch-unknown` | `e.x` in `catch (e)` where `instanceof` doesn't narrow `e` | `if (e instanceof C)` | |
 | `comparable` | `<` on a `T extends Comparable<T>` (the type itself is `velt-global`) | a comparator parameter | Planned |
 
@@ -163,11 +162,9 @@ Accepted by `tsc`, but behaves differently:
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
-| `strict-null-eq` | `=== null` / `!== null` on values that are `undefined` in JS (below) | error (a fix: `==` / `!=`) | |
 | `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
-| `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (`m.get(k)`, `xs.find(…)`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
 
@@ -194,12 +191,11 @@ Notes on the rules as built, against the issue's first design:
 - `jsx-pragma-comment` reports the pragma Velt uses: the first one in the comments before the
   first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
   comment holding only the pragma; a line comment with other text gets the finding without one.
-- Values that are `undefined` in JavaScript where Velt has `null` (for `strict-null-eq` and
-  `undefined-into-null`): `Map.get`, `find` / `findLast`, `pop` / `shift`, `at` (arrays and
-  strings), and a variable initialized with one of these. An optional field or parameter
-  (`x?: T`) and anything after `?.` were on this list until #930 phase 2 made them `undefined`
-  in Velt too. `process.env` would be one, but `process` itself is
-  `velt-global` (the baseline has no Node types).
+- `strict-null-eq`, `undefined-into-null` and `nullable-in-template` were removed with #930
+  phase 3: the standard library gives `undefined` where JavaScript does (`Map.get`, `find`,
+  `pop`, `at`, ...), so `velt check` itself reports what they reported (`=== null` on a
+  `T | undefined` warns as always false, a `T | undefined` where a `T | null` is declared is
+  TS2322), and a template prints `undefined` as JavaScript does.
 - `int-division` can only meet integer types that `velt-number-type` reports where they are
   written (or that come from another shared file), and unions of integer literal types
   (`(1 | 3)[]`, whose elements divide as integers). Its fix keeps Velt's quotient
