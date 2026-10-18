@@ -1106,8 +1106,11 @@ function makeCounter(): Counter {
   return c;
 }
 
-const fact = (n: number): number => (n <= 1 ? 1 : n * fact(n - 1));
-console.log(makeCounter().inc().inc().n, fact(5));   // 2 120
+function show(): void {
+  const fact = (n: number): number => (n <= 1 ? 1 : n * fact(n - 1));
+  console.log(makeCounter().inc().inc().n, fact(5));   // 2 120
+}
+show();
 ```
 
 - An arrow constant that names itself (`fact` above), with typed parameters (or a function
@@ -1134,7 +1137,8 @@ console.log(makeCounter().inc().inc().n, fact(5));   // 2 120
   object is done with: give it a `[Symbol.dispose]()` that clears the closure fields (or
   replaces them with closures that capture nothing) and declare it with `using`, or call that
   method yourself. A recursive arrow constant (above) holds no cycle.
-- A closure that runs on another task (a timer callback, a spawned closure) cannot capture the
-  constant before it is assigned yet: `const t = setInterval(() => clearInterval(t), 5)` in a
-  function body reports ``cannot assign to `t` after a stored closure captured it``. At module
-  level it works (`t` is module state).
+- Not supported yet: a closure that runs on another task (a timer callback, a spawned
+  closure) using the constant it initializes (`const t = setInterval(() => clearInterval(t),
+  5)` reports ``…is used by a closure in its own initializer, which cannot share it``), and a
+  module-level constant other than a recursive arrow whose closures use it
+  (``module-level constant refers to itself``) (#1292). The cycle is tracked in #1291.

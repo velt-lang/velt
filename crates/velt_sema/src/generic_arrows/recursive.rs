@@ -114,7 +114,7 @@ mod tests {
         let (m, d) = velt_syntax::parse_file(FileId(0), src);
         assert!(d.is_empty(), "{d:?}");
         match m.items.into_iter().next().map(|i| i.kind) {
-            Some(ast::ItemKind::Var(v)) => *v,
+            Some(ast::ItemKind::Var(v)) => v,
             _ => panic!("not a constant"),
         }
     }

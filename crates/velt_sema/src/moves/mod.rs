@@ -557,7 +557,7 @@ impl Moves<'_> {
                 span,
             )
             .with_note(why)
-            .with_note("this is not supported yet (#750)"),
+            .with_note("this is not supported yet (#1292)"),
         );
     }
 
