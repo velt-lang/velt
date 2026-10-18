@@ -410,8 +410,8 @@ shape is only known at run time.
 
 One growing call is allowed: in the `then` branch of `if (g(x))`, where `g` is a type predicate
 whose type has only primitive members (`v is string | number | null`) and `x` has the type of
-the parameter that grows, when the grown argument is an object type (an object type, class,
-array, tuple, map or function type). An instantiation whose argument is such an object type
+the parameter that grows, when the grown argument is an object type (a struct, class, object
+type, array, tuple, map or function type). An instantiation whose argument is such an object type
 does not compile that branch (`g(x)` still runs; if it returns `true`, which its type rules
 out, the program stops with a `TypeError`), so the recursion ends there. An argument that may
 hold a primitive (a union with a primitive member, `any`, `unknown`) keeps the branch.
