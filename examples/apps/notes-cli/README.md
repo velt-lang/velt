@@ -24,7 +24,7 @@ ids print `notes: <message>` and exit 2.
 | `src/commands.vlt` | argv → one command → output lines (testable without a process) |
 | `src/main.vlt` | process glue: args, `$NOTES_DB`, clock, exit code |
 | `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | scripted session; a golden in `cargo test -p veltc --test golden` |
+| `demo.vlt` / `demo.out` | scripted session; a golden in `cargo test --workspace --test golden` |
 
 Tests and the demo import the sources as `"@notes/commands"` through the `paths` alias
 `"@notes/*": "src/*"` in `package.vlt`.

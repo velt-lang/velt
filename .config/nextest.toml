@@ -34,7 +34,8 @@ binary(wasm_goldens) | binary(native_packages) | binary(reload) | binary(debugge
 """
 test-group = "end-to-end"
 
-# The slowest tests (a minute or more each) start first, so they don't finish alone at the end.
+# The slowest tests (a minute or more each; the parser's robustness shards with
+# VELT_ROBUSTNESS=full) start first, so they don't finish alone at the end.
 [[profile.default.overrides]]
 filter = """
 test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \

@@ -13,35 +13,176 @@ fn kitchen_sink_parses_cleanly() {
     assert!(dumped.contains("Module"));
 }
 
-/// Every prefix of every golden file and of the kitchen sink must parse without panicking.
+/// Cutting a file anywhere must not panic the parser: each cut parses what is before it and what
+/// is after it.
 ///
-/// Quadratic in the file sizes, so the work is cut into shards, one test each: a parallel test
-/// runner runs them as separate processes (threads in one process mostly wait on each other in
-/// the kernel, allocating and freeing the parser's large buffers).
+/// Every cut of every golden would be quadratic in the file sizes (each cut parses the whole
+/// file), and it was the slowest test of the gate. So by default the full every-character sweep
+/// covers the kitchen sink and the goldens the change touches (`VELT_ROBUSTNESS_FILES`, set by
+/// `cargo xtask check` from the changed paths: comma-separated paths relative to the workspace
+/// root, such as `tests/golden/lang/foo.vlt`), and every other golden is cut where each token
+/// starts or ends, within its top-level item, plus a deterministic sample of the characters,
+/// within the whole file ([`sampled_cuts`]). `VELT_ROBUSTNESS=full` sweeps every character of
+/// every file; the nightly gate sets it, and `cargo xtask check` does for a change to the parser
+/// (velt_syntax) or velt_common.
+///
+/// The work is cut into shards, one test each: a parallel test runner runs them as separate
+/// processes (threads in one process mostly wait on each other in the kernel, allocating and
+/// freeing the parser's large buffers).
 fn prefixes_never_panic(shard: usize) {
-    let mut sources: Vec<String> = golden_files()
+    // One thread with the parser's stack for the whole shard instead of one per parse.
+    velt_syntax::with_parser_stack(|| sweep(shard));
+}
+
+fn sweep(shard: usize) {
+    let full = match std::env::var("VELT_ROBUSTNESS").as_deref() {
+        Ok("full") => true,
+        Ok("" | "sample") | Err(_) => false,
+        Ok(other) => panic!("VELT_ROBUSTNESS={other}: expected `full` or `sample`"),
+    };
+    let touched = std::env::var("VELT_ROBUSTNESS_FILES").unwrap_or_default();
+    let touched: Vec<&str> = touched.split(',').map(str::trim).collect();
+    let root = workspace_root();
+    let mut sources: Vec<(String, String)> = golden_files()
         .iter()
-        .map(|f| std::fs::read_to_string(f).unwrap())
+        .map(|f| {
+            let rel = f.strip_prefix(&root).unwrap_or(f).to_string_lossy();
+            (rel.replace('\\', "/"), std::fs::read_to_string(f).unwrap())
+        })
         .collect();
-    sources.push(KITCHEN_SINK.to_string());
+    sources.push(("kitchen sink".into(), KITCHEN_SINK.to_string()));
     const CHUNK: usize = 64;
     let mut k = 0;
-    for src in &sources {
-        let positions: Vec<usize> = src.char_indices().map(|(i, _)| i).collect();
-        for chunk in positions.chunks(CHUNK) {
+    for (path, src) in &sources {
+        let every_char = full || path == "kitchen sink" || touched.contains(&path.as_str());
+        let cuts = if every_char {
+            src.char_indices().map(|(i, _)| (0, i, src.len())).collect()
+        } else {
+            sampled_cuts(path, src)
+        };
+        for chunk in cuts.chunks(CHUNK) {
             k += 1;
             if k % PREFIX_SHARDS != shard {
                 continue;
             }
-            for &i in chunk {
-                let _ = parse(&src[..i]);
-                let _ = parse(&src[i..]);
+            for &cut in chunk {
+                parse_cut(path, src, cut, |text| {
+                    let _ = parse(text);
+                });
             }
         }
     }
 }
 
-const PREFIX_SHARDS: usize = 8;
+/// Parses both sides of the cut `(lo, at, hi)` of `src` (the file at `path`) with `parse`. A panic
+/// is raised again with the file, the cut and the side in its message: the panicking parse
+/// itself shows only the parser's panic, and with the sampled sweep many panics surface only in
+/// the nightly full sweep, so the message is what one reproduces them from.
+fn parse_cut(path: &str, src: &str, (lo, at, hi): (usize, usize, usize), parse: impl Fn(&str)) {
+    for (side, range) in [("before", lo..at), ("after", at..hi)] {
+        let (start, end) = (range.start, range.end);
+        let text = &src[range];
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(text)))
+        {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("(no message)");
+            panic!(
+                "the parser panicked on {path} cut at byte {at} (lo {lo}, hi {hi}): parsing the \
+                 text {side} the cut, bytes {start}..{end}: {message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_panic_in_the_sweep_names_the_file_and_the_cut() {
+    let src = "let a = 1;\nlet b = 2;\n";
+    let cut = (0, 4, src.len());
+    let caught = std::panic::catch_unwind(|| {
+        parse_cut("tests/golden/lang/x.vlt", src, cut, |text| {
+            if text.starts_with("a =") {
+                panic!("deliberate");
+            }
+        });
+    });
+    let payload = caught.expect_err("the parse panics");
+    let message = payload
+        .downcast_ref::<String>()
+        .expect("a formatted message");
+    assert_eq!(
+        message,
+        "the parser panicked on tests/golden/lang/x.vlt cut at byte 4 (lo 0, hi 22): parsing the \
+         text after the cut, bytes 4..22: deliberate"
+    );
+    // No panic: both sides parse.
+    parse_cut("tests/golden/lang/x.vlt", src, cut, |_| {});
+}
+
+/// Besides the token boundaries, one character in this many is cut, within its item.
+const ITEM_STRIDE: usize = 7;
+/// One character in this many is cut with the rest of the file after it.
+const FILE_STRIDE: usize = 41;
+
+/// The cuts `(lo, at, hi)` of a golden outside the change: `src[lo..at]` and `src[at..hi]` are
+/// parsed. `lo` is the start of the top-level item around the cut (an item runs from its start
+/// to the next item's, comments included): the parser is at the top level between items, so
+/// what comes before the item doesn't matter to the cut, and the cost per cut is the item's
+/// size instead of the file's.
+///
+/// - Where each token starts or ends (as the lexer sees the file), and every [`ITEM_STRIDE`]th
+///   character (inside strings, comments and JSX text, which have few token boundaries): `hi` is
+///   the end of the item.
+/// - Every [`FILE_STRIDE`]th character: `hi` is the end of the file, which covers what a cut does
+///   to the rest of it (a cut inside a string or template turns the code after it inside out).
+///
+/// The character samples start at an offset that depends on the file's path, so they are the
+/// same on every run and every machine while different files cover different offsets.
+fn sampled_cuts(path: &str, src: &str) -> Vec<(usize, usize, usize)> {
+    let mut starts: Vec<usize> = parse(src)
+        .0
+        .items
+        .iter()
+        .map(|item| item.span.lo as usize)
+        .filter(|&lo| lo < src.len())
+        .collect();
+    starts.push(0);
+    starts.sort_unstable();
+    starts.dedup();
+    let item_around = |at: usize| {
+        let k = starts.partition_point(|&s| s <= at) - 1;
+        (starts[k], starts.get(k + 1).copied().unwrap_or(src.len()))
+    };
+    // FNV-1a: stable everywhere, unlike the standard library's hasher.
+    let hash = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let sample = |stride: usize| {
+        let offset = (hash % stride as u64) as usize;
+        src.char_indices()
+            .skip(offset)
+            .step_by(stride)
+            .map(|(at, _)| at)
+    };
+    let mut in_item = std::collections::BTreeSet::new();
+    for r in velt_syntax::token_ranges(src) {
+        in_item.extend([r.start as usize, r.end as usize]);
+    }
+    in_item.extend(sample(ITEM_STRIDE));
+    let in_item = in_item
+        .into_iter()
+        .filter(|&at| at < src.len() && src.is_char_boundary(at))
+        .map(|at| {
+            let (lo, hi) = item_around(at);
+            (lo, at, hi)
+        });
+    let to_end = sample(FILE_STRIDE).map(|at| (item_around(at).0, at, src.len()));
+    in_item.chain(to_end).collect()
+}
+
+const PREFIX_SHARDS: usize = 4;
 
 macro_rules! prefix_shards {
     ($($name:ident = $shard:literal),*) => {
@@ -58,11 +199,7 @@ prefix_shards!(
     prefixes_never_panic_0 = 0,
     prefixes_never_panic_1 = 1,
     prefixes_never_panic_2 = 2,
-    prefixes_never_panic_3 = 3,
-    prefixes_never_panic_4 = 4,
-    prefixes_never_panic_5 = 5,
-    prefixes_never_panic_6 = 6,
-    prefixes_never_panic_7 = 7
+    prefixes_never_panic_3 = 3
 );
 
 #[test]

@@ -1,0 +1,40 @@
+// Map / Set keys and includes keep an object's identity through Object.assign onto it (class
+// instance, object type, Record, null-prototype Record); Object.is and SameValueZero side by side.
+class Box {
+  a = 1;
+  b = 0;
+}
+
+type Pt = { x: number; y: number };
+const target = new Box();
+const m = new Map<Box, string>();
+const s = new Set<Box>();
+m.set(target, "t");
+s.add(target);
+const r = Object.assign(target, { b: 2 });
+console.log(m.get(target), m.get(r), s.has(target), s.has(r), r === target, target.b);
+const other = new Box();
+other.b = 2;
+console.log(m.has(other), s.has(other));
+m.set(r, "r");
+console.log(m.size, m.get(target));
+const p: Pt = { x: 1, y: 2 };
+const pm = new Map<Pt, number>([[p, 7]]);
+const p2 = Object.assign(p, { y: 3 });
+console.log(pm.get(p), pm.get(p2), pm.has({ x: 1, y: 3 }), [p].includes(p2));
+const rec: Record<string, number> = { a: 1 };
+const rm = new Map<Record<string, number>, string>([[rec, "rec"]]);
+const rec2 = Object.assign(rec, { b: 2 });
+console.log(rm.get(rec), rm.get(rec2), rm.has({ a: 1, b: 2 }), rec2 === rec);
+console.log(Object.is(NaN, NaN), Object.is(0, -0), [NaN].includes(NaN), [0].includes(-0));
+const nm = new Map<number, string>([
+  [NaN, "nan"],
+  [0, "zero"],
+]);
+console.log(nm.get(NaN), nm.get(-0), new Set([0, -0, NaN, NaN]).size);
+const t1: [number, string] = [-0, "a"];
+console.log(Object.is(t1[0], 0));
+const n1: Record<string, number> = Object.create(null);
+const nmap = new Map<Record<string, number>, number>([[n1, 1]]);
+Object.assign(n1, { z: 1 });
+console.log(nmap.get(n1), Object.is(n1, n1));

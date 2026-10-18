@@ -46,11 +46,21 @@ pub enum Intrinsic {
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
     /// any more must be cut off with it before the array is dropped.
     ArraySetLen,
-    /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
+    /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
+    /// keys): numbers, bool and strings by value, objects by identity, unions, options and
+    /// tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`
-    /// keys, `deepEqual`, `assertEq`
+    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`,
+    /// `deepEqual`, `assertEq`
     Eq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
+    /// (`__intrinsic_key_eq`): `Same` with floats compared so that `NaN` equals itself and `0`
+    /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
+    KeyEq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
+    /// (`__intrinsic_includes_eq`): `Same`, except that a number `NaN` equals `NaN` (a number
+    /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
+    IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
     /// class instances, arrays, object types, interface and function values — by identity;
     /// `T | null`, unions and tuples part by part; strings and numbers by value
