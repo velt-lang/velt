@@ -64,7 +64,13 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(k), Rvalue::Use(next));
         let s = self.share_value(Operand::Copy(ep), elem);
         let evt = self.cx.ty(elem);
-        let e = Place::local(self.copy_to_temp(s, evt));
+        // An element of a zero-sized type (a single literal type, `"a"[]`) has no value to
+        // copy: the binding reads a placeholder byte.
+        let e = if evt == Ty::Unit {
+            Place::local(self.temp(Ty::U8))
+        } else {
+            Place::local(self.copy_to_temp(s, evt))
+        };
         if consume {
             self.bind_pat(binding, &e, elem, true);
             self.own_rest(e, elem, Rc::new(binding.clone()));
