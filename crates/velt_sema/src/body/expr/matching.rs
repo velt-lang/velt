@@ -407,14 +407,35 @@ impl FnCx<'_, '_> {
         };
         let sty = s.ty;
         let some = self.pat(P::Binding(l, mode), payload, span);
+        // An option of a type parameter that allows `undefined` (`x?: T`): at `T = X | null`
+        // the present value may be `null`, which `??` replaces too, as in JavaScript. The
+        // payload is tested at run time for the instantiated type (`Intrinsic::IsNullish`).
+        let (guard, rest) = match self.param_payload(sty)
+            && self
+                .cx
+                .ty
+                .nothing_of(sty)
+                .is_some_and(|n| n.has_undefined())
+        {
+            true => {
+                let b = self.cx.ty.bool_;
+                let bound = self.mk(H::Local(l, UseMode::Borrow), payload, span);
+                let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
+                (
+                    Some(self.negated(test, true, span)),
+                    self.pat(P::Wildcard, sty, span),
+                )
+            }
+            false => (None, self.nothing_pat(sty, span)),
+        };
         let arms = vec![
             hir::Arm {
                 pat: self.present_pat(some, sty, span),
-                guard: None,
+                guard,
                 body: v,
             },
             hir::Arm {
-                pat: self.nothing_pat(sty, span),
+                pat: rest,
                 guard: None,
                 body: d,
             },
