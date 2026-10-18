@@ -105,3 +105,8 @@ console.log(sn.size, sn.has(NaN), sn.has(-0), ss.size, ss.has("a"));
 const wm = new WeakMap<P, number>();
 wm.set(p, 7);
 console.log(wm.get(p), wm.has({ x: 1, y: 2 }));
+
+// `includes` compares as keys do (SameValueZero), `indexOf` as `===`.
+const cs = [c1, new C(1)];
+console.log(cs.includes(c1), cs.includes(new C(1)), cs.indexOf(c1), [NaN].includes(NaN));
+console.log([NaN].indexOf(NaN), [0].includes(-0), ps.includes(p), ps.includes({ ...p }));

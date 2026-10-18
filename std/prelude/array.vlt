@@ -312,12 +312,17 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
-   * `includes`, `NaN` is never found.
+   * appropriate. Compares as `Map` keys do (JS's SameValueZero): like `indexOf` (objects by
+   * identity), except that `NaN` finds `NaN`.
    * @param x - The element to search for.
    */
   includes(x: T): bool {
-    return this.indexOf(x) >= 0;
+    for (let i: usize = 0; i < this.length; i++) {
+      if (__intrinsic_key_eq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

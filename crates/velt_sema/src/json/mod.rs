@@ -232,11 +232,17 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
         } => u.direct.push((e.ty, e.span, Need::Json(true))),
         E::Call {
             callee:
-                Callee::Intrinsic(i @ (Intrinsic::Print | Intrinsic::PrintErr | Intrinsic::Same)),
+                Callee::Intrinsic(
+                    i @ (Intrinsic::Print
+                    | Intrinsic::PrintErr
+                    | Intrinsic::Same
+                    | Intrinsic::KeyEq),
+                ),
             args,
         } if looks => {
             let how = match i {
-                Intrinsic::Same => Seen::Identity,
+                // `KeyEq`: `includes` (and `Map` keys, which `Hash` shows too).
+                Intrinsic::Same | Intrinsic::KeyEq => Seen::Identity,
                 _ => Seen::Printed,
             };
             for a in args {
