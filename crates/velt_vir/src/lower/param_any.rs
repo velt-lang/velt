@@ -9,7 +9,7 @@ use velt_sema::hir::{self, FloatTy, LitValue, Nothing, TyId, TyKind};
 use super::any::TYPEOF;
 
 use crate::lower::FnLower;
-use crate::vir::{Const, Operand, Place, Rvalue, Terminator, Ty, UnOp, STR_AGG};
+use crate::vir::{Const, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// Does a value of the concrete type `t` need unpacking on its way into `any`: one sema
@@ -141,59 +141,6 @@ impl FnLower<'_, '_> {
         }
         self.switch_to(done);
         Some(Operand::Copy(out))
-    }
-
-    /// `a === b` / `a == b` (`loose`) of an `any` boxed from a variable (sema's
-    /// `param_as_any`) and the dynamic `undefined` or `null`: answered from the instantiation
-    /// without boxing, tested at run time only for an option. `None` when the boxes must be
-    /// compared.
-    pub(super) fn nothing_eq_folded(
-        &mut self,
-        a: &hir::Expr,
-        b: &hir::Expr,
-        loose: bool,
-    ) -> Option<Operand> {
-        let (local, lit) = match (boxed_local(a), boxed_local(b)) {
-            (Some(l), None) => (l, b),
-            (None, Some(l)) => (l, a),
-            _ => return None,
-        };
-        let lit = match &lit.kind {
-            hir::ExprKind::ToDyn { expr, .. } => expr.as_ref(),
-            _ => lit,
-        };
-        let hir::ExprKind::Lit(hir::Lit::Null) = lit.kind else {
-            return None;
-        };
-        let lt = self.sub(lit.ty);
-        let want = match self.cx.kind(lt) {
-            // The dynamic nothing is a `null` literal of an option type (`dynamic_nothing_ty`).
-            TyKind::Option(_, n) if n != Nothing::Both => n,
-            _ => return None,
-        };
-        let t = self.sub(local.ty);
-        let constant = |b| Some(Operand::Const(Const::Bool(b), Ty::Bool));
-        let TyKind::Option(inner, n) = self.cx.kind(t) else {
-            // `void` is `undefined`; any other value is not a nothing.
-            return match self.static_typeof(t)? {
-                "undefined" => constant(loose || want == Nothing::Undefined),
-                _ => constant(false),
-            };
-        };
-        if n == Nothing::Both {
-            return None;
-        }
-        if !loose && n != want {
-            return constant(false);
-        }
-        if matches!(self.cx.kind(inner), TyKind::Never) {
-            return constant(true);
-        }
-        self.static_typeof(inner)?;
-        let v = self.expr(local);
-        let p = self.place_of(v, t);
-        let some = self.option_is_some(&p, t);
-        Some(self.rvalue_temp(Ty::Bool, Rvalue::Unary(UnOp::Not, some)))
     }
 
     /// The `typeof` of every value of the concrete type `t`, if the type fixes it.

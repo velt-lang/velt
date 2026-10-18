@@ -34,9 +34,6 @@ enum AnyCmp {
 impl FnLower<'_, '_> {
     /// `a === b` (`loose`: `a == b`) of two `any`s.
     pub(super) fn any_eq(&mut self, a: &hir::Expr, b: &hir::Expr, loose: bool) -> Operand {
-        if let Some(v) = self.nothing_eq_folded(a, b, loose) {
-            return v;
-        }
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
         if !self.primitive_operand(a) && !self.primitive_operand(b) {
             self.cx.note_any_identity();

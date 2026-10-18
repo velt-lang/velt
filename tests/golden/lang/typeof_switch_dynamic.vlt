@@ -1,0 +1,37 @@
+// check: no leaks
+// `switch (typeof x)` on an `any`, `unknown` or `object` value tests the run-time `typeof`, as
+// `typeof x === "..."` does, and as in Node.
+function k(x: any): string {
+  switch (typeof x) {
+    case "string":
+      return "S";
+    case "number":
+      return "N";
+    default:
+      return "D";
+  }
+}
+
+function ku(x: unknown): string {
+  switch (typeof x) {
+    case "string":
+    case "boolean":
+      return "SB";
+    default:
+      return "D";
+  }
+}
+
+function ko(x: object): string {
+  switch (typeof x) {
+    case "function":
+      return "F";
+    default:
+      return "D";
+  }
+}
+
+function main(): void {
+  const a: any = "hi";
+  console.log(k(a), k(3), k(true), ku("x"), ku(false), ku(1), ko(() => 1), ko({}));
+}

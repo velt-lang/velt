@@ -11,7 +11,7 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{DefId, LocalId, Nothing, TyId, TyKind};
+use crate::hir::{DefId, LocalId, Nothing, TyId};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
@@ -573,7 +573,7 @@ impl FnCx<'_, '_> {
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
         } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
-            && typeof_exact(self.cx, u)
+            && crate::unions::typeof_exact(self.cx, u)
             && pred(self.cx, u)
         {
             // A test every value passes (`typeof x === "string"` on a `string`, which may be a
@@ -687,6 +687,16 @@ pub(crate) fn is_null(e: &ast::Expr) -> bool {
     nothing_word(e).is_some()
 }
 
+/// `null`, `undefined`, or a conditional whose arms are only those
+/// (`i > 2 ? null : undefined`): an expression whose type comes from the other values.
+pub(crate) fn only_nothings(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => only_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => only_nothings(then) && only_nothings(els),
+        _ => is_null(e),
+    }
+}
+
 /// `"null"` / `"undefined"` for those literals (possibly parenthesized).
 pub(crate) fn nothing_word(e: &ast::Expr) -> Option<&'static str> {
     match &e.kind {
@@ -753,29 +763,6 @@ pub(crate) fn literal_of(e: &ast::Expr) -> Option<ast::SignedLit> {
         },
         ast::ExprKind::Paren(inner) => literal_of(inner),
         _ => None,
-    }
-}
-
-/// Does the static type `t` fix the run-time `typeof` of its values? Not for `object`,
-/// `Function`, `any` / `unknown` or an interface value (which may hold a function), a type
-/// parameter (any instantiation), an enum (a number or a string) or a deferred type.
-fn typeof_exact(cx: &crate::ctx::Ctx, t: TyId) -> bool {
-    let t = cx.brand_base(t).unwrap_or(t);
-    match cx.ty.kind(t) {
-        TyKind::Int(_)
-        | TyKind::Float(_)
-        | TyKind::Str
-        | TyKind::Bool
-        | TyKind::Symbol
-        | TyKind::Literal(_)
-        | TyKind::FnPtr { .. }
-        | TyKind::Closure(_)
-        | TyKind::Array(_)
-        | TyKind::Tuple(_)
-        | TyKind::Map(..)
-        | TyKind::Promise(..) => true,
-        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
-        _ => false,
     }
 }
 

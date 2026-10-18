@@ -56,11 +56,16 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
-        // A type parameter's value (`T = undefined`, `T = string | null`): tested as the
-        // instantiation's value, like `typeof` (#1036).
-        if matches!(self.cx.ty.kind(s.ty), hir::TyKind::Param(_)) && self.any_ty().is_some() {
-            let s = self.param_as_any(s);
-            return self.dynamic_null_compare(s, word, strict, is_eq, span);
+        // A type parameter (or a union with one, `T | string`): which nothings the value holds
+        // depends on the instantiation (`T = number | null`), so the test is made there.
+        if self.param_shaped(s.ty) {
+            let b = self.cx.ty.bool_;
+            let e = match (strict, word) {
+                (true, "null") => self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span),
+                (true, _) => self.undefined_test(s, span),
+                _ => self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span),
+            };
+            return self.negated(e, !is_eq, span);
         }
         if self.never_nullish(s.ty) {
             // TS accepts a test of a value that is never nullish (a defensive check).
@@ -69,14 +74,26 @@ impl FnCx<'_, '_> {
         // An option of a type parameter that allows `undefined` (`x?: T`): which nothings the
         // value can hold depends on the instantiation (`T = string | null` holds `null` too), so
         // the test is made there. (A `T | null` keeps its one test: its `null` is `T`'s too.)
+        // So is a union with a type parameter among its members (`T | string | undefined` at
+        // `T = number | null` holds `null` as its `T` member, #1268).
         if self.param_payload(s.ty) {
+            let union = self.param_union(s.ty);
             match (strict, word, self.cx.ty.nothing_of(s.ty)) {
                 (true, "null", Some(Nothing::Undefined)) => {
                     let b = self.cx.ty.bool_;
                     let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
                     return self.negated(e, !is_eq, span);
                 }
-                (false, _, Some(n)) if n.has_undefined() => {
+                (true, "null", Some(_)) if union => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (true, "undefined", Some(Nothing::Undefined)) if union => {
+                    let e = self.undefined_test(s, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (false, _, Some(n)) if n.has_undefined() || union => {
                     let b = self.cx.ty.bool_;
                     let e = self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span);
                     return self.negated(e, !is_eq, span);
@@ -167,6 +184,52 @@ impl FnCx<'_, '_> {
         members
             .iter()
             .any(|m| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_)))
+    }
+
+    /// Is `t` a union (or an option of one) with a type parameter among its members?
+    pub(super) fn param_union(&mut self, t: TyId) -> bool {
+        let core = self.cx.ty.core(t).unwrap_or(t);
+        let members = self.cx.union_members(core).unwrap_or_default();
+        let is_param = |m: &TyId| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_));
+        members.iter().any(is_param)
+    }
+
+    /// Is `t` a type parameter, or a union (not an option) with one among its members?
+    pub(super) fn param_shaped(&mut self, t: TyId) -> bool {
+        if self.cx.ty.opt_payload(t).is_some() {
+            return false;
+        }
+        matches!(self.cx.ty.kind(t), hir::TyKind::Param(_)) || self.param_union(t)
+    }
+
+    /// `s === undefined` of a `T | string | undefined` (`param_union`), tested for the
+    /// instantiated type: nullish and not `null`.
+    pub(super) fn undefined_test(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        let (sty, b) = (s.ty, self.cx.ty.bool_);
+        let (l, mode) = self.option_binding(&s, sty, "<tested>", false);
+        let mut s = s;
+        if mode == UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let v = |this: &Self| this.mk(H::Local(l, UseMode::Borrow), sty, span);
+        let nullish = self.intrinsic(hir::Intrinsic::IsNullish, vec![v(self)], b, span);
+        let null = self.intrinsic(hir::Intrinsic::IsNull, vec![v(self)], b, span);
+        let not_null = self.negated(null, true, span);
+        let test = H::Logical {
+            op: hir::LogicOp::And,
+            lhs: Box::new(nullish),
+            rhs: Box::new(not_null),
+        };
+        let arms = vec![hir::Arm {
+            pat: self.pat(P::Binding(l, mode), sty, span),
+            guard: None,
+            body: self.mk(test, b, span),
+        }];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, b, span)
     }
 
     /// `s`, evaluated, then `value`.
@@ -306,6 +369,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.test_operand(lhs, None, Want::Borrow);
+        if self.param_shaped(s.ty) {
+            return self.param_nullish(s, rhs, span);
+        }
         if self.never_nullish(s.ty) {
             // TS accepts `??` on a value that is never nullish: the value itself.
             return self.never_null_nullish(lhs, s, rhs, span);
@@ -446,11 +512,12 @@ impl FnCx<'_, '_> {
         // the present value may be `null`, which `??` replaces too, as in JavaScript. The
         // payload is tested at run time for the instantiated type (`Intrinsic::IsNullish`).
         let (guard, rest) = match self.param_payload(sty)
-            && self
-                .cx
-                .ty
-                .nothing_of(sty)
-                .is_some_and(|n| n.has_undefined())
+            && (self.param_union(sty)
+                || self
+                    .cx
+                    .ty
+                    .nothing_of(sty)
+                    .is_some_and(|n| n.has_undefined()))
         {
             true => {
                 let b = self.cx.ty.bool_;
