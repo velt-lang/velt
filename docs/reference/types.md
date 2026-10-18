@@ -717,7 +717,9 @@ the nullable type; `void` cannot be a member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
-    until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    until it is reassigned; `a || b` narrows to the members either side allows
+    (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
+    `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed by these tests ([Null](#null-and-undefined)).
   - Assigning a member's value narrows to that member until the next assignment or join, also
     in the declaration (`let u: string | number = "x"; u.length`, `else { p = new B(); }
