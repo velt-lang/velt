@@ -39,11 +39,10 @@ impl Ctx<'_> {
             {
                 written_nothing(members)
             }
-            _ => None,
-        };
-        let Some(nothing) = nothing else {
-            self.recursive_unions.insert(a, None);
-            return None;
+            _ => {
+                self.recursive_unions.insert(a, None);
+                return None;
+            }
         };
         let module = self.aliases[a as usize].module;
         let info = EnumInfo {
@@ -155,9 +154,9 @@ impl Ctx<'_> {
     }
 }
 
-/// The `null` / `undefined` written among a union's members (`Some(None)`: neither); `None`
-/// when both are (not supported yet: the alias is left to the usual error).
-fn written_nothing(members: &[ast::TypeExpr]) -> Option<Option<Nothing>> {
+/// The `null` / `undefined` written among a union's members: `None` for neither, the
+/// three-state `Nothing::Both` for both (#1250).
+fn written_nothing(members: &[ast::TypeExpr]) -> Option<Nothing> {
     let null = members
         .iter()
         .any(|m| matches!(m.kind, ast::TypeExprKind::Null));
@@ -165,9 +164,9 @@ fn written_nothing(members: &[ast::TypeExpr]) -> Option<Option<Nothing>> {
         .iter()
         .any(|m| matches!(m.kind, ast::TypeExprKind::Undefined));
     match (null, undefined) {
-        (true, true) => None,
-        (true, false) => Some(Some(Nothing::Null)),
-        (false, true) => Some(Some(Nothing::Undefined)),
-        (false, false) => Some(None),
+        (true, true) => Some(Nothing::Both),
+        (true, false) => Some(Nothing::Null),
+        (false, true) => Some(Nothing::Undefined),
+        (false, false) => None,
     }
 }

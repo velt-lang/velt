@@ -5,7 +5,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::{is_null, nothing_word};
+use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
@@ -672,7 +672,7 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || is_null(e);
+        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);
@@ -714,14 +714,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if let Some(word) = nothing_word(second) {
-            let n = if word == "null" {
-                Nothing::Null
-            } else {
-                Nothing::Undefined
-            };
-            if self.cx.ty.opt_payload(first.ty).is_none() {
-                return Some(self.cx.ty.option_of(first.ty, n));
+        if let Some(n) = written_nothings(second) {
+            match self.cx.ty.nothing_of(first.ty) {
+                None => return Some(self.cx.ty.option_of(first.ty, n)),
+                // `c ? undefined : x` against a `T | null` (or the reverse): both nothings
+                // (#1218).
+                Some(m) if !n.within(m) => {
+                    let core = self.cx.ty.core(first.ty).unwrap_or(first.ty);
+                    return Some(self.cx.ty.option_of(core, m.join(n)));
+                }
+                Some(_) => {}
             }
         }
         Some(first.ty)
@@ -773,5 +775,23 @@ impl FnCx<'_, '_> {
         }
         let span = t.span.to(f.span);
         self.union_join(t, f, span)
+    }
+}
+
+/// The `null` / `undefined` literals `e` may give: itself, or the arms of a conditional
+/// (`c ? null : undefined`), so the branch is checked against a type holding them.
+fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => written_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => {
+            match (written_nothings(then), written_nothings(els)) {
+                (Some(a), Some(b)) => Some(a.join(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        _ => nothing_word(e).map(|w| match w {
+            "null" => Nothing::Null,
+            _ => Nothing::Undefined,
+        }),
     }
 }
