@@ -1,0 +1,4 @@
+// `Array.isArray` of a `JsonValue` is its `isArray()`, as Node answers for `JSON.parse`'s value.
+const list: JsonValue = JSON.parse("[1, 2]");
+const obj: JsonValue = JSON.parse("{\"a\": [1]}");
+console.log(Array.isArray(list), Array.isArray(obj), Array.isArray(obj.get("a")));

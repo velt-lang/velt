@@ -16,7 +16,7 @@ use crate::hir::{self, AdtKind, DefId, TyId, TyKind};
 use crate::symbols::Presence;
 
 /// The members of `Object.prototype`, which `k in o` finds on every object (Node 22).
-const OBJECT_PROTOTYPE: [&str; 12] = [
+pub(super) const OBJECT_PROTOTYPE: [&str; 12] = [
     "__defineGetter__",
     "__defineSetter__",
     "__lookupGetter__",
@@ -293,7 +293,12 @@ impl FnCx<'_, '_> {
             KeyKind::Converted => syn.call(syn.name("String"), vec![lhs.clone()]),
             _ => lhs.clone(),
         };
-        let test = syn.call(syn.name("__recordIn"), vec![key, rhs.clone()]);
+        // A record made by `Object.create(null)` inherits nothing (`hir::Program::null_proto_records`).
+        let helper = match self.cx.objects.null_proto_records {
+            true => "__recordInMaybeNullProto",
+            false => "__recordIn",
+        };
+        let test = syn.call(syn.name(helper), vec![key, rhs.clone()]);
         self.expr(&test, None, Want::Move)
     }
 }

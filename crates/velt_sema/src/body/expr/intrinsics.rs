@@ -33,6 +33,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "hash" => I::Hash,
         "eq" => I::Eq,
         "same" => I::Same,
+        "same_value" => I::SameValue,
         "clone" => I::Clone,
         "share" => I::Share,
         "transfer" => I::Transfer,
@@ -168,7 +169,7 @@ impl FnCx<'_, '_> {
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
+            I::Eq | I::Same | I::SameValue => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
             I::NeedsTransfer

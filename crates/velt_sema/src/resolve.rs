@@ -334,11 +334,14 @@ impl Ctx<'_> {
             && self
                 .lookup_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
-        if let Some(p) = self
-            .ty
-            .primitive(name)
-            .filter(|_| !simd_outside_std && !shadowed)
-        {
+        // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
+        // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
+        let bigint = (name == "bigint").then(|| self.ty.bigint());
+        if let Some(p) = bigint.or_else(|| {
+            self.ty
+                .primitive(name)
+                .filter(|_| !simd_outside_std && !shadowed)
+        }) {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
