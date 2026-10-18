@@ -109,6 +109,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
+  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
+  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
+  `T = U | null` a `null` is a `T`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after

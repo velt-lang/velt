@@ -1,0 +1,58 @@
+// check: no leaks
+// `as` assertions that narrow (#893): a `T | null` as `T`, and a union as one of its members.
+// TypeScript trusts them; Velt checks them like `x!` (as_narrowing_panics.vlt), so a
+// value of the wrong type never reads as the asserted one.
+interface Ctx {
+  name: string;
+  depth: number;
+}
+
+interface Options {
+  label: string;
+}
+
+function contextOf(options: Ctx | Options, isCtx: boolean): string {
+  return isCtx ? (options as Ctx).name : (options as Options).label;
+}
+
+function message(e: Error | null): string {
+  return (e as Error).message;
+}
+
+function memo(m: string | symbol | null): string {
+  return m as string;
+}
+
+function stringified(s: string | undefined): number {
+  return (s as string).length;
+}
+
+// The asserted value is the same object: a change through it shows through the original.
+class Holder {
+  c: Ctx | null = { name: "h", depth: 2 };
+  u: Ctx | Options = { label: "l" };
+}
+
+function aliasing(): void {
+  const u: Ctx | Options = { name: "u", depth: 0 };
+  const c = u as Ctx;
+  c.depth = 5;
+  console.log(c, u);
+  const h = new Holder();
+  const hc = h.c as Ctx;
+  hc.depth += 1;
+  console.log(h.c, (h.u as Options).label, (h.c as Ctx).depth);
+  let m: Ctx | Options = { label: "first" };
+  const kept = m as Options;
+  m = { name: "second", depth: 9 };
+  console.log(kept, m);
+}
+
+function main() {
+  console.log(contextOf({ name: "root", depth: 0 }, true), contextOf({ label: "opts" }, false));
+  console.log(message(new Error("boom")), memo("cached"), stringified("four"));
+  const parent: Ctx | null = { name: "p", depth: 1 };
+  const p = parent as Ctx;
+  console.log(p.depth, p);
+  aliasing();
+}

@@ -648,7 +648,8 @@ impl FnCx<'_, '_> {
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         let coerced = self
             .try_coerce(inner, target)
-            .or_else(|h| self.param_as_object(h, target));
+            .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.narrowing_assertion(h, target, span));
         match coerced {
             Ok(h) => h,
             Err(h) => {

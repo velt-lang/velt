@@ -1,0 +1,10 @@
+// An `as` assertion that narrows is checked (#893): asserting a `null` as `Error` stops the
+// program, where Node goes on with `null` and throws a TypeError reading `.message`.
+function message(e: Error | null): string {
+  return (e as Error).message;
+}
+
+function main() {
+  console.log(message(new Error("first")));
+  console.log(message(null));
+}

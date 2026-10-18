@@ -60,6 +60,7 @@ mod method_call;
 mod method_value;
 mod names;
 mod namespaces;
+mod narrowing_casts;
 mod never_null;
 mod numbers;
 mod object;
