@@ -1,0 +1,58 @@
+// check: no leaks
+// `T & object` as a type argument (#1262), as sigx's `signal` writes it: at a primitive `T` it
+// has no value (`never`), so the union it is a member of keeps only its other members; at an
+// object `T` it is `T`; under a `T extends object` bound it is `T` too, so an overload
+// signature returning `Signal<T>` fits an implementation returning `Signal<T & object>`, and
+// such a value is an `object` (a `WeakMap` key). Expected output: Node's.
+type Signal<T> = T & { $set: (newValue: T) => void };
+type PrimitiveSignal<T> = { value: T };
+type Primitive = string | number | boolean | null | undefined;
+
+const seen = new WeakMap<object, string>();
+
+function remember<T extends object>(s: Signal<T & object>, name: string): Signal<T & object> {
+  seen.set(s, name);
+  return s;
+}
+
+function wrap<T>(target: T): PrimitiveSignal<T> | Signal<T & object> {
+  return { value: target };
+}
+
+function signal<T extends Primitive>(target: T): PrimitiveSignal<T>;
+function signal<T extends object>(target: T): Signal<T>;
+function signal<T>(target: T): PrimitiveSignal<T> | Signal<T & object> {
+  return { value: target };
+}
+
+// `never & string` is `never`, and `Omit` / `Pick` with `never` name no fields.
+type NoKeys = never & string;
+type Kept = Omit<{ a: number }, NoKeys>;
+type NonePicked = Pick<{ a: number }, never>;
+
+function objectOnly<T>(xs: (T & object)[]): number {
+  return xs.length;
+}
+
+const w = wrap(5);
+console.log(JSON.stringify(w));
+const p = signal(7);
+console.log(p.value);
+
+let last = { n: 0 };
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v;
+  },
+};
+const r = remember(s, "counter");
+r.$set({ n: 2 });
+console.log(r.n, last.n, seen.get(s), seen.has({}));
+
+const objs: ({ a: number } & object)[] = [{ a: 1 }, { a: 2 }];
+console.log(objectOnly<{ a: number }>(objs), objs[1].a);
+
+const kept: Kept = { a: 3 };
+const none: NonePicked = {};
+console.log(kept.a, JSON.stringify(none));

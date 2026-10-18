@@ -126,6 +126,17 @@ impl Ctx<'_> {
         if !self.is_object_type(actual) {
             return false;
         }
+        // `Signal<T & object>`: the nested intersection's parts are parts of this one, and an
+        // `object` part binds nothing.
+        let mut flat = vec![];
+        for &p in parts {
+            match self.ty.kind(p) {
+                TyKind::Op(TyOp::Intersect, ps) => flat.extend(ps.iter().copied()),
+                _ => flat.push(p),
+            }
+        }
+        flat.retain(|&p| self.dynamic(p) != Some(crate::any::Dynamic::Object));
+        let parts = &flat[..];
         let fields = self.public_fields(actual);
         let mut ok = true;
         for &p in parts {
