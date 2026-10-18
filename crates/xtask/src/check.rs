@@ -238,6 +238,7 @@ impl Gate<'_> {
             // The WebAssembly goldens follow the golden selection.
             tests.env("VELT_GOLDEN", filter);
         }
+        tests.envs(plan.sweep_env());
         self.step("unit + integration tests", &mut tests)?;
         if plan.rust {
             let crates = doctests::crates_with_doctests(self.root, &graph.dirs);
