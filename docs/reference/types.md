@@ -699,11 +699,13 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is. An array literal of strings keeps their
-  literal types and is read-only, like TypeScript's `readonly ["a", "b"]`: `const NAMES = ["a",
-  "b"] as const` is an array of `"a" | "b"`, so `for (const n of NAMES) f(n)` and `f(NAMES[0])`
-  pass a `"a" | "b"` parameter. Other values need no `readonly` or literal-type annotation for
-  it.
+- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
+  more different ones) keeps their literal types and is read-only, like TypeScript's
+  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+  `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
+  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  apart, since it cannot write through the parameter). Other values need no `readonly` or
+  literal-type annotation for it.
 
 ## Union types
 

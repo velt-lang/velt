@@ -13,4 +13,10 @@ function main() {
   const more = ["a", "c"] as const;
   for (const m of more) console.log(f(m));
   console.log(f(names[1]));
+  console.log(grow(names));
+}
+
+function grow(xs: string[]): number {
+  xs.push("c");
+  return xs.length;
 }

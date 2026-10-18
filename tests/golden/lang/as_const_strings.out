@@ -3,3 +3,5 @@ LARGE
 DEEP
 LARGE 2 [ 'large', 'small' ] SMALL,LARGE,DEEP
 [ 'large', 'small' ] true
+[ 'small', 'large', 'deep', 'extra' ] 3 2 large+small [ 'small', 'large', 'deep' ]
+1 [ 'only' ]

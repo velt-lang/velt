@@ -124,6 +124,9 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
             );
         }
         let mode = declared_mode(cx, ty);
+        if crate::body::is_readonly_array(&p.ty) {
+            cx.sigq.readonly_params.insert(p.name.span);
+        }
         out.push(ParamSig {
             name: p.name.name.clone(),
             span: p.name.span,

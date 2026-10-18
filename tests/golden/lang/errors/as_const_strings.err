@@ -1,3 +1,4 @@
 as_const_strings.vlt:11:9: error: property 'push' does not exist on type 'readonly Name[]' (TypeScript's TS2339)
 as_const_strings.vlt:12:3: error: index signature in type 'readonly Name[]' only permits reading (TypeScript's TS2542)
 as_const_strings.vlt:14:39: error: mismatched types
+as_const_strings.vlt:16:20: error: cannot use `names` (`(Name)[]`) as `string[]`
