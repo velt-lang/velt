@@ -65,12 +65,60 @@ fn sweep(shard: usize) {
             if k % PREFIX_SHARDS != shard {
                 continue;
             }
-            for &(lo, i, hi) in chunk {
-                let _ = parse(&src[lo..i]);
-                let _ = parse(&src[i..hi]);
+            for &cut in chunk {
+                parse_cut(path, src, cut, |text| {
+                    let _ = parse(text);
+                });
             }
         }
     }
+}
+
+/// Parses both sides of the cut `(lo, at, hi)` of `src` (the file at `path`) with `parse`. A panic
+/// is raised again with the file, the cut and the side in its message: the panicking parse
+/// itself shows only the parser's panic, and with the sampled sweep many panics surface only in
+/// the nightly full sweep, so the message is what one reproduces them from.
+fn parse_cut(path: &str, src: &str, (lo, at, hi): (usize, usize, usize), parse: impl Fn(&str)) {
+    for (side, range) in [("before", lo..at), ("after", at..hi)] {
+        let (start, end) = (range.start, range.end);
+        let text = &src[range];
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(text)))
+        {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("(no message)");
+            panic!(
+                "the parser panicked on {path} cut at byte {at} (lo {lo}, hi {hi}): parsing the \
+                 text {side} the cut, bytes {start}..{end}: {message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_panic_in_the_sweep_names_the_file_and_the_cut() {
+    let src = "let a = 1;\nlet b = 2;\n";
+    let cut = (0, 4, src.len());
+    let caught = std::panic::catch_unwind(|| {
+        parse_cut("tests/golden/lang/x.vlt", src, cut, |text| {
+            if text.starts_with("a =") {
+                panic!("deliberate");
+            }
+        });
+    });
+    let payload = caught.expect_err("the parse panics");
+    let message = payload
+        .downcast_ref::<String>()
+        .expect("a formatted message");
+    assert_eq!(
+        message,
+        "the parser panicked on tests/golden/lang/x.vlt cut at byte 4 (lo 0, hi 22): parsing the \
+         text after the cut, bytes 4..22: deliberate"
+    );
+    // No panic: both sides parse.
+    parse_cut("tests/golden/lang/x.vlt", src, cut, |_| {});
 }
 
 /// Besides the token boundaries, one character in this many is cut, within its item.
