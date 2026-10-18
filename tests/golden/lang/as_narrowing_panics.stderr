@@ -1,1 +1,1 @@
-panic: type assertion failed: the value is null
+panic: TypeError: type assertion failed: the value is null

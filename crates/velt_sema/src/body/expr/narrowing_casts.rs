@@ -41,7 +41,10 @@ impl FnCx<'_, '_> {
                 if core != target && !self.has_member(core, target) {
                     return Err(h);
                 }
-                let msg = format!("type assertion failed: the value is {}", n.word());
+                let msg = format!(
+                    "TypeError: type assertion failed: the value is {}",
+                    n.word()
+                );
                 let present = self.checked_present(h, &msg, None, false, span);
                 if present.ty == target {
                     return Ok(present);
@@ -101,7 +104,7 @@ impl FnCx<'_, '_> {
         };
         let shown = self.cx.display(target);
         let msg = self.str_lit(
-            &format!("type assertion failed: the value is not of type `{shown}`"),
+            &format!("TypeError: type assertion failed: the value is not of type `{shown}`"),
             span,
         );
         let never = self.cx.ty.never;
