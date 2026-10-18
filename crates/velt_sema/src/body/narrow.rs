@@ -142,22 +142,17 @@ impl FnCx<'_, '_> {
                         out.push(fa.clone());
                     }
                 }
-                Fact::Members(l, va) => {
-                    let mut vs = va.clone();
-                    let mut seen = false;
-                    for fb in b {
-                        if let Fact::Members(m, vb) = fb {
-                            if m == l {
-                                seen = true;
-                                vs.extend(vb.iter().copied());
-                            }
-                        }
-                    }
-                    if seen
-                        && !out
-                            .iter()
-                            .any(|f| matches!(f, Fact::Members(m, _) if m == l))
+                Fact::Members(l, _) => {
+                    // Each side's facts about `l` all hold together (`typeof c !== "string"`
+                    // and then `typeof c === "number"`): intersect them per side, then join.
+                    let done = out
+                        .iter()
+                        .any(|f| matches!(f, Fact::Members(m, _) if m == l));
+                    if let (false, Some(va), Some(vb)) =
+                        (done, members_in(a, *l), members_in(b, *l))
                     {
+                        let mut vs = va;
+                        vs.extend(vb);
                         vs.sort_unstable();
                         vs.dedup();
                         out.push(Fact::Members(*l, vs));
@@ -782,4 +777,21 @@ fn typeof_exact(cx: &crate::ctx::Ctx, t: TyId) -> bool {
         TyKind::Adt(d, _) => cx.adt(*d).is_some(),
         _ => false,
     }
+}
+
+/// The union members `facts` together allow local `l` (the intersection of their `Members`
+/// facts about it; `None`: they say nothing about its members).
+fn members_in(facts: &[Fact], l: LocalId) -> Option<Vec<u32>> {
+    let mut out: Option<Vec<u32>> = None;
+    for f in facts {
+        if let Fact::Members(m, vs) = f {
+            if *m == l {
+                out = Some(match out {
+                    Some(cur) => cur.into_iter().filter(|v| vs.contains(v)).collect(),
+                    None => vs.clone(),
+                });
+            }
+        }
+    }
+    out
 }

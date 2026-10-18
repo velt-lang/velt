@@ -110,6 +110,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
+  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
+  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
+  `T = U | null` a `null` is a `T`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -468,7 +472,9 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
-`undefined`.
+`undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
+number }`).
 
 ```ts
 function show(x: string | null | undefined): string {
@@ -711,8 +717,13 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is: Velt arrays and literals need no
-  `readonly` or literal-type annotation for it.
+- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
+  more different ones) keeps their literal types and is read-only, like TypeScript's
+  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+  `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
+  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  apart, since it cannot write through the parameter). Other values need no `readonly` or
+  literal-type annotation for it.
 
 ## Union types
 
@@ -739,7 +750,9 @@ the nullable type; `void` cannot be a member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
-    until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    until it is reassigned; `a || b` narrows to the members either side allows
+    (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
+    `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed by these tests ([Null](#null-and-undefined)).
   - Assigning a member's value narrows to that member until the next assignment or join, also
     in the declaration (`let u: string | number = "x"; u.length`, `else { p = new B(); }
@@ -959,7 +972,13 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
   expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
-  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`).
+  Keys compared by identity count as `===`: a `WeakMap`, `WeakSet` or `WeakRef` of the
+  expected type. So does converting a value that may be the copy (followed through variables,
+  parameters and results; anywhere once the copy is stored in a field or an array) to `any`,
+  `unknown` or `object` when the program compares two such values that may be objects
+  (`(a as any) === (ab as any)`, not `x !== undefined`), keys a `Set<any>`, `Map<object, V>`
+  or weak collection by them, or prints, spreads or lists the keys of one. An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -1833,7 +1852,7 @@ literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
 converted (a class instance through its base class, an interface value, a function converted
-twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
+twice), and one object converted twice is one value (`u1 === u2`, one `Set<unknown>` entry). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
@@ -1952,7 +1971,7 @@ function main(): void {
 ```
 
 **Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
-operators, `String(x)`, `JSON.stringify`, iteration, `any` converted to interface types and the
+operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,

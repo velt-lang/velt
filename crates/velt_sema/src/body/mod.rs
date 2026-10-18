@@ -69,6 +69,7 @@ pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
+pub(crate) use readonly_arrays::is_readonly_array;
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;

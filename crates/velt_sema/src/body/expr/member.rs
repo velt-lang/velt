@@ -648,7 +648,8 @@ impl FnCx<'_, '_> {
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         let coerced = self
             .try_coerce(inner, target)
-            .or_else(|h| self.param_as_object(h, target));
+            .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.narrowing_assertion(h, target, span));
         match coerced {
             Ok(h) => h,
             Err(h) => {
@@ -738,7 +739,7 @@ impl FnCx<'_, '_> {
 }
 
 /// The type of `x as const` (the parser's `const` type name).
-pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+pub(crate) fn is_as_const(ty: &ast::TypeExpr) -> bool {
     matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
 }
 
