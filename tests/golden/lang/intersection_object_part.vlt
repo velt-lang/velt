@@ -56,3 +56,22 @@ console.log(objectOnly<{ a: number }>(objs), objs[1].a);
 const kept: Kept = { a: 3 };
 const none: NonePicked = {};
 console.log(kept.a, JSON.stringify(none));
+
+// `T & object` against a class instance, an array or a `Map` infers `T` as the argument.
+class Pt {
+  x = 1;
+}
+function same<T extends object>(x: T & object): T {
+  return x;
+}
+function keepObj<T>(x: T & object): T & object {
+  return x;
+}
+same(new Pt()).x = 5;
+const pt = same(new Pt());
+pt.x = 7;
+const arr = keepObj([1, 2]);
+arr.push(4);
+const m = keepObj(new Map<string, number>());
+m.set("a", 1);
+console.log(pt.x, arr.join(","), m.get("a"), keepObj([3]).length);
