@@ -95,6 +95,11 @@ impl Names {
                 let name = self.alias_decls.get(*a as usize).map_or("unknown", |n| n);
                 with_args(name, args)
             }
+            TyKind::Op(crate::hir::TyOp::Intersect, args) => args
+                .iter()
+                .map(|t| self.show(*t, param))
+                .collect::<Vec<_>>()
+                .join(" & "),
             TyKind::FnPtr {
                 params,
                 ret,

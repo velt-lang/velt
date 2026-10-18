@@ -76,7 +76,6 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("map-iter-as-array", Claim::Rejected),
     ("velt-global", Claim::Rejected),
     ("velt-member", Claim::Rejected),
-    ("null-into-optional", Claim::Rejected),
     ("undefined-into-null", Claim::Rejected),
     ("catch-unknown", Claim::Rejected),
 ];

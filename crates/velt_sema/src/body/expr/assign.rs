@@ -5,7 +5,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::{is_null, nothing_word};
+use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
@@ -314,13 +314,19 @@ impl FnCx<'_, '_> {
             if let Some(AssignTarget::Dynamic(obj)) = checked {
                 return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
             }
+            // A record key has rules of its own (a key may be missing; `record_logical.rs`).
+            if let Some(AssignTarget::Record(obj)) = checked {
+                let (object, key) = super::record::record_parts(target);
+                let e = self.record_logical(obj, object, key, op, value, as_value, span);
+                return (e, as_value);
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
         }
     }
 
-    /// `a ??= b` on a place or record key (`checked` is the target as resolved).
+    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     fn logical_assign(
         &mut self,
         op: ast::BinaryOp,
@@ -343,19 +349,15 @@ impl FnCx<'_, '_> {
             self.expr(value, None, Want::Borrow);
             return self.error_expr(span);
         }
-        // A record key has rules of its own (a key may be missing): the record path handles
-        // every compound form. A target in error is reported once, here.
+        // A target in error is reported once, here.
         match checked {
-            Some(AssignTarget::Record(obj)) => {
-                let (object, key) = super::record::record_parts(target);
-                return self.record_assign(obj, object, key, Some(op), target, value, span);
-            }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
             Some(
                 AssignTarget::Place(_)
+                | AssignTarget::Record(_)
                 | AssignTarget::Setter(_)
                 | AssignTarget::Indexer(_)
                 | AssignTarget::Dynamic(_),
@@ -448,15 +450,15 @@ impl FnCx<'_, '_> {
                 self.check_capture_assign(l, target.span);
                 self.unnarrow(l);
             }
-            // Assigning a non-null value narrows the target like a check would (TS).
-            if matches!(v.kind, H::WrapSome(_)) {
-                let token = match place.kind {
-                    H::Local(l, _) => Some(l),
-                    _ => self.field_token(target),
-                };
-                if let Some(t) = token {
-                    self.narrow(&crate::body::narrow::Fact::NonNull(t));
-                }
+            // Assigning narrows the target like a check would (TS): to non-null, or to the
+            // union member assigned (`assign_narrow`).
+            let token = match place.kind {
+                H::Local(l, _) => Some(l),
+                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ => None,
+            };
+            if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
+                self.narrow_to_assigned(t, lty, &v);
             }
             let kind = H::Assign {
                 place: Box::new(place),
@@ -472,7 +474,12 @@ impl FnCx<'_, '_> {
             self.hoist_indices(&mut place, &mut stmts);
             // `s += n`: the number is appended as `String(n)` writes it (#740).
             let v = self.expr(value, Some(lty), Want::Borrow);
-            let v = self.concat_operand(v);
+            // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
+            // conversion to `string`).
+            let v = match self.any_to_source(v) {
+                Ok(a) => self.js_text(a, "a string concatenation"),
+                Err(v) => self.concat_operand(v),
+            };
             let v = self.coerce(v, lty);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
@@ -665,7 +672,7 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || is_null(e);
+        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);
@@ -707,14 +714,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if let Some(word) = nothing_word(second) {
-            let n = if word == "null" {
-                Nothing::Null
-            } else {
-                Nothing::Undefined
-            };
-            if self.cx.ty.opt_payload(first.ty).is_none() {
-                return Some(self.cx.ty.option_of(first.ty, n));
+        if let Some(n) = written_nothings(second) {
+            match self.cx.ty.nothing_of(first.ty) {
+                None => return Some(self.cx.ty.option_of(first.ty, n)),
+                // `c ? undefined : x` against a `T | null` (or the reverse): both nothings
+                // (#1218).
+                Some(m) if !n.within(m) => {
+                    let core = self.cx.ty.core(first.ty).unwrap_or(first.ty);
+                    return Some(self.cx.ty.option_of(core, m.join(n)));
+                }
+                Some(_) => {}
             }
         }
         Some(first.ty)
@@ -766,5 +775,23 @@ impl FnCx<'_, '_> {
         }
         let span = t.span.to(f.span);
         self.union_join(t, f, span)
+    }
+}
+
+/// The `null` / `undefined` literals `e` may give: itself, or the arms of a conditional
+/// (`c ? null : undefined`), so the branch is checked against a type holding them.
+fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => written_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => {
+            match (written_nothings(then), written_nothings(els)) {
+                (Some(a), Some(b)) => Some(a.join(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        _ => nothing_word(e).map(|w| match w {
+            "null" => Nothing::Null,
+            _ => Nothing::Undefined,
+        }),
     }
 }

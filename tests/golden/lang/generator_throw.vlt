@@ -1,0 +1,78 @@
+// check: no leaks
+// `gen.throw(e)` resumes the body with `e` thrown at the paused `yield`: a `try`/`catch` around
+// it catches it and the generator goes on; otherwise its `finally` blocks run, it is done, and
+// `throw()` throws `e`. Before the first `next()` and after the end it throws `e` at once.
+function* careful(): Generator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+    yield 99;
+  } finally {
+    console.log("careful finally");
+  }
+  yield 3;
+}
+
+function* careless(): Generator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log("careless finally");
+  }
+}
+
+function* rethrows(): Generator<string> {
+  try {
+    yield "a";
+  } catch (e) {
+    yield "cleaning up";
+    throw e;
+  }
+}
+
+function main(): void {
+  const g = careful();
+  console.log(g.next().value);
+  const r = g.throw(new Error("boom"));
+  console.log(r.value, r.done);
+  console.log(g.next().value);
+  console.log(g.next().done);
+
+  const u = careless();
+  console.log(u.next().value);
+  try {
+    u.throw(new Error("out"));
+  } catch (e) {
+    console.log("careless", "threw", (e as Error).message);
+  }
+  console.log(u.next().done);
+
+  const fresh = careful();
+  try {
+    fresh.throw(new Error("early"));
+  } catch (e) {
+    console.log("unstarted", "threw", (e as Error).message);
+  }
+  console.log(fresh.next().done);
+
+  const done = careless();
+  console.log([...done].length);
+  try {
+    done.throw(new Error("late"));
+  } catch (e) {
+    console.log("finished", "threw", (e as Error).message);
+  }
+
+  const re = rethrows();
+  console.log(re.next().value);
+  console.log(re.throw(new RangeError("again")).value);
+  try {
+    re.next();
+  } catch (e) {
+    console.log("rethrows", "threw", (e as Error).message);
+  }
+  console.log(re.next().done);
+}

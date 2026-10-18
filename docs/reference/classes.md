@@ -496,8 +496,8 @@ console.log(p.len(), q.len());  // 4 4
   through get, so other programs pay nothing; through a `T extends I` both are direct calls. An
   object literal implementing such an interface with `get f()` must give `set f(v)` too.
 - An **optional method** `m?(x: T): R` is an optional field of function type
-  (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
-  null`), and a caller writes `o.m?.(x)`.
+  (`m?: (x: T) => R`): an implementing class declares the field as `m?: (x: T) => R` or
+  `m: ((x: T) => R) | undefined = undefined`, and a caller writes `o.m?.(x)`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value
   (``generic method `apply` cannot be called on an interface value``): make the calling
@@ -626,9 +626,11 @@ console.log(p.x + p.y); // 3
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. Type parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a
-type leaves the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
+interfaces (an interface with only fields is satisfied by any type with its fields) or, as in
+TypeScript, other types a type argument must be assignable to (`T extends Record<string, V>`,
+`T extends string | number`; [Generic functions](functions.md#generic-functions)). Type
+parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a type leaves
+the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
 it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
 functions and methods take them too ([Generic functions](functions.md#generic-functions)). As
 in TypeScript, a default may use only the parameters declared before it, a parameter without a

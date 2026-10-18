@@ -263,6 +263,15 @@ impl FnCx<'_, '_> {
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
         frame.closure_assigned = closure_assigned_in(params, body);
+        let defaults = params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends = match body {
+            ast::ArrowBody::Block(b) => {
+                crate::body::assign_ends::assignment_ends(&b.stmts, defaults)
+            }
+            ast::ArrowBody::Expr(e) => {
+                crate::body::assign_ends::assignment_ends(&[], defaults.chain([&**e]))
+            }
+        };
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
@@ -305,6 +314,14 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
+        self.default_prologue(
+            params
+                .iter()
+                .zip(&ptys)
+                .take(n_params)
+                .map(|(p, ty)| (&p.name, p.default.as_ref(), p.optional, *ty)),
+            &mut locals,
+        );
         self.destructure_params(
             params
                 .iter()
@@ -364,7 +381,7 @@ impl FnCx<'_, '_> {
             generator: None,
             span,
         });
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params, true);
         self.mk(H::Closure(def), fn_ty, span)
     }
 
@@ -414,6 +431,7 @@ impl FnCx<'_, '_> {
         let mut info = fn_placeholder(name, span, span, self.module, FnKind::Closure, None);
         info.generics.names = self.env.params.clone();
         info.generics.bounds = self.bounds.clone();
+        info.generics.constraints = self.constraints.clone();
         info.generics
             .bounds
             .resize(info.generics.names.len(), vec![]);

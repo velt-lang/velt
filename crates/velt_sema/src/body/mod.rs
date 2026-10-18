@@ -33,13 +33,15 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod assign_ends;
+mod assign_narrow;
 pub(crate) mod assigned;
 mod closure_assigned;
 pub(crate) mod closure_group;
 mod const_borrow;
 mod consume;
 mod ctor;
-mod defaults;
+pub(crate) mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
@@ -54,6 +56,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod nested_pattern;
+mod object_rest;
 mod param_patterns;
 mod pattern;
 mod pattern_defaults;
@@ -66,6 +69,7 @@ pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
+pub(crate) use readonly_arrays::is_readonly_array;
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
@@ -123,6 +127,11 @@ pub(crate) struct LoopCx {
     pub needs_label: bool,
     /// Label given to the HIR loop when the source has none but one is needed.
     pub synth_label: String,
+    /// The number of scopes open where the entry starts.
+    pub depth: usize,
+    /// For a `switch`: the narrowing state at each `break` that leaves it, folded into the
+    /// scopes open at the `switch` (`switch::case_bodies` joins them).
+    pub break_states: Vec<locals::NarrowState>,
 }
 
 impl LoopCx {
@@ -141,6 +150,8 @@ pub(crate) struct Scope {
     pub names: HashMap<String, LocalId>,
     /// Option locals narrowed to their payload inside this scope.
     pub narrowed: Vec<LocalId>,
+    /// `T | null | undefined` locals known not to hold this nothing inside this scope.
+    pub excluded: Vec<(LocalId, crate::hir::Nothing)>,
     /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
@@ -202,6 +213,12 @@ pub(crate) struct Frame {
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
+    /// none).
+    pub next_ty: Option<TyId>,
+    /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
+    /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
+    pub catch_depth: u32,
     /// Body of a named generator function expression: its name (not in scope there).
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
@@ -266,6 +283,9 @@ pub(crate) struct Frame {
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: HashMap<String, Span>,
+    /// Where this function's own code last assigns each variable (`assign_ends`): closures
+    /// created before that do not see the variable's narrowing.
+    pub assign_ends: HashMap<String, u32>,
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
@@ -310,6 +330,8 @@ impl Frame {
             discards_value: false,
             is_async: false,
             yield_ty: None,
+            next_ty: None,
+            catch_depth: 0,
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],
@@ -336,6 +358,7 @@ impl Frame {
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
+            assign_ends: HashMap::new(),
             int_returns_number: false,
             checked_predicates: HashMap::new(),
             truthy_returns: false,
@@ -361,6 +384,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Generic params in scope (for annotations inside the body).
     pub env: TyEnv,
     pub bounds: Vec<Vec<Bound>>,
+    /// Type bounds of the generic params in scope (`Generics::constraints`).
+    pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
@@ -423,12 +448,18 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
+    /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
+    pub weak_key_args: bool,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
     pub optional_slots: Vec<(Span, OptionalSlot)>,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
+    /// the variable as it is, without the check `checked_narrowed_read` adds.
+    pub raw_read: Option<Span>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -444,6 +475,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The member of a recursive closure group whose arrow is about to be checked: group,
     /// member and its definition.
     pub pending_member: Option<(usize, usize, DefId)>,
+    /// Checking the body of an interface adapter's method (`expr/iface_adapt.rs`): an `unknown`
+    /// converts to a typed value checked at run time, and a function value to another function
+    /// type through an adapting arrow.
+    pub adapting: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -453,6 +488,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             module,
             env,
             bounds: vec![],
+            constraints: vec![],
             fn_name: String::new(),
             owner: None,
             body_def: None,
@@ -476,14 +512,17 @@ impl<'a, 'm> FnCx<'a, 'm> {
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,
+            weak_key_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
+            raw_read: None,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,
             jsx_list_trial: false,
             this_calls: Default::default(),
             pending_member: None,
+            adapting: false,
         }
     }
 

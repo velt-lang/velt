@@ -1,0 +1,10 @@
+// A plain value converted (inside an array literal) to a narrower object type that is later
+// written, in a program that creates proxies: a `TypeError` instead of a copy (#823).
+type Sig = { a: number; b: number };
+type A = { a: number };
+const p = new Proxy({ x: 1 }, {});
+console.log(p.x);
+const s = JSON.parse('{"a":1,"b":2}') as Sig;
+const arr: A[] = [s];
+arr[0].a = 3;
+console.log(s.a);

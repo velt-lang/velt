@@ -1,0 +1,62 @@
+// check: no leaks
+// `typeof` and `instanceof` narrowing on `T | null | undefined` locals (issue #930).
+class A {
+  constructor(public n: number) {}
+}
+class B {
+  constructor(public s: string) {}
+}
+
+function len(x: string | number | null | undefined): number {
+  if (typeof x === "string") {
+    return x.length;
+  }
+  if (typeof x === "number") {
+    return x;
+  }
+  return -1;
+}
+
+function kind(x: A | B | null | undefined): string {
+  if (x instanceof A) {
+    return "A" + x.n;
+  }
+  if (x instanceof B) {
+    return "B" + x.s;
+  }
+  return String(x);
+}
+
+function obj(x: string | null | undefined): string {
+  if (typeof x === "object") {
+    return `object ${x}`;
+  }
+  if (typeof x === "undefined") {
+    return "undef";
+  }
+  return "str " + x.length;
+}
+
+class D {
+  a = "A1";
+}
+
+function o(x: D | null | undefined): string {
+  if (typeof x === "object") {
+    return x === null ? "null" : x.a;
+  }
+  return "u";
+}
+
+function o2(x: D | null | undefined): string {
+  if (typeof x !== "object") return "u";
+  if (x === null) return "N";
+  return x.a;
+}
+
+function main(): void {
+  console.log(len("ab"), len(5), len(null), len(undefined));
+  console.log(kind(new A(1)), kind(new B("x")), kind(null), kind(undefined));
+  console.log(obj(null), obj(undefined), obj("abc"));
+  console.log(o(new D()), o(null), o(undefined), o2(new D()), o2(null), o2(undefined));
+}

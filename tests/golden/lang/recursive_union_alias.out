@@ -1,0 +1,9 @@
+[1,"x",{"b":null,"c":true},[false]]
+3 [1,[2,[3]],[]]
+4 ["s",2,false,null]
+[x,{k=[a,{}];}]
+3 {"kind":"node","kids":[{"kind":"leaf","v":1},{"kind":"node","kids":[{"kind":"leaf","v":2}]}]}
+{
+  kind: 'node',
+  kids: [ { kind: 'leaf', v: 1 }, { kind: 'node', kids: [Array] } ]
+}

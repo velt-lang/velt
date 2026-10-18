@@ -122,6 +122,17 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   (the root class), since a release through a base class type releases a subclass object. A
   program that never names a weak collection has none, and its VIR is unchanged
   (`crates/veltc/tests/bench_programs.rs` checks every benchmark for it).
+- **`object` keys** (issue #926, `lower/weak_object.rs`): once `object` is a weak key or
+  `WeakRef` target, every concrete type a dynamic value holds (each type an `any` table is
+  built for) is counted and weak-capable, and every `any` table gets a weak word: 0 when the
+  value cannot be weakly held (a primitive, `null`, an object the conversion boxed: a tuple, a
+  function value), else 1 or
+  the type's trace glue. The key is the dynamic value's data pointer; `set` passes the key's
+  trace glue (`velt_rt_weakmap_set_traced`), the trace glue of a value holding a dynamic value
+  visits its data pointer through the same word (so `WeakMap<object, object>` caches are
+  ephemerons too), and a `WeakRef<object>` keeps the target's descriptor with its slot
+  (`velt_rt_weakref_new_with`) so `deref()` rebuilds the `object`. Other programs are
+  unchanged.
 - **Release.** `release_as` in `lower/rc.rs` takes the three-way sequence above for those
   types, at every release (drop glue, boxed values, half-built objects, the queued drops of
   `drop_depth.rs`), at `drop_chain.rs`'s `take` and at `transfer.rs`'s release of the sender's
@@ -250,6 +261,20 @@ wait until the outermost release ends, so a trial never sees a cycle half freed.
 gives up the map's own reference. A wrong answer can therefore leak or drop an entry early, never
 free memory that is still in use. Trace glue must report exactly the counted references an object
 owns; one it misses makes the target look referenced from outside (a leak).
+
+**Typed proxies** (#823, velt_vir's `proxy_typed.rs`). A value of a proxiable type may be its
+`Proxy` object's address with bit 0 set. The compiler never hands that word to the table as a
+key or a released object (the runtime treats one as an ICE): a map key is the untagged `Proxy`
+object, a weak map value of a proxiable type is boxed, and a `WeakRef` slot keeps the word as
+given (the record and the count are the untagged object's), so `deref` gives the proxy back.
+Trace glue visits a typed proxy as its `Proxy` object, whose own trace glue visits its target
+when the target's `any` table is that of a type the program converts proxies to (others are
+opaque). When `object` is also a weak key, the field walk already visits the target through its
+weak word, so the `Proxy` glue's own visit runs only for a target whose weak word is 0: a target
+visited twice counted one reference too many, and a trial deleted a live key's entry (#1223). A
+map whose key type is proxiable has no key trace, since a key may be a `Proxy`
+object or a key-type object; each key's record gets its trace when the value graph reaches it,
+and the trial uses the record's trace for such keys.
 
 ### What it handles
 

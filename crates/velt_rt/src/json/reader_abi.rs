@@ -35,6 +35,14 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     )))
 }
 
+/// May a JSON `null` stand for an absent optional field whose type has no `null`? 1 = yes
+/// (`JSON.parse<T>`), 0 = no: the decoder reads the field's value and fails
+/// (`FLAG_NULL_NOT_ABSENT`, `JSON.parse(text) as T`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_null_absent(r: *mut Reader) -> u8 {
+    u8::from(!(*r).null_not_absent)
+}
+
 /// Free the reader (not the source).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_free(r: *mut Reader) {

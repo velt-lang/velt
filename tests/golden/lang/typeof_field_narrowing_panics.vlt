@@ -1,0 +1,21 @@
+// A field narrowed by `typeof` is checked again where it is read (#1264): a call between the
+// test and the read that sets it to another type stops the program, where Node reads the
+// number and prints `undefined` for its `length`.
+interface Box {
+  v: string | number;
+}
+
+function clobber(b: Box): void {
+  b.v = 7;
+}
+
+function lengthAfter(b: Box): number {
+  if (typeof b.v === "string") {
+    clobber(b);
+    return b.v.length;
+  }
+  return -1;
+}
+
+console.log(lengthAfter({ v: 3 }));
+console.log(lengthAfter({ v: "abc" }));

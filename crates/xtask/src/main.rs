@@ -6,6 +6,7 @@
 //! cargo xtask affected               print what `check` would run, and why
 //! cargo xtask precheck               fmt, file sizes and clippy on the changed files (fast)
 //! cargo xtask install-hooks          a pre-push hook that runs `precheck`
+//! cargo xtask pr-lint                check a pull request's text and commits
 //! ```
 //!
 //! Run `cargo xtask help` for every option.
@@ -19,6 +20,7 @@ mod graph;
 mod hooks;
 mod os;
 mod plan;
+mod pr_lint;
 mod precheck;
 
 use std::path::{Path, PathBuf};
@@ -41,6 +43,9 @@ Commands:
   install-hooks
               Install a git pre-push hook that runs `precheck` (shared by every worktree;
               `git push --no-verify` skips it)
+  pr-lint     Check a pull request's title, description and commits for tool footers and
+              trailers, session links, machine paths, review wording and the commit author
+              (`cargo xtask pr-lint --help` for its options)
 
 Options:
   --full               Check everything (the merge queue and nightly run this)
@@ -112,7 +117,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let args = parse(std::env::args().skip(1).collect())?;
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().is_some_and(|c| c == "pr-lint") {
+        return pr_lint::main(&repo_root()?, &argv[1..]);
+    }
+    let args = parse(argv)?;
     let root = repo_root()?;
     match args.command.as_str() {
         "check" => {

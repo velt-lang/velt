@@ -157,7 +157,7 @@ impl Ctx<'_> {
 
     /// Does `piece` (as literal type `lit`) fit a hole of type `h`?
     fn hole_fits(&mut self, piece: &str, lit: TyId, h: TyId) -> bool {
-        let core = self.ty.opt_payload(h).unwrap_or(h);
+        let core = self.ty.core(h).unwrap_or(h);
         let members = self.union_members(core).unwrap_or_else(|| vec![core]);
         members.iter().any(|m| {
             *m == self.ty.str_
@@ -220,7 +220,7 @@ impl Ctx<'_> {
         if t == self.ty.never {
             return Some(vec![]);
         }
-        let core = self.ty.opt_payload(t).unwrap_or(t);
+        let core = self.ty.core(t).unwrap_or(t);
         let members = self.union_members(core).unwrap_or_else(|| vec![core]);
         Some(
             names
@@ -407,7 +407,7 @@ impl Ctx<'_> {
                 continue;
             }
             // `null` and `undefined` meet no primitive: `("a" | undefined) & string` is `"a"`.
-            let t = self.ty.opt_payload(t).unwrap_or(t);
+            let t = self.ty.core(t).unwrap_or(t);
             let members = self.union_members(t).unwrap_or_else(|| vec![t]);
             if lits.is_some() || !members.iter().all(|m| self.lit_value(*m).is_some()) {
                 return None;

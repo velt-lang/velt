@@ -209,8 +209,13 @@ impl<'a> Parser<'a> {
         }
         let this_param = self.this_param.take();
         let body = self.parse_fn_body()?;
-        // Without a `this` parameter, `this` in a function declaration is sema's to report.
-        if this_param.is_some() {
+        // `this` in a function declaration is sema's to report, but for `this: void`. A
+        // function whose body doesn't use `this` (or with overloads or a generator, not
+        // supported yet) is called without it.
+        if !sigs.is_empty() || sig.is_generator || super::fn_exprs::own_this(&body).is_none() {
+            sig.this_param = None;
+        }
+        if this_param.is_some() && sig.this_param.is_none() {
             self.check_fn_this(this_param, &body, false);
         }
         // TypeScript's TS2383, at each signature exported differently from the implementation.
@@ -323,6 +328,7 @@ impl<'a> Parser<'a> {
     ) -> PResult<FnSig> {
         let generics = self.parse_generic_params()?;
         let params = self.parse_params()?;
+        let this_param = self.this_type();
         let ret = if self.eat(Tok::Colon) {
             Some(self.parse_ret_type()?)
         } else {
@@ -337,6 +343,7 @@ impl<'a> Parser<'a> {
             throws,
             is_async,
             is_generator: false,
+            this_param,
             span: self.span_from(lo),
         })
     }
@@ -358,9 +365,29 @@ impl<'a> Parser<'a> {
             let name = self.parse_ident()?;
             let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
+                let lo = self.cur_lo();
+                self.eat(Tok::Pipe);
                 bounds.push(self.parse_type_no_union()?);
                 while self.eat(Tok::Amp) {
                     bounds.push(self.parse_type_no_union()?);
+                }
+                // `T extends A | B`: one bound, a union type (`A & B | C` is `(A & B) | C`).
+                if self.at(Tok::Pipe) {
+                    let first = match bounds.len() {
+                        1 => bounds.remove(0),
+                        _ => TypeExpr {
+                            kind: TypeExprKind::Intersection(std::mem::take(&mut bounds)),
+                            span: self.span_from(lo),
+                        },
+                    };
+                    let mut members = vec![first];
+                    while self.eat(Tok::Pipe) {
+                        members.push(self.parse_intersection()?);
+                    }
+                    bounds = vec![TypeExpr {
+                        kind: TypeExprKind::Union(members),
+                        span: self.span_from(lo),
+                    }];
                 }
             }
             let default = self.type_param_default(&out, &name)?;
@@ -492,14 +519,9 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`, and `name?: T | undefined` is
-            // `name: T | undefined = undefined`.
+            // `name?: T` is `name: T | undefined = undefined`, as in TypeScript.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            let nothing = match super::types::has_undefined(&ty) {
-                true => Lit::Undefined,
-                false => Lit::Null,
-            };
-            default = Some(self.mk_expr(ExprKind::Lit(nothing), span));
+            default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
             ty = super::types::optional_param(ty);
         }
         if rest {

@@ -70,7 +70,90 @@ impl FnCx<'_, '_> {
             let bounds = self.bounds.clone();
             return self.cx.satisfies(t, &b, &bounds);
         }
+        // `T & object` (or `T & …` at a `T extends object`) holds objects at every instance.
+        if d == Dynamic::Object {
+            if let TyKind::Op(crate::hir::TyOp::Intersect, _) = self.cx.ty.kind(t) {
+                let objects = self.object_params();
+                if self.cx.holds_objects(t, &objects) {
+                    return true;
+                }
+            }
+        }
         self.cx.dynamic_takes(iface, t).unwrap_or(false)
+    }
+
+    /// `h as object` for an `h` whose type is a type parameter without an `object` bound, or
+    /// one or `null` (sigx's `toRaw<T>`, issue #926): lowering unpacks the instantiation (a
+    /// `T | null`, a union) at run time, and a primitive is a `TypeError` there. `Err` when `h`
+    /// is no such value or `exp` is not `object`.
+    pub(crate) fn param_as_object(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return Err(h);
+        }
+        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        if !matches!(self.cx.ty.kind(inner), TyKind::Param(_)) {
+            return Err(h);
+        }
+        self.box_dynamic(h, exp)
+    }
+
+    /// The key of a weak operation (`WeakMap.set` / `get` / `has` / `delete`, `WeakSet`'s,
+    /// `new WeakRef`) converted to its parameter `exp` (issue #926). A variable stays its own:
+    /// the conversion to `object` takes a share of it, so the key (a fresh `WeakRef`'s target)
+    /// lives to the end of the variable's scope, as a typed key does. An `any` enters `object`
+    /// unchecked: a primitive reaches the operation, which finds nothing or throws
+    /// JavaScript's `TypeError` (velt_vir `weak_object.rs`).
+    pub(crate) fn weak_key_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return self.coerce(h, exp);
+        }
+        match self.cx.dynamic(h.ty) {
+            Some(Dynamic::Any) => {
+                let Some(imp) = self.cx.any_impl() else {
+                    return self.coerce(h, exp);
+                };
+                let mut h = self.share_if_place(h);
+                self.force_move(&mut h);
+                let span = h.span;
+                self.mk(
+                    H::ToDyn {
+                        expr: Box::new(h),
+                        impl_index: imp,
+                    },
+                    exp,
+                    span,
+                )
+            }
+            Some(_) => self.coerce(h, exp),
+            None => {
+                let h = self.share_place(h);
+                self.coerce(h, exp)
+            }
+        }
+    }
+
+    /// A typed variable (a place) passed for a borrowed `object` parameter (issue #926): a
+    /// share of it, so the variable lives to the end of its scope as it does when passed to a
+    /// typed parameter (a `WeakRef` made from the parameter keeps its target).
+    pub(crate) fn object_arg_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) || self.cx.dynamic(h.ty).is_some() {
+            return self.coerce(h, exp);
+        }
+        let h = self.share_place(h);
+        self.coerce(h, exp)
+    }
+
+    fn share_place(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if is_place(&h) {
+            set_place_mode(&mut h, UseMode::Borrow);
+            let (ty, span) = (h.ty, h.span);
+            h = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
+        }
+        h
     }
 
     /// A typed value boxed as `exp` (`any` or `unknown`).
@@ -105,7 +188,12 @@ impl FnCx<'_, '_> {
         }
         if let Some(payload) = self.cx.ty.opt_payload(h.ty) {
             if !matches!(h.kind, H::Lit(hir::Lit::Null)) {
-                let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
+                // A `T | null | undefined`'s own nothing is `undefined` (its payload is the
+                // `T | null`, boxed in turn).
+                let nothing = match self.cx.ty.nothing_of(h.ty) {
+                    Some(Nothing::Both) => Nothing::Undefined,
+                    n => n.unwrap_or(Nothing::Null),
+                };
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }

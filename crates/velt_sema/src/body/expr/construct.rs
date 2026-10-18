@@ -83,6 +83,7 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            constraints: names.constraints,
             js_numbers: false,
             positions: false,
             js_api: false,
@@ -90,6 +91,7 @@ impl FnCx<'_, '_> {
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);
+        self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends
@@ -129,7 +131,7 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         let h = self.mk(kind, ck.ret, span);
-        self.proxy_new(d, h, exp, span)
+        self.proxy_new(d, h, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
@@ -161,15 +163,21 @@ impl FnCx<'_, '_> {
             _ => false,
         };
         let tn = self.cx.display(k);
-        if matches!(
-            self.cx.dynamic(k),
-            Some(crate::any::Dynamic::Object | crate::any::Dynamic::Function)
-        ) {
-            self.cx.error(
-                Diagnostic::error(format!("`{tn}` as {what} is not supported yet (#926)"), span)
-                    .with_note("use the class or object type of the values it holds; a `Set` or `Map` takes `object` keys, but holds them strongly"),
-            );
-            return false;
+        match self.cx.dynamic(k) {
+            // `object` (issue #926): the types converted to it become weak-capable; a value
+            // that is not a counted object is checked where it is used (`TypeError`).
+            Some(crate::any::Dynamic::Object) => return true,
+            Some(crate::any::Dynamic::Function) => {
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("`{tn}` as {what} is not supported yet (#926)"),
+                        span,
+                    )
+                    .with_note("use `object`, or the class or object type of the values it holds"),
+                );
+                return false;
+            }
+            _ => {}
         }
         let d = match primitive {
             true => Diagnostic::error(

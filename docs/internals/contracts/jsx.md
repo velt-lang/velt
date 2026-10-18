@@ -303,7 +303,7 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
 
   An optional field's value is checked against its declared type, so an optional value (a
   forwarded optional prop, an optional field of a spread source) is accepted, as `tsc` accepts
-  it; a mismatch names the type without `| null`, as `tsc` reports it
+  it; a mismatch names the type without `| undefined`, as `tsc` reports it
   (`not assignable to type 'string'`). A spread source may give these attributes, and a prop of
   the same name counts as given (its value must fit both types, as `tsc` intersects them).
   `key` keeps its own handling. The names are usually quoted property names, since they hold a
@@ -311,7 +311,8 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
 - **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
   component element with at least one of them calls `jsxComponentAttributes`, with the names and
   the values converted to `AttrValue` (a bare attribute is `true`, a written optional value that
-  is absent is `null`), in source order and evaluated in source order with the props (above).
+  is absent is `undefined`, or `null` when `AttrValue` has no `undefined`), in source order and
+  evaluated in source order with the props (above).
   An attribute given by a spread source is passed too. Each name is passed once: a later value
   replaces an earlier one in its place, as in an object, whether it is written or comes from a
   spread source. An optional field that a spread source does not have keeps the earlier value,
@@ -320,9 +321,10 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
 - **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
   `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
   take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
-  an object type whose fields convert to `AttrValue` (an optional field's `T | null`, so
-  `AttrValue` includes `null` when a field is optional). All of this is checked once, when the
-  provider is loaded: a mismatch is one error, not one per element.
+  an object type whose fields convert to `AttrValue` (an optional field's `T | undefined`, whose
+  `undefined` an `AttrValue` with `null` and no `undefined` gets as `null`; so `AttrValue`
+  includes `null` or `undefined` when a field is optional). All of this is checked once, when
+  the provider is loaded: a mismatch is one error, not one per element.
 - **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
   synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
   namespaced names on them are ordinary attributes.
@@ -340,7 +342,8 @@ The golden `lang/jsx_intrinsic_attributes` renders them through a provider in bo
 - Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
   provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
   `escapeHtml`.
-- `true` attributes render as the bare name, `false`/`null` attributes are omitted.
+- `true` attributes render as the bare name, `false`/`null` attributes are omitted. An attribute
+  whose value is `undefined` (`title={props.title}` with `title?: string`) is omitted as well.
 - The precompile lowering escapes static text and attribute values at compile time with the four
   replacements every provider shares; static text or an attribute value that contains a `'` is
   passed to `jsxEscape` (`jsxEscapeString` when exported) or `jsxAttr` at run time instead (as

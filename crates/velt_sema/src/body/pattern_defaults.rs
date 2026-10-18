@@ -37,23 +37,8 @@ impl FnCx<'_, '_> {
     ) {
         match &pattern.kind {
             P::Object { fields, rest } => {
-                if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
-                }
                 let tmp = self.temp_decl(init, out);
-                for (key, sub) in fields {
-                    let field = member(&tmp, key.clone());
-                    let (sub, value) = match self.split_default(sub, &tmp, key) {
-                        Some((inner, Applies::WhenNothing(d))) => (inner, nullish(field, d)),
-                        Some((inner, Applies::WhenAbsent(d))) => {
-                            (inner, cond_expr(has_key(key, &tmp), field, d))
-                        }
-                        Some((inner, Applies::Never)) => (inner, field),
-                        None => (sub, field),
-                    };
-                    self.decl_with_defaults(kind, sub, value, out);
-                }
+                self.object_decls(kind, fields, rest.as_ref(), &tmp, out);
             }
             P::Array { elems, rest } => {
                 let tmp = self.temp_decl(init, out);
@@ -111,6 +96,36 @@ impl FnCx<'_, '_> {
                 };
                 self.var_decl(&v, span, out);
             }
+        }
+    }
+
+    /// `kind { k1: p1, k2 = d, ...rest } = tmp;` key by key, each binding declared from
+    /// `tmp.k` (with its default), then the rest. `tmp` is a variable or a path of fields: the
+    /// hidden temporary of a pattern with defaults or a rest, or the value a method pattern
+    /// takes apart (`property_pattern.rs`).
+    pub(super) fn object_decls(
+        &mut self,
+        kind: VarKind,
+        fields: &[(ast::Ident, Pattern)],
+        rest: Option<&ast::Ident>,
+        tmp: &Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        for (key, sub) in fields {
+            let field = member(tmp, key.clone());
+            let (sub, value) = match self.split_default(sub, tmp, key) {
+                Some((inner, Applies::WhenNothing(d))) => (inner, nullish(field, d)),
+                Some((inner, Applies::WhenAbsent(d))) => {
+                    (inner, cond_expr(has_key(key, tmp), field, d))
+                }
+                Some((inner, Applies::Never)) => (inner, field),
+                None => (sub, field),
+            };
+            self.decl_with_defaults(kind, sub, value, out);
+        }
+        if let Some(r) = rest {
+            let taken: Vec<String> = fields.iter().map(|(k, _)| k.name.clone()).collect();
+            self.object_rest_decl(kind, r, &taken, tmp, out);
         }
     }
 
@@ -291,7 +306,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type of a temporary declared by `temp_decl`.
-    fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
+    pub(super) fn temp_ty(&mut self, tmp: &Expr) -> Option<hir::TyId> {
         let E::Ident(name) = &tmp.kind else {
             return None;
         };
@@ -331,7 +346,7 @@ fn without_defaults(p: &Pattern) -> Pattern {
     pat(kind, p.span)
 }
 
-fn mk(kind: E, span: Span) -> Expr {
+pub(super) fn mk(kind: E, span: Span) -> Expr {
     Expr {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -339,7 +354,7 @@ fn mk(kind: E, span: Span) -> Expr {
     }
 }
 
-fn pat(kind: P, span: Span) -> Pattern {
+pub(super) fn pat(kind: P, span: Span) -> Pattern {
     Pattern {
         id: ast::NodeId(u32::MAX),
         kind,
@@ -347,7 +362,7 @@ fn pat(kind: P, span: Span) -> Pattern {
     }
 }
 
-fn ident(name: &str, span: Span) -> ast::Ident {
+pub(super) fn ident(name: &str, span: Span) -> ast::Ident {
     ast::Ident {
         name: name.to_string(),
         span,
@@ -401,15 +416,17 @@ fn call(callee: Expr, args: Vec<Expr>) -> Expr {
     )
 }
 
+/// The callee of `#undefined_or(value, default)`: `value`, or `default` where it is
+/// `undefined` (not `null`, which a default never replaces). The name can't be written in
+/// source; sema checks the call as `FnCx::undefined_or`.
+pub(super) const UNDEFINED_OR: &str = "#undefined_or";
+
+/// A destructuring default: `#undefined_or(lhs, rhs)`.
 fn nullish(lhs: Expr, rhs: Expr) -> Expr {
     let span = lhs.span;
-    mk(
-        E::Binary {
-            op: ast::BinaryOp::Nullish,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        },
-        span,
+    call(
+        mk(E::Ident(ident(UNDEFINED_OR, span)), span),
+        vec![lhs, rhs],
     )
 }
 

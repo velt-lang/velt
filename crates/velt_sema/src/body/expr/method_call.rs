@@ -98,10 +98,45 @@ impl FnCx<'_, '_> {
             }
             return self.no_method(recv, prop, args, span);
         };
+        // `g.throw(e)` with `e: never` (from the `catch` of a `try` that cannot throw) cannot
+        // run: the call is its argument, so it adds no `any` to what the caller throws.
+        if prop.name == "throw" && args.len() == 1 && self.cx.generator_result(recv.ty).is_some() {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = self.trial_frames();
+            let never = self.expr(&args[0], None, Want::Move).ty == self.cx.ty.never;
+            mark.rollback(self.cx);
+            self.restore_trial_frames(frames);
+            if never {
+                let arg = self.expr(&args[0], None, Want::Move);
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(recv),
+                        span,
+                    }],
+                    value: Some(Box::new(arg)),
+                    span,
+                };
+                return self.mk(H::Block(block), self.cx.ty.never, span);
+            }
+        }
         if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {
+            // `next(value)` on a `Generator<T, E, N>`: the prelude's `nextWith(value)`.
+            let n = self.cx.generator_next_ty(recv.ty);
+            if args.len() == 1 && !self.cx.ty.is_bottom(n) {
+                if let Some(Resolved::Def {
+                    def,
+                    slots,
+                    recv_ty,
+                    ..
+                }) = self.resolve_method(recv.ty, "nextWith")
+                {
+                    return self
+                        .def_method_call(recv, def, slots, recv_ty, type_args, args, exp, span);
+                }
+            }
             self.cx.error(
                 Diagnostic::error("`next()` takes no argument", args[0].span).with_note(
-                    "TypeScript allows this (`next(value)` makes the paused `yield` evaluate to `value`); Velt doesn't because a generator's `yield` has no value; write `next()`, and pass values into the generator through its parameters or an object both sides share",
+                    "`next(value)` makes the paused `yield` evaluate to `value`, which needs the generator's type to say what it takes: declare it `Generator<T, void, N>` (`N`: the type of the values `next` passes), or write `next()`",
                 ),
             );
             self.check_args_loose(args);
@@ -206,6 +241,7 @@ impl FnCx<'_, '_> {
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.weak_key_args = self.weak_method(def);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
         let this_recv = self.this_recv(&recv);
@@ -305,10 +341,6 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
-        } else if prop.name == "throw" && self.cx.generator_result(recv.ty).is_some() {
-            d = d.with_note(
-                "TypeScript allows this (`throw(e)` throws `e` at the generator's paused `yield`); Velt doesn't because what a generator throws is checked from its body, and an error thrown in from outside could not be; write `return()` to close the generator (its `finally` blocks run), and throw the error where you call it",
-            );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {
@@ -373,5 +405,20 @@ impl FnCx<'_, '_> {
                 self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is `def` a method of the prelude's `WeakMap` or `WeakSet` taking a key first (`set`,
+    /// `get`, `has`, `delete`, `add`)?
+    fn weak_method(&self, def: DefId) -> bool {
+        let Some(owner) = self.cx.fn_info(def).owner else {
+            return false;
+        };
+        let weak = ["WeakMap", "WeakSet"]
+            .iter()
+            .any(|n| self.cx.prelude_adt(n) == Some(owner));
+        let name = self.cx.fn_info(def).name.rsplit('.').next().unwrap_or("");
+        weak && matches!(name, "set" | "get" | "has" | "delete" | "add")
     }
 }

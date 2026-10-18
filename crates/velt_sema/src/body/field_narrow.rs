@@ -39,7 +39,8 @@ impl FnCx<'_, '_> {
         Some(token)
     }
 
-    /// `h`, the value of `object.prop`, as its payload if a condition proved it non-null.
+    /// `h`, the value of `object.prop`, as its payload if a condition proved it non-null, and
+    /// as the union member a `typeof` test narrowed it to.
     pub(crate) fn narrowed_field(
         &mut self,
         object: &ast::Expr,
@@ -47,18 +48,63 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         want: Want,
     ) -> hir::Expr {
-        let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
+        if self.f.field_tokens.is_empty() {
             return h;
-        };
+        }
+        let payload = self.present_payload(h.ty);
+        let union = self.cx.union_members(payload.unwrap_or(h.ty));
+        if payload.is_none() && union.is_none() {
+            return h;
+        }
         let Some((root, path)) = self.member_path(object, prop) else {
             return h;
         };
-        match self.find_token(root, &path) {
-            Some(t) if self.is_narrowed(t) => {
-                let span = h.span;
-                self.checked_unwrap(h, payload, want, span)
+        let Some(t) = self.find_token(root, &path) else {
+            return h;
+        };
+        let member = match (union, self.allowed_members(t).as_deref()) {
+            (Some(ms), Some(&[v])) => Some((v, ms[v as usize])),
+            _ => None,
+        };
+        let base_mode = match want {
+            Want::BorrowMut => hir::UseMode::BorrowMut,
+            _ => hir::UseMode::Borrow,
+        };
+        let span = h.span;
+        let h = match payload {
+            Some(payload) if self.is_narrowed(t) => {
+                let mode = match member {
+                    Some(_) => base_mode,
+                    None => self.use_mode(payload, want),
+                };
+                // Each `UnwrapSome` of a field place checks it again (`checked_unwrap`).
+                self.unwrap_present(h, mode, span)
             }
-            _ => h,
+            // `x.f !== undefined` on a `T | null | undefined` field: its `T | null`.
+            Some(_) if self.is_three_state(h.ty) && self.excludes(t, hir::Nothing::Undefined) => {
+                let mid = self
+                    .cx
+                    .ty
+                    .opt_payload(h.ty)
+                    .expect("ICE: option without a payload");
+                return self.checked_unwrap(h, mid, want, span);
+            }
+            Some(_) => return h,
+            None => h,
+        };
+        match member {
+            // `typeof x.f === "string"` (#1264): lowering checks the variant again, as a call
+            // since the test may have changed the field.
+            Some((variant, m)) => {
+                let mode = self.use_mode(m, want);
+                let kind = H::UnwrapVariant {
+                    expr: Box::new(h),
+                    variant,
+                    mode,
+                };
+                self.mk(kind, m, span)
+            }
+            None => h,
         }
     }
 
@@ -124,7 +170,7 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        let u = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let u = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.union_def(u).is_some() {
             return None;
         }
@@ -133,8 +179,13 @@ impl FnCx<'_, '_> {
 
     /// The type local `l` reads as here (null, union member and subclass narrowing applied).
     fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
-        let mut t = self.local_ty(l);
-        if let Some(p) = self.cx.ty.opt_payload(t) {
+        let t = self.local_ty(l);
+        self.narrowed_as(l, t)
+    }
+
+    /// `t`, the type of local or field token `l`, as narrowed here.
+    fn narrowed_as(&mut self, l: LocalId, mut t: TyId) -> TyId {
+        if let Some(p) = self.cx.ty.core(t) {
             if !self.is_narrowed(l) {
                 return t;
             }
@@ -150,6 +201,31 @@ impl FnCx<'_, '_> {
             Some(c) if self.downcast_applies(t, c) => c,
             _ => t,
         }
+    }
+
+    /// `typeof x.f === tag` on field path `e` of a local (#1264): its token, whether its type is
+    /// nullable, the type without the nothings, and the nothings.
+    pub(super) fn field_with_members(
+        &mut self,
+        e: &ast::Expr,
+    ) -> Option<(LocalId, bool, TyId, Option<hir::Nothing>)> {
+        let (root, path) = self.field_path(e)?;
+        let mut t = self.narrowed_local_ty(root);
+        for k in 0..path.len() {
+            if k > 0 {
+                if let Some(token) = self.find_token(root, &path[..k]) {
+                    t = self.narrowed_as(token, t);
+                }
+            }
+            let owner = self.name_owner(&path[k]);
+            (_, t) = self.cx.field_seen_from(t, &path[k], owner)?;
+        }
+        let token = self.field_token(e)?;
+        let nothing = self.cx.ty.nothing_of(t);
+        Some(match self.cx.ty.core(t) {
+            Some(p) => (token, true, p, nothing),
+            None => (token, false, t, nothing),
+        })
     }
 
     /// Assigning field path `e` (or its root local) drops the narrowing of it and every path

@@ -170,6 +170,19 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return self.never_sel(s, span);
         }
+        if self.is_three_state(s.expr.ty) {
+            // One of the two nothing slots (`nothing_arms` order: `undefined`, then `null`).
+            let (which, k) = match word {
+                "null" => (crate::hir::Nothing::Null, 1),
+                _ => (crate::hir::Nothing::Undefined, 0),
+            };
+            return Sel {
+                pat: self.one_nothing_pat(which, s.expr.ty, span),
+                guard: None,
+                touched: vec![k],
+                covered: vec![k],
+            };
+        }
         match self.slot_sel(s, span, &|_, slot| slot.member.is_none()) {
             Some(sel) => sel,
             None => Sel {
@@ -193,12 +206,24 @@ impl FnCx<'_, '_> {
                 return self.never_sel(s, span);
             }
         };
+        if self.cx.dynamic(s.expr.ty).is_some() {
+            return self.dynamic_typeof_sel(s, &tag, span);
+        }
         let none = nothing_tag(self.cx, s.expr.ty);
         let found = self.slot_sel(s, span, &|cx, slot| match slot.member {
             Some(m) => cx.cx.typeof_tag(m) == tag,
             None => tag == none,
         });
         found.unwrap_or_else(|| {
+            // On a type that fixes the run-time `typeof` of its values, here also a union local
+            // that flow narrowing reduced to one member (`let u: number | string = 5`),
+            // TypeScript accepts the case, which never matches. A union none of whose members
+            // passes stays an error, as for `typeof x === "..."` (`type_test`), and so do types
+            // whose `typeof` is only known at run time (`any`, `unknown`, `T`, `object`).
+            let inner = self.cx.ty.core(s.expr.ty).unwrap_or(s.expr.ty);
+            if self.cx.union_def(inner).is_none() && typeof_exact(self.cx, inner) {
+                return self.never_sel(s, span);
+            }
             let tn = self.cx.display(s.expr.ty);
             self.never_matches(
                 s,
@@ -212,7 +237,7 @@ impl FnCx<'_, '_> {
     /// covered; a literal of a base-type member only tests that value).
     fn union_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let (v, m) = match self.lit_member(inner, l) {
             Ok(x) => x,
             Err(msg) => {
@@ -247,7 +272,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         let touched = (0..s.slots.len())
             .filter(|&k| s.slots[k].variant == Some(v))
@@ -263,7 +288,7 @@ impl FnCx<'_, '_> {
     /// `case 5:` / `case "a":` on a plain (possibly nullable) value.
     fn plain_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if let Some(v) = self.cx.lit_value(inner) {
             if !lit_matches(&v, l) {
                 let tn = self.cx.display(inner);
@@ -284,7 +309,7 @@ impl FnCx<'_, '_> {
         };
         let mut pat = self.pat(P::Lit(lit), inner, span);
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         Sel {
             pat,
@@ -309,6 +334,29 @@ impl FnCx<'_, '_> {
         let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
         let guard = self.eq_values(cur, v, span);
+        Sel {
+            pat: self.pat(P::Binding(l, mode), ty, span),
+            guard: Some(guard),
+            touched: (0..s.slots.len()).collect(),
+            covered: vec![],
+        }
+    }
+
+    /// `case "string":` on `typeof x` with `x` an `any` / `unknown`: the value is bound and its
+    /// run-time `typeof` compared with the tag in a guard, as `typeof x === "string"` does.
+    fn dynamic_typeof_sel(&mut self, s: &Scrut, tag: &str, span: Span) -> Sel {
+        let ty = s.expr.ty;
+        let mode = if self.cx.is_copy(ty) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        };
+        let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
+        let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let str_ = self.cx.ty.str_;
+        let key = self.intrinsic(hir::Intrinsic::AnyTypeof, vec![cur], str_, span);
+        let want = self.str_lit(tag, span);
+        let guard = self.eq_values(key, want, span);
         Sel {
             pat: self.pat(P::Binding(l, mode), ty, span),
             guard: Some(guard),
@@ -469,5 +517,29 @@ fn nothing_tag(cx: &crate::ctx::Ctx, t: crate::hir::TyId) -> &'static str {
     match cx.ty.nothing_of(t) {
         Some(crate::hir::Nothing::Undefined) => "undefined",
         _ => "object",
+    }
+}
+
+/// Does the static type `t` fix the run-time `typeof` of its values? Not for `object`,
+/// `Function`, `any` / `unknown` or an interface value (which may hold a function), a type
+/// parameter (any instantiation), an enum (a number or a string) or a deferred type.
+fn typeof_exact(cx: &crate::ctx::Ctx, t: hir::TyId) -> bool {
+    use crate::hir::TyKind;
+    let t = cx.brand_base(t).unwrap_or(t);
+    match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Str
+        | TyKind::Bool
+        | TyKind::Symbol
+        | TyKind::Literal(_)
+        | TyKind::FnPtr { .. }
+        | TyKind::Closure(_)
+        | TyKind::Array(_)
+        | TyKind::Tuple(_)
+        | TyKind::Map(..)
+        | TyKind::Promise(..) => true,
+        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
+        _ => false,
     }
 }

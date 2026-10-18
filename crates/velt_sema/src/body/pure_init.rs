@@ -23,15 +23,15 @@ pub(crate) struct Impure {
     what: String,
     span: Span,
     via: Vec<String>,
-    /// It may throw or is async: the value can never be known before `main` runs, so the
-    /// constant cannot be kept as module state either.
+    /// It is async: the value can never be known before `main` runs, so the constant cannot
+    /// be kept as module state either. (One that may throw is kept: an error thrown while the
+    /// module state is initialized ends the process, as in Node.)
     fatal: bool,
 }
 
 /// One of [`check_init`]'s own diagnostics: why an initializer is not a constant value. The
 /// caller drops them when the constant is kept as module state instead, unless one is `fatal`
-/// (the initializer may throw or is async: module state is initialized where nothing can catch
-/// or await it). Diagnostics of the functions it calls are never among them.
+/// (the initializer is async: module state is initialized where nothing can await it). Diagnostics of the functions it calls are never among them.
 pub(crate) struct NotConstant {
     pub(crate) diag: Diagnostic,
     pub(crate) fatal: bool,
@@ -435,7 +435,7 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     let info = cx.fn_info(f);
     for s in &info.throw_srcs {
         match s {
-            ThrowSrc::Direct(t, span) if *t != cx.ty.never => return fatal("may throw", *span),
+            ThrowSrc::Direct(t, span) if *t != cx.ty.never => return at("may throw", *span),
             ThrowSrc::Slot { span, .. } => return at("calls an interface method", *span),
             _ => {}
         }
@@ -545,7 +545,7 @@ impl VisitMut for Walk {
             },
             H::Closure(c) => self.closures.push((*c, e.span)),
             H::Await(_) => self.set_as("awaits", e.span, true),
-            H::Throw(_) => self.set_as("may throw", e.span, true),
+            H::Throw(_) => self.set("may throw", e.span),
             _ => {}
         }
     }
@@ -589,6 +589,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::HoldsNull
         | I::NullAs
         | I::Truthy
+        | I::IsNull
+        | I::IsNullish
         | I::FnCapturesNothing
         | I::Sqrt
         | I::Floor

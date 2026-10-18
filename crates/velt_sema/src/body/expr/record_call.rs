@@ -16,6 +16,7 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
 
 /// `(object, key)` of a record read or assignment target `object[key]` / `object.name`.
+#[derive(Clone, Copy)]
 pub(super) enum RecordKey<'a> {
     Index(&'a ast::Expr),
     Name(&'a ast::Ident),

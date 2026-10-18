@@ -1,0 +1,81 @@
+// check: no leaks
+// sigx's reactive caches (issue #926): `rawToReactive` and `reactiveToRaw` are
+// `WeakMap<object, object>`s between a raw object and its proxy, which holds the raw object.
+// Both go once nothing else refers to either (the ephemeron rule,
+// docs/internals/design/weak-refs.md); `WeakRef`s show it at once (Node clears them at a later
+// garbage collection, so Node prints `alive 200` below).
+class State {
+  count: number;
+  constructor(count: number) {
+    this.count = count;
+  }
+}
+
+const rawToReactive = new WeakMap<object, object>();
+const reactiveToRaw = new WeakMap<object, object>();
+let made = 0;
+
+function reactive(target: object): any {
+  const hit = rawToReactive.get(target);
+  if (hit !== undefined) {
+    return hit;
+  }
+  const p: object = new Proxy(target as any, {
+    get(obj, prop, receiver) {
+      return Reflect.get(obj, prop);
+    },
+  });
+  made++;
+  rawToReactive.set(target, p);
+  reactiveToRaw.set(p, target);
+  return p;
+}
+
+function isReactive(value: object): boolean {
+  return reactiveToRaw.has(value);
+}
+
+function toRaw<T>(observed: T): object {
+  const raw = reactiveToRaw.get(observed as object);
+  return raw !== undefined ? raw : (observed as object);
+}
+
+function churn(refs: WeakRef<object>[], i: number): number {
+  const raw = new State(i);
+  const a = reactive(raw);
+  const b = reactive(raw);
+  refs.push(new WeakRef(raw));
+  refs.push(new WeakRef(a as object));
+  const same = a === b && toRaw(a) === raw && isReactive(a) && !isReactive(raw);
+  return same ? a.count : -1;
+}
+
+function alive(refs: WeakRef<object>[]): number {
+  let n = 0;
+  for (const r of refs) {
+    if (r.deref() !== undefined) {
+      n++;
+    }
+  }
+  return n;
+}
+
+function main(): void {
+  const refs: WeakRef<object>[] = [];
+  let total = 0;
+  for (let i = 0; i < 100; i++) {
+    total += churn(refs, i);
+  }
+  console.log("total", total, "made", made, "alive", alive(refs));
+
+  // The raw object alive outside keeps its proxy: the same one every time.
+  const kept = new State(5);
+  const first = reactive(kept);
+  console.log(reactive(kept) === first, first.count);
+
+  // Only the proxy alive outside: it keeps the raw object, and both entries stay.
+  const proxy = reactive(new State(42));
+  const raw = toRaw(proxy);
+  console.log(reactive(raw) === proxy, proxy.count, isReactive(proxy));
+}
+

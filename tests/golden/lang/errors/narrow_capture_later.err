@@ -1,0 +1,3 @@
+narrow_capture_later.vlt:17:27: error: value of type `string | null` may be null
+narrow_capture_later.vlt:25:29: error: no field `a` on type `A | B`
+narrow_capture_later.vlt:35:21: error: value of type `string | null` may be null

@@ -72,7 +72,8 @@ changes with file:line and the fix, then follow-ups that may become issues):
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
    tool trailers; the description has no generated footers or session links (it becomes the
-   commit message); no internal process wording.
+   commit message); no internal process wording. The `hygiene` check covers the mechanical part
+   (`cargo xtask pr-lint`); review still reads for stale or process wording it can't recognize.
 2. **Correctness against the issue and the design**: JavaScript-identical results where the
    program is valid TypeScript (compare with Node); regression tests for every fix.
 3. **Soundness and security**: ownership across FFI, use-after-free paths (stale handles must be
@@ -89,13 +90,17 @@ review.
 
 ## Merging
 
-- `main` only changes through pull requests. Required check: `ci` (on the pull request, the
-  checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
-  `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
+- `main` only changes through pull requests. Required checks: `hygiene` (the title, description
+  and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
+  request, the checks its changes need: `cargo xtask check`, rules in
+  `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
   macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
-- Before queueing, strip any generated footer from the description: it becomes the commit message.
+- The description becomes the commit message. `hygiene` fails on generated footers, trailers,
+  session links, machine paths and review-process wording, so there is no footer to strip by hand
+  any more; editing the description re-runs it. It does not judge whether the text still
+  describes the head: that stays part of the review.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress

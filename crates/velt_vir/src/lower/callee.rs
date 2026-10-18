@@ -227,6 +227,11 @@ impl FnLower<'_, '_> {
         ty: TyId,
         transfer: bool,
     ) -> Operand {
+        if !transfer {
+            if let Some(v) = self.proxy_field_call(f, args, ty) {
+                return v;
+            }
+        }
         let fty = self.sub(f.ty);
         let throws = match self.cx.kind(fty) {
             TyKind::FnPtr { throws, .. } => self.cx.error_ty(Some(throws)),
@@ -282,15 +287,16 @@ impl FnLower<'_, '_> {
     /// counted object (a field, an element), or rooted in a variable held in a shared cell or a
     /// module `let`'s slot? A variable of this function or a parameter, and anything inside them
     /// stored inline, is reached by no other reference, so the callee cannot replace it.
-    fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn callee_replaceable(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(l, _) => self.info[l.0 as usize].in_cell,
-            // A module `let`: every function reaches its slot, the callee too.
-            K::Global(d) => self.slot_of(*d).is_some(),
+            // A module `let`: every function reaches its slot, the callee too (when some code
+            // reassigns it), and may replace what lies inside any slot.
+            K::Global(d) => self.slot_reassigned(*d),
             K::Field { base, .. } | K::Index { base, .. } => {
                 let bty = self.sub(base.ty);
-                self.cx.counted(bty) || self.callee_replaceable(base)
+                self.cx.counted(bty) || self.callee_replaceable(base) || self.rooted_in_slot(base)
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.callee_replaceable(base)

@@ -1,0 +1,7 @@
+plain a &lt;b&gt; &amp; &quot;c&quot; &#39;d&#39;
+true false true
+2 3 -1 2
+3 3 true
+{"color":"red","background":"url(a;b)"}
+true false
+false true
