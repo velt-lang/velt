@@ -1,0 +1,7 @@
+// `{ ...r }` of a record with no type expected is a record of its entries (it printed `{}`).
+const r: Record<string, number> = { a: 1, "1": 0 };
+console.log({ ...r });
+const c = { ...r, b: 2, a: 5 };
+console.log(c, Object.keys(c));
+const s = { z: 9, ...r };
+console.log(s, Object.values(s));

@@ -293,3 +293,26 @@ fn has_params(ty: &crate::types::Types, t: TyId) -> bool {
     collect_params(ty, t, &mut ps);
     !ps.is_empty()
 }
+
+/// Does the static type `t` fix the run-time `typeof` of its values? Not for `object`,
+/// `Function`, `any` / `unknown` or an interface value (which may hold a function), a type
+/// parameter (any instantiation), an enum (a number or a string) or a deferred type.
+pub(crate) fn typeof_exact(cx: &Ctx, t: TyId) -> bool {
+    let t = cx.brand_base(t).unwrap_or(t);
+    match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Str
+        | TyKind::Bool
+        | TyKind::Symbol
+        | TyKind::Literal(_)
+        | TyKind::FnPtr { .. }
+        | TyKind::Closure(_)
+        | TyKind::Array(_)
+        | TyKind::Tuple(_)
+        | TyKind::Map(..)
+        | TyKind::Promise(..) => true,
+        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
+        _ => false,
+    }
+}
