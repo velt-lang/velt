@@ -153,45 +153,36 @@ fn findings_print_as_diagnostics_with_their_code_and_fail() {
     assert!(velt(dir, &["check", "a.vlt"]).status.success());
 }
 
-/// The rules on types run in the command too; a warning alone doesn't fail it.
+/// The rules on types run in the command too; a library result that is `undefined` in Velt as
+/// in JavaScript (`Map.get` of a missing key) needs no finding.
 #[test]
-fn typed_findings_and_warnings() {
+fn typed_findings() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     write(
         dir,
         "a.ts",
-        "export function has(m: Map<string, number>): boolean {\n  \
-         return m.get(\"a\") === null;\n}\n",
+        "export function sorted(xs: number[]): number[] {
+  return xs.toSorted();
+}
+",
     );
     write(
         dir,
         "b.ts",
-        "export function label(m: Map<string, number>): string {\n  return `${m.get(\"a\")}`;\n}\n",
+        "export function label(m: Map<string, number>): string {
+           return `${m.get(\"a\")} ${m.get(\"a\") === undefined}`;
+}
+",
     );
     let o = velt(dir, &["check", "--ts-compat", "a.ts", "--json"]);
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
     let report = json(&o);
-    assert_eq!(codes(&report), ["strict-null-eq"]);
-    assert_eq!(report["diagnostics"][0]["fix"]["replacement"], "==");
+    assert_eq!(codes(&report), ["default-sort"]);
     let o = velt(dir, &["check", "--ts-compat", "b.ts", "--json"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let report = json(&o);
-    assert_eq!(codes(&report), ["nullable-in-template"]);
-    assert_eq!(report["diagnostics"][0]["severity"], "warning");
-    assert_eq!(
-        (report["errors"].as_u64(), report["warnings"].as_u64()),
-        (Some(0), Some(1))
-    );
-    let o = velt(dir, &["check", "--ts-compat", "b.ts"]);
-    assert!(o.status.success());
-    assert!(
-        stderr(&o).contains(
-            "b.ts:2:13: warning: `${…}` of a value that may be `undefined` in JavaScript"
-        ),
-        "{}",
-        stderr(&o)
-    );
+    assert!(codes(&report).is_empty(), "{report}");
 }
 
 #[test]
