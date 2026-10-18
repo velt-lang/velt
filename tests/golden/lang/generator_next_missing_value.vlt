@@ -1,0 +1,15 @@
+// A `next()` without a value resumes a `yield` whose `TNext` (`number`) has no `undefined`:
+// it panics (TypeScript's types allow it, and JS gives the `yield` `undefined`).
+function* sums(): Generator<number, void, number> {
+  let total = 0;
+  while (true) {
+    total += yield total;
+  }
+}
+
+function main(): void {
+  const g = sums();
+  console.log(g.next().value);
+  console.log(g.next(2).value);
+  console.log(g.next().value);
+}

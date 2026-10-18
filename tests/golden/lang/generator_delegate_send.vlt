@@ -1,0 +1,57 @@
+// check: no leaks
+// `yield* inner` hands the caller's `next(value)`, `throw(e)` and `return()` on to `inner`; an
+// error `inner` does not catch is thrown at the `yield*`.
+function* inner(tag: string): Generator<string, void, number> {
+  try {
+    const a = yield `${tag}1`;
+    console.log(tag, "got", a);
+    const b = yield `${tag}2`;
+    console.log(tag, "got", b);
+  } catch (e) {
+    console.log(tag, "caught", (e as Error).message);
+    yield `${tag}-recovered`;
+  } finally {
+    console.log(tag, "finally");
+  }
+}
+
+function* plain(tag: string): Generator<string, void, number> {
+  try {
+    yield `${tag}1`;
+    yield `${tag}2`;
+  } finally {
+    console.log(tag, "finally");
+  }
+}
+
+function* outer(): Generator<string, void, number> {
+  const x = yield "o1";
+  console.log("outer got", x);
+  yield* inner("a");
+  try {
+    yield* plain("b");
+  } catch (e) {
+    console.log("outer caught", (e as Error).message);
+  }
+  yield* inner("c");
+  yield "o-end";
+}
+
+function main(): void {
+  const g = outer();
+  console.log(g.next(0).value);
+  console.log(g.next(1).value);
+  console.log(g.next(2).value);
+  console.log(g.next(3).value);
+  console.log(g.throw(new Error("into b")).value);
+  console.log(g.throw(new Error("into c")).value);
+  console.log(g.next(4).value);
+  console.log(g.next(5).done);
+
+  const h = outer();
+  h.next();
+  h.next(1);
+  h.next(2);
+  console.log(h.return().done);
+  console.log(h.next(6).done);
+}

@@ -8,8 +8,8 @@ narrow_branch_assigned.vlt:61:10: error: value of type `string | null` may be nu
 narrow_branch_assigned.vlt:67:10: error: value of type `string | null` may be null
 narrow_branch_assigned.vlt:76:10: error: value of type `string | null` may be null
 narrow_branch_assigned.vlt:82:10: error: value of type `string | null` may be null
-narrow_branch_assigned.vlt:88:12: error: no field `b` on type `A | B`
-narrow_branch_assigned.vlt:94:12: error: no field `length` on type `string | f64`
+narrow_branch_assigned.vlt:88:12: error: no field `b` on type `A`
+narrow_branch_assigned.vlt:94:12: error: no field `length` on type `f64`
 narrow_branch_assigned.vlt:100:10: error: value of type `string | null` may be null
 narrow_branch_assigned.vlt:106:10: error: value of type `string | null` may be null
 narrow_branch_assigned.vlt:116:10: error: value of type `string | null` may be null

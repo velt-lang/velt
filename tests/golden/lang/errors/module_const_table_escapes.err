@@ -5,7 +5,7 @@ module_const_table_escapes.vlt:66:17: error: cannot move out of module constant 
 module_const_table_escapes.vlt:67:13: error: cannot move out of module constant `Limits.STEPS`
 module_const_table_escapes.vlt:70:37: error: cannot move out of module constant `K`
 module_const_table_escapes.vlt:70:41: error: cannot move out of module constant `L`
-module_const_table_escapes.vlt:70:47: error: `??` needs a `T | null` value on the left, found `f64[]`
+module_const_table_escapes.vlt:70:47: error: cannot pass module constant `K` to a function value
 module_const_table_escapes.vlt:70:52: error: cannot move out of module constant `L`
 module_const_table_escapes.vlt:19:7: error: cannot pass module constant `K` to a function value
 module_const_table_escapes.vlt:44:9: error: cannot modify module-level constant `K`

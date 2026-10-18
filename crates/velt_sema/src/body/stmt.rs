@@ -106,6 +106,10 @@ impl FnCx<'_, '_> {
             A::Break(label) => {
                 if let Some(i) = self.loop_target(label.as_ref(), "break", span) {
                     self.f.loops[i].has_break = true;
+                    if self.f.loops[i].is_switch {
+                        let st = self.narrow_state_at(self.f.loops[i].depth);
+                        self.f.loops[i].break_states.push(st);
+                    }
                     Self::push(out, S::Break(label.as_ref().map(|l| l.name.clone())), span);
                 }
             }
@@ -299,7 +303,9 @@ impl FnCx<'_, '_> {
             );
             return;
         };
-        if super::pattern_defaults::has_default(&v.pattern) {
+        if super::pattern_defaults::has_default(&v.pattern)
+            || super::object_rest::has_object_rest(&v.pattern)
+        {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
                 Some(t) => self.typed_temp(e, t, out),
@@ -313,6 +319,9 @@ impl FnCx<'_, '_> {
         };
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
+                if let Some(src) = self.method_source(fields, e, init.clone(), out) {
+                    return self.object_decls(v.kind, fields, None, &src, out);
+                }
                 return self.property_decls(v.kind, fields, init, out);
             }
         }
@@ -456,6 +465,11 @@ impl FnCx<'_, '_> {
         }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
+        }
+        // `let u: string | number = "x"` holds a `string` until it is assigned (TS).
+        let cast = v.init.as_ref().is_some_and(super::assign_narrow::is_cast);
+        if let (Some(_), Some(h), false) = (ann, &init, cast) {
+            self.narrow_to_assigned(local, ty, h);
         }
         Self::push(out, S::Let { local, init }, span);
     }

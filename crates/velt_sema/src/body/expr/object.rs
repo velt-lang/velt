@@ -64,6 +64,11 @@ impl FnCx<'_, '_> {
                 t
             }
         };
+        // `[x, y]` with `x: A` (narrowed) and `y: A | null`: an `(A | null)[]`, as in TS.
+        let elem = match exp_elem {
+            None => self.nullable_elem(elems, &mut out, elem),
+            Some(_) => elem,
+        };
         let elem = match exp_elem {
             // `[undefined, 1]`: the elements' union (`number | undefined`), as in TypeScript.
             None if self.cx.ty.core(elem) == Some(self.cx.ty.never) => {
@@ -93,6 +98,31 @@ impl FnCx<'_, '_> {
         }
         let ty = self.cx.ty.array(elem);
         self.mk(H::ArrayLit(hs), ty, span)
+    }
+
+    /// Element type of an array literal whose first element is of the non-nullable type
+    /// `first`: the nullable type of the first element that is a `first | null` (or `first |
+    /// undefined`), else `first`. Checks the elements into `out`.
+    fn nullable_elem(
+        &mut self,
+        elems: &[ast::Expr],
+        out: &mut [Option<hir::Expr>],
+        first: TyId,
+    ) -> TyId {
+        let t = &self.cx.ty;
+        if t.opt_payload(first).is_some() || t.is_bottom(first) || elems.len() < 2 {
+            return first;
+        }
+        for (i, e) in elems.iter().enumerate() {
+            if out[i].is_none() {
+                out[i] = Some(self.expr(e, Some(first), Want::Move));
+            }
+            let ty = out[i].as_ref().map_or(first, |h| h.ty);
+            if ty != first && self.cx.ty.core(ty) == Some(first) {
+                return ty;
+            }
+        }
+        first
     }
 
     /// Element type of an array literal whose first element is of class `first`: the class of

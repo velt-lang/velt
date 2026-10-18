@@ -39,7 +39,7 @@ pub(super) const ST_NOT_FN: i128 = 2;
 
 impl Cx<'_> {
     /// The type `any`.
-    pub(super) fn any_ty(&mut self) -> TyId {
+    pub(in crate::lower) fn any_ty(&mut self) -> TyId {
         let i = self
             .hir
             .any_impl

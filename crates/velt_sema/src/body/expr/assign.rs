@@ -448,20 +448,15 @@ impl FnCx<'_, '_> {
                 self.check_capture_assign(l, target.span);
                 self.unnarrow(l);
             }
-            // Assigning a non-null value narrows the target like a check would (TS). On a
-            // `T | null | undefined` a `WrapSome` of a `T | null` only rules out `undefined`.
-            if let H::WrapSome(inner) = &v.kind {
-                let present = !self.is_three_state(v.ty) || matches!(inner.kind, H::WrapSome(_));
-                let token = match place.kind {
-                    H::Local(l, _) => Some(l),
-                    _ => self.field_token(target),
-                };
-                use crate::body::narrow::Fact;
-                match token {
-                    Some(t) if present => self.narrow(&Fact::NonNull(t)),
-                    Some(t) => self.narrow(&Fact::Excludes(t, crate::hir::Nothing::Undefined)),
-                    None => {}
-                }
+            // Assigning narrows the target like a check would (TS): to non-null, or to the
+            // union member assigned (`assign_narrow`).
+            let token = match place.kind {
+                H::Local(l, _) => Some(l),
+                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ => None,
+            };
+            if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
+                self.narrow_to_assigned(t, lty, &v);
             }
             let kind = H::Assign {
                 place: Box::new(place),

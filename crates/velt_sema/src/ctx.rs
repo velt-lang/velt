@@ -83,10 +83,8 @@ pub(crate) struct Ctx<'m> {
     pub checking_unused_aliases: bool,
     /// The state of type-level evaluation (`crate::type_level`).
     pub(crate) type_level: crate::type_level::State,
-    /// The program (not std) writes `undefined`, as a type or a value. The checks that only
-    /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
-    /// skipped otherwise; the type table alone cannot tell, since the prelude declares
-    /// `Array<T | undefined>.sort`.
+    /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
+    /// a `toJSON()` returning `undefined`) are skipped (the prelude uses `T | undefined` itself).
     pub writes_undefined: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
     /// a utility type in a field type shapes the type it reads first, whatever the order.
@@ -96,9 +94,8 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: HashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: HashMap<TyId, TyId>,
-    /// Object types the replaced-holder check (`crate::replaced_holders`) accepted assignments
-    /// for because they are shared: lowering counts them from its first pass
-    /// (`hir::Program::counted_objects`).
+    /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
+    /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
@@ -143,9 +140,8 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
-    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
-    /// error type is inferred: it must turn out `never`, since the interface's iterator type
-    /// is fixed before bodies are checked (throws/checks.rs).
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
+    /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
@@ -176,6 +172,8 @@ pub(crate) struct Ctx<'m> {
     pub group_defs: HashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
@@ -340,6 +338,7 @@ impl<'m> Ctx<'m> {
             group_defs: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             has_overloads: false,
+            gen_throw: false,
             overloaded_methods: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
@@ -761,7 +760,7 @@ impl<'m> Ctx<'m> {
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
-                DefInfo::Adt(a) => with_args(self, &a.name, args),
+                DefInfo::Adt(a) => with_args(self, &a.name, self.shown_args(*d, args)),
                 DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),

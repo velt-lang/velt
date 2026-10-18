@@ -48,7 +48,7 @@ impl FnCx<'_, '_> {
         is_eq: bool,
         span: Span,
     ) -> hir::Expr {
-        let mut s = self.expr(other, None, Want::Borrow);
+        let mut s = self.test_operand(other, None, Want::Borrow);
         // A narrowed value may be tested again (TS allows it): compare the value itself.
         while let H::UnwrapSome(base, _) = s.kind {
             s = *base;
@@ -56,15 +56,9 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
-        if self.cx.ty.opt_payload(s.ty).is_none() && !self.cx.ty.is_bottom(s.ty) {
-            let tn = self.cx.display(s.ty);
-            self.cx.error(
-                Diagnostic::error(
-                    format!("comparison with `{word}`, but `{tn}` is never {word}"),
-                    span,
-                )
-                .with_note(format!("only `T | {word}` values can be {word}")),
-            );
+        if self.never_nullish(s.ty) {
+            // TS accepts a test of a value that is never nullish (a defensive check).
+            return self.never_null_compare(other, s, is_eq, span);
         }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
             // A `T | undefined` is never `null`: still evaluated, then constant.
@@ -116,7 +110,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `s`, evaluated, then `value`.
-    fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
+    pub(super) fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
         let sty = s.ty;
         let arms = vec![hir::Arm {
             pat: self.pat(P::Wildcard, sty, span),
@@ -203,14 +197,34 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        let mut h = self.expr(inner, None, Want::Borrow);
+        if self.cx.ty.opt_payload(h.ty).is_none() {
+            // `const v = K!` takes over what `K` names, as `const v = K` does.
+            if want == Want::Move && matches!(h.kind, H::Global(_)) {
+                self.force_move(&mut h);
+            }
+            return h;
+        }
+        let msg = "non-null assertion failed: the value is null";
+        self.checked_present(h, msg, exp, keep, span)
+    }
+
+    /// The payload of the nullable value `h`, or a panic with `msg` when it is nullish; with
+    /// `keep`, a place is borrowed, not consumed.
+    pub(crate) fn checked_present(
+        &mut self,
+        h: hir::Expr,
+        msg: &str,
+        exp: Option<TyId>,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
             span,
         };
-        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(
-            "non-null assertion failed: the value is null".into(),
-        )));
+        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(msg.into())));
         let panic = mk(ast::ExprKind::Call {
             callee: Box::new(mk(ast::ExprKind::Ident(ast::Ident {
                 name: "panic".into(),
@@ -220,14 +234,6 @@ impl FnCx<'_, '_> {
             args: vec![msg],
             optional: false,
         });
-        let mut h = self.expr(inner, None, Want::Borrow);
-        if self.cx.ty.opt_payload(h.ty).is_none() {
-            // `const v = K!` takes over what `K` names, as `const v = K` does.
-            if want == Want::Move && matches!(h.kind, H::Global(_)) {
-                self.force_move(&mut h);
-            }
-            return h;
-        }
         let keep = keep && is_place(&h) && self.cx.dynamic(h.ty).is_none();
         self.nullish_checked_keeping(h, &panic, exp, keep, span)
     }
@@ -239,7 +245,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let s = self.expr(lhs, None, Want::Borrow);
+        let s = self.test_operand(lhs, None, Want::Borrow);
+        if self.never_nullish(s.ty) {
+            // TS accepts `??` on a value that is never nullish: the value itself.
+            return self.never_null_nullish(lhs, s, rhs, span);
+        }
         self.nullish_checked(s, rhs, exp, span)
     }
 
@@ -389,7 +399,7 @@ impl FnCx<'_, '_> {
         span: Span,
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
-        let s = self.expr(object, None, Want::Borrow);
+        let s = self.test_operand(object, None, Want::Borrow);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         if self
             .cx

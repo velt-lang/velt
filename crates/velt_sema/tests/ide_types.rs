@@ -71,11 +71,11 @@ function main() {
   const b = new Box<Map<string, i64>>(new Map<string, i64>());
   const c = new Crate(1);
   const o: Opts = { port: 1 };
-  const u: string | number = \"s\";
+  const u = \"s\" as string | number;
   const pair: [i64, string] = [1, \"a\"];
   const f = (x: i64) => x;
   const p = later();
-  const lit: \"up\" | \"down\" = \"up\";
+  const lit = \"up\" as \"up\" | \"down\";
   console.log(div(7, 2), half, got, len, b, c, o, u, pair, f(1), lit, true);
 }
 ";

@@ -37,7 +37,7 @@ struct Sig {
 
 impl FnCx<'_, '_> {
     /// Is `obj.name` a method (not a field or getter) of `obj`'s type?
-    pub(super) fn is_method_value(&mut self, t: TyId, name: &str) -> bool {
+    pub(crate) fn is_method_value(&mut self, t: TyId, name: &str) -> bool {
         if self.record_args(t).is_some() || self.field_of(t, name).is_some() {
             return false;
         }
@@ -353,12 +353,22 @@ impl FnCx<'_, '_> {
                     .iter()
                     .map(|p| self.cx.subst(p.ty, &iface_args));
                 let params: Vec<TyId> = params.collect();
+                // A type parameter left after substituting the interface's arguments is one of
+                // the enclosing generic definition's (`options: RendererOptions<N>` in
+                // `createRenderer<N>`), in scope for the arrow too.
                 let ret = self.cx.subst(method.ret, &iface_args);
-                let generic = |s: &Self, t: TyId| s.cx.mentions_params(t);
-                if params.iter().any(|p| generic(self, *p)) || generic(self, ret) {
-                    return None;
-                }
-                let defaults = params.iter().map(|_| None).collect();
+                // An interface method's only defaults are the `null` of its optional
+                // parameters (`anchor?: N | null`), which the function value takes too, as a
+                // class method's (the parser gives `x?: T` the default `null`).
+                let defaults = method
+                    .params
+                    .iter()
+                    .map(|p| {
+                        p.default
+                            .as_ref()
+                            .map(|_| synth(ast::ExprKind::Lit(ast::Lit::Null), span))
+                    })
+                    .collect();
                 Some(Sig {
                     params,
                     defaults,
@@ -371,7 +381,10 @@ impl FnCx<'_, '_> {
 
     /// `(x) => recv.prop(x)` with the parameter names of `object`'s method, for notes.
     fn arrow_fix(&mut self, object: &ast::Expr, recv: &ast::Expr, prop: &ast::Ident) -> String {
-        let recv = path_text(recv).unwrap_or_else(|| "obj".into());
+        // A hidden temporary (`#d1`, a destructured value) has no name the source knows.
+        let recv = path_text(recv)
+            .filter(|t| !t.starts_with('#'))
+            .unwrap_or_else(|| "obj".into());
         let names = self.param_names(object, prop).join(", ");
         format!("({names}) => {recv}.{}({names})", prop.name)
     }

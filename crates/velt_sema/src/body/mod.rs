@@ -33,6 +33,8 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod assign_ends;
+mod assign_narrow;
 pub(crate) mod assigned;
 mod closure_assigned;
 pub(crate) mod closure_group;
@@ -54,6 +56,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod nested_pattern;
+mod object_rest;
 mod param_patterns;
 mod pattern;
 mod pattern_defaults;
@@ -123,6 +126,11 @@ pub(crate) struct LoopCx {
     pub needs_label: bool,
     /// Label given to the HIR loop when the source has none but one is needed.
     pub synth_label: String,
+    /// The number of scopes open where the entry starts.
+    pub depth: usize,
+    /// For a `switch`: the narrowing state at each `break` that leaves it, folded into the
+    /// scopes open at the `switch` (`switch::case_bodies` joins them).
+    pub break_states: Vec<locals::NarrowState>,
 }
 
 impl LoopCx {
@@ -204,6 +212,12 @@ pub(crate) struct Frame {
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
+    /// none).
+    pub next_ty: Option<TyId>,
+    /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
+    /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
+    pub catch_depth: u32,
     /// Body of a named generator function expression: its name (not in scope there).
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
@@ -268,6 +282,9 @@ pub(crate) struct Frame {
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: HashMap<String, Span>,
+    /// Where this function's own code last assigns each variable (`assign_ends`): closures
+    /// created before that do not see the variable's narrowing.
+    pub assign_ends: HashMap<String, u32>,
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
@@ -312,6 +329,8 @@ impl Frame {
             discards_value: false,
             is_async: false,
             yield_ty: None,
+            next_ty: None,
+            catch_depth: 0,
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],
@@ -338,6 +357,7 @@ impl Frame {
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
+            assign_ends: HashMap::new(),
             int_returns_number: false,
             checked_predicates: HashMap::new(),
             truthy_returns: false,
@@ -436,6 +456,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub optional_slots: Vec<(Span, OptionalSlot)>,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
+    /// the variable as it is, without the check `checked_narrowed_read` adds.
+    pub raw_read: Option<Span>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
     pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
@@ -491,6 +514,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             weak_key_args: false,
             optional_slots: vec![],
             refused_reads: vec![],
+            raw_read: None,
             literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,

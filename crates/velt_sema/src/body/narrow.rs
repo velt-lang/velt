@@ -122,9 +122,7 @@ impl FnCx<'_, '_> {
                 self.discriminant_facts(cond, &t).unwrap_or_default()
             }
             ast::ExprKind::Ident(_)
-            | ast::ExprKind::Member {
-                optional: false, ..
-            }
+            | ast::ExprKind::Member { .. }
             | ast::ExprKind::Index {
                 optional: false, ..
             }
@@ -292,6 +290,25 @@ impl FnCx<'_, '_> {
 
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
     fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
+        if let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: true,
+        } = &e.kind
+        {
+            // `a?.b` is truthy: `a` is not null, and `a.b` is truthy (`if (def?.transform)`).
+            let plain = ast::Expr {
+                kind: ast::ExprKind::Member {
+                    object: object.clone(),
+                    prop: prop.clone(),
+                    optional: false,
+                },
+                ..e.clone()
+            };
+            let mut facts = self.truthy_facts(object);
+            facts.extend(self.truthy_facts(&plain));
+            return facts;
+        }
         if let Some(l) = self.nullable_local(e) {
             return vec![Fact::NonNull(l)];
         }
