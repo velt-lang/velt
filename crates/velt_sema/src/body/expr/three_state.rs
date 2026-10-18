@@ -315,4 +315,43 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, exp, span)
     }
+
+    /// `null` / `undefined` (`which`) as a value of type `t` that allows it only through a
+    /// member of its union: `T | string | undefined` at `T = number | null` holds `null` as its
+    /// `T` member (#1268). The instance keeps the generic union's layout (velt_vir
+    /// `canon_union`), so the value is that member's variant holding its nothing.
+    pub(crate) fn nothing_in_member(
+        &mut self,
+        which: Nothing,
+        t: TyId,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let allows = |n: Nothing| match which {
+            Nothing::Undefined => n.has_undefined(),
+            _ => n.has_null(),
+        };
+        let (core, outer) = match self.cx.ty.nothing_of(t) {
+            // The option's own nothing holds it (or the payload is a `T | null`).
+            Some(n) if allows(n) || n == Nothing::Both => return None,
+            Some(_) => (self.cx.ty.opt_payload(t)?, true),
+            None => (t, false),
+        };
+        let (def, type_args) = self.cx.union_def(core)?;
+        let members = self.cx.union_members(core)?;
+        let v = members
+            .iter()
+            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows))?;
+        let inner = self.nothing_value(which, members[v], span);
+        let kind = H::Variant {
+            def,
+            type_args,
+            variant: v as u32,
+            args: vec![inner],
+        };
+        let value = self.mk(kind, core, span);
+        Some(match outer {
+            true => self.mk(H::WrapSome(Box::new(value)), t, span),
+            false => value,
+        })
+    }
 }
