@@ -37,6 +37,7 @@ mod errors;
 mod fn_union_call;
 mod gen_closure;
 mod gen_value;
+mod hidden_nothings;
 mod hoist;
 pub(crate) mod iface_adapt;
 mod iface_call;
@@ -150,6 +151,8 @@ impl FnCx<'_, '_> {
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an
         // optional field) is an `any` in user code, as in TypeScript.
         let h = self.collapse_dynamic_option(h);
+        // A generic union holding `null` / `undefined` through a member, in its written form.
+        let h = self.flatten_hidden_nothings(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);
