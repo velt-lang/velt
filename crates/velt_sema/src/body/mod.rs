@@ -56,6 +56,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod nested_pattern;
+mod object_rest;
 mod param_patterns;
 mod pattern;
 mod pattern_defaults;
