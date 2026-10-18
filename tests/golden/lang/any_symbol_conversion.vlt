@@ -1,0 +1,39 @@
+// check: no leaks
+// An `any` converted to a union with `symbol` (`k as string | symbol`, a Map key): the run-time
+// test of a symbol is `typeof x === "symbol"`, as for the other primitives (#924).
+const KEY = Symbol("key");
+
+function toRaw(x: unknown): any {
+  return x;
+}
+
+const deps = new Map<string | symbol, number>();
+
+function dep(k: string | symbol): number {
+  const d = deps.get(k);
+  if (d != null) {
+    return d;
+  }
+  deps.set(k, deps.size);
+  return deps.size - 1;
+}
+
+function track(key: unknown): number {
+  const raw = toRaw(key);
+  return dep(raw as string | symbol);
+}
+
+function describe(v: any): string {
+  const k: symbol | number = v;
+  return typeof k === "symbol" ? `symbol ${String(k.description)}` : `number ${k}`;
+}
+
+function main(): void {
+  const local = Symbol("local");
+  console.log(track("a"), track(KEY), track("a"), track(KEY), track(local), track(local));
+  console.log(deps.size, deps.has(KEY), deps.get(local));
+  console.log(describe(KEY), describe(local), describe(7));
+  const s: any = KEY;
+  const back = s as symbol;
+  console.log(back === KEY, typeof back, back.toString());
+}

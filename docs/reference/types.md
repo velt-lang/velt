@@ -1815,8 +1815,8 @@ instance of a generic class against that very instantiation (`Box<number>`, so a
 `Record<string, number>` converts only from a record of that type: an object of a fixed shape
 stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
-`typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
-literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`typeof` test for `number`, `string`, `boolean` and `symbol` (`k as string | symbol`),
+`instanceof` for a class, `===` for a literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
 `===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
