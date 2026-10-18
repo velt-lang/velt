@@ -1,0 +1,4 @@
+object_copies_dynamic_unknown.vlt:9:15: error: a value of type `UV` converts to `U` by copying its fields, and this program compares `unknown` values with `===` or `!==`: two copies of one object are not `===`
+object_copies_dynamic_unknown.vlt:7:10: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `U` made from a `UV` value is a new object with the same field values
+= note: build the new object explicitly, `{ u: su.u }` (a new object in TypeScript too), or declare the parameter or variable as `UV`

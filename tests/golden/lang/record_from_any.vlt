@@ -1,0 +1,45 @@
+// check: no leaks
+// A `Record` converted from `any` or `unknown` (#1211): `Object.keys`, `Object.values`,
+// `Object.entries`, `for...in`, spread, `console.log` and `JSON.stringify` of it. Printing or
+// serializing a record calls its `__positions()`, whose `usize[]` result comes back through an
+// out pointer when the program keeps arrays inline (as one with `any` values does).
+function keys(x: any): string[] {
+  const r = x as Record<string, number>;
+  return Object.keys(r);
+}
+
+function numbers(x: any): Record<string, number> {
+  return x as Record<string, number>;
+}
+
+function main() {
+  const src: Record<string, number> = { b: 2, a: 1, "1": 3 };
+  console.log(keys(src));
+  const r = numbers(src);
+  console.log(Object.keys(r));
+  console.log(Object.values(r));
+  console.log(Object.entries(r));
+  for (const k in r) {
+    console.log(k, r[k]);
+  }
+  const copy = { ...r, z: 9 };
+  console.log(copy);
+  console.log(r);
+  console.log(JSON.stringify(r));
+
+  const words: Record<string, string> = { x: "hi", y: "yo" };
+  const ws: any = words;
+  const s = ws as Record<string, string>;
+  console.log(Object.keys(s), Object.values(s), s);
+
+  const mixed: Record<string, any> = { p: 1, q: "two", r: [1, 2] };
+  const ma: any = mixed;
+  const m = ma as Record<string, any>;
+  console.log(Object.keys(m), Object.entries(m), m);
+
+  const u: unknown = { m: 5, n: 6 } as Record<string, number>;
+  if (typeof u === "object" && u !== null) {
+    const ru = u as Record<string, number>;
+    console.log(Object.keys(ru), ru, JSON.stringify(ru));
+  }
+}

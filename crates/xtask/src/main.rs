@@ -4,6 +4,7 @@
 //! cargo xtask check                  the checks the changes since origin/main need
 //! cargo xtask check --full           the whole gate (what the merge queue runs)
 //! cargo xtask affected               print what `check` would run, and why
+//! cargo xtask pr-lint                check a pull request's text and commits
 //! ```
 //!
 //! Run `cargo xtask help` for every option.
@@ -15,6 +16,7 @@ mod doctests;
 mod graph;
 mod os;
 mod plan;
+mod pr_lint;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -30,6 +32,9 @@ Commands:
   check       Run the quality gate: by default only the checks the changed files need
               (changed since the merge base with --base, plus uncommitted and untracked files)
   affected    Print the plan `check` would run, and why
+  pr-lint     Check a pull request's title, description and commits for tool footers and
+              trailers, session links, machine paths, review wording and the commit author
+              (`cargo xtask pr-lint --help` for its options)
 
 Options:
   --full               Check everything (the merge queue and nightly run this)
@@ -97,7 +102,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let args = parse(std::env::args().skip(1).collect())?;
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().is_some_and(|c| c == "pr-lint") {
+        return pr_lint::main(&repo_root()?, &argv[1..]);
+    }
+    let args = parse(argv)?;
     let root = repo_root()?;
     match args.command.as_str() {
         "check" => {

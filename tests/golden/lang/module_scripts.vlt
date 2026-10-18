@@ -1,0 +1,15 @@
+// check: no leaks
+// An imported module's top-level statements run once, when the module is evaluated: after the
+// modules it imports, before the module that imports it, in Node's order (a circular import
+// finds the module that is still being evaluated and goes on). A module imported only for its
+// types (`import type`) is never evaluated.
+import { register, registry, loads } from "./_module_scripts/registry";
+import { a } from "./_module_scripts/a";
+import { b } from "./_module_scripts/b";
+import type { Shape } from "./_module_scripts/types";
+
+console.log("main runs");
+register("main");
+console.log(registry.join(","), loads, a(), b());
+const s: Shape = { n: 1 };
+console.log(s.n);

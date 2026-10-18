@@ -1,0 +1,27 @@
+// Conversions of a generic interface value to `unknown` arguments (#1153) that a method's
+// parameter type cannot take yet are compile errors naming the case: a generic class with
+// `unknown` arguments, a container of another shape (#1185), and an interface (#924).
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+interface Shape {
+  area(): number;
+}
+
+const boxes: Handler<Box<unknown>, number> = { name: "box", serialize: (b) => 1 };
+const shapes: Handler<Shape, number> = { name: "shape", serialize: (s) => s.area() };
+const maps: Handler<Map<string, unknown>, number> = { name: "m", serialize: (m) => m.size };
+
+function main(): void {
+  const all: Handler[] = [boxes, shapes, maps];
+  console.log(all.length);
+}

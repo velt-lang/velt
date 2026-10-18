@@ -5,8 +5,9 @@
 //! a `U | null` of a type parameter `U` would therefore hold its own `null` and a
 //! `U = T | undefined` value's `undefined` in one marker, and could not tell them apart (a
 //! `Map` entry holding `undefined` would read as a missing one); the same holds the other way
-//! round, for a `U | undefined` at `U = T | null`. Until the three-state encoding (the design
-//! note's marker `2`) lands, such an instantiation is reported, at the place that makes it: a
+//! round, for a `U | undefined` at `U = T | null`. That one is `T | null | undefined`, which
+//! keeps the `T | null` apart (`TyTable::intern`); the first is still reported, at the place
+//! that makes it: a
 //! call of a generic function, or a value of a generic type, whose definition keeps an option
 //! with the other nothing of the parameter that receives the argument.
 //!
@@ -171,7 +172,10 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         let bad = targs.iter().enumerate().find_map(|(i, t)| {
             let have = cx.ty.nothing_of(*t)?;
             let m = m.get(i).copied().unwrap_or(0);
-            let kept = m & (NULL | UNDEFINED) & !bits(have);
+            // A kept `U | undefined` at `U = T | null` is `T | null | undefined`, which holds
+            // the `T | null` apart (hir_encodings.md "Undefined"); a kept `U | null` at a `U`
+            // that allows `undefined` would read its own `null` as that `undefined`.
+            let kept = if have.has_undefined() { m & NULL } else { 0 };
             let sorts = if have.has_undefined() { m & SORTS } else { 0 };
             (kept | sorts != 0).then_some((*t, have, kept | sorts))
         });
@@ -207,7 +211,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
                 span,
             )
             .with_note(format!(
-                "`{name}` keeps a `T | {other}` of that type parameter, and a type that holds both `null` and `undefined` is not supported yet"
+                "`{name}` keeps a `T | {other}` of that type parameter, whose `{other}` it could not tell from the value's `undefined` yet"
             )),
         );
     }

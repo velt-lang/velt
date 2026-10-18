@@ -1,6 +1,7 @@
-//! Rules on `null` and JavaScript's `undefined`: Velt has only `null`, so a value that is
-//! `undefined` in JavaScript (an optional field or parameter left out, `Map.get` of a missing
-//! key, `find` without a match, `pop` of an empty array, `?.` on `null`) is `null` in Velt.
+//! Rules on `null` and JavaScript's `undefined`: Velt's standard library still gives `null`
+//! where JavaScript gives `undefined` (`Map.get` of a missing key, `find` without a match, `pop`
+//! of an empty array; #930 phase 3). An optional field or parameter left out and `?.` are
+//! `undefined` in Velt too, so code testing them behaves as in Node.
 //!
 //! - `strict-null-eq`: `x === null` on such a value is `false` in JavaScript (fix: `==`);
 //! - `undefined-into-null`: such a value where a `T | null` is declared, which `tsc` rejects
@@ -16,17 +17,8 @@ use crate::{Fix, Severity};
 
 /// Why `e` may be `undefined` in JavaScript where Velt has `null`; `None` when it can't be.
 pub(super) fn undefined_source(e: &ast::Expr, t: &Typed) -> Option<&'static str> {
-    if optional_chain(e) {
-        return Some("`?.` gives `undefined` in JavaScript when the value before it is null");
-    }
     match &e.kind {
         E::Paren(inner) => undefined_source(inner, t),
-        E::Member { prop, .. } => {
-            let d = t.def(prop.span)?;
-            (d.kind == DefKind::Field && t.decls.is_optional(d.span)).then_some(
-                "an optional field that an object leaves out is `undefined` in JavaScript",
-            )
-        }
         E::Ident(id) => ident_source(id, t),
         E::Call { callee, .. } => {
             let E::Member { object, prop, .. } = &callee.kind else {
@@ -42,9 +34,6 @@ pub(super) fn undefined_source(e: &ast::Expr, t: &Typed) -> Option<&'static str>
 pub(super) fn ident_source(id: &ast::Ident, t: &Typed) -> Option<&'static str> {
     let d = t.def(id.span)?;
     match d.kind {
-        DefKind::Parameter if t.decls.is_optional(d.span) => {
-            Some("an optional parameter that a call leaves out is `undefined` in JavaScript")
-        }
         DefKind::Local if t.undefined_locals.contains(&d.span) => Some(
             "the variable holds a value that is `undefined` in JavaScript where Velt has `null`",
         ),
@@ -68,23 +57,6 @@ fn missing_result(receiver: &TypeView, method: &str) -> Option<&'static str> {
             Some("`at` past the end is `undefined` in JavaScript")
         }
         _ => None,
-    }
-}
-
-/// `a?.b`, `a?.b.c`, `f?.()`: a chain with an optional link, `undefined` when it short-circuits.
-fn optional_chain(e: &ast::Expr) -> bool {
-    match &e.kind {
-        E::Member {
-            object, optional, ..
-        }
-        | E::Index {
-            object, optional, ..
-        } => *optional || optional_chain(object),
-        E::Call {
-            callee, optional, ..
-        } => *optional || optional_chain(callee),
-        E::NonNull(inner) => optional_chain(inner),
-        _ => false,
     }
 }
 
@@ -133,8 +105,8 @@ pub(super) fn strict_eq(
     };
     let notes = [
         why,
-        "Velt has only `null`; in JavaScript `undefined === null` is `false`, while \
-         `undefined == null` is `true`",
+        "Velt's standard library gives `null` there; in JavaScript `undefined === null` is \
+         `false`, while `undefined == null` is `true`",
         "write `== null` / `!= null`: the same test in Velt",
     ];
     t.cx.report(

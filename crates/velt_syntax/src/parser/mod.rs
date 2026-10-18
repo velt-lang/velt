@@ -108,12 +108,12 @@ pub(crate) struct Parser<'a> {
     /// Where the module first mentions `import.meta` (`import_meta`).
     import_meta: Option<Span>,
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
-    /// and whether `T` is `void`.
-    this_param: Option<(Span, bool)>,
+    /// and `T`.
+    this_param: Option<(Span, TypeExpr)>,
     /// The value of the object-literal property being parsed is a function expression
     /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
     fn_in_object: bool,
-    /// The first `this: T` parameter parsed (the AST does not keep them).
+    /// The first `this: T` parameter parsed (`velt fmt` refuses files with them).
     pub(crate) first_this_param: Option<std::ops::Range<u32>>,
     /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
     /// directly in it.

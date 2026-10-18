@@ -169,6 +169,11 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.narrowing_note(t) {
             d = d.with_note(note);
         }
+        if matches!(self.cx.ty.kind(t), hir::TyKind::Op(hir::TyOp::Intersect, _)) {
+            d = d.with_note(
+                "in generic code, the members of an intersection with a type parameter part are not available yet (#350); callers see them once the type arguments are known",
+            );
+        }
         if let Some(note) = self.unnarrowed_note(obj) {
             d = d.with_note(note);
         }
@@ -640,7 +645,12 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
-        match self.try_coerce(inner, target) {
+        // `x as object` of an unbounded `T` (issue #926): checked at run time.
+        let coerced = self
+            .try_coerce(inner, target)
+            .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.narrowing_assertion(h, target, span));
+        match coerced {
             Ok(h) => h,
             Err(h) => {
                 let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));
@@ -729,7 +739,7 @@ impl FnCx<'_, '_> {
 }
 
 /// The type of `x as const` (the parser's `const` type name).
-pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+pub(crate) fn is_as_const(ty: &ast::TypeExpr) -> bool {
     matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
 }
 

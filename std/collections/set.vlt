@@ -148,3 +148,29 @@ export class Set<T> implements Iterable<T> {
     return none;
   }
 }
+
+// The copy an interface adapter passes for a `Set<unknown>` parameter (std/prelude/zzz_adapt.vlt).
+
+/** A set of any type held by `v`, as a `Set<unknown>` of its elements. */
+export function __unknownSetIn(v: unknown): Set<unknown> {
+  if (!(v instanceof Set)) {
+    __adaptMismatch(v, "a Set<unknown>");
+  }
+  const a = v as any;
+  const vs = a.values();
+  const n = vs.length as number;
+  const out = new Set<unknown>();
+  for (let i = 0; i < n; i++) {
+    out.add(vs[i]);
+  }
+  return out;
+}
+
+/** Writes the elements of `s` back into the set `v` holds (`__unknownSetIn`). */
+export function __unknownSetOut(v: unknown, s: Set<unknown>): void {
+  const a = v as any;
+  a.clear();
+  for (const x of s) {
+    a.add(x);
+  }
+}

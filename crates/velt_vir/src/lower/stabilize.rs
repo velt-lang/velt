@@ -7,7 +7,8 @@
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
-//! and shared for the statement, so a closure the callee runs cannot free it.
+//! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
+//! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
 use velt_sema::hir::{self, TyId};
 
@@ -34,7 +35,10 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        if self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
+        // A value held in a module state slot, or inside what one holds, is like an element:
+        // any callee may replace it there and drop it.
+        let movable = self.in_array_buffer(a) || self.in_module_slot(a);
+        if movable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -84,7 +88,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the place `e` rooted in a variable held in a shared cell, which a closure the callee
-    /// runs may reassign? Its value's type is then counted (recorded as shared), so the borrow
+    /// runs may reassign, or in a module state slot, which any function may reassign or change
+    /// in place? A variable's value type is then counted (recorded as shared), so the borrow
     /// can share what it reaches from the variable.
     pub(super) fn in_shared_cell(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
@@ -98,10 +103,53 @@ impl FnLower<'_, '_> {
                 self.cx.note_share(ty);
                 true
             }
-            K::Field { base, .. } | K::Index { base, .. } => self.in_shared_cell(base),
+            // A module state slot is a cell every function reaches: the callee may reassign it
+            // (when some code does), as a closure may a variable in a cell, or empty an array
+            // held there in place (`XS.length = 0`, `splice`), even one nothing reassigns.
+            K::Global(d) => {
+                let ty = self.sub(e.ty);
+                if !self.slot_reassigned(*d)
+                    && !(self.slot_of(*d).is_some() && self.contents_replaceable(ty))
+                {
+                    return false;
+                }
+                self.cx.note_share(ty);
+                true
+            }
+            // Whatever lies inside a slot, the callee may replace in place (`xs.length = 0`,
+            // `reg.items = []`), even when nothing reassigns the slot itself.
+            K::Field { base, .. } | K::Index { base, .. } => {
+                self.in_shared_cell(base) || self.rooted_in_slot(base)
+            }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
                 self.in_shared_cell(base)
             }
+            _ => false,
+        }
+    }
+
+    /// Can a call replace or free what a value of `ty` holds in place, even when nothing
+    /// reassigns the slot holding it? True for an array (any function may empty or grow it while
+    /// a loop, a callback method or a callee walks its buffer), and for a struct, class, object
+    /// or tuple with a part that owns something (`REG.items = []`, `REG.child = new T()` frees
+    /// the old part while a method borrows it through `this`, or a callee through a parameter).
+    /// A module slot holding such a value is counted like a variable in a cell, so those
+    /// borrows go through a counted object. Maps need no such rule: their loops re-read the
+    /// entries every step and their callbacks get shares (prelude `Map`), so
+    /// `const seen = new Map<string, number>()` stays uncounted.
+    fn contents_replaceable(&mut self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            hir::TyKind::Array(_) => true,
+            hir::TyKind::Option(inner, _) => {
+                let inner = self.sub(inner);
+                self.contents_replaceable(inner)
+            }
+            hir::TyKind::Tuple(parts) => parts.into_iter().any(|p| self.cx.needs_drop(p)),
+            hir::TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => self
+                .cx
+                .adt_field_tys(ty)
+                .into_iter()
+                .any(|f| self.cx.needs_drop(f)),
             _ => false,
         }
     }
@@ -119,6 +167,24 @@ impl FnLower<'_, '_> {
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.in_array_buffer(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does the place `e` lie in a module state slot, or inside what one holds? Every function
+    /// reaches the slot, so a callee may replace the value there, even behind a counted object
+    /// (retaining keeps the object, not what its field holds: `relabel(REG.label)` where
+    /// `relabel` sets `REG.label` still sees the old string, as in JavaScript). Called only for
+    /// places `in_shared_cell` accepted (the slot itself when a call may change it, or a place
+    /// inside a slot).
+    fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. } | K::Index { base, .. } => self.in_module_slot(base),
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.in_module_slot(base)
             }
             _ => false,
         }
@@ -218,7 +284,8 @@ impl FnLower<'_, '_> {
             return base.clone();
         }
         let t = self.copy_to_temp(Operand::Copy(base.clone()), Ty::Ptr);
-        self.retain(Operand::Copy(Place::local(t)));
+        let c = self.count_ptr(Operand::Copy(Place::local(t)), ty);
+        self.retain(c);
         self.own_temp(t, ty);
         Place::local(t)
     }

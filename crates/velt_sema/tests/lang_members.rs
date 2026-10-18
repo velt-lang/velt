@@ -167,13 +167,9 @@ fn getters_returning_a_field_borrow_this() {
 #[test]
 fn a_chain_on_an_object_of_a_failed_type_names_no_internal_local() {
     let r = err_src(
-        "function f(p: Map<string, f64> | null | undefined): f64 | undefined {
-           return p?.get(\"a\") as f64 | undefined;
-         }
-         function g(p: Missing | null): f64 { return p?.get(\"a\").size ?? 0; }
-         function main() { console.log(f(undefined), g(null)); }",
+        "function g(p: Missing | null): f64 { return p?.get(\"a\").size ?? 0; }
+         function main() { console.log(g(null)); }",
     );
     assert!(!r.contains("<chain"), "{r}");
-    assert!(r.contains("`T | null | undefined`"), "{r}");
     assert!(r.contains("`Missing`"), "{r}");
 }

@@ -1,0 +1,8 @@
+// Printing a dynamic value that may hold a copy made by a conversion shows the copy's fields;
+// Node shows the original's (`{ a: 1, b: 2 }`) (#1240).
+type A = { a: number };
+type AB = { a: number; b: number };
+const s: AB = JSON.parse('{"a":1,"b":2}');
+const v: A = s;
+const shown: any[] = [v];
+console.log(shown);

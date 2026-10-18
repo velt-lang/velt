@@ -1,0 +1,29 @@
+// check: no leaks
+// An object converted to `unknown` / `any` / `object` more than once is the same object in each
+// (#1256), also when it is never changed in place: dependency arrays, `Set` and `Map` keys and
+// weak keys see one identity, as in Node.
+type Props = { title: string };
+const defaults: Props = { title: "d" };
+const u1: unknown = defaults;
+const u2: unknown = defaults;
+console.log(u1 === u2);
+const a1: any = defaults;
+console.log(a1 === u1);
+function depsChanged(a: unknown[], b: unknown[]): boolean {
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+  return false;
+}
+console.log(depsChanged([defaults], [defaults]), depsChanged([defaults], [{ title: "d" }]));
+const seen = new Set<unknown>();
+seen.add(defaults);
+seen.add(defaults);
+seen.add({ title: "d" });
+console.log(seen.size);
+const counts = new Map<unknown, number>();
+counts.set(defaults, 1);
+counts.set(defaults, 2);
+console.log(counts.size, counts.get(defaults));
+const weak = new WeakMap<object, string>();
+weak.set(defaults, "found");
+console.log(weak.get(defaults));

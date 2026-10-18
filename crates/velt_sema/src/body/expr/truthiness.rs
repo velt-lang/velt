@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
     /// Check `e` as a condition, as a `bool`.
     pub(crate) fn cond(&mut self, e: &ast::Expr) -> hir::Expr {
         let b = self.cx.ty.bool_;
-        let h = self.expr(e, Some(b), Want::Borrow);
+        let h = self.test_operand(e, Some(b), Want::Borrow);
         self.truthy(h)
     }
 
@@ -232,12 +232,12 @@ impl FnCx<'_, '_> {
         let some = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![
             hir::Arm {
-                pat: self.pat(P::Some(Box::new(some)), hty, span),
+                pat: self.present_pat(some, hty, span),
                 guard: None,
                 body,
             },
             hir::Arm {
-                pat: self.pat(P::None, hty, span),
+                pat: self.nothing_pat(hty, span),
                 guard: None,
                 body: self.bool_const(false, span),
             },
@@ -321,7 +321,7 @@ impl FnCx<'_, '_> {
     /// "an expression of type `T` cannot be tested for truthiness", with what to write instead.
     fn report_condition(&mut self, h: &hir::Expr) {
         let found = self.cx.display(h.ty);
-        let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let note = match self.cx.ty.kind(t) {
             TyKind::Unit => "a `void` value is never a condition",
             TyKind::Simd(_) => "test a mask with `.any()` or `.all()`: `a.eq(b).all()`",
@@ -338,7 +338,7 @@ impl FnCx<'_, '_> {
     /// `!operand`.
     pub(crate) fn not_expr(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
         let b = self.cx.ty.bool_;
-        let inner = self.expr(operand, Some(b), Want::Borrow);
+        let inner = self.test_operand(operand, Some(b), Want::Borrow);
         if self.rejected(inner.ty) {
             self.report_condition(&inner);
             return self.error_expr(span);
@@ -367,7 +367,7 @@ impl FnCx<'_, '_> {
         let facts = if is_and { when_true } else { when_false };
         // No `bool` hint unless one is expected: `a && a.b && a.b.c` chains values.
         let hint = exp.filter(|t| *t == b);
-        let l = self.expr(lhs, hint, Want::Borrow);
+        let l = self.test_operand(lhs, hint, Want::Borrow);
         if self.rejected(l.ty) {
             self.report_condition(&l);
             self.scoped(&facts, |s| s.expr(rhs, None, Want::Borrow));
@@ -473,7 +473,7 @@ impl FnCx<'_, '_> {
             )
         };
         let cond = self.truthy(read);
-        let left = match self.cx.ty.opt_payload(lty) {
+        let left = match self.present_payload(lty) {
             // A truthy `T | null` is not `null`.
             Some(p) if !is_and => {
                 let base = match take.kind {
@@ -481,7 +481,7 @@ impl FnCx<'_, '_> {
                     _ => take,
                 };
                 let mode = self.use_mode(p, Want::Move);
-                self.mk(H::UnwrapSome(Box::new(base), mode), p, lspan)
+                self.unwrap_present(base, mode, lspan)
             }
             _ => take,
         };
@@ -581,23 +581,48 @@ impl FnCx<'_, '_> {
         };
         let sty = s.ty;
         let payload = self
-            .cx
-            .ty
-            .opt_payload(sty)
+            .present_payload(sty)
             .expect("ICE: nullable `&&` operand");
         let any = self.pat(P::Wildcard, payload, span);
-        let arms = vec![
-            hir::Arm {
-                pat: self.pat(P::Some(Box::new(any)), sty, span),
+        let mut arms = vec![hir::Arm {
+            pat: self.present_pat(any, sty, span),
+            guard: None,
+            body,
+        }];
+        if self.is_three_state(sty) {
+            // `null && b` is `null`, `undefined && b` is `undefined`.
+            let (ty, body) = (
+                arms[0].body.ty,
+                std::mem::replace(&mut arms[0].body, none_body),
+            );
+            let ty3 = match self.cx.ty.core(ty) {
+                Some(c) => self.cx.ty.option_of(c, crate::hir::Nothing::Both),
+                None => self.cx.ty.option_of(ty, crate::hir::Nothing::Both),
+            };
+            arms[0].body = self.coerce(body, ty3);
+            let null = self.nothing_value(crate::hir::Nothing::Null, ty3, span);
+            let undefined = self.nothing_value(crate::hir::Nothing::Undefined, ty3, span);
+            arms.push(hir::Arm {
+                pat: self.one_nothing_pat(crate::hir::Nothing::Null, sty, span),
                 guard: None,
-                body,
-            },
-            hir::Arm {
-                pat: self.pat(P::None, sty, span),
+                body: null,
+            });
+            arms.push(hir::Arm {
+                pat: self.pat(P::Wildcard, sty, span),
                 guard: None,
-                body: none_body,
-            },
-        ];
+                body: undefined,
+            });
+            let kind = H::Match {
+                scrutinee: Box::new(s),
+                arms,
+            };
+            return self.mk(kind, ty3, span);
+        }
+        arms.push(hir::Arm {
+            pat: self.pat(P::None, sty, span),
+            guard: None,
+            body: none_body,
+        });
         let kind = H::Match {
             scrutinee: Box::new(s),
             arms,

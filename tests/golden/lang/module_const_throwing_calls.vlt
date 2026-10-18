@@ -1,0 +1,22 @@
+// check: no leaks
+// A module constant whose initializer may throw (a function with a `throw`, `JSON.parse`) is
+// evaluated once, when the module is evaluated, as in Node; when nothing is thrown, every
+// function reads that one value (module_const_throws.vlt has one that throws).
+import { LIMITS, limit } from "./_module_const_throwing_calls_lib";
+
+function risky(n: number): number {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  console.log("risky runs once");
+  return n * 2;
+}
+
+const D = risky(21);
+
+function twice(): number {
+  return D + D;
+}
+
+console.log(twice(), twice(), D);
+console.log(LIMITS.max, limit(5), limit(2));

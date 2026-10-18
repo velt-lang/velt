@@ -11,5 +11,5 @@ jsx_void_children.vlt:10:18: error: Property 'viewbox' does not exist on type 'J
 
 jsx_void_children.vlt:10:58: error: Property 'radius' does not exist on type 'JSX.IntrinsicElements["circle"]'.
 
-jsx_void_children.vlt:11:33: error: Type 'false' is not assignable to type '"true" | "false" | null'.
+jsx_void_children.vlt:11:33: error: Type 'false' is not assignable to type '"true" | "false" | undefined'.
   = note: in attribute 'stretchy' of <mo>

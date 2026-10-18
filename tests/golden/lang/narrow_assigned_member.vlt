@@ -1,0 +1,96 @@
+// check: no leaks
+// Assigning a union variable (or declaring it with a value) narrows it to the member assigned
+// until the next assignment or join, as in TypeScript (#1237). A `switch` case that assigns and
+// ends in `break` passes what holds at the `break` on to the code after the `switch`.
+class A {
+  a = 1;
+}
+
+class B {
+  b = 2;
+}
+
+function elseAssigns(p: A | B): number {
+  if (p instanceof A) { return 0; } else { p = new B(); }
+  return p.b;
+}
+
+function thenAssigns(p: A | B): number {
+  if (p instanceof B) { p = new B(); } else { return 0; }
+  return p.b;
+}
+
+function typeofNumber(p: string | number): number {
+  if (typeof p === "string") { return 0; } else { p = 5; }
+  return p + 1;
+}
+
+function typeofString(p: string | number): string {
+  if (typeof p === "number") { return "n"; } else { p = p + "!"; }
+  return p.toUpperCase();
+}
+
+function declared(): number {
+  let u: string | number = "x";
+  const n = u.length;
+  u = 41;
+  return n + u + 1;
+}
+
+function bothBranches(c: boolean): string {
+  let u: string | number = 0;
+  if (c) { u = "yes"; } else { u = "no"; }
+  return u.toUpperCase();
+}
+
+function nullable(c: boolean): number {
+  let v: string | number | null = null;
+  if (c) { v = "four"; } else { v = "two"; }
+  return v.length;
+}
+
+function cases(k: number): number {
+  let x: string | null = null;
+  switch (k) {
+    case 1:
+      x = "a";
+      break;
+    case 2: {
+      x = "bb";
+      break;
+    }
+    default:
+      x = "ccc";
+  }
+  return x.length;
+}
+
+function breakInIf(k: number, c: boolean): number {
+  let x: string | null = null;
+  switch (k) {
+    case 1:
+      if (c) { x = "early"; break; }
+      x = "late!!";
+      break;
+    default:
+      x = "d";
+  }
+  return x.length;
+}
+
+// A `while` loop without `break` ends only where its condition is false (#1227).
+function untilSet(x: string | null): number {
+  let y = x;
+  while (y === null) {
+    y = "set";
+  }
+  return y.length;
+}
+
+function main() {
+  console.log(elseAssigns(new B()), elseAssigns(new A()), thenAssigns(new B()), thenAssigns(new A()));
+  console.log(typeofNumber(4), typeofNumber("s"), typeofString("q"), typeofString(1));
+  console.log(declared(), bothBranches(true), bothBranches(false), nullable(true), nullable(false));
+  console.log(cases(1), cases(2), cases(3), breakInIf(1, true), breakInIf(1, false), breakInIf(2, true));
+  console.log(untilSet(null), untilSet("ab"));
+}

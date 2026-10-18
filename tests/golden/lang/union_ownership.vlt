@@ -50,7 +50,7 @@ function main() {
   console.log(show(a));
   a = "text";
   console.log(show(a));
-  a = [1, 2, 3];
+  a = [1, 2, 3] as Slot;
   if (typeof a === "object" && !(a instanceof Res)) {
     a.push(4);
   }

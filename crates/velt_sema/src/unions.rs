@@ -107,13 +107,11 @@ impl Ctx<'_> {
         let ty = &self.ty;
         members.sort_by_key(|t| (has_params(ty, *t), t.0));
         let core = match members.len() {
-            0 if nothing == Some(Nothing::Null) => {
-                self.err("`null` alone is not a type; write `T | null`", span);
-                return self.ty.error;
-            }
+            0 if nothing == Some(Nothing::Null) => return self.ty.null_alone(),
+            0 if nothing == Some(Nothing::Undefined) => return self.ty.undefined(),
             0 if nothing.is_some() => {
                 self.err(
-                    "`undefined` alone (or `null | undefined`) as a type is not supported yet",
+                    "`null | undefined` alone as a type is not supported yet",
                     span,
                 );
                 return self.ty.error;
@@ -123,13 +121,6 @@ impl Ctx<'_> {
             _ => self.union_enum(&members),
         };
         match nothing {
-            Some(Nothing::Both) => {
-                self.err(
-                    "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
-                    span,
-                );
-                self.ty.error
-            }
             Some(n) => self.ty.option_of(core, n),
             None => core,
         }

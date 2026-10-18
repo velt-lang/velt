@@ -1,0 +1,8 @@
+export function double(x: number): number {
+  return x * 2;
+}
+
+async function ready(): Promise<void> {}
+
+await ready();
+console.log("loaded");

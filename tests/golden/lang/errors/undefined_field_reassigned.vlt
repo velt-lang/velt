@@ -1,0 +1,17 @@
+// Reassigning a local drops what strict tests ruled out on its fields (issue #930): `o.v` of the
+// new object may be `undefined` again (tsc: TS18048).
+class C {
+  v: string | null | undefined;
+  constructor(v: string | null | undefined) {
+    this.v = v;
+  }
+}
+function f(a: C, b: C): number {
+  let o = a;
+  if (o.v !== undefined) {
+    o = b;
+    return o.v === null ? 1 : o.v.length;
+  }
+  return 0;
+}
+console.log(f(new C("x"), new C(undefined)));

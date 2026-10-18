@@ -1,0 +1,6 @@
+record_logical_value_type.vlt:3:9: error: mismatched types
+expected string, found f64
+record_logical_value_type.vlt:4:20: error: mismatched types
+expected string, found f64
+record_logical_value_type.vlt:5:12: error: mismatched types
+expected string, found boolean

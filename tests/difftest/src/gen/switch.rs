@@ -104,8 +104,8 @@ impl Gen {
                 let label: fn(&str) -> String = |m| format!("\"{m}\"");
                 let mut vars = self.unnarrowed(Ty::Lvl);
                 if vars.is_empty() {
-                    // Not `"lo" as Lvl`: Velt has no type assertions (gap).
                     let value = self.tag_value(Ty::Lvl);
+                    let value = self.unnarrowed_init(Ty::Lvl, value);
                     let fresh = self.bind("c", Ty::Lvl, false);
                     self.line(&format!("const {fresh}: Lvl = {value};"));
                     vars = self.unnarrowed(Ty::Lvl);
@@ -127,6 +127,7 @@ impl Gen {
         let vars = self.unnarrowed(Ty::Shape);
         let Some(v) = (!vars.is_empty()).then(|| self.rng.pick(&vars).clone()) else {
             let lit = self.shape_literal(1);
+            let lit = self.unnarrowed_init(Ty::Shape, lit);
             let fresh = self.bind("c", Ty::Shape, false);
             self.line(&format!("const {fresh}: Sh = {lit};"));
             return self.shape_subject();

@@ -1,0 +1,43 @@
+// check: no leaks
+// `super.m()` through a typed proxy where the calling class doesn't override `m` (#823): only
+// `k` is read through the `get` trap; `super.m()` calls the base method without reading it
+// from the proxy, also when a subclass overrides `m`, and across two levels of `super`.
+class C {
+  n = 1;
+  m(): number {
+    return this.n * 10;
+  }
+}
+class D extends C {
+  k(): number {
+    return super.m() + 1;
+  }
+}
+class E extends D {
+  override m(): number {
+    return 99;
+  }
+}
+class F extends E {
+  override m(): number {
+    return super.m() + 1000;
+  }
+  j(): number {
+    return super.k() + super.m();
+  }
+}
+function wrap(o: any): any {
+  return new Proxy(o, {
+    get(t: any, k: string | symbol, r: any): any {
+      console.log("get", String(k));
+      return Reflect.get(t, k, r);
+    },
+  });
+}
+const d = wrap(new D()) as D;
+console.log(d.k());
+const e = wrap(new E()) as E;
+console.log(e.k());
+const f = wrap(new F()) as F;
+console.log(f.j());
+console.log(f.m());

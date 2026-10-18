@@ -1,0 +1,51 @@
+// check: no leaks
+// A typed proxy (#823) going to another task (`spawn`, a `shared` `Mutex`) is copied as an
+// `any` holding it is: the `Proxy` object with its target and handler, so it is still a proxy
+// there; the original keeps working here. Also through an interface value and an array.
+function logged(target: any): any {
+  return new Proxy(target, {
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+interface Shape {
+  area(): number;
+}
+class Sq implements Shape {
+  side: number = 3;
+  area(): number {
+    return this.side * this.side;
+  }
+}
+class State {
+  n: number = 2;
+  label: string = "ab";
+}
+type Obj = { n: number; label: string };
+
+const s = logged(new State()) as State;
+const r1 = await spawn(async () => s.n + s.label.length);
+console.log(r1, s.n);
+const o = logged({ n: 1, label: "x" }) as Obj;
+const r2 = await spawn(async () => o.n + o.label.length);
+console.log(r2, o.label);
+const shape: Shape = logged(new Sq()) as Sq;
+const r3 = await spawn(async () => shape.area() + s.n);
+console.log(r3);
+const items: State[] = [logged(new State()) as State, new State()];
+const r4 = await spawn(async () => items[0].n + items[1].n);
+console.log(r4);
+const all = shared(new Mutex<State>(logged(new State()) as State));
+const r5 = await spawn(async () =>
+  all.with((v) => {
+    v.n = 9;
+    return v.n + v.label.length;
+  }),
+);
+console.log(r5);
+const after = logged(new State()) as State;
+after.n = 3;
+console.log(s.n, items[0].n, after.n, shape instanceof Sq);

@@ -165,7 +165,7 @@ impl FnCx<'_, '_> {
     /// a promise (an async function's value is never one) or a function type (checked with the
     /// adapter of `expr_coerce`), nor where `ret` is not known.
     fn adopts_promise(&self, ret: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let t = self.cx.ty.core(ret).unwrap_or(ret);
         !matches!(
             self.cx.ty.kind(t),
             TyKind::Promise(..) | TyKind::FnPtr { .. } | TyKind::Error

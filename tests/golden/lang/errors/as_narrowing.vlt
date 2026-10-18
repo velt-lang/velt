@@ -1,0 +1,14 @@
+// An `as` assertion between unrelated types stays an error (#893), on the same line as in tsc:
+// only an assertion that narrows (`T | null` as `T`, a union as its member) is checked at run
+// time.
+function unrelated(x: string | null): number {
+  return x as number;
+}
+
+function member(x: string | number): boolean {
+  return x as boolean;
+}
+
+function main() {
+  console.log(unrelated("a"), member(1));
+}

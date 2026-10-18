@@ -1,0 +1,8 @@
+// A conversion that copies an object's fields (#650, #651) is an error when the copy reaches a
+// dynamic type and the program compares dynamic values by identity (#1240): Node compares the
+// one original object and prints `true`.
+type A = { a: number };
+type AB = { a: number; b: number };
+const s: AB = JSON.parse('{"a":1,"b":2}');
+const v: A = s;
+console.log((v as any) === (s as any));

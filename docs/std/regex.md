@@ -23,7 +23,8 @@ pair (JavaScript without the `u` flag stops between its halves; #401).
   not take part, where JS gives `undefined`); `limit` 0 means no limit.
 - `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
   holding a `RegExp` can be copied for another task, `spawn` or a channel).
-- `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)`,
+- `RegExpMatch { index; end; value; captures: (string | null)[]; names }` (`index` and `end`
+  are `number`s, as JS's `m.index`), with `group(n)`,
   `named(name)` and `substitute(s, repl)` (`repl` expanded for the match). `m[n]` is group `n`
   (`m[0]` the match), `""` for a group that did not take part.
 

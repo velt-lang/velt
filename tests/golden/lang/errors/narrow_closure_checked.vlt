@@ -1,0 +1,18 @@
+// A closure that captures a variable some closure assigns does not see a null check made
+// outside it: the check may no longer hold when it runs (#1199). An error, as in tsc.
+function captured(): number {
+  let s = "abc" as string | null;
+  const clear = (): void => {
+    s = null;
+  };
+  if (s !== null) {
+    const len = (): number => s.length;
+    clear();
+    return len();
+  }
+  return 0;
+}
+
+function main() {
+  console.log(captured());
+}

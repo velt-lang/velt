@@ -44,7 +44,7 @@ export struct Layout {
 export function layout(
   arg: number | ArrayBuffer | number[] | TypedArray,
   byteOffset: number,
-  length: number | null,
+  length: number | null | undefined,
   size: usize,
   kind: u32,
   name: string,

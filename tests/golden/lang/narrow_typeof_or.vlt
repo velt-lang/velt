@@ -1,0 +1,39 @@
+// check: no leaks
+// An `||` of `typeof` tests narrows to the union of what each test narrows to (#1252), as in
+// TypeScript: `typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`.
+type Child = { type: string } | string | number | boolean;
+
+function text(s: string | number): string {
+  return String(s);
+}
+
+function render(c: Child): string {
+  if (typeof c === "string" || typeof c === "number") return text(c);
+  return typeof c === "boolean" ? "" : c.type;
+}
+
+// The false branch keeps both facts: neither a string nor a number.
+function rest(c: Child): string {
+  if (!(typeof c === "string" || typeof c === "number")) {
+    return typeof c === "boolean" ? `bool ${c}` : `object ${c.type}`;
+  }
+  return `text ${text(c)}`;
+}
+
+// Three tests, and a test after a negated one on the same side.
+function three(c: Child): string {
+  if (typeof c === "string" || typeof c === "number" || typeof c === "boolean") return String(c);
+  return c.type;
+}
+
+function mixed(c: Child): string {
+  if ((typeof c !== "object" && typeof c !== "boolean") || typeof c === "number") return text(c);
+  return "other";
+}
+
+function main() {
+  console.log(render(1), render("a"), render({ type: "p" }), render(true));
+  console.log(rest(1), rest("a"), rest({ type: "p" }), rest(false));
+  console.log(three(2), three("b"), three(true), three({ type: "q" }));
+  console.log(mixed(3), mixed("c"), mixed(true), mixed({ type: "r" }));
+}

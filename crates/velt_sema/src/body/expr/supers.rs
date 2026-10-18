@@ -140,6 +140,7 @@ impl FnCx<'_, '_> {
             }) = self.base_extension_method(base, &prop.name)
             {
                 let recv = self.this_expr(Want::Borrow, span);
+                self.cx.super_calls.insert(span);
                 return self.def_method_call(recv, def, slots, recv_ty, &[], args, exp, span);
             }
         }
@@ -177,6 +178,7 @@ impl FnCx<'_, '_> {
             .map(|(i, _)| owner_args.get(i).copied())
             .collect();
         let recv_ty = found.recv_ty(self.cx);
+        self.cx.super_calls.insert(span);
         self.def_method_call(recv, def, slots, recv_ty, &[], args, exp, span)
     }
 

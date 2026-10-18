@@ -85,7 +85,8 @@ impl FnLower<'_, '_> {
                 return self.build_sized(&parts, ty);
             }
             // Two strings: `velt_rt_str_concat` allocates exactly once, at the exact size.
-            let va = self.expr_held(a, Later::of(b));
+            let later = self.later_of(b);
+            let va = self.expr_held(a, later);
             let vb = self.expr(b);
             let pa = self.operand_addr(va, STR);
             let pb = self.operand_addr(vb, STR);
@@ -147,7 +148,7 @@ impl FnLower<'_, '_> {
         for (i, p) in parts.iter().enumerate().rev() {
             later[i] = acc;
             if let Part::Str(e) | Part::Format(e, _) = p {
-                let l = Later::of(e);
+                let l = self.later_of(e);
                 acc.locals |= l.locals;
                 acc.memory |= l.memory;
             }

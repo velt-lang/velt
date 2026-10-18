@@ -1,4 +1,4 @@
-object_copies_spread.vlt:7:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads a `A`: Node would copy all the original object's fields, in its order
+object_copies_spread.vlt:7:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads an `A`: Node would copy all the original object's fields, in its order
 object_copies_spread.vlt:8:18: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
   = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`

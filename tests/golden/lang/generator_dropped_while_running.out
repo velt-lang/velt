@@ -13,4 +13,4 @@ viaIface: finally
 variable cleared while running 21
 viaClosure: finally
 { value: 21, done: false }
-null
+undefined

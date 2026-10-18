@@ -120,6 +120,7 @@ impl FnCx<'_, '_> {
             ret: self.cx.ty.unit,
             slot_names: vec![],
             bounds: vec![],
+            constraints: vec![],
             js_numbers: false,
             positions: false,
             js_api: false,

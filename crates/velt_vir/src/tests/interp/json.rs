@@ -248,6 +248,7 @@ impl Interp<'_> {
                 0
             }
             "velt_rt_json_reader_peek" => self.reader(a[0]).kind() as u64,
+            "velt_rt_json_reader_null_absent" => 1,
             "velt_rt_json_reader_expect_object_start" => self.open(a[0], b'{'),
             "velt_rt_json_reader_expect_array_start" => self.open(a[0], b'['),
             "velt_rt_json_reader_next_key" => self.next_key(a[0], a[1]),
