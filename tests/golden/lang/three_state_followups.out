@@ -9,3 +9,7 @@ was null undefined s
 null object undefined undefined null false true
 undefined undefined null object undefined false true
 3 number 3 number undefined true true
+s0 string u0 string false false
+s1 string null object false false
+undefined undefined undefined undefined true true
+null object undefined undefined true false

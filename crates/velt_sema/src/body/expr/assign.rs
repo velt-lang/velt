@@ -5,7 +5,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::{is_null, nothing_word};
+use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
@@ -672,7 +672,7 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || is_null(e);
+        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);

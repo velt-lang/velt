@@ -47,3 +47,11 @@ for (let i = 0; i < 4; i++) {
   const z = i === 0 ? i : i === 1 ? null : undefined;
   console.log(v, typeof v, w, typeof w, z, v === w, v == w);
 }
+
+// A conditional whose first arm is a conditional of nothings only.
+for (let i = 0; i < 4; i++) {
+  const a = i > 1 ? (i > 2 ? null : undefined) : "s" + i;
+  const c = i === 0 ? "u" + i : i === 1 ? null : undefined;
+  const same = a == c;
+  console.log(a, typeof a, c, typeof c, same, a === c);
+}
