@@ -152,7 +152,6 @@ Errors where `tsc` rejects the code:
 | `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |
 | `velt-member` | members TypeScript doesn't have: `xs.isEmpty()`, `m.upsert(…)`, `x.unwrapOr(d)`, `a.compareTo(b)`, `x.clone()`, `JSON.parse<T>(…)`, `Promise.withResolvers()` (ES2024), … | a hint per member | |
 | `map-iter-as-array` | `m.keys()`, `values()`, `entries()` used as an array (a member, an index, a declared type, a return value) | `[...m.keys()]` (a fix) | |
-| `null-into-optional` | `null` for an optional parameter or field (`x?: T`), whose TypeScript type is `T \| undefined` | a fix leaves it out | |
 | `undefined-into-null` | a value that is `undefined` in JavaScript (below) where a `T \| null` is declared: an annotated variable, a return value, an argument, a field | `?? null` (a fix) | |
 | `catch-unknown` | `e.x` in `catch (e)` where `instanceof` doesn't narrow `e` | `if (e instanceof C)` | |
 | `comparable` | `<` on a `T extends Comparable<T>` (the type itself is `velt-global`) | a comparator parameter | Planned |
@@ -168,7 +167,7 @@ Accepted by `tsc`, but behaves differently:
 | `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
-| `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
+| `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (`m.get(k)`, `xs.find(…)`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
 
@@ -196,9 +195,10 @@ Notes on the rules as built, against the issue's first design:
   first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
   comment holding only the pragma; a line comment with other text gets the finding without one.
 - Values that are `undefined` in JavaScript where Velt has `null` (for `strict-null-eq` and
-  `undefined-into-null`): an optional field or parameter (`x?: T`), `Map.get`, `find` /
-  `findLast`, `pop` / `shift`, `at` (arrays and strings), anything after `?.`, and a variable
-  initialized with one of these. `process.env` would be one, but `process` itself is
+  `undefined-into-null`): `Map.get`, `find` / `findLast`, `pop` / `shift`, `at` (arrays and
+  strings), and a variable initialized with one of these. An optional field or parameter
+  (`x?: T`) and anything after `?.` were on this list until #930 phase 2 made them `undefined`
+  in Velt too. `process.env` would be one, but `process` itself is
   `velt-global` (the baseline has no Node types).
 - `int-division` can only meet integer types that `velt-number-type` reports where they are
   written (or that come from another shared file), and unions of integer literal types
@@ -221,9 +221,8 @@ Notes on the rules as built, against the issue's first design:
   `xs.push`, `Promise.withResolvers`) are listed by hand. `x.clone()` is reported on any
   receiver where it is the compiler's own, that is, wherever the type doesn't declare a
   `clone()` itself.
-- `null-into-optional` covers arguments of functions, methods and constructors the program
-  declares, object literal fields and assignments to fields; its fix removes trailing `null`
-  arguments and `null` properties.
+- `null-into-optional` (`null` for an optional parameter or field) was removed when `x?: T`
+  became `T | undefined` in Velt too (#930 phase 2): `velt check` reports it as TS2322 itself.
 - `catch-unknown` treats `e` as narrowed inside an `if (e instanceof C)` branch, after
   `e instanceof C &&` and in the `?` branch of `e instanceof C ? … : …`; not yet after an early
   exit (`if (!(e instanceof C)) throw e;`).

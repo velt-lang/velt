@@ -438,13 +438,13 @@ impl Ctx<'_> {
         let fields = norm
             .iter()
             .map(|f| {
-                // An optional field reads as `T | null` and may be left out, like a class's
-                // (`body::driver`): its default is `null`, which lowering's JSON and printing
-                // glue reads as "absent".
+                // An optional field reads as `T | undefined` and may be left out, like a class's
+                // (`body::driver`): its default is `undefined`, which lowering's JSON and
+                // printing glue reads as "absent".
                 // `q?: any` holds the dynamic `undefined` itself (`collect::shapes`).
                 let dynamic = f.optional && self.dynamic(f.ty).is_some();
                 let ty = if f.optional && !dynamic {
-                    self.ty.option(f.ty)
+                    self.ty.option_of(f.ty, crate::hir::Nothing::Undefined)
                 } else {
                     f.ty
                 };
@@ -525,15 +525,17 @@ pub(crate) fn shape_field(f: &FieldInfo) -> ShapeField {
     }
 }
 
-/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present `null`
-/// (`hir::FieldDef::presence`): an optional field whose declared type is nullable
-/// (`a?: T | null`), in an object type or struct (P2b, deferred-types.md).
+/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present value
+/// (`hir::FieldDef::presence`): an optional field (`a?: T`, read as `T | undefined`) of an
+/// object type or struct, so that an absent key and one holding `undefined` stay apart, as in
+/// JavaScript (`"a" in o`, printing, spread; issue #930). A class's optional field is an own
+/// property holding `undefined` until set, and `a?: any` holds its own `undefined`.
 pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
-    f.optional && kind != AdtKind::Class && ty.opt_payload(f.declared).is_some()
+    f.optional && kind != AdtKind::Class && ty.nothing_of(f.ty).is_some()
 }
 
-/// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): a
-/// `null` in it stands for "absent", so it cannot hold a present `undefined`
+/// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): an
+/// `undefined` in it stands for "absent", so it cannot hold a present `undefined`
 /// (`crate::absent_fields`).
 pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
     f.optional && kind != AdtKind::Class && !has_presence(ty, kind, f)

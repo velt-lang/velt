@@ -1,0 +1,25 @@
+// check: no leaks
+// `x ?? d` and `x ??= d` on an option of a type parameter (`x?: T`, `x: T | undefined`) replace
+// both nothings of the type it is instantiated with: at `T = string | null` a `null` takes the
+// default too, as in JavaScript (#930 phase 2). Expected output from Node 22.
+
+class Box {
+  constructor(public label: string) {}
+}
+
+function pick<T>(fallback: T, x?: T): T {
+  return x ?? fallback;
+}
+
+function fill<T>(fallback: T, x: T | undefined): T {
+  let y = x;
+  y ??= fallback;
+  return y;
+}
+
+function main() {
+  console.log(pick<string | null>("d", null), pick<string | null>("d"), pick<string | null>("d", "v"));
+  console.log(pick<number>(0), pick<number>(0, 7), pick<number | null>(1, null));
+  console.log(pick<Box | null>(new Box("d"), null), pick<Box | null>(new Box("d"), new Box("v")));
+  console.log(fill<string | null>("d", null), fill<string | null>("d", undefined), fill<string | null>("d", `v${1}`));
+}

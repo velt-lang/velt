@@ -1,3 +1,1 @@
-module_const_impure.vlt:16:11: error: `risky` cannot initialize module constant `D`: it may throw
-module_const_impure.vlt:7:5: may throw
-module_const_impure.vlt:17:11: error: `later` cannot initialize module constant `E`: it is async
+module_const_impure.vlt:9:11: error: `later` cannot initialize module constant `E`: it is async

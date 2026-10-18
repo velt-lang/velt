@@ -1,13 +1,13 @@
 //! Type expressions: named types with generic arguments, `T[]`, tuples, function types, unions,
 //! literal types (`"circle"`, `-1`, `true`), object types (`{ kind: "circle"; r: f64 }`), `null`
-//! and `void`; `name?: T` (optional parameters and object-type fields) as `T | null`.
+//! and `void`; `name?: T` (optional parameters and object-type fields) as `T | undefined`.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
-pub(super) use super::optional_types::{has_undefined, optional_param, or_null};
+pub(super) use super::optional_types::{optional_param, or_undefined};
 
 impl<'a> Parser<'a> {
     /// A union type (no conditional type at the top level). Unguarded: its callers are
@@ -402,7 +402,7 @@ impl<'a> Parser<'a> {
                 self.parse_type()?
             };
             if optional {
-                ty = or_null(ty);
+                ty = or_undefined(ty);
             }
             fields.push(ObjectTypeField {
                 name,
@@ -578,7 +578,7 @@ impl<'a> Parser<'a> {
             }
             rest = self.eat(Tok::DotDotDot);
             let name_span = self.cur_span();
-            // `x?: T`: an optional parameter, typed `T | null` as in a declaration.
+            // `x?: T`: an optional parameter, typed `T | undefined` as in a declaration.
             let mut optional = false;
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();

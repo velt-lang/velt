@@ -1,21 +1,13 @@
-// A call that may throw or is async cannot initialize a module constant: module state is
-// initialized where nothing could catch or await it (module_const_stored_calls.vlt has the
-// calls that make a constant module state).
-
-function risky(n: number): number {
-  if (n < 0) {
-    throw new Error("negative");
-  }
-  return n;
-}
+// An async call cannot initialize a module constant: module state is initialized where
+// nothing could await it (module_const_stored_calls.vlt has the calls that make a constant
+// module state, module_const_throws.vlt one that may throw).
 
 async function later(): Promise<number> {
   return 1;
 }
 
-const D = risky(1);
 const E = later();
 
 function main() {
-  console.log(D);
+  console.log(E);
 }

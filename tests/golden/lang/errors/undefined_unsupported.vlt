@@ -128,18 +128,18 @@ function toJson(b: Base) {
   const subclass = JSON.stringify({ b });
 }
 
-// A destructuring default for an optional class field declared `T | null`: a class does not
-// keep an unset field apart from one set to `null` (an object type's `a?: T | null` does).
-class Opt {
-  b?: number | null;
-}
+// (A destructuring default for an optional class field declared `T | null` is supported
+// now: the field is a `T | null | undefined` and the default replaces only `undefined`;
+// see lang/optional_undefined.)
 
-function classDefault(k: Opt) {
-  const { b = 6 } = k;
-}
 
-// `undefined` given for an optional parameter, a parameter with a default or an optional
-// field (TypeScript accepts each).
+
+
+
+
+
+// `undefined` given for a parameter with a default (TypeScript accepts it); for an optional
+// parameter or field it is supported now (see lang/optional_undefined).
 function withValue(x: number = 5): number {
   return x;
 }
@@ -150,11 +150,11 @@ function optional(a?: number): number {
 
 function optionals(u: number | undefined) {
   const a = withValue(undefined);
-  const b = optional(undefined);
-  const c = optional(void 0);
-  const d = optional(u);
-  const o: { a?: number; b: string } = { a: undefined, b: "x" };
-  const p: { a?: number; b: string } = { a: u, b: "x" };
+
+
+
+
+
 }
 
 // A generic alias whose `T | null` would hold a `T` that allows `undefined` (`Maybe<number | null>`
@@ -173,15 +173,15 @@ function main() {
   console.log(withDefault());
 }
 
-// A branch of a conditional giving `undefined` for an optional parameter or field.
+// A branch of a conditional giving `undefined` for an optional parameter or field (supported now).
 function prodError(code: number, detail?: string): string {
   return `${code}:${detail ?? "-"}`;
 }
 
 function conditionals(name: string, c: boolean) {
-  const a = prodError(1, name ? `"${name}"` : undefined);
-  const b = prodError(2, c ? undefined : "d");
-  const o: { a?: number; b: string } = { a: c ? 1 : undefined, b: "x" };
+
+
+
 }
 
 // A `T | null` the standard library gives where Node gives `undefined` (phase 3).

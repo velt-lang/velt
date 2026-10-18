@@ -108,7 +108,7 @@ fn method_signatures_in_object_types_and_optional_interface_methods() {
     );
     assert_eq!(
         alias_ty(&m, 0),
-        "{stop: fn() => void; size: fn(number) => number; label: (fn(string) => string | null)}"
+        "{stop: fn() => void; size: fn(number) => number; label: (fn(string) => string | undefined)}"
     );
     let ItemKind::Interface(i) = &m.items[1].kind else {
         panic!()
@@ -131,7 +131,7 @@ fn generic_method_signatures_are_fields_of_generic_function_type() {
     };
     assert_eq!(i.fields[0].name.name, "wrap");
     assert!(i.fields[0].optional);
-    assert_eq!(ty(&i.fields[0].ty), "(<A>fn(A) => A | null)");
+    assert_eq!(ty(&i.fields[0].ty), "(<A>fn(A) => A | undefined)");
 }
 
 #[test]
@@ -181,9 +181,9 @@ fn object_literal_async_generic_methods() {
 #[test]
 fn optional_parameters_in_function_types() {
     let m = parse_ok("type F = (app: App, options?: Options) => void;");
-    assert_eq!(alias_ty(&m, 0), "fn(App, (Options | null)) => void");
+    assert_eq!(alias_ty(&m, 0), "fn(App, (Options | undefined)) => void");
     let m = parse_ok("type F = (scoped?: any) => any[];");
-    assert_eq!(alias_ty(&m, 0), "fn((any | null)) => any[]");
+    assert_eq!(alias_ty(&m, 0), "fn((any | undefined)) => any[]");
     assert_eq!(
         errors("type F = (a?: number, b: string) => void;"),
         ["a required parameter cannot follow an optional parameter"]

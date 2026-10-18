@@ -155,13 +155,16 @@ fn interfaces_enums_aliases() {
     let ItemKind::TypeAlias(a) = &m.items[0].kind else {
         panic!()
     };
-    assert_eq!(ty(&a.ty), "{a: (i64 | null); b: (A | null)}");
+    assert_eq!(
+        ty(&a.ty),
+        "{a: (i64 | undefined); b: (A | null | undefined)}"
+    );
     let m = parse_ok("function f(a?: string) {}");
     let ItemKind::Function(f) = &m.items[0].kind else {
         panic!()
     };
     assert!(f.sig.params[0].optional && f.sig.params[0].default.is_some());
-    assert_eq!(ty(&f.sig.params[0].ty), "(string | null)");
+    assert_eq!(ty(&f.sig.params[0].ty), "(string | undefined)");
     assert!(errors("function f(a?: i64 = 1) {}")[0].contains("optional and have a default"));
 }
 

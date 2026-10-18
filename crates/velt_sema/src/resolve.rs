@@ -192,8 +192,8 @@ impl Ctx<'_> {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            // The declared type: without the `| null` the parser adds for `name?: T`
-            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            // The declared type: without the `| undefined` the parser adds for `name?: T`
+            // (`velt_syntax` `or_undefined`), which the flag stands for.
             let written = if f.optional {
                 written_type(&f.ty)
             } else {
@@ -756,15 +756,16 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
     cx.checking_unused_aliases = false;
 }
 
-/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
-/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
-/// that already admits `null` (`name?: T | null`) is kept as written.
+/// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
+/// adds (`velt_syntax` `or_undefined`; the added `undefined` is the zero-width one at the end).
+/// A written type that already admits `undefined` (`name?: T | undefined`) is kept as written.
 pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     let ast::TypeExprKind::Union(ms) = &ty.kind else {
         return ty.clone();
     };
-    let added =
-        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    let added = |m: &ast::TypeExpr| {
+        matches!(m.kind, ast::TypeExprKind::Undefined) && m.span.lo == m.span.hi
+    };
     match ms.last() {
         Some(last) if added(last) => {
             let rest = &ms[..ms.len() - 1];

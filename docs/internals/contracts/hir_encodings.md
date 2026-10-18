@@ -143,8 +143,9 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
 - `spawn` accepts a promise value or an async closure. Promise errors: see "Errors" below.
 - `Mutex<T>` is laid out as `struct { lock: u64; value: T }`. `Mutex<scalar>.with` gets a copy.
-- `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are `T | null`
-  fields with a `null` default.
+- `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are
+  `T | undefined` fields (`T | null | undefined` for `a?: T | null`) with an `undefined`
+  default (#930 phase 2).
 - An async closure clones its owned captures into each promise it creates (it may be called many
   times, e.g. as an HTTP handler); borrowed captures are read from its env. A local async
   closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
@@ -487,9 +488,12 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`
   fields never do (ES private names).
 - `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
-  `T | null`), in a class, an object type or an interface. `JSON.stringify` and `console.log`
-  leave it out while it is absent (`null`, or a clear presence flag, below), as JavaScript leaves
-  out a missing property; a `T | null` field that is not optional is written as `null`.
+  `T | undefined`, and `T | null | undefined` for `a?: T | null`), in a class, an object type or
+  an interface. `JSON.stringify` leaves it out while it is absent or holds `undefined`, as
+  JavaScript leaves out a missing property; `console.log` leaves out an absent field (a clear
+  presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
+  `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
+  written as `null`.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
   internal error).
@@ -605,8 +609,8 @@ module constant initialized with `Symbol(...)` or `Symbol.for("k")` is
 `KEY in o` with such a key is a `match` on `o` (on a union, per member): `true` for a member
 whose type declares the key (a field, method or accessor; a class's optional field too),
 `false` for one that doesn't, and for an optional field of an object type or interface
-(`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) for
-`[KEY]?: T | null` in an object type, else not null. `Symbol.iterator in o` and
+(`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) when it has
+one (`FieldDef::presence`), else that it does not hold its nothing. `Symbol.iterator in o` and
 `Symbol.asyncIterator in o` are `true` or `false` from `o`'s type's methods.
 
 `Intrinsic::TemplateToString` is a template literal part whose type mentions a type parameter:
@@ -638,7 +642,7 @@ entry is an `ICE:`.
   Lowering may still meet such instances (it substitutes on its own while monomorphizing); it maps
   them onto `Program::anon_shapes` (the concrete anonymous def of each shape: field names, field
   types, `optional` and `presence` flags, in order; never a def replaced by readonly erasure,
-  and `{ d?: string }` and `{ d?: string | null }`, whose field types are the same, are two
+  and `{ d?: string }` and `{ d: string | undefined }`, whose field types are the same, are two
   shapes) and
   `Program::union_shapes` (the concrete union def of each sorted member list), so one shape is one
   VIR type. A generic union whose members are not all plain types (a union or nullable member)
@@ -646,15 +650,23 @@ entry is an `ICE:`.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
   (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.
-- `FieldDef::presence` (additive): an optional field whose declared type is nullable
-  (`a?: T | null`), in an object type or struct (not a class). It keeps an absent key apart from a
-  present `null`: lowering stores a `bool` flag after the aggregate's fields (in field order, one
-  per presence field). An `AdtLit` sets it, unless the field's value is
-  `Intrinsic::FieldAbsent` (`() -> T | null`; outside a literal it is `null`); any write to the
-  field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the argument a `Field` place of a
-  presence field) reads it. `JSON.stringify` and `console.log` write a present `null` and leave
-  out an absent field, and `JSON.parse` sets the flag when the key is there. Copy, clone and
-  equality glue include the flag.
+- `FieldDef::presence` (additive): every optional field whose type is an option (`a?: T`, read
+  as `T | undefined`, and `a?: T | null`, read as `T | null | undefined`), in an object type,
+  field-only interface or struct (not a class, whose optional field is an own property holding
+  `undefined` until set, and not `a?: any`, which holds its own `undefined`; #930 phase 2). It
+  keeps an absent key apart from a present value, also a present `undefined` or `null`: lowering
+  stores a `bool` flag after the aggregate's fields (in field order, one per presence field).
+  An absent field holds the option's nothing (`undefined`). An `AdtLit` sets the flag, unless the
+  field's value is `Intrinsic::FieldAbsent` (`() -> T | undefined`; outside a literal it is
+  `undefined`); any write to the field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the
+  argument a `Field` place of a presence field) reads it. `console.log` leaves out an absent
+  field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
+  and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
+  key is there with a value the field's type holds (a JSON `null` for an `a?: T` field without
+  `null` leaves it absent, unless the reader has flag 2, `JSON.parse(text) as T`: then it fails).
+  A spread copies a present field over an earlier value, also one holding `undefined`, unless
+  the target field is required and cannot hold `undefined`: then an absent field keeps the
+  earlier value and a present `undefined` panics with a `TypeError` message. Copy, clone and equality glue include the flag.
 
 ## Undefined (issue #930, phase 1)
 - `TyKind::Option(T, Nothing)`: `Nothing::Null` is `T | null` (every option before #930),
@@ -694,8 +706,17 @@ entry is an `ICE:`.
 - AST (additive): `ast::BinaryOp::StrictEq` / `StrictNotEq` are `===` / `!==`; `Eq` / `NotEq`
   are `==` / `!=` (before #930 both spellings were `Eq` / `NotEq`). `BinaryOp::loose()` maps the
   strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
-  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
-  HIR keeps one `BinOp::Eq` / `NotEq`.
+  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`,
+  and sema warns about it). HIR keeps one `BinOp::Eq` / `NotEq`.
+- Optional parameters and fields (phase 2): the parser writes the type of `p?: T` (a function's,
+  an arrow's or a function type's parameter) and of an object type's optional field
+  `a?: T` as `T | undefined`, adding a zero-width `undefined` at the end of `T`'s span (a written
+  type that already includes `undefined` stays as it is); `a?: T | null` becomes
+  `T | null | undefined`. An interface's or class's optional field reads as the same type. An
+  optional parameter's default is `undefined` (the nothing of its option type), so a call
+  that leaves it out passes `undefined`. `?.` gives `undefined` when its object is either
+  nothing: on a `T | null` object the result is `R | undefined`, and `R | null | undefined` for a
+  `R | null` rest.
 
 ## any and unknown (issue #924, phase 1a)
 - `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is

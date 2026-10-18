@@ -3,8 +3,12 @@
 //! that type (sema's truthiness.rs): `false`, `null`, `0` and `-0` of every number type, `NaN`
 //! and `""` are falsy; a nullable by its payload, a union by the member it holds, an enum by its
 //! member's value; objects, arrays and functions are always truthy.
+//!
+//! `Intrinsic::IsNull` / `IsNullish`: `x === null` / `x == null` on an option of a type
+//! parameter (`x?: T`), lowered per instantiation: a `T = X | null` makes `x` a
+//! `X | null | undefined`, whose `null` is the inner nothing.
 
-use velt_sema::hir::{self, LitValue, TyId, TyKind};
+use velt_sema::hir::{self, LitValue, Nothing, TyId, TyKind};
 
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Rvalue, Terminator, Ty};
@@ -18,6 +22,48 @@ impl FnLower<'_, '_> {
         let out = Place::local(self.temp(Ty::Bool));
         self.truthy_into(&out, &p, t);
         Operand::Copy(out)
+    }
+
+    /// `IsNull(a)` / `IsNullish(a)` (`loose`): a `Bool` operand.
+    pub(super) fn null_intrinsic(&mut self, a: &hir::Expr, loose: bool) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        let p = self.place_of(v, t);
+        let out = Place::local(self.temp(Ty::Bool));
+        self.null_into(&out, &p, t, loose);
+        Operand::Copy(out)
+    }
+
+    /// Assign whether the value at `p` (of the concrete type `t`) is `null` (`loose`: `null`
+    /// or `undefined`) to `out`. A `X | null | undefined` is an option of a `X | null` here
+    /// (`Cx::kind`), whose own nothing is `undefined`.
+    fn null_into(&mut self, out: &Place, p: &Place, t: TyId, loose: bool) {
+        let TyKind::Option(e, n) = self.cx.kind(t) else {
+            self.assign(out.clone(), Rvalue::Use(bool_const(false)));
+            return;
+        };
+        let counts = loose || n == Nothing::Null;
+        let nested = matches!(self.cx.kind(e), TyKind::Option(..));
+        if !counts && !nested {
+            self.assign(out.clone(), Rvalue::Use(bool_const(false)));
+            return;
+        }
+        let (some_bb, none_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        let some = self.option_is_some(p, t);
+        self.branch(some, some_bb, none_bb);
+        self.switch_to(none_bb);
+        self.assign(out.clone(), Rvalue::Use(bool_const(counts)));
+        self.goto(done);
+        self.switch_to(some_bb);
+        match nested {
+            true => {
+                let payload = self.some_payload(p, t);
+                self.null_into(out, &payload, e, loose);
+            }
+            false => self.assign(out.clone(), Rvalue::Use(bool_const(false))),
+        }
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// Assign whether the value at `p` (of the concrete type `t`) is truthy to `out`.

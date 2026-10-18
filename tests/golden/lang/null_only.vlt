@@ -1,6 +1,7 @@
-// `null` is the only "nothing": `a?: T` is `T | null` for parameters, class and interface
-// fields and object types; an object literal may leave such a field out, and `JSON.parse`
-// treats an absent key like an explicit `null` (only `JsonValue` tells them apart).
+// `a?: T` is `T | undefined` for parameters, class and interface fields and object types (it
+// was `T | null` before #930): an object literal may leave such a field out, and `JSON.parse`
+// treats an explicit `null` for such a field like an absent key (only `JsonValue` tells them
+// apart).
 
 interface Named {
   nickname?: string;
@@ -37,11 +38,11 @@ class Config {
 }
 
 function main() {
-  console.log(greet("Ann"), greet("Bo", "Hi"), greet("Cy", "Hey", "?"), greet("Di", null));
+  console.log(greet("Ann"), greet("Bo", "Hi"), greet("Cy", "Hey", "?"), greet("Di", undefined));
   const named: Named = new User("ann", "annie");
   console.log(named.label(), new User("bo").label(), new User("cy").nickname);
   console.log(describe({ port: 80 }), describe({ port: 8080, host: "example.com", retries: 3 }));
-  const o: Options = { port: 1, retries: null };
+  const o: Options = { port: 1, retries: undefined };
   console.log(o.host, o.retries);
 
   const parsed = JSON.parse<Options>("{\"port\":443}");
