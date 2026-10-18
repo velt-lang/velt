@@ -5,11 +5,9 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::{may_write, Later};
 use super::types::VariantAt;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -20,11 +18,17 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Adt(..) if self.cx.is_class(ty) => {
                 let obj = self.cx.obj_agg(ty);
+                if self.cx.proxiable(ty) {
+                    self.proxy_guard(base);
+                }
                 let base = self.retained_hop(base, ty);
                 let p = proj(&base, Proj::Deref(Ty::Agg(obj)));
                 proj(&p, Proj::Field(self.cx.vir_field(ty, index)))
             }
             TyKind::Adt(..) | TyKind::Tuple(_) => {
+                if self.cx.proxiable(ty) {
+                    self.proxy_guard(base);
+                }
                 let value = self.content(base, ty);
                 proj(&value, Proj::Field(self.cx.vir_field(ty, index)))
             }
@@ -40,6 +44,9 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
+        if self.cx.proxiable(bty) && !self.is_unit_field(bty, index) {
+            return self.proxy_field_read(base, bty, index, mode);
+        }
         if mode == UseMode::Move && (self.counted_part(base) || self.in_module_state(base)) {
             // Other owners still see the field (semantics stage 2): share it instead.
             let v = self.field_expr(base, index, UseMode::Borrow);
@@ -118,7 +125,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is field `index` of `ty` a zero-sized `void` field (nothing to read)?
-    fn is_unit_field(&mut self, ty: TyId, index: u32) -> bool {
+    pub(super) fn is_unit_field(&mut self, ty: TyId, index: u32) -> bool {
         let base = match self.cx.kind(ty) {
             TyKind::Shared(inner) => inner,
             _ => ty,
@@ -206,6 +213,31 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
+    /// A union member read of a field that a `typeof` test narrowed (an `UnwrapVariant` not
+    /// rooted at a local): a call since the test may have changed the field, so its variant is
+    /// checked again, as `check_narrowed_field` checks a narrowed nullable field.
+    fn check_narrowed_variant(&mut self, inner: &hir::Expr, p: &Place, ety: TyId, at: VariantAt) {
+        let VariantAt::Index(i) = at else {
+            return;
+        };
+        if unwrap_root(inner).is_some() || self.dead() {
+            return;
+        }
+        let fail = self.new_block();
+        self.test_variant(i, &[], p, ety, fail);
+        let ok = self.new_block();
+        self.goto(ok);
+        self.switch_to(fail);
+        let msg = format!(
+            "a narrowed field was set to a value of another type before this read{}",
+            self.panic_suffix()
+        );
+        let msg = self.str_lit(&msg);
+        let a = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+        self.call_rt(super::rt::Rt::Panic, vec![a], None);
+        self.switch_to(ok);
+    }
+
     /// Payload of the (flow-narrowed) union value `inner` known to be in `variant`.
     pub(super) fn unwrap_variant(
         &mut self,
@@ -226,6 +258,7 @@ impl FnLower<'_, '_> {
         }
         let v = self.expr(inner);
         let p = self.place_of(v, ety);
+        self.check_narrowed_variant(inner, &p, ety, at);
         let (payload, pty) = match at {
             VariantAt::Index(i) => self.variant_part(&p, ety, i, 0),
             // The union collapsed to this member: the value itself.
@@ -350,7 +383,9 @@ impl FnLower<'_, '_> {
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
-                match self.variant_at(expr.ty, *variant, ety) {
+                let at = self.variant_at(expr.ty, *variant, ety);
+                self.check_narrowed_variant(expr, &p, ety, at);
+                match at {
                     VariantAt::Index(i) => self.variant_part(&p, ety, i, 0).0,
                     VariantAt::Whole => p,
                 }
@@ -373,6 +408,12 @@ impl FnLower<'_, '_> {
     /// `place = value`: evaluate the target's indices, then the new value; drop the old one,
     /// store.
     pub(super) fn assign_expr(&mut self, place: &hir::Expr, value: &hir::Expr) -> Operand {
+        if let hir::ExprKind::Field { base, index, .. } = &place.kind {
+            let bty = self.sub(base.ty);
+            if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
+                return self.proxy_assign(place, base, *index, value);
+            }
+        }
         if let Some(done) = self.str_append(place, value) {
             return done;
         }
@@ -380,7 +421,10 @@ impl FnLower<'_, '_> {
         self.place_indices(place, &mut pre);
         let pin = match place.kind {
             hir::ExprKind::Local(..) => None,
-            _ => self.pin_target(place, &pre, Later::of(value)),
+            _ => {
+                let later = self.later_of(value);
+                self.pin_target(place, &pre, later)
+            }
         };
         let v = self.consume(value);
         if self.dead() {
@@ -415,7 +459,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The store of `place = v` into `p`, dropping the old value when `drops`.
-    fn store_assigned(
+    pub(super) fn store_assigned(
         &mut self,
         place: &hir::Expr,
         p: Place,
@@ -494,6 +538,12 @@ impl FnLower<'_, '_> {
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        if let hir::ExprKind::Field { base, index, .. } = &place.kind {
+            let bty = self.sub(base.ty);
+            if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
+                return self.proxy_compound(op, place, (base, *index), value);
+            }
+        }
         if op == hir::BinOp::Add {
             if let Some(done) = self.str_append_compound(place, value) {
                 return done;
@@ -507,7 +557,7 @@ impl FnLower<'_, '_> {
         // Through a counted object, or with a right-hand side that may change the container
         // (`xs[0] += grow(xs)` reallocates `xs`): read the element, evaluate the right-hand
         // side, then form the element's address again for the write (#580).
-        if local.is_none() && (self.through_counted(place, pty) || may_change_memory(value)) {
+        if local.is_none() && (self.through_counted(place, pty) || self.may_change_memory(value)) {
             return self.compound_assign_shared(op, place, value, pty);
         }
         let p = match local {
@@ -521,7 +571,7 @@ impl FnLower<'_, '_> {
             None => self.place_expr(place),
         };
         let mut l = Operand::Copy(p.clone());
-        if may_write(value) {
+        if self.may_write(value) {
             l = self.freeze(l, place.ty);
         }
         let r = self.expr(value);
@@ -558,7 +608,8 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
-        let pin = self.pin_target(place, &pre, Later::of(value));
+        let later = self.later_of(value);
+        let pin = self.pin_target(place, &pre, later);
         let first = self.place_expr_with(place, &mut pre.clone());
         let l = self.share_value(Operand::Copy(first), ty);
         let l = self.own_value(l, ty);

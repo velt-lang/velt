@@ -1,0 +1,1 @@
+panic: TypeError: Object.assign copies `undefined` into the key `color` of a `Record<string, string>`, which can't hold it

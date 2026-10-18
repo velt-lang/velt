@@ -437,10 +437,10 @@ impl FnLower<'_, '_> {
                 let next = self.on_key(key, name);
                 let fty = self.cx.member_ty(ty, i as u32);
                 let f = &self.cx.adt_def(d).fields[i];
-                // A left-out optional field `q?: T` is JavaScript's `undefined`; one that keeps
-                // a present `null` apart (`q?: T | null`, a presence flag) comes later.
-                let (optional, presence) = (f.optional, f.presence);
-                if self.cx.any_boxable(fty) && !presence {
+                // A left-out optional field `q?: T` is JavaScript's `undefined` (its type's own
+                // nothing, whether absent or present).
+                let optional = f.optional;
+                if self.cx.any_boxable(fty) {
                     let fp = self.field_place(&vp, ty, i as u32);
                     let v = self.share_value(Operand::Copy(fp), fty);
                     self.any_box_with(v, fty, &outp, optional);
@@ -461,7 +461,11 @@ impl FnLower<'_, '_> {
                         self.any_invoke(&r, this, vec![], &outp);
                         self.ret_status(ST_OK);
                     }
-                    // A method read as a value (a bound function) comes later.
+                    // A method read as a value: in a program with proxies, the unbound method
+                    // (proxy_method.rs); a bound function comes later.
+                    (DynMemberKind::Method, Some(r)) if self.method_value_into(&r, &outp) => {
+                        self.ret_status(ST_OK);
+                    }
                     _ => self.ret_status(ST_UNSUPPORTED),
                 }
                 self.switch_to(next);

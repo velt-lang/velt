@@ -11,6 +11,7 @@
 use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_NAME, SLOT_SHARE, SLOT_TRANSFER};
+use crate::lower::weak_object::WeakSlot;
 use crate::lower::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
@@ -65,6 +66,7 @@ impl Cx<'_> {
                 let mut entries = self.impl_entries(index, ty);
                 let mut id = self.class_id_word(ty, true);
                 if self.is_any_impl(index) {
+                    self.note_dyn_type(ty);
                     entries.extend(self.any_entries(ty));
                     if matches!(self.kind(ty), TyKind::Array(_) | TyKind::Tuple(_)) {
                         // `Array.isArray` (any_set_site.rs).
@@ -86,6 +88,22 @@ impl Cx<'_> {
             Some(_) => n.max(super::super::any::SLOT_TAG + HIDDEN + 1),
             None => n,
         };
+        // The weak slot of every `any` table when `object` is a weak key (weak_object.rs).
+        let weak = match key {
+            VtableKey::Impl(index, ty) if self.is_any_impl(index) && self.weak_object() => {
+                Some(self.weak_slot(ty))
+            }
+            _ => None,
+        };
+        let slot_weak = super::super::weak_object::SLOT_WEAK;
+        let n = match weak {
+            Some(_) => n.max(slot_weak + HIDDEN + 1),
+            None => n,
+        };
+        let mut entries = entries;
+        if let Some(WeakSlot::Trace(f)) = &weak {
+            entries.push((slot_weak, f.clone()));
+        }
         let relocs = entries
             .into_iter()
             .map(|(slot, c)| ((8 * (slot + HIDDEN)) as u32, c))
@@ -96,6 +114,10 @@ impl Cx<'_> {
         if let Some(tag) = tag {
             let at = (8 * (super::super::any::SLOT_TAG + HIDDEN)) as usize;
             bytes[at..at + 8].copy_from_slice(&tag.to_le_bytes());
+        }
+        if let Some(WeakSlot::Opaque) = weak {
+            let at = (8 * (slot_weak + HIDDEN)) as usize;
+            bytes[at..at + 8].copy_from_slice(&1u64.to_le_bytes());
         }
         self.statics.push(StaticData {
             bytes,

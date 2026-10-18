@@ -22,7 +22,44 @@ impl FnCx<'_, '_> {
             let never = self.cx.ty.never;
             return self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
         }
-        let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
+        // A narrowed `T | null | undefined` reads as its `T` (both nothings ruled out).
+        let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
+        // A variable that a closure assigns is checked again where it is used, and read as it
+        // is where a test checks it (`closure_assigned`).
+        let reassigned = self.closure_assignment(l).is_some();
+        if payload.is_some() && reassigned {
+            if self.raw_read == Some(span) {
+                let mode = self.use_mode(ty, want);
+                return self.mk(H::Local(l, mode), ty, span);
+            }
+            return self.checked_narrowed_read(l, ty, want, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Undefined)
+        {
+            // `x !== undefined` on a `T | null | undefined`: its `T | null`.
+            let mid = self
+                .cx
+                .ty
+                .opt_payload(ty)
+                .expect("ICE: option without a payload");
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let mode = self.use_mode(mid, want);
+            return self.mk(H::UnwrapSome(Box::new(base), mode), mid, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && want != Want::BorrowMut
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Null)
+        {
+            // `x !== null` on a `T | null | undefined`: its `T | undefined` (#1218).
+            let mode = self.use_mode(ty, want);
+            let base = self.mk(H::Local(l, mode), ty, span);
+            return self.three_state_without_null(base, want == Want::Move);
+        }
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
@@ -45,7 +82,7 @@ impl FnCx<'_, '_> {
                 Some(_) => base_mode,
                 None => self.use_mode(p, want),
             };
-            e = self.mk(H::UnwrapSome(Box::new(e), mode), p, span);
+            e = self.unwrap_present(e, mode, span);
         }
         if let Some((variant, m)) = member {
             let mode = self.use_mode(m, want);
@@ -81,7 +118,7 @@ impl FnCx<'_, '_> {
         if let Some(p) = payload {
             let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
             let inner = self.use_mode(p, want);
-            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+            e = self.unwrap_present(base, inner, span);
         }
         self.union_downcast(e, target).ok()
     }
@@ -285,6 +322,9 @@ impl FnCx<'_, '_> {
                         return h;
                     }
                 }
+                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                    return h;
+                }
                 self.fn_ref(d, id, exp)
             }
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
@@ -377,6 +417,10 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if let Some(h) = self.generator_value(d, None, exp, span) {
+            return h;
+        }
+        let f = self.cx.fn_info(d);
         let slots = vec![None; f.generics.len()];
         self.fn_ref_slots(d, &id.name, slots, exp, span)
     }
@@ -422,7 +466,13 @@ impl FnCx<'_, '_> {
 
     /// The function type of named function `d` used as a value, with what it is known to throw
     /// (an async function's promise rejects with it).
-    fn fn_value_type(&mut self, d: DefId, params: Vec<TyId>, ret: TyId, is_async: bool) -> TyId {
+    pub(super) fn fn_value_type(
+        &mut self,
+        d: DefId,
+        params: Vec<TyId>,
+        ret: TyId,
+        is_async: bool,
+    ) -> TyId {
         if is_async {
             let ret = self.async_call_ret(d, ret);
             return self.cx.ty.fn_ptr(params, ret);
@@ -445,7 +495,7 @@ impl FnCx<'_, '_> {
     /// A synchronous function value takes the error type the context expects when it throws
     /// less (lowering's function-value thunk converts its errors); the final error type of `d`
     /// is checked against the one used here.
-    fn fn_value_errors(
+    pub(super) fn fn_value_errors(
         &mut self,
         d: DefId,
         args: &[TyId],

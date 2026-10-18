@@ -1,0 +1,16 @@
+// The per-type microbenchmark (#823), outside the proxiable set: a program without proxies
+// whose `tick` reads and writes three fields of a `State`. proxy_tick_proxiable.vlt is the same
+// with `State` proxiable; bench/proxy/run.sh counts both.
+type State = { count: number; step: number; total: number };
+
+function tick(s: State): void {
+  s.count = s.count + s.step;
+  s.total = s.total + s.count;
+}
+
+const a: State = { count: 0, step: 1, total: 0 };
+const holders: State[] = [a, a];
+for (let i = 0; i < 10000000; i++) {
+  tick(holders[i & 1]);
+}
+console.log(a.count, a.total);

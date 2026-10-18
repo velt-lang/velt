@@ -1,0 +1,2 @@
+recursive_union_inline.vlt:3:6: error: type alias `L` refers to itself
+recursive_union_inline.vlt:4:6: error: type alias `U` refers to itself

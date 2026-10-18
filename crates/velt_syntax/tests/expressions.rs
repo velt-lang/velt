@@ -59,7 +59,7 @@ fn object_type_arguments() {
     );
     check(
         "f<{ a: Array<Map<K, V>> }, { b?: string }>()",
-        "(call f<{a: Array<Map<K, V>>}, {b: (string | null)}> [])",
+        "(call f<{a: Array<Map<K, V>>}, {b: (string | undefined)}> [])",
     );
     check(
         "f<{ p: { q: i64[] } }[]>()",

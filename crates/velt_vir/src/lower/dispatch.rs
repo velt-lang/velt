@@ -8,7 +8,6 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::operand::proj;
-use super::sequence::later_each;
 use super::{ice, FnLower};
 use crate::vir::{Operand, Proj, Rvalue, Ty};
 
@@ -99,7 +98,7 @@ impl FnLower<'_, '_> {
         if transfer {
             return rv;
         }
-        let later = later_each(args).first().copied().unwrap_or_default();
+        let later = self.later_each(args).first().copied().unwrap_or_default();
         self.hold(rv, args[0].ty, later)
     }
 
@@ -122,11 +121,29 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.receiver(recv, transfer);
+        // The method or an argument may replace or free the receiver where it was read from
+        // (`XS[0].m(clear())` where `clear` empties a module array, `this.items[0].m(reset())`),
+        // so it is stabilized as a class method's receiver is (`lower_args`): a receiver read
+        // through a counted object, a cell or module state is shared for the call, then held
+        // against the arguments.
+        let rv = match !transfer && !super::call::is_moved(recv) {
+            true => self.stable_borrow(recv, &args[1..]),
+            false => self.receiver(recv, transfer),
+        };
         let rv = self.hold_receiver(rv, args, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
-        let vt = self.obj_vtable(obj.clone(), cls);
-        let entry = self.dispatch(vt, slot as i128);
+        let entry = match self.cx.proxiable(cls) {
+            true => {
+                let vt = self.proxy_obj_vtable(obj.clone(), cls);
+                let entry = self.dispatch(vt, slot as i128);
+                self.proxy_virtual_get(&obj, cls, slot, &entry);
+                entry
+            }
+            false => {
+                let vt = self.obj_vtable(obj.clone(), cls);
+                self.dispatch(vt, slot as i128)
+            }
+        };
         let ret = self.sub(ty);
         self.call_ptr(
             entry,
@@ -155,7 +172,12 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv, transfer);
+        // A receiver read from a place the method may replace gets a reference of its own for
+        // the call (receiver.rs): the method is only known at run time.
+        let rv = match !transfer && self.replaceable_receiver(recv) {
+            true => self.held_receiver(recv),
+            false => self.receiver(recv, transfer),
+        };
         let rv = self.hold_receiver(rv, args, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
@@ -166,6 +188,11 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&rp, Proj::Field(1)))),
         );
+        if self.cx.has_proxies() {
+            // The interface value may hold a typed proxy (its data tagged): the same check as
+            // a direct call through the proxy.
+            self.proxy_method_check(&data);
+        }
         let entry = self.dispatch(vt, slot as i128);
         let ret = self.sub(ty);
         self.call_ptr(

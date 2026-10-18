@@ -1,0 +1,11 @@
+null 3 undefined s
+null undefined true
+null s 2
+null,undefined,1,x
+true true false d null
+false false 4
+true true d {"v":null} Box { v: null }
+false 5
+nothing null
+undefined Box { v: undefined }
+false [ 'a' ]

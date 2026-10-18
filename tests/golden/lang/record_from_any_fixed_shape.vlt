@@ -1,0 +1,11 @@
+// An `any` holding an object of a fixed shape does not convert to a `Record` yet (#1219): the
+// conversion stops with a `TypeError` saying so (it compiled to invalid code before, #1211).
+function keys(x: any): string[] {
+  const r = x as Record<string, number>;
+  return Object.keys(r);
+}
+
+function main() {
+  console.log("before");
+  console.log(keys({ a: 1, b: 2 }));
+}

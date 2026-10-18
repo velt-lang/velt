@@ -27,8 +27,8 @@ The differences come from three rules:
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
-  statements run in a generated `main`; only the root file may have them
-  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+  statements run in a generated `main`; an imported module's run once when it is evaluated,
+  in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
 - A module-level `let` works as in Node: one per process, which every task (spawned tasks,
   HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
   Node's single thread between `await`s, so updates are never lost
@@ -94,13 +94,12 @@ accept; compiler messages and editors print `boolean` either way
 
 `null` and `undefined` are two values, as in Node: `T | undefined` prints, compares, tests with
 `typeof` and serializes to JSON as in JavaScript ([Null and undefined](../reference/types.md#null-and-undefined)).
-For now, `a?: T` still means `T | null`, and the standard library returns `null` where
-TypeScript returns `undefined` (issue #930 moves them to `undefined`):
+Optional fields and parameters (`a?: T`) are `T | undefined`, as in TypeScript:
 
 ```ts
 class Config {
   host: string = "localhost";
-  port?: i64;                       // T | null, starts as null
+  port?: i64;                       // i64 | undefined, starts as undefined
 }
 
 function connect(c: Config, timeout?: i64): string {
@@ -110,10 +109,9 @@ function connect(c: Config, timeout?: i64): string {
 console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
-Until then, `JSON.parse` treats an absent key like
-`null`; only `JsonValue` tells them apart. What JS gives as `undefined` for a missing value is
-`null`, and prints as `null`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match,
-`s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
+For now, the standard library returns `null` where TypeScript returns `undefined` (issue #930
+moves it to `undefined`), and it prints as `null`: `m.get(k)` for a key a `Map` lacks,
+`arr.find(…)` without a match, `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 
@@ -308,7 +306,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 `var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`),
 `with`, getters on object literals, decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
-method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
+method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
@@ -320,7 +318,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
-| `null` and `undefined` | both, as in Node; `a?: T` is still `T \| null` (#930) | — |
+| `null` and `undefined` | both, as in Node, and `a?: T` is `T \| undefined`; the standard library still gives `null` for a missing value (#930) | — |
 | `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `\|\|` and `&&` return an operand) | — |
 | `==` coerces | no coercion: `==` is `===` except that `x == null` also matches `undefined`, and the reverse (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
@@ -334,7 +332,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
-| top-level statements | run in a generated `main` (root file only) | — |
+| top-level statements | the root file's run in a generated `main`; an imported module's run once when it is evaluated, in Node's order (no top-level `await` there) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted), but a chained access reads the changed array as in TypeScript (`xs.sort().join(",")`); other uses of the result are an error with the fix; `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |

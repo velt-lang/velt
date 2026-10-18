@@ -544,6 +544,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::HoldsNull
         | I::NullAs
         | I::Truthy
+        | I::IsNull
+        | I::IsNullish
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
         | I::Sqrt
@@ -571,6 +573,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::GeneratorResume
         | I::GeneratorValue
         | I::GeneratorReturn
+        | I::GeneratorResumeWith
+        | I::GeneratorThrow
+        | I::YieldDelegate
         | I::GeneratorEmbed
         | I::AsyncGeneratorResume
         | I::AsyncGeneratorValue
@@ -596,6 +601,9 @@ pub(crate) fn resumes(i: Intrinsic) -> bool {
         i,
         Intrinsic::GeneratorResume
             | Intrinsic::GeneratorReturn
+            | Intrinsic::GeneratorResumeWith
+            | Intrinsic::GeneratorThrow
+            | Intrinsic::YieldDelegate
             | Intrinsic::AsyncGeneratorResume
             | Intrinsic::AsyncGeneratorReturn
             | Intrinsic::AsyncGeneratorDispose

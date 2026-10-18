@@ -41,9 +41,9 @@ export class RegExpError extends Error {
 /** One match: the matched text, where it is, and its capture groups. */
 export class RegExpMatch {
   /** Position of the match in the subject (code units). */
-  index: usize;
+  index: number;
   /** Position just past the match. */
-  end: usize;
+  end: number;
   /** The matched text (JS `m[0]`). */
   value: string;
   /** Groups 1.. (JS `m[1]`, `m[2]`, …); null for a group that did not take part. */
@@ -52,8 +52,8 @@ export class RegExpMatch {
   names: string[];
 
   constructor(
-    index: usize,
-    end: usize,
+    index: number,
+    end: number,
     value: string,
     captures: (string | null)[],
     names: string[],
@@ -204,7 +204,7 @@ export class RegExp {
     }
     const start = this.lastIndex as usize;
     const m = start > s.length ? null : this.execAt(s, start);
-    velt_rt_regex_set_last_index(this.#handle, m == null ? 0 : m.end as number);
+    velt_rt_regex_set_last_index(this.#handle, m == null ? 0 : m.end);
     return m;
   }
 
@@ -245,7 +245,7 @@ export class RegExp {
       return velt_rt_regex_replace(this.#handle, s, replacement, this.global);
     }
     let out = "";
-    let last: usize = 0;
+    let last: number = 0;
     for (const m of this.replaced(s)) {
       out += s.slice(last as i64, m.index as i64);
       out += m.substitute(s, replacement);
@@ -266,7 +266,7 @@ export class RegExp {
    */
   replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string throws E {
     let out = "";
-    let last: usize = 0;
+    let last: number = 0;
     for (const m of this.replaced(s)) {
       out += s.slice(last as i64, m.index as i64);
       out += f(m);
@@ -282,7 +282,7 @@ export class RegExp {
     f: (m: RegExpMatch, s: string) => string throws E,
   ): string throws E {
     let out = "";
-    let last: usize = 0;
+    let last: number = 0;
     for (const m of this.replaced(s)) {
       out += s.slice(last as i64, m.index as i64);
       out += f(m, s);
@@ -342,7 +342,7 @@ export class RegExp {
   }
 
   /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
-  __split(s: string, limit: number | null): string[] {
+  __split(s: string, limit: number | null | undefined): string[] {
     if (limit == null) {
       return this.split(s);
     }
@@ -435,7 +435,7 @@ export class RegExp {
       if (m == null) {
         break;
       }
-      at = m.end == m.index ? m.end + 1 : m.end;
+      at = (m.end == m.index ? m.end + 1 : m.end) as usize;
       out.push(m);
     }
     return out;
@@ -462,8 +462,8 @@ export class RegExp {
       }
     }
     return new RegExpMatch(
-      offsets[at] as usize,
-      offsets[at + 1] as usize,
+      offsets[at] as number,
+      offsets[at + 1] as number,
       s.slice(offsets[at], offsets[at + 1]),
       captures,
       this.#names.clone(),

@@ -1,0 +1,10 @@
+// check: no leaks
+// A `this: any` or `this: unknown` parameter takes a plain call's `this` too (#942).
+function kind(this: unknown, x: number): string {
+  return `${typeof this} ${x}`;
+}
+console.log(kind.call("s", 1), kind.call(2, 2), kind.call(undefined, 3), kind.call(null, 4));
+function show(this: any): string {
+  return this === undefined ? "undefined" : String(this.name);
+}
+console.log(show.call({ name: "obj" }), show.call(undefined), show(), kind(5));

@@ -356,7 +356,7 @@ impl FnCx<'_, '_> {
         let Some(cands) = self.scan(h).filter(|c| !c.is_empty()) else {
             return;
         };
-        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.ty.core(t).unwrap_or(t);
         if self.cx.ty.is_int(core) {
             self.literal.use_int(&cands, core, h.span);
         } else if self.cx.ty.is_float(core) {

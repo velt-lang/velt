@@ -1,0 +1,39 @@
+// check: no leaks
+// `instanceof` on a typed proxy (#823) answers for its target's class, as in JavaScript (the
+// target's prototype chain, with no `getPrototypeOf` trap): through a class type, a base class
+// and an interface value.
+function logged(target: any): any {
+  return new Proxy(target, {
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(t, key, value, receiver);
+    },
+  });
+}
+
+interface Shape {
+  area(): number;
+}
+class Base {
+  n: number = 1;
+}
+class Sub extends Base {
+  m: number = 2;
+}
+class Other extends Base {}
+class Sq implements Shape {
+  side: number = 3;
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+const b: Base = logged(new Sub()) as Sub;
+console.log(b instanceof Sub, b instanceof Base, b instanceof Other);
+const sq = logged(new Sq()) as Sq;
+const shape: Shape = sq;
+console.log(shape instanceof Sq, sq instanceof Sq);
+const plain: Shape = new Sq();
+console.log(plain instanceof Sq, new Other() instanceof Base);
+b.n = 5;
+console.log(b.n, shape.area());

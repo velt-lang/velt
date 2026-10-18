@@ -229,7 +229,7 @@ impl FnCx<'_, '_> {
     /// The float type of an array element type `number` or `number | null` (integers spread
     /// into it convert, as JS numbers).
     fn float_elem(&self, elem: TyId) -> Option<TyId> {
-        let inner = self.cx.ty.opt_payload(elem).unwrap_or(elem);
+        let inner = self.cx.ty.core(elem).unwrap_or(elem);
         self.cx.ty.is_float(inner).then_some(inner)
     }
 

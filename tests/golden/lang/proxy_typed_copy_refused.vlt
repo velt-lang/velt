@@ -1,0 +1,11 @@
+// A conversion the program could tell from a copy (a later write) is allowed in a program that
+// creates proxies only because a proxy keeps its identity through it (#823): a plain value
+// (here from `JSON.parse`) throws a `TypeError` there instead of being copied.
+type Sig = { a: number; b: number };
+type A = { a: number };
+const p = new Proxy({ x: 1 }, {});
+console.log(p.x);
+const s = JSON.parse('{"a":1,"b":2}') as Sig;
+const v: A = s;
+v.a = 5;
+console.log(s.a);

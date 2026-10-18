@@ -104,7 +104,7 @@ fn interface_field(f: &ast::ObjectTypeField) -> ast::Field {
 }
 
 /// Does type `t` name `name` (a one-segment named type) anywhere?
-fn names(t: &ast::TypeExpr, name: &str) -> bool {
+pub(crate) fn names(t: &ast::TypeExpr, name: &str) -> bool {
     use ast::TypeExprKind as K;
     match &t.kind {
         K::Named { path, args } => {

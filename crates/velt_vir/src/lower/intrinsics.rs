@@ -4,7 +4,6 @@ use velt_sema::hir::{self, Intrinsic, TyId};
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::sequence::Later;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Ty, STR_AGG};
 
@@ -14,8 +13,11 @@ impl FnLower<'_, '_> {
     pub(super) fn intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         use Intrinsic as I;
         match (i, args) {
-            (I::Yield, [a]) => self.yield_value(a),
+            (I::Yield, [a, rest @ ..]) => self.yield_value(a, rest.first(), ty),
             (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
+            (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
+            (I::YieldDelegate, [g]) => self.yield_delegate(g),
             (I::GeneratorValue, [g]) => self.gen_value(g),
             (I::GeneratorReturn, [g]) => self.gen_return(g),
             (I::AsyncGeneratorValue, [g]) => self.gen_value(g),
@@ -137,6 +139,8 @@ impl FnLower<'_, '_> {
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
             (I::ClosureSibling(def), []) => self.closure_sibling(def, ty),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
+            (I::IsNull, [a]) => self.null_intrinsic(a, false),
+            (I::IsNullish, [a]) => self.null_intrinsic(a, true),
             (I::AnyTo, [a]) => self.any_to(a, ty),
             (I::AnyTypeof, [a]) => self.any_typeof(a),
             (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
@@ -234,7 +238,8 @@ impl FnLower<'_, '_> {
     /// Evaluate two operands to places (the first held if the second may change it).
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
-        let va = self.expr_held(a, Later::of(b));
+        let later = self.later_of(b);
+        let va = self.expr_held(a, later);
         let vb = self.expr(b);
         (self.place_of(va, ta), self.place_of(vb, tb))
     }

@@ -1,0 +1,85 @@
+// check: no leaks
+// A table of generic interface values with concrete type arguments, read through the same
+// interface with `unknown` arguments, as `@sigx/serialize` keeps its type handlers (#1153).
+// Each handler is written for one type (`TypeHandler<Date, number | null>`); the table holds
+// `TypeHandler` (`TypeHandler<unknown, unknown>`) values, and every call through it converts
+// its argument to the handler's own type, checked at run time.
+interface TypeHandler<T = unknown, Encoded = unknown> {
+  name: string;
+  tag?: string;
+  test(value: unknown): boolean;
+  serialize(value: T): Encoded;
+  revive?(encoded: Encoded): T;
+}
+
+class Money {
+  cents: number;
+  currency: string;
+  constructor(cents: number, currency: string) {
+    this.cents = cents;
+    this.currency = currency;
+  }
+}
+
+const BUILTIN_TYPE_HANDLERS: readonly TypeHandler[] = [
+  {
+    name: "date",
+    tag: "$date",
+    test: (v) => v instanceof Date,
+    serialize: (v) => {
+      const t = v.getTime();
+      return Number.isNaN(t) ? null : t;
+    },
+    revive: (v) => new Date(v === null ? NaN : v),
+  } satisfies TypeHandler<Date, number | null>,
+  {
+    name: "money",
+    tag: "$money",
+    test: (v) => v instanceof Money,
+    serialize: (m) => m.currency + " " + m.cents,
+    revive: (s) => new Money(Number(s.split(" ")[1]), s.split(" ")[0]),
+  } satisfies TypeHandler<Money, string>,
+  {
+    name: "legacy",
+    test: (v) => typeof v === "string" && v.startsWith("legacy:"),
+    serialize: (s) => s.length,
+  } satisfies TypeHandler<string, number>,
+];
+
+function encode(value: unknown, handlers: readonly TypeHandler[]): void {
+  for (const h of handlers) {
+    if (h.test(value)) {
+      console.log(h.name, h.tag ?? "(no tag)", h.serialize(value));
+      return;
+    }
+  }
+  console.log("plain", value);
+}
+
+function roundTrip(value: unknown, handlers: readonly TypeHandler[]): void {
+  for (const h of handlers) {
+    if (h.test(value)) {
+      const payload = h.serialize(value);
+      const revive = h.revive;
+      if (revive == null) {
+        console.log(h.name, "is serialize-only");
+      } else {
+        const back = revive(payload);
+        console.log(h.name, "revived", back instanceof Date || back instanceof Money);
+      }
+      return;
+    }
+  }
+}
+
+function main(): void {
+  const values: unknown[] = [new Date(86400000), new Money(250, "EUR"), "legacy:abc", 42];
+  for (const v of values) {
+    encode(v, BUILTIN_TYPE_HANDLERS);
+  }
+  for (const v of values) {
+    roundTrip(v, BUILTIN_TYPE_HANDLERS);
+  }
+  const one: TypeHandler = BUILTIN_TYPE_HANDLERS[0];
+  console.log(one.name, one.serialize(new Date(NaN)));
+}

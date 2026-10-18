@@ -11,13 +11,16 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{DefId, LocalId, TyId};
+use crate::hir::{DefId, LocalId, Nothing, TyId};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Fact {
     /// The `T | null` local is not null.
     NonNull(LocalId),
+    /// The `T | null | undefined` local is not this nothing (`x !== undefined`, `x !== null`);
+    /// with both excluded it is narrowed as by `NonNull`.
+    Excludes(LocalId, Nothing),
     /// The union local (or, for `U | null`, its payload when not null) is one of these variants.
     Members(LocalId, Vec<u32>),
     /// The class or interface local (or the union member it is narrowed to) holds an instance
@@ -122,9 +125,7 @@ impl FnCx<'_, '_> {
                 self.discriminant_facts(cond, &t).unwrap_or_default()
             }
             ast::ExprKind::Ident(_)
-            | ast::ExprKind::Member {
-                optional: false, ..
-            }
+            | ast::ExprKind::Member { .. }
             | ast::ExprKind::Index {
                 optional: false, ..
             }
@@ -139,27 +140,22 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for fa in a {
             match fa {
-                Fact::NonNull(l) => {
+                Fact::NonNull(_) | Fact::Excludes(..) => {
                     if b.contains(fa) && !out.contains(fa) {
-                        out.push(Fact::NonNull(*l));
+                        out.push(fa.clone());
                     }
                 }
-                Fact::Members(l, va) => {
-                    let mut vs = va.clone();
-                    let mut seen = false;
-                    for fb in b {
-                        if let Fact::Members(m, vb) = fb {
-                            if m == l {
-                                seen = true;
-                                vs.extend(vb.iter().copied());
-                            }
-                        }
-                    }
-                    if seen
-                        && !out
-                            .iter()
-                            .any(|f| matches!(f, Fact::Members(m, _) if m == l))
+                Fact::Members(l, _) => {
+                    // Each side's facts about `l` all hold together (`typeof c !== "string"`
+                    // and then `typeof c === "number"`): intersect them per side, then join.
+                    let done = out
+                        .iter()
+                        .any(|f| matches!(f, Fact::Members(m, _) if m == l));
+                    if let (false, Some(va), Some(vb)) =
+                        (done, members_in(a, *l), members_in(b, *l))
                     {
+                        let mut vs = va;
+                        vs.extend(vb);
                         vs.sort_unstable();
                         vs.dedup();
                         out.push(Fact::Members(*l, vs));
@@ -221,7 +217,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let ty = self.local_ty(l);
-        let ty = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let ty = self.cx.ty.core(ty).unwrap_or(ty);
         let declared = self.cx.union_members(ty).unwrap_or_else(|| vec![ty]);
         let is_declared = declared
             .iter()
@@ -251,7 +247,10 @@ impl FnCx<'_, '_> {
         }
         facts.retain(|f| {
             let l = match f {
-                Fact::NonNull(l) | Fact::Members(l, _) | Fact::Class(l, _) => l,
+                Fact::NonNull(l)
+                | Fact::Members(l, _)
+                | Fact::Class(l, _)
+                | Fact::Excludes(l, _) => l,
             };
             !gone.contains(l)
         });
@@ -289,6 +288,25 @@ impl FnCx<'_, '_> {
 
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
     fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
+        if let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: true,
+        } = &e.kind
+        {
+            // `a?.b` is truthy: `a` is not null, and `a.b` is truthy (`if (def?.transform)`).
+            let plain = ast::Expr {
+                kind: ast::ExprKind::Member {
+                    object: object.clone(),
+                    prop: prop.clone(),
+                    optional: false,
+                },
+                ..e.clone()
+            };
+            let mut facts = self.truthy_facts(object);
+            facts.extend(self.truthy_facts(&plain));
+            return facts;
+        }
         if let Some(l) = self.nullable_local(e) {
             return vec![Fact::NonNull(l)];
         }
@@ -313,6 +331,23 @@ impl FnCx<'_, '_> {
             // `x === null` on a `T | undefined` is constant: it narrows nothing.
             if strict && self.lacks_nothing(other, word) {
                 return (vec![], vec![]);
+            }
+            // `x === null` / `x === undefined` on a `T | null | undefined` rules out one
+            // nothing when false; both ruled out narrow the local to its value.
+            if strict && self.three_state_operand(other) {
+                let which = if word == "null" {
+                    Nothing::Null
+                } else {
+                    Nothing::Undefined
+                };
+                let token = match self.nullable_local(other) {
+                    Some(l) => Some(l),
+                    None => self.field_token(other),
+                };
+                return match token {
+                    Some(l) => (vec![], vec![Fact::Excludes(l, which)]),
+                    None => (vec![], vec![]),
+                };
             }
             return match self.nullable_local(other) {
                 Some(l) => (vec![], vec![Fact::NonNull(l)]),
@@ -362,7 +397,7 @@ impl FnCx<'_, '_> {
         let l = self.named_local(object)?;
         let ty = self.local_ty(l);
         let nullable = self.cx.ty.opt_payload(ty).is_some();
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         let values = self.cx.discriminant_values(u, &prop.name)?;
         let (yes, no): (Vec<u32>, Vec<u32>) = (0..values.len() as u32)
             .partition(|v| crate::literals::lit_matches(&values[*v as usize], lit));
@@ -383,7 +418,7 @@ impl FnCx<'_, '_> {
             return false;
         };
         let ty = self.local_ty(l);
-        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let u = self.cx.ty.core(ty).unwrap_or(ty);
         self.cx
             .discriminant_values(u, &prop.name)
             .is_some_and(|vs| {
@@ -441,11 +476,29 @@ impl FnCx<'_, '_> {
                 return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        let Some((l, nullable, u)) = self.local_with_members(operand) else {
-            return (vec![], vec![]);
+        let (l, nullable, u, nothing) = match self.local_with_members(operand) {
+            Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
+            // A field path of a local (`typeof node.text === "string"`).
+            None => match self.field_with_members(operand) {
+                Some(found) => found,
+                None => return (vec![], vec![]),
+            },
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let nothing = self.cx.ty.nothing_of(self.local_ty(l));
+        // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
+        // its `undefined`; the false branch rules that nothing out.
+        if nothing == Some(Nothing::Both) {
+            return match tag {
+                "undefined" => (vec![], vec![Fact::Excludes(l, Nothing::Undefined)]),
+                "object" => {
+                    let (mut t, mut f) = self.split_facts(l, false, u, &pred, false);
+                    t.push(Fact::Excludes(l, Nothing::Undefined));
+                    f.push(Fact::Excludes(l, Nothing::Null));
+                    (t, f)
+                }
+                _ => self.split_facts(l, nullable, u, &pred, false),
+            };
+        }
         let none_matches = match tag {
             "object" => nothing.is_none_or(|n| n.has_null()),
             "undefined" => nothing.is_some_and(|n| n.has_undefined()),
@@ -475,7 +528,7 @@ impl FnCx<'_, '_> {
             Some(x) => Some(x),
             None => self
                 .readonly_field_path(e)
-                .map(|(token, t)| match self.cx.ty.opt_payload(t) {
+                .map(|(token, t)| match self.cx.ty.core(t) {
                     Some(p) => (token, true, p),
                     None => (token, false, t),
                 }),
@@ -515,8 +568,7 @@ impl FnCx<'_, '_> {
         let Some((l, nullable, u)) = self.local_with_members(e) else {
             return (vec![], vec![]);
         };
-        let pred =
-            |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), crate::hir::TyKind::Array(_));
+        let pred = crate::body::expr::object_builtins::is_array_ty;
         self.split_facts(l, nullable, u, &pred, false)
     }
 
@@ -536,6 +588,14 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
+        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+            && crate::unions::typeof_exact(self.cx, u)
+            && pred(self.cx, u)
+        {
+            // A test every value passes (`typeof x === "string"` on a `string`, which may be a
+            // `string | bigint`): nothing is left where it fails, as in TypeScript. Only for
+            // types whose `typeof` the static type fixes.
+            f.push(Fact::Members(l, vec![]));
         }
         if nullable {
             if null_matches {
@@ -569,7 +629,7 @@ impl FnCx<'_, '_> {
     pub(super) fn local_with_members(&mut self, e: &ast::Expr) -> Option<(LocalId, bool, TyId)> {
         let l = self.named_local(e)?;
         let ty = self.local_ty(l);
-        Some(match self.cx.ty.opt_payload(ty) {
+        Some(match self.cx.ty.core(ty) {
             Some(p) => (l, true, p),
             None => (l, false, ty),
         })
@@ -594,6 +654,14 @@ impl FnCx<'_, '_> {
                 "undefined" => !n.has_undefined(),
                 _ => !n.has_null(),
             })
+    }
+
+    fn three_state_operand(&mut self, e: &ast::Expr) -> bool {
+        let ty = match self.named_local(e) {
+            Some(l) => Some(self.local_ty(l)),
+            None => self.peek_ty(e),
+        };
+        ty.is_some_and(|t| self.is_three_state(t))
     }
 
     fn nullable_local(&mut self, e: &ast::Expr) -> Option<LocalId> {
@@ -633,6 +701,16 @@ impl FnCx<'_, '_> {
 /// with one nothing (`T | null`, `T | undefined`) tests for that nothing (issue #930).
 pub(crate) fn is_null(e: &ast::Expr) -> bool {
     nothing_word(e).is_some()
+}
+
+/// `null`, `undefined`, or a conditional whose arms are only those
+/// (`i > 2 ? null : undefined`): an expression whose type comes from the other values.
+pub(crate) fn only_nothings(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => only_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => only_nothings(then) && only_nothings(els),
+        _ => is_null(e),
+    }
 }
 
 /// `"null"` / `"undefined"` for those literals (possibly parenthesized).
@@ -702,4 +780,21 @@ pub(crate) fn literal_of(e: &ast::Expr) -> Option<ast::SignedLit> {
         ast::ExprKind::Paren(inner) => literal_of(inner),
         _ => None,
     }
+}
+
+/// The union members `facts` together allow local `l` (the intersection of their `Members`
+/// facts about it; `None`: they say nothing about its members).
+fn members_in(facts: &[Fact], l: LocalId) -> Option<Vec<u32>> {
+    let mut out: Option<Vec<u32>> = None;
+    for f in facts {
+        if let Fact::Members(m, vs) = f {
+            if *m == l {
+                out = Some(match out {
+                    Some(cur) => cur.into_iter().filter(|v| vs.contains(v)).collect(),
+                    None => vs.clone(),
+                });
+            }
+        }
+    }
+    out
 }

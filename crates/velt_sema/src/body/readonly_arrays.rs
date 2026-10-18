@@ -9,7 +9,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{self, ExprKind as H, LocalId, TyKind};
+use crate::hir::{self, ExprKind as H, LitValue, LocalId, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Records local `l` declared with the written type `ty` when that is a read-only array.
@@ -21,16 +21,20 @@ impl FnCx<'_, '_> {
 
     /// The readonly array type local `l` (of type `ty`) is declared with, as TypeScript shows
     /// it (`readonly number[]`).
-    fn readonly_shown(&self, h: &hir::Expr) -> Option<String> {
+    fn readonly_shown(&mut self, h: &hir::Expr) -> Option<String> {
         let H::Local(l, _) = h.kind else {
             return None;
         };
         if !self.f.readonly_arrays.contains(&l) {
             return None;
         }
-        match *self.cx.ty.kind(h.ty) {
-            TyKind::Array(elem) => Some(format!("readonly {}[]", self.cx.display(elem))),
-            _ => None,
+        let TyKind::Array(elem) = *self.cx.ty.kind(h.ty) else {
+            return None;
+        };
+        let shown = self.cx.display(elem);
+        match self.cx.union_members(elem) {
+            Some(_) if shown.contains(" | ") => Some(format!("readonly ({shown})[]")),
+            _ => Some(format!("readonly {shown}[]")),
         }
     }
 
@@ -68,6 +72,75 @@ impl FnCx<'_, '_> {
     }
 }
 
+impl FnCx<'_, '_> {
+    /// `e as const`. An array literal of string literals (two or more different ones) with no
+    /// expected type keeps their literal types (TypeScript's `readonly ["a", "b"]`): it is an array of their union, so
+    /// iterating or indexing it gives `"a" | "b"`. Anything else is typed as `e` alone: Velt
+    /// arrays and literals need no annotation for it.
+    pub(super) fn as_const(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+        want: super::Want,
+    ) -> hir::Expr {
+        let exp = match exp {
+            Some(t) => Some(t),
+            None => self.as_const_array_ty(e),
+        };
+        self.expr(e, exp, want)
+    }
+
+    fn as_const_array_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+        let elems = as_const_strings(e)?;
+        let mut members = vec![];
+        for s in elems {
+            let t = self.cx.lit_type(LitValue::Str(s.clone()));
+            if !members.contains(&t) {
+                members.push(t);
+            }
+        }
+        // One string alone stays a `string[]`: an array of one literal type is zero-sized
+        // elements, which a read-only parameter's copy cannot convert yet.
+        if members.len() < 2 {
+            return None;
+        }
+        let u = self.cx.union_of(&members, false, e.span);
+        Some(self.cx.ty.array(u))
+    }
+
+    /// Records local `l` initialized with `init` as a read-only array when that is an array
+    /// literal of strings `as const`.
+    pub(super) fn note_as_const_array(&mut self, l: LocalId, init: Option<&ast::Expr>) {
+        let Some(ast::ExprKind::Cast { expr, ty }) = init.map(|e| &e.kind) else {
+            return;
+        };
+        let distinct = as_const_strings(expr).map(|mut v| {
+            v.sort();
+            v.dedup();
+            v.len()
+        });
+        if super::expr::member::is_as_const(ty) && distinct.is_some_and(|n| n > 1) {
+            self.f.readonly_arrays.insert(l);
+        }
+    }
+}
+
+/// The elements of `[...]` (in parentheses or not) when it has some and they are all string
+/// literals.
+fn as_const_strings(e: &ast::Expr) -> Option<Vec<&String>> {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => as_const_strings(inner),
+        ast::ExprKind::Array(elems) if !elems.is_empty() => elems
+            .iter()
+            .map(|x| match &x.kind {
+                ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 /// The methods of `T[]` that `readonly T[]` doesn't have.
 const MUTATING: [&str; 9] = [
     "push",
@@ -82,15 +155,18 @@ const MUTATING: [&str; 9] = [
 ];
 
 /// `readonly T[]` (parsed as `ReadonlyArray<T>`) or `ReadonlyArray<T>`, possibly `| null`.
-fn is_readonly_array(t: &ast::TypeExpr) -> bool {
+pub(crate) fn is_readonly_array(t: &ast::TypeExpr) -> bool {
     match &t.kind {
         ast::TypeExprKind::Named { path, args } => {
             path.len() == 1 && path[0].name == "ReadonlyArray" && args.len() == 1
         }
         ast::TypeExprKind::Union(ms) => {
-            let mut non_null = ms
-                .iter()
-                .filter(|m| !matches!(m.kind, ast::TypeExprKind::Null));
+            let mut non_null = ms.iter().filter(|m| {
+                !matches!(
+                    m.kind,
+                    ast::TypeExprKind::Null | ast::TypeExprKind::Undefined
+                )
+            });
             matches!((non_null.next(), non_null.next()), (Some(m), None) if is_readonly_array(m))
         }
         _ => false,

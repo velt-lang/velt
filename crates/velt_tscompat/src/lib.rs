@@ -49,7 +49,6 @@ pub const RULES: &[&str] = &[
     "map-iter-as-array",
     "velt-global",
     "velt-member",
-    "null-into-optional",
     "undefined-into-null",
     "catch-unknown",
 ];

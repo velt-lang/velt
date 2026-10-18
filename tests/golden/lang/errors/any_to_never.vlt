@@ -1,0 +1,5 @@
+// An `any` where a `never` is expected, in a program that never names `bigint`: the error
+// does not mention it.
+const a: any = 1;
+const n: never = a;
+console.log(n);

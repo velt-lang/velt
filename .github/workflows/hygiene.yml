@@ -1,0 +1,76 @@
+# The hygiene of a pull request: its title and description (which become the squash commit
+# message on main) and its commits' messages and authors, checked by `cargo xtask pr-lint`
+# (crates/xtask/src/pr_lint.rs): no tool footers or trailers, no chat or session links, no
+# absolute machine paths, no review-process wording, and every commit by the expected author.
+#
+# Why a workflow of its own, with its own required check `hygiene`, instead of a job inside
+# ci.yml's `ci` summary: fixing the description must re-run the check (the `edited` event), and an
+# `edited` run must neither cancel nor stand in for the code checks.
+#   - In ci.yml an `edited` run would share the `ci-<number>` concurrency group and cancel the
+#     lint, test and golden jobs still running for the same commit.
+#   - GitHub takes the latest check run of a name for a commit. An `edited` run that skipped the
+#     heavy jobs would report a passing `ci` over an earlier failing one, hiding the failure.
+#   - With `ci` alone, a description fixed after a failed hygiene job would leave `ci` red until
+#     the next push, even though nothing in the code changed.
+# Here each run checks only the text and commits, so the latest run is always the right answer,
+# and `ci` keeps meaning "the code checks passed" for the commit.
+#
+# The merge queue requires every required check on its merge group too. The text was checked on
+# the pull request, so a merge group passes at once (an edit while queued re-runs the pull
+# request's check, which shows red; dequeue and fix it).
+name: hygiene
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  merge_group:
+
+concurrency:
+  group: hygiene-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # The pull request's commits with the GitHub account each is attributed to (works for forks).
+  pull-requests: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - if: github.event_name == 'merge_group'
+        run: echo "Checked on the pull request."
+      # HEAD is the merge of the pull request into its base: HEAD^1..HEAD^2 are its commits.
+      # Full history for the range, without file contents.
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - if: github.event_name == 'pull_request'
+        name: the GitHub account of each commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/commits"
+          --jq '.[] | [.sha, (.author.login // "")] | @tsv' > "$RUNNER_TEMP/logins.tsv"
+      # The text comes in through the environment, never into the script itself (a title or
+      # description is untrusted input). A commit passes the author rule when GitHub attributes
+      # it to the pull request's author (any email verified on their account), or when its email
+      # is one of PR_LINT_AUTHORS: the repository variable when set, else the author's GitHub
+      # noreply addresses. Merge commits (a maintainer's "Update branch") are not checked.
+      - if: github.event_name == 'pull_request'
+        name: cargo xtask pr-lint
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          PR_LINT_AUTHORS: >-
+            ${{ vars.PR_LINT_AUTHORS || format('{0}+{1}@users.noreply.github.com,{1}@users.noreply.github.com',
+            github.event.pull_request.user.id, github.event.pull_request.user.login) }}
+        run: >-
+          cargo xtask pr-lint --base HEAD^1 --head HEAD^2
+          --commit-logins "$RUNNER_TEMP/logins.tsv"

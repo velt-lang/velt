@@ -39,8 +39,8 @@ function main() {
   const kept = { name: "dflt", ...empty };
   console.log(over.name, kept.name);
 
-  // `{ a?: string }` is not `{ a: string | null }`: a copy converts.
+  // `{ a?: string }` is not `{ a: string | undefined }`: a copy converts.
   const v: { a?: string } = { a: "s" };
-  const w: { a: string | null } = { ...v };
+  const w: { a: string | undefined } = { ...v };
   console.log(w.a);
 }

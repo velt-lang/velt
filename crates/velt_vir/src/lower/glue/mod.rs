@@ -30,6 +30,7 @@
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
+//! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -108,6 +109,8 @@ pub(crate) enum Glue {
     AnySet,
     AnySetIndex,
     AnyHas,
+    ProxyGet,
+    ProxySet,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -166,6 +169,8 @@ impl Glue {
             Glue::AnySet => "anyset",
             Glue::AnySetIndex => "anysetindex",
             Glue::AnyHas => "anyhas",
+            Glue::ProxyGet => "proxyget",
+            Glue::ProxySet => "proxyset",
         }
     }
 
@@ -206,6 +211,7 @@ impl Glue {
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyHas => (vec![Ptr, Ptr], U8),
+            Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
         }
     }
 }
@@ -259,6 +265,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
+            Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
+            Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

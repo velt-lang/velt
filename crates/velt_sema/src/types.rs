@@ -15,6 +15,8 @@ pub(crate) struct Types {
     pub u64: TyId,
     pub usize: TyId,
     pub f64: TyId,
+    /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
+    pub bigint_named: bool,
 }
 
 impl Types {
@@ -42,7 +44,14 @@ impl Types {
             u64,
             usize,
             f64,
+            bigint_named: false,
         }
+    }
+
+    /// The type `bigint` names: `never`, since no value is a `bigint` yet (#1088).
+    pub fn bigint(&mut self) -> TyId {
+        self.bigint_named = true;
+        self.never
     }
 
     pub fn intern(&mut self, k: TyKind) -> TyId {
@@ -103,8 +112,28 @@ impl Types {
         self.intern(TyKind::Param(n))
     }
 
-    /// Payload of `T | null` (or `T | undefined`).
+    /// Payload of `T | null` (or `T | undefined`): what `WrapSome` / `UnwrapSome` hold. For
+    /// `T | null | undefined` that is `T | null` (`TyTable::payload`); `core` is `T` itself.
     pub fn opt_payload(&self, t: TyId) -> Option<TyId> {
+        self.table.payload(t)
+    }
+
+    /// `undefined` alone as a type: an option of `never`, so its one value is the option's
+    /// nothing (hir_encodings.md "Undefined").
+    pub fn undefined(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Undefined)
+    }
+
+    /// `null` alone as a type (a field that is always `null` in one member of a discriminated
+    /// union): an option of `never`, like `undefined` alone.
+    pub fn null_alone(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Null)
+    }
+
+    /// `T` of `T | null`, `T | undefined` and `T | null | undefined`.
+    pub fn core(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {
             TyKind::Option(p, _) => Some(*p),
             _ => None,

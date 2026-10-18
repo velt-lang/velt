@@ -19,6 +19,7 @@ mod chain;
 mod closure;
 mod closure_sig;
 mod coerce;
+mod constraints;
 mod construct;
 mod conversions;
 mod discriminated;
@@ -26,6 +27,7 @@ mod dispose_call;
 mod division;
 pub(crate) mod downcast;
 mod dynamic;
+mod dynamic_concat;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_write;
@@ -35,7 +37,10 @@ mod error_view;
 mod errors;
 mod fn_union_call;
 mod gen_closure;
+mod gen_value;
+mod hidden_nothings;
 mod hoist;
+pub(crate) mod iface_adapt;
 mod iface_call;
 mod iface_object;
 mod iface_write;
@@ -58,10 +63,12 @@ mod method_call;
 mod method_value;
 mod names;
 mod namespaces;
+mod narrowing_casts;
+mod never_null;
 mod numbers;
 mod object;
 mod object_assign;
-mod object_builtins;
+pub(crate) mod object_builtins;
 mod object_copy;
 mod object_define;
 mod object_keys;
@@ -69,6 +76,7 @@ mod object_method;
 mod object_own;
 mod object_prototypes;
 mod ops;
+mod optional_fn_call;
 mod ordering;
 mod overload_call;
 mod process;
@@ -81,6 +89,7 @@ mod record;
 mod record_call;
 mod record_compound;
 mod record_literal;
+mod record_logical;
 mod regex_args;
 mod setters;
 mod spread;
@@ -93,7 +102,9 @@ mod supers;
 mod symbol_keys;
 mod sync;
 pub(crate) mod tasks;
+mod this_param;
 mod this_type;
+mod three_state;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
@@ -111,7 +122,7 @@ impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
-        let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
+        let fn_ty = self.cx.ty.core(exp).unwrap_or(exp);
         let adapted = match self.cx.ty.kind(fn_ty) {
             TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
@@ -133,7 +144,7 @@ impl FnCx<'_, '_> {
 
     /// `exp` with a surrounding `| null` removed (the value is wrapped after checking).
     pub fn hint(&self, exp: Option<TyId>) -> Option<TyId> {
-        exp.map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+        exp.map(|t| self.cx.ty.core(t).unwrap_or(t))
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
@@ -146,6 +157,8 @@ impl FnCx<'_, '_> {
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an
         // optional field) is an `any` in user code, as in TypeScript.
         let h = self.collapse_dynamic_option(h);
+        // A generic union holding `null` / `undefined` through a member, in its written form.
+        let h = self.flatten_hidden_nothings(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);
@@ -188,6 +201,23 @@ impl FnCx<'_, '_> {
             } if !*optional && args.iter().any(|a| matches!(a.kind, A::Spread(_))) => {
                 self.call_spreading(callee, type_args, args, exp, span)
             }
+            // A destructuring default (`pattern_defaults::undefined_or`): applies on `undefined`.
+            A::Call { callee, args, .. }
+                if args.len() == 2
+                    && matches!(&callee.kind, A::Ident(i) if i.name == super::pattern_defaults::UNDEFINED_OR) =>
+            {
+                self.undefined_or(&args[0], &args[1], exp, span)
+            }
+            // `Object.assign` onto a variable or field path gives that place itself, used as
+            // the consumer wants it (`const r = Object.assign(t, s)` names `t`'s object).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional: false,
+            } if self.object_assign_callee(callee) => {
+                self.object_assign_call(type_args, args, want, span)
+            }
             A::Call {
                 callee,
                 type_args,
@@ -220,8 +250,8 @@ impl FnCx<'_, '_> {
             A::Await(inner) => self.await_expr(inner, exp, span),
             A::Yield { arg, delegate } => self.yield_expr(arg.as_deref(), *delegate, span),
             // `xs as const`: TS narrows the type to literals and `readonly`; the value is the
-            // same, and Velt's arrays and literal types need no annotation for it.
-            A::Cast { expr, ty } if member::is_as_const(ty) => self.expr(expr, exp, want),
+            // same (`readonly_arrays::as_const`).
+            A::Cast { expr, ty } if member::is_as_const(ty) => self.as_const(expr, exp, want),
             A::Cast { expr, ty } => self.cast(expr, ty, want, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),

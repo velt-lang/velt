@@ -1,0 +1,4 @@
+object_copies_dynamic_print.vlt:6:14: error: a value of type `AB` converts to `A` by copying its fields, and this program prints an `any[]`: Node would show the original object's fields, in its order
+object_copies_dynamic_print.vlt:8:13: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+= note: build the new object explicitly, `{ a: s.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`

@@ -147,11 +147,24 @@ pub(crate) fn written(t: &TypeExpr) -> String {
 
 /// A parameter's type as written: `T` for `x?: T` (parsed as `T | null`).
 pub(crate) fn written_param(p: &ast::Param) -> String {
-    match (&p.ty.kind, p.optional) {
-        (T::Union(ts), true) if matches!(ts.last().map(|t| &t.kind), Some(T::Null)) => {
+    match p.optional {
+        true => without_added_undefined(&p.ty),
+        false => written(&p.ty),
+    }
+}
+
+/// The written type of an optional parameter or field (`name?: T`): without the zero-width
+/// `| undefined` the parser adds (`velt_syntax` `or_undefined`).
+fn without_added_undefined(t: &TypeExpr) -> String {
+    match &t.kind {
+        T::Union(ts)
+            if ts
+                .last()
+                .is_some_and(|l| matches!(l.kind, T::Undefined) && l.span.lo == l.span.hi) =>
+        {
             list(&ts[..ts.len() - 1], " | ")
         }
-        _ => written(&p.ty),
+        _ => written(t),
     }
 }
 
@@ -162,11 +175,9 @@ fn list(ts: &[TypeExpr], sep: &str) -> String {
 
 fn object_field(f: &ast::ObjectTypeField) -> String {
     let readonly = if f.readonly { "readonly " } else { "" };
-    let (q, ty) = match (&f.ty.kind, f.optional) {
-        (T::Union(ts), true) if matches!(ts.last().map(|t| &t.kind), Some(T::Null)) => {
-            ("?", list(&ts[..ts.len() - 1], " | "))
-        }
-        _ => ("", written(&f.ty)),
+    let (q, ty) = match f.optional {
+        true => ("?", without_added_undefined(&f.ty)),
+        false => ("", written(&f.ty)),
     };
     format!("{readonly}{}{q}: {ty}", f.name.name)
 }

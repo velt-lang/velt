@@ -165,9 +165,7 @@ impl FnCx<'_, '_> {
             // `if (v != null) { names.push(n); values.push(v); }`
             let mut s = e.value;
             let payload = self
-                .cx
-                .ty
-                .opt_payload(s.ty)
+                .present_payload(s.ty)
                 .expect("ICE: an attribute that may be absent is nullable");
             let (l, mode) = self.option_binding(&s, payload, "<attr>", true);
             if mode == UseMode::Move {
@@ -191,12 +189,12 @@ impl FnCx<'_, '_> {
             let some = self.pat(hir::PatKind::Binding(l, mode), payload, e.span);
             let arms = vec![
                 hir::Arm {
-                    pat: self.pat(hir::PatKind::Some(Box::new(some)), sty, e.span),
+                    pat: self.present_pat(some, sty, e.span),
                     guard: None,
                     body,
                 },
                 hir::Arm {
-                    pat: self.pat(hir::PatKind::None, sty, e.span),
+                    pat: self.nothing_pat(sty, e.span),
                     guard: None,
                     body: none,
                 },

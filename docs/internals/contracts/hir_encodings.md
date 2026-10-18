@@ -9,7 +9,10 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
   root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
-  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
+  `Lit(Unit)` when no ancestor has a constructor. `super.m(args)` in a method is a
+  `Callee::Def` call of the base implementation with `this` (upcast) as `args[0]`; the call
+  expression's span is in `Program::super_calls` (#823: JavaScript does not read `m` from
+  `this` there, so a typed proxy's `get` trap does not run). Field defaults (`FieldDef::default`) run
   in JavaScript's order: a constructor evaluates those of its class's fields that its base
   constructor's class does not have, right after the `super(args)` call (when no ancestor has
   a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
@@ -140,8 +143,9 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
 - `spawn` accepts a promise value or an async closure. Promise errors: see "Errors" below.
 - `Mutex<T>` is laid out as `struct { lock: u64; value: T }`. `Mutex<scalar>.with` gets a copy.
-- `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are `T | null`
-  fields with a `null` default.
+- `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are
+  `T | undefined` fields (`T | null | undefined` for `a?: T | null`) with an `undefined`
+  default (#930 phase 2).
 - An async closure clones its owned captures into each promise it creates (it may be called many
   times, e.g. as an HTTP handler); borrowed captures are read from its env. A local async
   closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
@@ -178,14 +182,26 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   only creates the generator; lowering builds a `Generator` object and, for an interface
   `ret`, the interface value of it. Params are `Owned` or `Copy` (methods: `this` too), as for
   async functions.
-- In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
-  `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
-  own (a `Block` expression holding the desugared `for...of` that yields each value). No
+- `Generator<T, E, N>`: `N` (`never`: none) is the type `next(value)` passes in. In the body:
+  `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`; in a generator
+  with an `N` whose value is used, the call has type `N` and may have a second argument (owned,
+  evaluated only when resumed by a `next()` without a value: `undefined` as an `N`; without
+  it such a resume panics). `Return(None)` ends the generator (no `Return(Some)` occurs);
+  `yield* src` has no form of its own: a `Block` expression holding the desugared `for...of`
+  that yields each value or, in a generator with an `N` or a program with
+  `Program::generator_throw`, for a `src` of type `Generator<T, E2, N | never>`, `Block { Let
+  <yield-gen@N> = src (or GeneratorEmbed(src)); If { cond: GeneratorResume(<yield-gen@N>),
+  then: [While { cond: YieldDelegate(<yield-gen@N>), body: [] }] } }`. With
+  `Program::generator_throw`, a `Yield` or `yield*` inside a `try` with a `catch` may throw an
+  `any` (what `throw()` passes in), and the catch types include it. No
   `finally` block of a generator contains a `Yield`, can throw, or contains a `Break` /
   `Continue` whose target loop is outside it (sema).
 - The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
-  `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
-  `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
+  `E`), `GeneratorResumeWith` (`next(value)`; the value `Borrow`), `GeneratorThrow` (`u32`
+  code, the error an `any`, `Borrow`), `GeneratorValue` (`T`, moved out; only after a resume
+  returned true) and `GeneratorReturn` (close), each taking the `Generator<T, E, N>` operand
+  `BorrowMut`. `Program::generator_throw` says whether a user module calls a `throw()`
+  method; without it lowering emits no code for errors thrown in.
 - `for...of` over a direct generator call (`gen(a)`, or the generator `[Symbol.iterator]()`
   method it would call) is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
   [call] } : Generator<T, E>; While { cond: GeneratorResume(<generator@N>), body: [LetPat
@@ -472,9 +488,12 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`
   fields never do (ES private names).
 - `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
-  `T | null`), in a class, an object type or an interface. `JSON.stringify` and `console.log`
-  leave it out while it is absent (`null`, or a clear presence flag, below), as JavaScript leaves
-  out a missing property; a `T | null` field that is not optional is written as `null`.
+  `T | undefined`, and `T | null | undefined` for `a?: T | null`), in a class, an object type or
+  an interface. `JSON.stringify` leaves it out while it is absent or holds `undefined`, as
+  JavaScript leaves out a missing property; `console.log` leaves out an absent field (a clear
+  presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
+  `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
+  written as `null`.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
   internal error).
@@ -590,8 +609,8 @@ module constant initialized with `Symbol(...)` or `Symbol.for("k")` is
 `KEY in o` with such a key is a `match` on `o` (on a union, per member): `true` for a member
 whose type declares the key (a field, method or accessor; a class's optional field too),
 `false` for one that doesn't, and for an optional field of an object type or interface
-(`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) for
-`[KEY]?: T | null` in an object type, else not null. `Symbol.iterator in o` and
+(`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) when it has
+one (`FieldDef::presence`), else that it does not hold its nothing. `Symbol.iterator in o` and
 `Symbol.asyncIterator in o` are `true` or `false` from `o`'s type's methods.
 
 `Intrinsic::TemplateToString` is a template literal part whose type mentions a type parameter:
@@ -610,7 +629,8 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 `TyKind::Op(TyOp, args)` appears only in generic definitions (signatures, fields, bodies): a type
 alias applied to arguments that mention type parameters, whose body (a conditional, mapped,
 indexed access or template literal type) can't be evaluated until they are known
-(`TyOp::Alias`). Lowering never lays one out: when its substitution makes the arguments concrete,
+(`TyOp::Alias`), or an intersection with a part that is a type parameter (`T & { $set: … }`,
+`TyOp::Intersect`, its arguments the parts in written order, #350). Lowering never lays one out: when its substitution makes the arguments concrete,
 it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else with canonical
 arguments), the reduced type sema computed for every instantiation the program reaches. A missing
 entry is an `ICE:`.
@@ -622,7 +642,7 @@ entry is an `ICE:`.
   Lowering may still meet such instances (it substitutes on its own while monomorphizing); it maps
   them onto `Program::anon_shapes` (the concrete anonymous def of each shape: field names, field
   types, `optional` and `presence` flags, in order; never a def replaced by readonly erasure,
-  and `{ d?: string }` and `{ d?: string | null }`, whose field types are the same, are two
+  and `{ d?: string }` and `{ d: string | undefined }`, whose field types are the same, are two
   shapes) and
   `Program::union_shapes` (the concrete union def of each sorted member list), so one shape is one
   VIR type. A generic union whose members are not all plain types (a union or nullable member)
@@ -630,21 +650,40 @@ entry is an `ICE:`.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
   (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.
-- `FieldDef::presence` (additive): an optional field whose declared type is nullable
-  (`a?: T | null`), in an object type or struct (not a class). It keeps an absent key apart from a
-  present `null`: lowering stores a `bool` flag after the aggregate's fields (in field order, one
-  per presence field). An `AdtLit` sets it, unless the field's value is
-  `Intrinsic::FieldAbsent` (`() -> T | null`; outside a literal it is `null`); any write to the
-  field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the argument a `Field` place of a
-  presence field) reads it. `JSON.stringify` and `console.log` write a present `null` and leave
-  out an absent field, and `JSON.parse` sets the flag when the key is there. Copy, clone and
-  equality glue include the flag.
+- `FieldDef::presence` (additive): every optional field whose type is an option (`a?: T`, read
+  as `T | undefined`, and `a?: T | null`, read as `T | null | undefined`), in an object type,
+  field-only interface or struct (not a class, whose optional field is an own property holding
+  `undefined` until set, and not `a?: any`, which holds its own `undefined`; #930 phase 2). It
+  keeps an absent key apart from a present value, also a present `undefined` or `null`: lowering
+  stores a `bool` flag after the aggregate's fields (in field order, one per presence field).
+  An absent field holds the option's nothing (`undefined`). An `AdtLit` sets the flag, unless the
+  field's value is `Intrinsic::FieldAbsent` (`() -> T | undefined`; outside a literal it is
+  `undefined`); any write to the field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the
+  argument a `Field` place of a presence field) reads it. `console.log` leaves out an absent
+  field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
+  and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
+  key is there with a value the field's type holds (a JSON `null` for an `a?: T` field without
+  `null` leaves it absent, unless the reader has flag 2, `JSON.parse(text) as T`: then it fails).
+  A spread copies a present field over an earlier value, also one holding `undefined`, unless
+  the target field is required and cannot hold `undefined`: then an absent field keeps the
+  earlier value and a present `undefined` panics with a `TypeError` message. Copy, clone and equality glue include the flag.
 
 ## Undefined (issue #930, phase 1)
 - `TyKind::Option(T, Nothing)`: `Nothing::Null` is `T | null` (every option before #930),
-  `Nothing::Undefined` is `T | undefined`, and `Nothing::Both` is `T | null | undefined`, which
-  sema reports as not supported yet (`Ctx::union_with`), so lowering never sees it. A union
-  `A | B | undefined` is `Option(union, Undefined)`.
+  `Nothing::Undefined` is `T | undefined`, and `Nothing::Both` is `T | null | undefined`. A
+  union `A | B | undefined` is `Option(union, Undefined)`. `undefined` alone as a type is
+  `Option(never, Undefined)` (its one value is the nothing).
+- `T | null | undefined` (phase 1b) is an option of a `T | null` whose own nothing is
+  `undefined`: its payload (`TyTable::payload`, what `WrapSome`, `UnwrapSome` and
+  `PatKind::Some` hold) is `Option(T, Null)`, which `TyTable::intern` interns with it. A present
+  value is `WrapSome(WrapSome(v))`, `null` is `WrapSome(Lit::Null)` (the `Lit::Null` typed
+  `T | null`), and `undefined` is `Lit::Null` typed `T | null | undefined`; `PatKind::None`
+  matches `undefined` only, `Some(None)` matches `null`. Lowering sees the type as
+  `Option(Option(T, Null), Undefined)` (`Cx::kind`), so layout and glue are those of two nested
+  options. `TyTable::intern` makes `Option(Option(T, Null), Undefined)` (and `Both` over
+  `Null`) `Option(T, Both)`, so a generic `U | undefined` at `U = T | null` is that type and
+  its `WrapSome` / `Lit::Null` mean the outer option's. Sema converts a `T | undefined` to a
+  `T | null | undefined` with a `Match` (the two keep `undefined` in different places).
 - `T | undefined` has the layout of `T | null` (the nothing is the null marker: flag `0`, the
   null pointer, `false`); only what observes the nothing differs: `console.log`, template
   strings and `String(x)` write `undefined`, `typeof` gives `"undefined"`, and `JSON.stringify`
@@ -654,20 +693,30 @@ entry is an `ICE:`.
 - `hir::Lit::Null` is the nothing of its option type: `undefined` when that type is
   `T | undefined`. `void e` is a `Block` of `StmtKind::Expr(e)` and that literal; as a
   statement, `void e;` is `StmtKind::Expr(e)`.
-- An option of an option keeps the inner option's `Nothing`: generic code's `U | null` with
+- An option of an option otherwise keeps the inner option's `Nothing`: generic code's `U | null` with
   `U = T | undefined` is `T | undefined`, so its nothing is JavaScript's `undefined` (`pop`,
   `?.`). Generic code that keeps a `U | null` of a parameter given a `T | undefined` could not
-  tell its own `null` from the value's `undefined` (and the reverse); sema reports such
+  tell its own `null` from the value's `undefined`; sema reports such
   instantiations (`undefined_args`, following calls, closures, methods and the generic types a
-  definition uses to a fixpoint) until the three-state encoding lands. As a backstop,
+  definition uses to a fixpoint); the reverse (`U | undefined` at `U = T | null`) is
+  `T | null | undefined` above. As a backstop,
   `velt_vir::lower_checked` reports an error (not an ICE) for an instance whose substitution
-  makes an option of an option with another `Nothing`; `lower_with` and `lower` panic (`ICE:`)
+  makes a `U | null` of a `U` that allows `undefined`; `lower_with` and `lower` panic (`ICE:`)
   there instead.
 - AST (additive): `ast::BinaryOp::StrictEq` / `StrictNotEq` are `===` / `!==`; `Eq` / `NotEq`
   are `==` / `!=` (before #930 both spellings were `Eq` / `NotEq`). `BinaryOp::loose()` maps the
   strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
-  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
-  HIR keeps one `BinOp::Eq` / `NotEq`.
+  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`,
+  and sema warns about it). HIR keeps one `BinOp::Eq` / `NotEq`.
+- Optional parameters and fields (phase 2): the parser writes the type of `p?: T` (a function's,
+  an arrow's or a function type's parameter) and of an object type's optional field
+  `a?: T` as `T | undefined`, adding a zero-width `undefined` at the end of `T`'s span (a written
+  type that already includes `undefined` stays as it is); `a?: T | null` becomes
+  `T | null | undefined`. An interface's or class's optional field reads as the same type. An
+  optional parameter's default is `undefined` (the nothing of its option type), so a call
+  that leaves it out passes `undefined`. `?.` gives `undefined` when its object is either
+  nothing: on a `T | null` object the result is `R | undefined`, and `R | null | undefined` for a
+  `R | null` rest.
 
 ## any and unknown (issue #924, phase 1a)
 - `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
@@ -715,7 +764,7 @@ entry is an `ICE:`.
   `null == undefined`, `"1" == 1`, `true == 1`; objects by identity: tables of two static types
   of one object, such as a class and its base, compare the data pointers; `==` of an object
   and a primitive stops with a `TypeError`).
-- A dynamic value is never boxed again: `ToDyn` never has a dynamic operand (an `any | null`
+- A dynamic value is never boxed again: `ToDyn` has no dynamic operand but a weak key (below; an `any | null`
   unpacks to the `any` it holds). An interface value converted to `any` is `ToDyn` of the
   interface value; lowering keeps its data pointer and takes the `any` table of the concrete
   type from the interface table. Into a union or literal type, `AnyTo` is applied per member
@@ -760,7 +809,7 @@ entry is an `ICE:`.
 - Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
   any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
-  (`ToDyn`), and reports one converted straight to a typed value. The member slots of the
+  (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
@@ -770,6 +819,66 @@ entry is an `ICE:`.
   their qualified names (`std/prelude/zz_proxy::Proxy`, `::Reflect`; a program's own class
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
+- Typed proxies (#823, velt_vir `lower/proxy_typed.rs`): in a program that lowers a `ToDyn` of
+  a `Proxy`, the class hierarchies and object types that `AnyTo` in the program's own code
+  converts to, and what values of those types are upcast to (`Upcast`), are *proxiable*
+  (`VELT_DEBUG_PROXY=1` lists them). A value of a proxiable type is the object's address, or the
+  `Proxy` object's address with bit 0 set: `AnyTo` of an `any` holding a `Proxy` sets the bit,
+  boxing clears it again. Field reads, writes and compound assignments on a proxiable type test
+  the bit and call the `get` / `set` traps (glue `ProxyGet` / `ProxySet` per field type), counts
+  clear the bit, and drop and format glue handle the `Proxy` object. Transfer, many-threads
+  check and clone glue of a proxiable type (and of interface values, which may hold one) handle
+  the `Proxy` object as an `any` holding it, then set the bit again; `instanceof` reads the
+  target's class; weak map keys are the untagged `Proxy` object (values of a proxiable type are
+  boxed), and a `WeakRef` keeps the tagged word (rt_abi.md). Sema's update-as-value blocks
+  (`{ let tmp = s.f; s.f += 1; tmp }`, `{ s.f += 1; s.f }`) on a proxiable field are lowered
+  with one read, and assignment-as-value blocks (`{ s.f = v; s.f }`) with none (the value is
+  `v`); a field read on a proxiable type counts as running user code when lowering orders
+  operands (`sequence.rs`). Without proxiable types nothing changes. Method calls through a proxy whose handler has a `get` trap
+  (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
+  name on a class object gives the method read as a value, a function value whose code is the
+  method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
+  a proxiable class whose receiver holds such a proxy first runs `__get(name, receiver)` (after
+  the receiver, before the other arguments) and checks that the answer is the method about to
+  run read as a value (for a virtual call, the instance in the target's vtable entry); the call
+  then runs with `this` the proxy. A `super.m()` call (`Program::super_calls`) does not read
+  through the proxy, as in JavaScript. An
+  async method, or one that owns its receiver, cannot be read as a value yet: a call of one
+  through a proxy with a `get` trap is a `TypeError` naming #823. A call of a function-typed field of a proxiable object
+  type (`Callee::Indirect` of a `Field`) whose base holds a proxy reads the field with
+  `__get` (before the arguments) and calls the answer through its `AnyApply` slot with the
+  arguments boxed, its result converted to the field's result type (velt_vir
+  `lower/proxy_call.rs`). Object conversions keep a proxy's identity: `AdtLit` has
+  `converted` ("Object conversions" below), and a converted literal whose source has a proxiable type gives the
+  source's proxy when it holds one (and makes the target type proxiable, as `Upcast` does).
+- Object conversions (#650, #651; sema `body/expr/object_copy.rs`): an object type converted to
+  another object type whose fields it has (in another order, or only some of them) is an
+  `AdtLit` of the expected type with `converted: Conversion::Copy`, whose fields each read the
+  source place (`Field` of it, possibly under `Share`) or are absent (`null` for an optional
+  field the source lacks); a source that is not a place is bound to a `let` first. Every other
+  `AdtLit` has `Conversion::No`. Lowering builds the literal, except that when the source's type
+  is proxiable (typed proxies, above) and the source holds a proxy, the value is that proxy (a
+  new reference, the bit kept): decision 2 of #823. A conversion whose copy the program could
+  tell from the original (`object_copies.rs`: a later write, `===`, ...) is a compile error,
+  except in a program whose own code constructs a `Proxy` when no `AdtLit` in the program builds
+  the source type: then it is `Conversion::ProxyOnly`, and a plain source throws a `TypeError`
+  naming #823 instead of being copied (a proxy is still shared).
+- Interface adapters (#1153): a value of `Dyn(I, A)` (or of a type implementing `I<A>`, made
+  an interface value first) converted to `Dyn(I, B)`, where each of `B` is the same as in `A`
+  or dynamic, is `ToDyn` of an `AdtLit` of a hidden struct `<I> adapter` with one field, the
+  original interface value (moved in; dropping the adapter drops it), through an `ImplDef` of
+  `I<B>` for that struct. Sema makes one struct and impl per `(I, A, B)` the program converts
+  (`Ctx::iface_adapters`). Each impl method (`<I> adapter.<m>`, `this` borrowed) calls the same
+  slot of the field (`Callee::Dyn`), its arguments converted with `AnyTo` (or, for a function,
+  an arrow adapting each call) and its result boxed with `ToDyn` of `Program::any_impl` (or
+  adapted in turn). The struct is in `Program::counted_objects`, so a share of the converted
+  value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
+  `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
+  prelude's `__unknownArrayIn` / `__unknownMapIn` (std/prelude/zzz_adapt.vlt) or
+  `__unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
+  `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
+  Lowering sees only these ordinary forms.
 - `object` and `Function` (issue #926) are two more interfaces of `z_dynamic.vlt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
@@ -778,13 +887,36 @@ entry is an `ICE:`.
   values) into `object` and functions into `Function`; `find_impl` of either interface answers
   for the type, so `T extends object` is a bound that primitives fail. A `ToDyn` operand may then
   be a type parameter bound by `object` / `Function`; when its instantiation is itself dynamic,
-  lowering keeps the value as it is. A call of a `Function` is `AnyApply` (result `any`).
+  lowering keeps the value as it is. `x as object` of a type parameter without that bound (or
+  of one `| null`) is such a `ToDyn` too; lowering unpacks an option or union instantiation and
+  stops with a `TypeError` on a primitive. The one `ToDyn` with a dynamic operand is a weak
+  operation's key (`WeakMap.set(k, v)` and the others, `new WeakRef(k)`) written `any` and
+  converted to `object` unchecked: a primitive reaches the operation, which behaves as in
+  JavaScript. A variable passed there as the key is shared (`Intrinsic::Share`), not moved.
+  A call of a `Function` is `AnyApply` (result `any`).
   `AnyTo` from `any` / `unknown` to `object` checks the tag: a boolean, number, string or
   symbol is a `TypeError`. `typeof x === "function"` narrows an `unknown` local with
   `Fact::Class(l, Function)`. Once
   any value converts to `object` / `Function`, lowering converts objects to every dynamic type by
   identity (one counted object, as with a write through `any`), so `Set<object>` keys compare by
-  identity whichever dynamic type a value went through.
+  identity whichever dynamic type a value went through. So does a program that compares two `any`s neither of
+  which is a literal or a primitive made dynamic (`AnyStrictEq` / `AnyLooseEq`), compares `any`s
+  in generic code, or keys a `Set` / `Map` by them (#1256).
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
-  an `any`, iteration.
+  an `any` and `JSON.parse` into one, iteration.
+
+## Object built-ins (issue #925)
+
+- `Intrinsic::SameValue(a, b)` (additive), `(borrow T, borrow T) -> bool`, is JavaScript's
+  `Object.is`: `Intrinsic::Same`, except that a float compares by value with `NaN` equal to
+  itself and `0` unequal to `-0`, part by part through `T | null`, unions and tuples. Sema emits it
+  with both operands of one type, also in generic code; lowering resolves it per instantiation
+  (`Glue::SameValue`).
+- `Program::null_proto_records` (additive): the program calls `Object.create(null)` (sema's scan
+  of the user modules, `null` in any parentheses; sema accepts the call only when the scan found
+  it). Such a call is an empty `Record<string, V>` whose map is marked with the top bit of its
+  `edits` counter (`__markNullProto`, std/prelude/map.vlt). Only when the flag is set does sema
+  test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
+  has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
+  other programs are unchanged.
