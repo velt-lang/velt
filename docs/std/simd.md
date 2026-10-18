@@ -132,9 +132,11 @@ such a loop the compiler removes theirs; a condition written by hand (`i + 16 <=
 works too, with the check left in.
 
 The last elements, fewer than a vector, can be done one at a time as in `dot` above, or as one
-more vector with `loadPartial` and `storePartial`, which is shorter and, past a few elements,
-faster: each reads or writes only the elements that exist, with two overlapping scalar
-accesses (single bytes for fewer than four), not one per lane:
+more vector with `loadPartial` and `storePartial`, which is shorter: each reads or writes
+only the elements that exist, in two overlapping scalar accesses (three single bytes for fewer
+than four bytes). From about four elements left that is faster than a loop over them (on
+x86-64, a count and an XOR of a 15-byte array took 0.4 times the instructions); for one to
+three, the loop is (about half the instructions for one byte; `bench/simd/partial.sh`):
 
 ```ts
 import { mask8x16, u8x16 } from "velt:simd";
