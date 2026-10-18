@@ -20,6 +20,9 @@ browser, Node.js, wasmtime and wasmer do).
 | `T.fits(xs, at = 0)` | whether the `n` elements of the `L[]` from `at` are inside it: what `load` and `store` check |
 | `T.load(xs, at = 0)` | the `n` elements of the `L[]` from `at`; a RangeError panic unless all are inside the array |
 | `v.store(xs, at = 0)` | writes the lanes to the `L[]` from `at`; a RangeError panic unless they fit (the array does not grow) |
+| `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others; `at` may be the length (all 0), a RangeError panic past it |
+| `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist; `at` may be the length (nothing written), a RangeError panic past it |
+| `T.index()` | each lane its own index: 0, 1, 2, … |
 | `v.lane(i)`, `v.withLane(i, x)` | lane `i`; the vector with lane `i` set to `x` (a RangeError panic unless `i < n`) |
 | `add` `sub` `mul` | lane by lane; integers wrap (`mul`: not 8-bit lanes) |
 | `div` `sqrt` | floats |
@@ -42,6 +45,7 @@ A mask `m`:
 
 | Member | Meaning |
 |---|---|
+| `M.prefix(count)` | the mask with its first `count` lanes set |
 | `m.any()`, `m.all()` | whether some lane, every lane is set |
 | `m.first()` | the index of the first set lane, `n` when none is |
 | `m.count()` | the number of set lanes |
@@ -49,7 +53,8 @@ A mask `m`:
 | `and` `or` `xor` `not` | lane by lane |
 
 The methods keep the types they declare: a lane of a `u8x16` is a `u8`, `first()` a `usize`.
-A position or lane index (`at` of `fits`, `load` and `store`, `i` of `lane` and `withLane`)
+A position or lane index (`at` of `fits`, `load`, `store`, `loadPartial` and `storePartial`,
+`i` of `lane` and `withLane`)
 given as a `number` is used as itself when it is a whole number from 0 up; any other number
 (negative, fractional, NaN, ±Infinity) is out of range: `fits` gives `false` and the others
 panic with their RangeError. A negative literal written there (`v.lane(-1)`) is a compile
@@ -122,7 +127,40 @@ function main() {
 ```
 
 Write the loop as above: a step while a whole vector fits (`T.fits(xs, i)`; with several
-vectors per step, the last one's position), then the rest one element at a time. `fits` is the
-check `load` and `store` make, so in such a loop the compiler removes theirs. A condition
-written by hand (`i + 16 <= d.length`) works too, with the check left in.
+vectors per step, the last one's position). `fits` is the check `load` and `store` make, so in
+such a loop the compiler removes theirs; a condition written by hand (`i + 16 <= d.length`)
+works too, with the check left in.
+
+The last elements, fewer than a vector, can be done one at a time as in `dot` above, or as one
+more vector with `loadPartial` and `storePartial`, which is shorter: each reads or writes
+only the elements that exist, in two overlapping scalar accesses (three single bytes for fewer
+than four bytes). From about four elements left that is faster than a loop over them (on
+x86-64, a count and an XOR of a 15-byte array took 0.4 times the instructions); for one to
+three, the loop is (about half the instructions for one byte; `bench/simd/partial.sh`):
+
+```ts
+import { mask8x16, u8x16 } from "velt:simd";
+
+// The number of bytes equal to `b`.
+function count(d: u8[], b: u8): usize {
+  const needle = u8x16.splat(b);
+  let n: usize = 0;
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    n += u8x16.load(d, i).eq(needle).count();
+    i += 16;
+  }
+  // The lanes past the end are 0, which `b` may be too: only the ones that exist count.
+  const rest = mask8x16.prefix((d.length as usize) - i);
+  return n + u8x16.loadPartial(d, i).eq(needle).and(rest).count();
+}
+
+function main() {
+  const d: u8[] = Buffer.alloc(37);
+  d[3] = 9;
+  d[36] = 9;
+  console.log(count(d, 9), count(d, 0)); // 2 35
+}
+```
+
 `bench/simd` measures these kernels against plain loops and against Rust.

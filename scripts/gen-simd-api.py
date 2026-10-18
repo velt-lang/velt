@@ -46,7 +46,8 @@ def vector(l,n):
     d=[]; m=[]
     def decl(op,params,ret=None):
         d.append(f"declare function {P}{op}({params}){': '+ret if ret else ''};")
-    decl("fits",f"xs: {l}[], at: u64","bool"); decl("splat",f"x: {l}",T); decl("load",f"from: {l}[], at: u64",T); decl("store",f"v: {T}, to: {l}[], at: u64")
+    decl("fits",f"xs: {l}[], at: u64","bool"); decl("splat",f"x: {l}",T); decl("index","",T); decl("load",f"from: {l}[], at: u64",T); decl("store",f"v: {T}, to: {l}[], at: u64")
+    decl("load_partial",f"from: {l}[], at: u64, count: u64",T); decl("store_partial",f"v: {T}, to: {l}[], at: u64, count: u64")
     decl("lane",f"v: {T}, index: u64",l); decl("with_lane",f"v: {T}, index: u64, x: {l}",T)
     decl("select",f"m: {M}, a: {T}, b: {T}",T)
     m.append(f"""  /** A vector with every lane `x`. */
@@ -74,6 +75,26 @@ def vector(l,n):
     return {P}fits(xs, at as u64);
   }}
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): {T} {{
+    return {P}index();
+  }}
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to {n}, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take {n} at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
+   */
+  static loadPartial(from: {l}[], at: usize = 0): {T} {{
+    if ({T}.fits(from, at)) {{
+      return {P}load(from, at as u64);
+    }}
+    if (at > from.length) {{
+      panic("RangeError: {T}.loadPartial: position is out of range");
+    }}
+    return {P}load_partial(from, at as u64, (from.length - at) as u64);
+  }}
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: {M}, a: {T}, b: {T}): {T} {{
     return {P}select(m, a, b);
@@ -88,6 +109,22 @@ def vector(l,n):
       panic("RangeError: {T}.store: range is out of bounds");
     }}
     {P}store(this, to, at as u64);
+  }}
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to {n} (the
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
+   */
+  storePartial(to: {l}[], at: usize = 0) {{
+    if ({T}.fits(to, at)) {{
+      {P}store(this, to, at as u64);
+      return;
+    }}
+    if (at > to.length) {{
+      panic("RangeError: {T}.storePartial: position is out of range");
+    }}
+    {P}store_partial(this, to, at as u64, (to.length - at) as u64);
   }}
 
   /** Lane `index` (0 to {n-1}; panics with a RangeError otherwise). */
@@ -211,8 +248,11 @@ def vector(l,n):
     return "\n".join(d)+f"\n\nextend {T} {{\n"+"\n".join(m)+"}\n"
 
 def maskty(b,n):
-    M=f"mask{b}x{n}"; P=f"velt_simd_{M}_"
-    return f"""declare function {P}any(m: {M}): bool;
+    M=f"mask{b}x{n}"; P=f"velt_simd_{M}_"; U=f"u{b}x{n}"; UP=f"velt_simd_{U}_"
+    return f"""declare function {UP}index(): {U};
+declare function {UP}splat(x: u{b}): {U};
+declare function {UP}lt(a: {U}, b: {U}): {M};
+declare function {P}any(m: {M}): bool;
 declare function {P}all(m: {M}): bool;
 declare function {P}bitmask(m: {M}): u64;
 declare function {P}first(m: {M}): u64;
@@ -223,6 +263,15 @@ declare function {P}xor(a: {M}, b: {M}): {M};
 declare function {P}not(m: {M}): {M};
 
 extend {M} {{
+  /**
+   * The mask with its first `count` lanes set (all {n} from {n} up): the lanes `loadPartial`
+   * filled when `count` elements were left.
+   */
+  static prefix(count: usize): {M} {{
+    const lanes = count < {n} ? count : {n};
+    return {UP}lt({UP}index(), {UP}splat(lanes as u{b}));
+  }}
+
   /** Whether some lane is set. */
   any(): bool {{
     return {P}any(this);

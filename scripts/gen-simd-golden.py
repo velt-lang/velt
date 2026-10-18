@@ -113,6 +113,17 @@ def ints():
                 by+= [(u>>(8*k))&255 for k in range(b//8)]
             o.append(f"  n += lanesU8x16(\"{T}.asU8x16\", va.asU8x16(), {arr('u8',by)});")
             o.append(f"  n += lanes{tname(T)}(\"{T} round trip\", va.asU8x16().as{tname(T)}(), {arr(l,A)});")
+        chk("index",f"{T}.index()",list(range(n)))
+        src=[A[0]]*2+B  # the array `out` after the store above: A0, A0, then B's lanes
+        for at in range(len(src) + 1):
+            part=(src[at:at+n]+[0]*n)[:n]
+            o.append(f"  n += lanes{tname(T)}(\"{T}.loadPartial({at})\", {T}.loadPartial(out, {at}), {arr(l,part)});")
+        o.append(f"  const few: {l}[] = {arr(l,A[:n-1])};")
+        o.append(f"  vb.storePartial(few, 1);")
+        o.append(f"  vb.storePartial(few, {n-1});")
+        o.append(f"  n += lanes{tname(T)}(\"{T}.storePartial\", {T}.loadPartial(few), {arr(l,([A[0]]+B+[0]*n)[:n-1]+[0])});")
+        for k in (0, 1, n - 1, n, n + 5):
+            o.append(f"  n += bitmask(\"{M}.prefix({k})\", {M}.prefix({k}).bitmask(), {(1<<min(k,n))-1});")
         tw=lambda L,N: tname(f"{L}x{N}")
         low=[v for k in range(n//2) for v in (A[k],B[k])]
         high=[v for k in range(n//2,n) for v in (A[k],B[k])]

@@ -1,0 +1,15 @@
+// `loadPartial` and `storePartial` take a position up to the array's length (at the length
+// nothing is left); past it, or a `number` that is not a whole number from 0 up, is a
+// RangeError.
+
+import { u8x16 } from "velt:simd";
+
+function main() {
+  const d: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+  console.log(u8x16.loadPartial(d, 19).eq(u8x16.splat(0)).all(), u8x16.loadPartial(d, 18).lane(0));
+  u8x16.splat(9).storePartial(d, 19);
+  u8x16.splat(9).storePartial(d, 17);
+  console.log(d[16], d[17], d[18]);
+  const at: number = 1.5;
+  console.log(u8x16.loadPartial(d, at).lane(0));
+}

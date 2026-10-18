@@ -70,6 +70,13 @@ function f32s() {
   // Halfway between two floats: to the even one, 2^24 + 2 and 2^32.
   show4("ties", u32x4.splat(16777219).withLane(1, 4294967168).toF32x4());
 
+  show4("index", f32x4.index());
+  show4("loadPartial", f32x4.loadPartial(b, 2));
+  show4("loadPartial at the end", f32x4.loadPartial(b, 4));
+  const short: f32[] = [7, 7, 7];
+  va.storePartial(short, 1);
+  console.log("storePartial", short[0], short[1], short[2]);
+
   const out: f32[] = [0, 0, 0, 0, 0, 0];
   va.store(out, 1);
   console.log("store", out[0], out[1], out[4], out[5]);
@@ -94,6 +101,8 @@ function f64s() {
   show2("select", f64x2.select(va.gt(vb), va, vb));
   show2("zipLow", va.zipLow(vb));
   show2("zipHigh", va.zipHigh(vb));
+  show2("index", f64x2.index());
+  show2("loadPartial", f64x2.loadPartial(a, 1));
   const nan = f64x2.splat(NaN).withLane(1, 2);
   console.log("NaN eq", nan.eq(nan).bitmask(), "any", nan.ne(nan).any(), "all", nan.ne(nan).all());
   console.log("bits", f64x2.splat(1).asU64x2().lane(0), f64x2.splat(-2).asI64x2().lane(1));

@@ -117,6 +117,8 @@ impl Lanes {
 pub enum Op {
     /// `(lane) -> v`: every lane the same value.
     Splat,
+    /// `() -> v`: each lane its own index, 0 in lane 0.
+    Index,
     /// `(array: ptr, at: u64) -> bool`: whether a vector's worth of elements from `at` is
     /// inside the array (`at + lanes` does not wrap and is at most the length): what the
     /// prelude checks before `load` and `store`, and offers as a loop condition.
@@ -126,6 +128,13 @@ pub enum Op {
     Load,
     /// `(v, array: ptr, at: u64)`: writes the lanes to elements `at..`, unchecked.
     Store,
+    /// `(array: ptr, at: u64, count: u64) -> v`: elements `at..at + count` in the low lanes and
+    /// 0 in the others, for `count` below the lane count, unchecked. A few scalar loads that
+    /// stay inside those elements, not one per lane.
+    LoadPartial,
+    /// `(v, array: ptr, at: u64, count: u64)`: writes the low `count` lanes (below the lane
+    /// count) to elements `at..`, unchecked, with a few scalar stores.
+    StorePartial,
     /// `(v, index: u64) -> lane`: one lane; the index is in range (the prelude checks it).
     Lane,
     /// `(v, index: u64, lane) -> v`: `v` with one lane replaced; the index is in range.
@@ -257,9 +266,12 @@ impl SimdCall {
             },
             SimdCall::Vector(lanes, op) => match op {
                 Op::Splat => (vec![lanes.scalar()], V128),
+                Op::Index => (vec![], V128),
                 Op::Fits => (vec![Ptr, U64], Bool),
                 Op::Load => (vec![Ptr, U64], V128),
                 Op::Store => (vec![V128, Ptr, U64], Unit),
+                Op::LoadPartial => (vec![Ptr, U64, U64], V128),
+                Op::StorePartial => (vec![V128, Ptr, U64, U64], Unit),
                 Op::Lane => (vec![V128, U64], lanes.scalar()),
                 Op::WithLane => (vec![V128, U64, lanes.scalar()], V128),
                 Op::Neg
@@ -313,9 +325,12 @@ fn vector_op(name: &str) -> Option<Op> {
     }
     Some(match name {
         "splat" => Op::Splat,
+        "index" => Op::Index,
         "fits" => Op::Fits,
         "load" => Op::Load,
         "store" => Op::Store,
+        "load_partial" => Op::LoadPartial,
+        "store_partial" => Op::StorePartial,
         "lane" => Op::Lane,
         "with_lane" => Op::WithLane,
         "add" => Op::Add,
@@ -441,7 +456,8 @@ mod tests {
                 let symbol = format!("velt_simd_{name}");
                 let call = SimdCall::of_symbol(&symbol)
                     .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
-                let declared = params.split_once(')').expect("`)`").0.split(", ").count();
+                let list = params.split_once(')').expect("`)`").0;
+                let declared = list.split(", ").filter(|p| !p.is_empty()).count();
                 assert_eq!(call.signature().0.len(), declared, "{symbol}");
                 seen += 1;
             }
