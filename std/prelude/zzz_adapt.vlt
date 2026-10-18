@@ -80,3 +80,119 @@ export function __unknownMapOut(v: unknown, m: Map<unknown, unknown>): void {
     a.set(k, x);
   }
 }
+
+/**
+ * `{ ...o }` of an `any` (or `object`) `o` in an object literal: the record `r` the literal
+ * builds gets every own enumerable key of the value `o` holds, in its order (`null` and
+ * `undefined` have none, as in JavaScript).
+ */
+export function __spreadAny(r: Record<string, any>, o: any): void {
+  if (o === null || o === undefined) {
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    r.__set(k, __anyMember(o, k));
+  }
+}
+
+/**
+ * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
+ * array's or string's `length`.
+ */
+export function __anyHasOwn(o: any, k: string): boolean {
+  if ((Array.isArray(o) || typeof o === "string") && k === "length") {
+    return true;
+  }
+  return Object.keys(o).includes(k);
+}
+
+/** Member `k` (one of `Object.keys(o)`) of the value `o` holds: an array's by its index. */
+function __anyMember(o: any, k: string): any {
+  if (Array.isArray(o)) {
+    return o[Number(k)];
+  }
+  return o[k];
+}
+
+/** `Object.values(o)` of an `any` (or `object`) `o`. */
+export function __anyValues(o: any): any[] {
+  const out: any[] = [];
+  for (const k of Object.keys(o)) {
+    out.push(__anyMember(o, k));
+  }
+  return out;
+}
+
+/** `Object.entries(o)` of an `any` (or `object`) `o`. */
+export function __anyEntries(o: any): [string, any][] {
+  const out: [string, any][] = [];
+  for (const k of Object.keys(o)) {
+    out.push([k, __anyMember(o, k)]);
+  }
+  return out;
+}
+
+/**
+ * `Object.getPrototypeOf(v)` of an `any` (or `object`) `v` that holds no class instance: an
+ * array's or an object's; anything else is not supported yet.
+ */
+export function __anyPrototype(v: any): ObjectPrototype | null {
+  if (v === null || v === undefined) {
+    panic("TypeError: Cannot convert undefined or null to object");
+  }
+  if (Array.isArray(v)) {
+    return Array.prototype;
+  }
+  if (typeof v === "object") {
+    return Object.prototype;
+  }
+  panic(`TypeError: \`Object.getPrototypeOf\` of a ${typeof v} through \`any\` is not supported yet (#924)`);
+}
+
+/** `Object.getPrototypeOf(r)` of an `any` holding a record: `null` for `Object.create(null)`'s. */
+export function __anyRecordPrototype(r: any): ObjectPrototype | null {
+  if (r.__isNullProto() as boolean) {
+    return null;
+  }
+  return Object.prototype;
+}
+
+/** `Object.getPrototypeOf(v)` of an `any` holding an instance of class `name`, which Velt doesn't name. */
+export function __anyPrototypeUnsupported(name: string): ObjectPrototype | null {
+  panic(`TypeError: \`Object.getPrototypeOf\` of a ${name} through \`any\` is not supported yet (#924)`);
+}
+
+/** `Object.prototype.toString.call(v)` of an `any` (or `object`) `v` that holds no class instance. */
+export function __anyObjectTag(v: any): string {
+  if (v === undefined) {
+    return "[object Undefined]";
+  }
+  if (v === null) {
+    return "[object Null]";
+  }
+  if (Array.isArray(v)) {
+    return "[object Array]";
+  }
+  const t = typeof v;
+  if (t === "number") {
+    return "[object Number]";
+  }
+  if (t === "string") {
+    return "[object String]";
+  }
+  if (t === "boolean") {
+    return "[object Boolean]";
+  }
+  if (t === "function") {
+    return "[object Function]";
+  }
+  if (t === "symbol") {
+    return "[object Symbol]";
+  }
+  return "[object Object]";
+}
+
+/** `Object.prototype.toString.call(v)` of an `any` holding an instance of class `name`, whose tag Velt doesn't know. */
+export function __anyTagUnsupported(name: string): string {
+  panic(`TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`);
+}

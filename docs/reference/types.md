@@ -2090,9 +2090,37 @@ except that `NaN` is itself and `0` is not `-0`.
 the length before each step as JavaScript's array iterator does. Another value (a string, a
 `Map`, an iterable object) stops with a `TypeError` naming #924 for now.
 
+`Object.keys(x)` of an `any`, an `object` or a `Function` lists the own enumerable string keys
+of the value held, in JavaScript's order (integer-like keys first, ascending, then the others in
+order): the fields of a class instance (a subclass's too) or object (an optional field only while
+present), a `Record`'s keys, an array's or a string's indexes as strings, and none for a number,
+a boolean, a function, a `Map` or a `Set`. `null` and `undefined` stop with Node's `TypeError:
+Cannot convert undefined or null to object`; a proxy stops with a `TypeError` naming #924 for
+now. `Object.keys` of an `unknown` is an error until it is narrowed, as in TypeScript. A spread
+of an `any` or `object` into an object literal (`{ ...a, b: 1 }`) builds a `Record<string, any>`
+with those keys and their values (`null` and `undefined` spread nothing):
+
+```ts
+function main(): void {
+  const a: any = { x: 1, y: "two" };
+  console.log(Object.keys(a)); // [ 'x', 'y' ]
+  const merged = { ...a, z: true };
+  console.log(merged); // { x: 1, y: 'two', z: true }
+}
+```
+
+`JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
+`unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
+`toJSON()`: `undefined`, functions and symbols are left out as object members and written as
+`null` in arrays, and an object that holds itself stops with `TypeError: Converting circular
+structure to JSON`. Node returns `undefined` for such a value at the top; a Velt `string` cannot
+hold it, so `JSON.stringify` of an `any` holding `undefined`, a function or a symbol stops with a
+`TypeError` naming #924. A value with no JSON form here (an object with a function field, a
+proxy) also stops with a `TypeError`.
+
 **Planned** (#924): compound assignments and `++` on members, arithmetic operators,
-`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
-interface types and the warning on a written `any`; until then each is a compile error.
+`String(x)`, `JSON.parse` into an `any`, `any` converted to interface types and the warning on a
+written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
@@ -2362,5 +2390,5 @@ function main(): void {
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
 members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
-(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
-without the `object` bound converted with `as object`. Each is a compile error.
+(`call`, `apply`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+converted with `as object`. Each is a compile error.

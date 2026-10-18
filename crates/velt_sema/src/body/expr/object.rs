@@ -408,9 +408,10 @@ impl FnCx<'_, '_> {
     /// Does an object literal with `props` spread a record (`{ ...r, a: 1 }`)?
     fn spreads_record(&mut self, props: &[ast::ObjectProp]) -> bool {
         props.iter().any(|p| match p {
+            // An `any` (or `object`) spread too: its keys are known only at run time.
             ast::ObjectProp::Spread(e) => self
                 .trial_type(e)
-                .is_some_and(|t| self.record_args(t).is_some()),
+                .is_some_and(|t| self.record_args(t).is_some() || self.spreads_dynamic(t)),
             _ => false,
         })
     }

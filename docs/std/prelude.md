@@ -262,7 +262,9 @@ Differences from JavaScript:
 `Object.values(r)` and `Object.entries(r)` return arrays in JavaScript's key order: array-index
 keys such as `"2"` first, ascending, then the others in insertion order. `Object.keys` returns
 a `string[]` and, as in TypeScript, also lists the fields of any object, struct or class
-instance (except `#private` fields, as in JS).
+instance (except `#private` fields, as in JS). Of an `any`, `object` or `Function` it lists the
+keys of the value held, at run time
+([Reference](../reference/types.md#any-and-unknown)).
 
 ```ts
 class User {

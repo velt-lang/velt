@@ -1,0 +1,6 @@
+// `Object.keys` of an `any` holding `undefined` stops with Node's `TypeError` (#924).
+function main(): void {
+  const u: any = undefined;
+  console.log("before");
+  console.log(Object.keys(u));
+}

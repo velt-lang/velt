@@ -366,4 +366,9 @@ pub enum Intrinsic {
     AnyHas,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
+    /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the
+    /// value held in JavaScript's order (an array's or a string's indexes, a record's keys,
+    /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
+    /// supported yet. Sets `Program::dyn_members`.
+    AnyKeys,
 }

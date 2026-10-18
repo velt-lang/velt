@@ -806,6 +806,18 @@ entry is an `ICE:`.
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
+- `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
+  of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
+  It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
+  slot 13 `AnyKeys (data, out: *string[]) -> u8` (velt_vir `lower/any_keys.rs`; 0 written, 1 not
+  supported yet) only when the program has such a call; `null` / `undefined` are tested before
+  the slot. An object literal spreading an `any` or `object` (`{ ...a }`) is a
+  `Record<string, any>` literal whose spread is a call of the prelude's `__spreadAny(r, a)`
+  (std/prelude/zzz_adapt.vlt). `JSON.stringify` accepts dynamic types anywhere in its argument's
+  type: the writer calls slot 14 `AnyJson (data, buf) -> u8` of the value's table (velt_vir
+  `lower/json/any.rs`; present only when the program writes one), after testing the tag for
+  `undefined`, a function or a symbol (left out as a member, `null` as an element, a
+  `TypeError` at the top).
 - Proxy and Reflect (#823): the prelude's `Proxy` class (std/prelude/zz_proxy.vlt; `#target:
   any`, `#handler: ProxyHandler<any>`) and `Reflect` (static methods). Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
@@ -903,8 +915,8 @@ entry is an `ICE:`.
   which is a literal or a primitive made dynamic (`AnyStrictEq` / `AnyLooseEq`), compares `any`s
   in generic code, or keys a `Set` / `Map` by them (#1256).
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
-  members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
-  an `any` and `JSON.parse` into one, iteration.
+  members of an `any`, other operators, template literals and `String(x)`, `JSON.parse` into an
+  `any`, iteration.
 
 ## Object built-ins (issue #925)
 
