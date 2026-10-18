@@ -204,9 +204,18 @@ impl FnLower<'_, '_> {
             }
         }
         self.cx.note_dyn_identity(ty, cty);
+        // A type parameter converted to `any` / `unknown` (issue #1241) instantiated with a
+        // type sema would have unpacked (an option, a union, a literal type).
+        let unpack = self.cx.is_any_impl(impl_index)
+            && !self.is_object_ty(ty)
+            && matches!(self.cx.kind(e.ty), hir::TyKind::Param(_))
+            && self.any_unpacks(cty);
         let v = self.consume(e);
         if self.dead() {
             return unit();
+        }
+        if unpack {
+            return self.any_unpack(v, cty, ty);
         }
         self.value_to_dyn(v, cty, ty, impl_index)
     }

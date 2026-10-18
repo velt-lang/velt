@@ -39,6 +39,9 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         let to = self.cx.dynamic(exp);
         let from = self.cx.dynamic(h.ty);
+        if from.is_some() && exp == self.cx.ty.never {
+            return Ok(self.dynamic_to_never(h));
+        }
         match (from, to) {
             (None, None) => Err(h),
             (None, Some(d)) if !self.dynamic_takes_static(d, h.ty) => Err(h),
@@ -48,6 +51,19 @@ impl FnCx<'_, '_> {
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
+    }
+
+    /// An `any` / `unknown` where a `never` is expected (also a `bigint`, which is `never`,
+    /// #1088): no value converts.
+    fn dynamic_to_never(&mut self, h: hir::Expr) -> hir::Expr {
+        let f = self.cx.display(h.ty);
+        let mut d = Diagnostic::error(format!("an `{f}` value cannot be a `never`"), h.span)
+            .with_note("no value has type `never`");
+        if self.cx.ty.bigint_named {
+            d = d.with_note("a `bigint` is a `never` too: it has no values in Velt yet (#1088)");
+        }
+        self.cx.error(d);
+        self.error_expr(h.span)
     }
 
     /// Does the dynamic type `d` take a value of the static type `t`? `object` takes
@@ -197,15 +213,13 @@ impl FnCx<'_, '_> {
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
-        let narrow = matches!(
-            self.cx.dynamic(exp),
-            Some(Dynamic::Object | Dynamic::Function)
-        );
         match self.cx.ty.kind(h.ty) {
             // A type parameter bound by `object` / `Function` holds no `null` and no primitive
-            // to unpack (issue #926); lowering boxes the instantiation's value.
-            TyKind::Param(_) if narrow => {}
-            TyKind::Unit | TyKind::Never | TyKind::Error | TyKind::Param(_) => return Err(h),
+            // to unpack (issue #926); lowering boxes the instantiation's value. Into `any` or
+            // `unknown`, lowering unpacks an instantiation that is an option, a union or a
+            // literal type (issue #1241).
+            TyKind::Param(_) => {}
+            TyKind::Unit | TyKind::Never | TyKind::Error => return Err(h),
             TyKind::Promise(..) => return Err(h),
             _ => {}
         }
