@@ -313,7 +313,21 @@ impl FnCx<'_, '_> {
         let mut stmts = Vec::new();
         let mut temps = Vec::new();
         for e in [a, b] {
-            let h = self.expr(e, None, crate::body::Want::Borrow);
+            // `null` / `undefined` written as such: the dynamic nothing itself (a bare
+            // `undefined` checks as `void`, which would box as another value).
+            let nothing = match &super::object_builtins::strip_parens(e).kind {
+                velt_syntax::ast::ExprKind::Lit(velt_syntax::ast::Lit::Undefined) => {
+                    Some(hir::Nothing::Undefined)
+                }
+                velt_syntax::ast::ExprKind::Lit(velt_syntax::ast::Lit::Null) => {
+                    Some(hir::Nothing::Null)
+                }
+                _ => None,
+            };
+            let h = match nothing {
+                Some(n) => self.dynamic_nothing(n, any, e.span),
+                None => self.expr(e, None, crate::body::Want::Borrow),
+            };
             if self.cx.ty.is_bottom(h.ty) {
                 return Some(self.error_expr(span));
             }

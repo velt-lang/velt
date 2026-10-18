@@ -19,4 +19,10 @@ function main(): void {
   console.log(Object.is(r["k"], NaN), Object.is(r["k"], 0));
   const u: unknown = -0;
   console.log(Object.is(u, -0), Object.is(u, 0), Object.is(u, u));
+  const nu: any = undefined;
+  const nk: unknown = undefined;
+  const nn: any = null;
+  console.log(Object.is(nu, undefined), Object.is(undefined, nu), Object.is(nk, undefined));
+  console.log(Object.is(undefined as any, undefined), Object.is(nn, null), Object.is(null, nn));
+  console.log(Object.is(nn, undefined), Object.is(nu, null), Object.is(p as any, null));
 }
