@@ -345,9 +345,11 @@ block scope.
   without a type annotation (`const A = "a"`), or a local whose type is a literal type
   (`const y: "y" = "y"`). A literal that is not a possible value (`case "square":` when `s.kind`
   is `"circle" | "rect"`) is an error, as in TypeScript. A `typeof` case that no member of a union
-  has is an error (TypeScript accepts it); on any other type, also a union local that flow
-  narrowing reduced to one member (`let u: number | string = 5`), it is accepted, as in
-  TypeScript, and never matches. A value may appear in several cases:
+  has is an error (TypeScript accepts it). On a type that fixes the `typeof` of its values (a
+  number, string, boolean, function, class, array, ...), also a union local that flow narrowing
+  reduced to one member (`let u: number | string = 5`), such a case is accepted, as in
+  TypeScript, and never matches. On `any`, `unknown` and `object`, cases test the run-time
+  `typeof`; on a type parameter, a case its type doesn't fix is an error. A value may appear in several cases:
   the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`
