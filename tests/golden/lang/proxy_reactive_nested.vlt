@@ -1,0 +1,94 @@
+// check: no leaks
+// A sigx-style reactive object with a nested `raw -> proxy` cache (#1223): the nested object
+// read through `Reflect.get` is the same object every time, so the cache hits, the same proxy
+// comes back and a write through it reaches the effect that read it. The object types are
+// proxiable (an `any` is converted to them on `Reflect.set`), and `object` is a weak key.
+type Todo = { title: string; done: boolean };
+type State = { count: number; todo: Todo; list: Todo[] };
+
+let active: (() => void) | null = null;
+const deps: Map<string, (() => void)[]> = new Map();
+const ids: WeakMap<object, number> = new WeakMap();
+let nextId = 0;
+function idOf(o: any): number {
+  const id = ids.get(o);
+  if (id != null) return id;
+  const fresh = nextId++;
+  ids.set(o, fresh);
+  return fresh;
+}
+function track(k: string): void {
+  const f = active;
+  if (f == null) return;
+  const fs = deps.get(k);
+  if (fs == null) {
+    deps.set(k, [f]);
+  } else if (!fs.includes(f)) {
+    fs.push(f);
+  }
+}
+function trigger(k: string): void {
+  const fs = deps.get(k);
+  if (fs == null) return;
+  for (const f of fs.slice()) f();
+}
+function effect(f: () => void): void {
+  const prev = active;
+  active = f;
+  f();
+  active = prev;
+}
+
+let built = 0;
+function reactive(target: any): any {
+  const cache: WeakMap<object, any> = new WeakMap();
+  const id = idOf(target);
+  built++;
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      track(`${id}.${String(key)}`);
+      const v = Reflect.get(t, key, receiver);
+      if (typeof v === "object" && v !== null) {
+        let c = cache.get(v);
+        if (c == null) {
+          c = reactive(v);
+          cache.set(v, c);
+        }
+        return c;
+      }
+      return v;
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      const ok = Reflect.set(t, key, value);
+      trigger(`${id}.${String(key)}`);
+      return ok;
+    },
+  });
+}
+
+function run(): void {
+  const raw: State = {
+    count: 0,
+    todo: { title: "write", done: false },
+    list: [{ title: "a", done: false }],
+  };
+  const s = reactive(raw);
+  effect(() => {
+    console.log("effect:", s.todo.title, s.todo.done, s.count);
+  });
+  s.todo.title = "test";
+  s.todo.done = true;
+  s.count = 1;
+  console.log("same proxy:", s.todo === s.todo, "proxies built:", built);
+  console.log("raw sees writes:", raw.todo.title, raw.todo.done, raw.count);
+  // The array and its elements are cached the same way.
+  effect(() => {
+    console.log("list effect:", s.list[0].title);
+  });
+  s.list[0].title = "b";
+  console.log("same element proxy:", s.list[0] === s.list[0], "proxies built:", built);
+  // Replacing the nested object gives a new proxy for the new object.
+  s.todo = { title: "new", done: false };
+  console.log("after replace:", s.todo.title, "proxies built:", built);
+}
+run();

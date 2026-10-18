@@ -7,7 +7,7 @@ use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
 /// What a piece of code refers to and binds, at any depth.
 #[derive(Default)]
-pub(super) struct Scan {
+pub(crate) struct Scan {
     /// Names used as values.
     pub refs: HashSet<String>,
     /// Names bound by variables and parameters (not nested function names).
@@ -146,7 +146,7 @@ impl Scan {
         }
     }
 
-    pub(super) fn pattern(&mut self, p: &ast::Pattern) {
+    pub(crate) fn pattern(&mut self, p: &ast::Pattern) {
         use ast::PatternKind as P;
         match &p.kind {
             P::Ident(id) => {
@@ -221,7 +221,7 @@ pub(super) fn scan_fn(f: &ast::FnDecl) -> Scan {
     s
 }
 
-pub(super) fn scan_stmt(st: &ast::Stmt) -> Scan {
+pub(crate) fn scan_stmt(st: &ast::Stmt) -> Scan {
     let mut s = Scan::default();
     s.stmt(st);
     s

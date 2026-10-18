@@ -1,0 +1,36 @@
+// check: no leaks
+// A proxy converted to an object type (#823): typed reads, writes and compound assignments
+// run the traps, printing shows the target, and converting back to `any` keeps one identity.
+type State = { count: number; name: string };
+
+function makeHandler(): ProxyHandler<any> {
+  return {
+  get(target: any, key: string | symbol, receiver: any): any {
+    console.log("get", key);
+    return Reflect.get(target, key, receiver);
+  },
+  set(target: any, key: string | symbol, value: any, receiver: any): boolean {
+    console.log("set", key, value);
+    return Reflect.set(target, key, value, receiver);
+  },
+  };
+}
+
+function signal(target: State): State {
+  return new Proxy(target, makeHandler()) as State;
+}
+
+function show(s: State): void {
+  console.log(s.count, s.name);
+}
+
+const st: State = { count: 1, name: "a" };
+const s = signal(st);
+s.count = s.count + 1;
+s.count += 10;
+s.name += "b";
+show(s);
+show(st);
+console.log(s);
+const back: any = s;
+console.log(back === s, back.count);

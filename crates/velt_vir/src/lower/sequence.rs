@@ -97,11 +97,6 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
     }
 }
 
-/// Can evaluating `e` change what an earlier operand reads?
-pub(super) fn may_write(e: &hir::Expr) -> bool {
-    Later::of(e).any()
-}
-
 /// Can evaluating `e` write to a local of the enclosing function?
 fn writes_local(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
@@ -129,6 +124,74 @@ fn writes_local(e: &hir::Expr) -> bool {
 }
 
 impl FnLower<'_, '_> {
+    /// [`Later::of`] in this program: a field read on a proxiable type (#823, proxy_typed.rs)
+    /// may run a `get` trap, user code that may change any memory, like an `any` member read.
+    pub(super) fn later_of(&mut self, e: &hir::Expr) -> Later {
+        let mut l = Later::of(e);
+        if !l.memory && self.reads_proxy(e) {
+            l.memory = true;
+        }
+        l
+    }
+
+    /// [`later_each`] with [`later_of`](Self::later_of).
+    pub(super) fn later_each(&mut self, es: &[hir::Expr]) -> Vec<Later> {
+        let mut out = later_each(es);
+        if self.cx.has_proxies() {
+            let mut acc = false;
+            for (i, e) in es.iter().enumerate().rev() {
+                out[i].memory |= acc;
+                acc = acc || self.reads_proxy(e);
+            }
+        }
+        out
+    }
+
+    /// Can evaluating `e` change what an earlier operand reads?
+    pub(super) fn may_write(&mut self, e: &hir::Expr) -> bool {
+        self.later_of(e).any()
+    }
+
+    /// [`may_change_memory`] with [`later_of`](Self::later_of).
+    pub(super) fn may_change_memory(&mut self, e: &hir::Expr) -> bool {
+        self.later_of(e).memory
+    }
+
+    /// Does evaluating `e` read a field of a proxiable type? Only the shapes
+    /// `may_change_memory` looks into: it answers yes for the others already.
+    fn reads_proxy(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        if !self.cx.has_proxies() {
+            return false;
+        }
+        match &e.kind {
+            K::Field { base, .. } => {
+                let bt = self.sub(base.ty);
+                self.cx.proxiable(bt) || self.reads_proxy(base)
+            }
+            K::Unary { expr: x, .. }
+            | K::Cast(x)
+            | K::WrapSome(x)
+            | K::Upcast(x)
+            | K::Downcast(x)
+            | K::UnwrapSome(x, _)
+            | K::UnwrapVariant { expr: x, .. } => self.reads_proxy(x),
+            K::Index {
+                base: a, index: b, ..
+            }
+            | K::Binary { lhs: a, rhs: b, .. }
+            | K::Logical { lhs: a, rhs: b, .. } => self.reads_proxy(a) || self.reads_proxy(b),
+            K::If { cond, then, els } => {
+                self.reads_proxy(cond) || self.reads_proxy(then) || self.reads_proxy(els)
+            }
+            K::Call {
+                callee: hir::Callee::Intrinsic(_),
+                args,
+            } => args.iter().any(|a| self.reads_proxy(a)),
+            _ => false,
+        }
+    }
+
     /// Hold the borrowed operand `op` (of type `ty`) against the operands after it (`later`):
     /// a value that owns nothing is copied; anything else gets a reference of its own in an
     /// owned temporary (a share), so the parts it points at outlive what the later operands

@@ -1,0 +1,20 @@
+narrow_branch_assigned.vlt:15:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:21:10: error: value of type `string | null | undefined` may be null
+narrow_branch_assigned.vlt:27:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:33:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:41:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:53:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:61:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:67:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:76:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:82:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:88:12: error: no field `b` on type `A`
+narrow_branch_assigned.vlt:94:12: error: no field `length` on type `f64`
+narrow_branch_assigned.vlt:100:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:106:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:116:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:123:10: error: value of type `string | null | undefined` may be null
+narrow_branch_assigned.vlt:128:10: error: value of type `string | null | undefined` may be null
+narrow_branch_assigned.vlt:140:10: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:148:20: error: value of type `string | null` may be null
+narrow_branch_assigned.vlt:160:10: error: value of type `string | null` may be null

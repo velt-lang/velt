@@ -27,6 +27,8 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
+    /// Per slot, a bound that is a type (`Generics::constraints`); empty when none has one.
+    pub constraints: Vec<Option<TyId>>,
     /// A `std/` function called from user code: a float argument for a parameter it declares
     /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
@@ -91,6 +93,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let weak_key = std::mem::take(&mut self.weak_key_args);
         let expanded;
         let args = match self.expand_spreads(c, args, span) {
             Ok(Some(a)) => {
@@ -149,7 +152,9 @@ impl FnCx<'_, '_> {
         let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
+            let outer = self.cx.type_level.use_site.replace(h.span);
             let target = self.cx.subst(p.ty, &type_args);
+            self.cx.type_level.use_site = outer;
             // Only a parameter the library declares an integer (`slice(start: i64)`), not a
             // type argument the program chose (`push` on an `i64[]`).
             let declared_int = self.cx.ty.is_int(p.ty);
@@ -166,7 +171,15 @@ impl FnCx<'_, '_> {
                 h
             };
             let arg_ty = h.ty;
-            let mut h = self.coerce(h, target);
+            let mut h = if weak_key && hargs.is_empty() {
+                self.weak_key_coerce(h, target)
+            } else if self.cx.sigq.readonly_params.contains(&p.span) {
+                self.readonly_array_arg(h, target)
+            } else if p.mode != PassMode::Owned {
+                self.object_arg_coerce(h, target)
+            } else {
+                self.coerce(h, target)
+            };
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
             }
@@ -193,11 +206,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// JavaScript applies a parameter's default to a passed `undefined` too. For a parameter of
-    /// a dynamic type (`o: any = 5`), an argument that may hold `undefined` (`h`, of type
-    /// `arg_ty` before its conversion) is tested where it is passed:
-    /// `{ const <arg> = h; <arg> === undefined ? <default> : <arg> }`. Other parameters whose
-    /// type allows `undefined` take no default but `undefined` itself (`defaults.rs`).
+    /// JavaScript applies a parameter's default to a passed `undefined` too. A function with a
+    /// body does that itself for a parameter of a dynamic type (`defaults::in_callee`); for one
+    /// that does not (an interface method's own default, a generator's), an argument that may
+    /// hold `undefined` (`h`, of type `arg_ty` before its conversion) is tested where it is
+    /// passed: `{ const <arg> = h; typeof <arg> === "undefined" ? <default> : <arg> }`. Other
+    /// parameters whose type allows `undefined` take no default but `undefined` itself
+    /// (`defaults.rs`).
     fn default_on_undefined(
         &mut self,
         h: hir::Expr,
@@ -211,7 +226,7 @@ impl FnCx<'_, '_> {
                 .ty
                 .nothing_of(arg_ty)
                 .is_some_and(|n| n.has_undefined());
-        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined {
+        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined || self.is_undefined_lit(default) {
             return h;
         }
         let (ty, span) = (h.ty, h.span);
@@ -227,9 +242,7 @@ impl FnCx<'_, '_> {
                 span,
             )
         };
-        let undefined = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
-        let test =
-            super::accessor_rmw::binary(ast::BinaryOp::StrictEq, name(span), undefined, span);
+        let test = crate::body::defaults::undefined_test(name(span), span);
         let cond = self.cond(&test);
         let mut d = default.clone();
         crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
@@ -244,6 +257,17 @@ impl FnCx<'_, '_> {
         self.pop_scope();
         let b = super::accessor_rmw::block(stmts, Some(pick), span);
         self.mk(H::Block(b), ty, span)
+    }
+
+    /// Is `h` the dynamic `undefined` (`dynamic_nothing`)? The default of an optional dynamic
+    /// parameter, and of one whose function applies its default itself (`defaults::in_callee`):
+    /// testing a passed argument for `undefined` changes nothing there.
+    fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::ToDyn { expr, .. } => self.is_undefined_lit(expr),
+            H::Lit(hir::Lit::Null) => self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined),
+            _ => false,
+        }
     }
 
     /// A call whose arguments were reported: no arguments, the result with what is known.
@@ -323,6 +347,7 @@ impl FnCx<'_, '_> {
             ret: c.ret,
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
+            constraints: c.constraints.clone(),
             js_numbers: c.js_numbers,
             positions: c.positions,
             js_api: c.js_api,
@@ -381,14 +406,17 @@ impl FnCx<'_, '_> {
             if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
+            let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
+            self.cx.type_level.use_site = outer;
+            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
             // An arrow (or a function's adapter) passed to the JS API (also where `cmp | null` is
             // expected): what its parameters and result are in user code (`closure`,
             // `returns::returned`).
-            let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
+            let declared = self.cx.ty.core(p.ty).unwrap_or(p.ty);
             self.std_callback = match self.cx.ty.kind(declared) {
                 TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
                     Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
@@ -410,7 +438,13 @@ impl FnCx<'_, '_> {
                 {
                     self.arrow_arg(a, expected, owned)
                 }
-                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                _ => match &super::method_value::strip_parens(&args[i]).kind {
+                    // `f(k!)` for a borrowed parameter: `k` stays (`non_null_arg`).
+                    ast::ExprKind::NonNull(inner) if want_of(p.mode) == Want::Borrow => {
+                        self.non_null_arg(inner, Some(expected), args[i].span)
+                    }
+                    _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                },
             };
             // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
             let h = match self.cx.ty.array_elem(expected).is_some()
@@ -479,7 +513,7 @@ impl FnCx<'_, '_> {
     /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
     /// JS number argument converts)?
     fn float_core(&self, t: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let t = self.cx.ty.core(t).unwrap_or(t);
         self.cx.ty.is_float(t)
     }
 
@@ -612,6 +646,7 @@ impl FnCx<'_, '_> {
                     self.cx.error(d);
                 }
             }
+            self.check_constraint(c, k, t, slots, &name, span);
             out.push(t);
         }
         out

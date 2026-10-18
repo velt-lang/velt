@@ -1,0 +1,17 @@
+// `next(value)` and the value of `yield` need the generator's `TNext` (`Generator<T, void, N>`).
+function* noNext(): Generator<number> {
+  const x = yield 1;
+  console.log(x);
+}
+
+function* numbers(): Generator<number, void, number> {
+  const x: string = yield 1;
+  console.log(x);
+}
+
+function main(): void {
+  const g = noNext();
+  g.next(1);
+  const n = numbers();
+  n.next("one");
+}

@@ -36,6 +36,7 @@ mod body;
 mod brands;
 mod call_sigs;
 mod collect;
+mod copy_flow;
 mod creation_notes;
 mod ctx;
 mod defs;
@@ -60,6 +61,8 @@ mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_chunks;
+mod module_scripts;
 mod module_state;
 mod moves;
 mod namespaces;
@@ -72,6 +75,7 @@ pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
+mod recursive_unions;
 mod replaced_holders;
 mod resolve;
 mod suggest;
@@ -218,7 +222,10 @@ fn check_on_current_thread(
     recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
-    let mut merge_diags = call_sigs::check(modules);
+    let chunks = module_chunks::split(modules, root);
+    let modules = chunks.modules.as_deref().unwrap_or(modules);
+    let mut merge_diags = chunks.diags.clone();
+    merge_diags.extend(call_sigs::check(modules));
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
@@ -248,6 +255,7 @@ fn check_on_current_thread(
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
+        cx.gen_throw = ts_protocol::calls_throw(modules);
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -261,12 +269,13 @@ fn check_on_current_thread(
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();
         cx.diags.extend(merge_diags.iter().cloned());
+        cx.promoted_consts = chunks.promoted.clone();
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();
             cx.set_closure_groups(&c.groups);
         }
-        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        let entry = analyze(&mut cx, root, root_mod, opts);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
@@ -294,6 +303,8 @@ fn check_on_current_thread(
         counted_objects,
         objects,
         any,
+        gen_throw,
+        super_calls,
         ..
     } = cx;
     let defs = defs
@@ -316,6 +327,8 @@ fn check_on_current_thread(
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members,
+        generator_throw: gen_throw,
+        super_calls,
     };
     (Some(program), diags)
 }
@@ -325,12 +338,10 @@ fn analyze(
     cx: &mut ctx::Ctx,
     root: usize,
     root_mod: &SourceModule,
-    modules: &[SourceModule],
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    check_imported_scripts(cx, root, modules);
     resolve::check_unused_aliases(cx);
     entry
 }
@@ -353,6 +364,7 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    module_scripts::declare(cx);
     absent_fields::check(cx);
     fresh_returns::check(cx);
     any_keys::check(cx);
@@ -398,30 +410,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::check_many_threads(cx);
     promise_copies::check(cx);
     weak_threads::check(cx, weak);
-}
-
-/// Top-level statements run only in the root file: the parser turned an imported module's into
-/// a `main` whose name has an empty span (`velt_syntax` `parser::script`).
-fn check_imported_scripts(cx: &mut ctx::Ctx, root: usize, modules: &[SourceModule]) {
-    for (i, m) in modules.iter().enumerate() {
-        let script = m.ast.items.iter().find_map(|it| match &it.kind {
-            velt_syntax::ast::ItemKind::Function(f)
-                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-            {
-                Some(f.sig.span)
-            }
-            _ => None,
-        });
-        if let (true, Some(span)) = (i != root, script) {
-            cx.error(
-                Diagnostic::error(
-                    "top-level statements are only allowed in the file the program starts from",
-                    span,
-                )
-                .with_note("an imported module runs nothing when it loads; put this code in a function and call it"),
-            );
-        }
-    }
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.

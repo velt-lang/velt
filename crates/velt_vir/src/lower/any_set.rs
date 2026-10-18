@@ -108,12 +108,19 @@ impl FnLower<'_, '_> {
             }
             let next = self.on_key(key, name);
             let fty = self.cx.member_ty(ty, i as u32);
-            let presence = self.cx.adt_def(d).fields[i].presence;
-            if readonly.contains(name) || presence || !self.cx.any_unboxable(fty) {
+            if readonly.contains(name) || !self.cx.any_unboxable(fty) {
                 self.any_set_refuse(v, ST_UNSUPPORTED);
             } else {
                 let val = self.any_set_value(v, fty);
                 let fp = self.field_place(&vp, ty, i as u32);
+                // An optional field that keeps "absent" apart (`a?: T`) is present once written.
+                if let Some(slot) = self.cx.presence_slot(ty, i as u32) {
+                    let mut flag = fp.clone();
+                    if let Some(crate::vir::Proj::Field(x)) = flag.proj.last_mut() {
+                        *x = slot;
+                    }
+                    self.assign(flag, crate::vir::Rvalue::Use(Self::ctrue()));
+                }
                 self.any_replace(fp, val, fty);
                 self.ret_status(ST_OK);
             }

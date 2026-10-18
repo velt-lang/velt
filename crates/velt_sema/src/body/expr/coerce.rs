@@ -6,13 +6,14 @@
 //! → anything, and `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1`
 //! (`never` included: `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` →
 //! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
-//! and an object type to one with some of its fields, or the same ones in another order
-//! (`object_copy`).
+//! an object type to one with some of its fields, or the same ones in another order
+//! (`object_copy`), and a generic interface value to the same interface with `unknown` or `any`
+//! type arguments (`iface_adapt`).
 
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Nothing, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
@@ -60,11 +61,18 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
-            return self.coerce_dynamic(h, exp, false);
+            return self.coerce_dynamic(h, exp, self.adapting);
         }
         // Two forms of one anonymous object type (a generic shape at concrete arguments and the
         // written shape, crate::anon): the same values, so only the type changes.
         if self.cx.canon(h.ty) == self.cx.canon(exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
+        // `Generator<T, E, N>` to `Generator<T, E>` or back: `N` only types `next(value)`,
+        // and one side takes no value (the other never reads one).
+        if self.cx.generator_next_differs(h.ty, exp) {
             let mut h = h;
             h.ty = exp;
             return Ok(h);
@@ -83,6 +91,48 @@ impl FnCx<'_, '_> {
         {
             if !found.within(want) {
                 return Err(h);
+            }
+        }
+        // `undefined` alone (an option of `never`): always its nothing, which is `exp`'s.
+        if let (Some(n), Some(_)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp)) {
+            if self.cx.ty.core(h.ty) == Some(self.cx.ty.never) {
+                let span = h.span;
+                let value = self.nothing_value(n, exp, span);
+                if matches!(h.kind, H::Lit(_)) {
+                    return Ok(value);
+                }
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(h),
+                        span,
+                    }],
+                    value: Some(Box::new(value)),
+                    span,
+                };
+                return Ok(self.mk(H::Block(block), exp, span));
+            }
+        }
+        // Into a `T | null | undefined` (an option of a `T | null`): a `T | null` is its
+        // payload, a `T | undefined` moves its nothing (hir_encodings.md "Undefined").
+        if self.is_three_state(exp) && !self.is_three_state(h.ty) {
+            match self.cx.ty.nothing_of(h.ty) {
+                Some(Nothing::Undefined) => {
+                    let core = self.cx.ty.core(exp).expect("ICE: option without a payload");
+                    let undef = self.cx.ty.option_of(core, Nothing::Undefined);
+                    let h = self.try_coerce(h, undef)?;
+                    return Ok(self.undefined_to_three_state(h, exp));
+                }
+                Some(_) => {
+                    let mid = self
+                        .cx
+                        .ty
+                        .opt_payload(exp)
+                        .expect("ICE: option without a payload");
+                    let span = h.span;
+                    let h = self.try_coerce(h, mid)?;
+                    return Ok(self.mk(H::WrapSome(Box::new(h)), exp, span));
+                }
+                None => {}
             }
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
@@ -133,6 +183,12 @@ impl FnCx<'_, '_> {
         // `i8`..`i32`, `u8`..`u32` and `f32` are numbers too (exactly).
         if exp == self.cx.ty.f64 && self.exact_in_number(h.ty) {
             return Ok(self.int_to_float(h, exp));
+        }
+        if self.adapting
+            && matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. })
+            && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
+        {
+            return self.adapt_fn(h, exp);
         }
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
@@ -212,11 +268,23 @@ impl FnCx<'_, '_> {
         iface: hir::DefId,
         args: &[TyId],
     ) -> Result<hir::Expr, hir::Expr> {
+        // `I<A>` where `I<unknown>` is expected: wrapped (`iface_adapt`).
+        if let TyKind::Dyn(have, from) = self.cx.ty.kind(h.ty).clone() {
+            if have == iface && self.cx.dynamic(h.ty).is_none() {
+                return self.adapt_iface(h, exp, iface, &from, args);
+            }
+        }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
             return Err(h);
         };
         if iargs != args {
-            return Err(h);
+            // A value implementing `I<A>`: an `I<A>` first, then adapted.
+            if !self.iface_adapts(iface, &iargs, args) {
+                return Err(h);
+            }
+            let mid = self.cx.ty.intern(TyKind::Dyn(iface, iargs.clone()));
+            let h = self.dyn_value(h, mid, iface, &iargs)?;
+            return self.adapt_iface(h, exp, iface, &iargs, args);
         }
         let mut h = if imp_ty != h.ty {
             self.upcast(h, imp_ty)?
@@ -263,7 +331,8 @@ impl FnCx<'_, '_> {
             return;
         }
         let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
-        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span) {
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
+        {
             return;
         }
         let e = self.cx.display(expected);
@@ -329,9 +398,15 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
-            d = match self.extends_note(expected, found.ty) {
-                Some(note) => d.with_note(note),
-                None => d.with_note(format!("`{f}` does not declare `implements {e}`")),
+            d = match (
+                self.adapt_refusal(expected, found.ty),
+                self.extends_note(expected, found.ty),
+            ) {
+                (Some(why), _) => d.with_note(format!(
+                    "`{f}` converts to `{e}` through a wrapper that checks each call's arguments, but {why}"
+                )),
+                (None, Some(note)) => d.with_note(note),
+                (None, None) => d.with_note(format!("`{f}` does not declare `implements {e}`")),
             };
             if let Some(note) = self.other_args_note(expected, found.ty) {
                 d = d.with_note(note);
@@ -353,7 +428,7 @@ impl FnCx<'_, '_> {
         }
         if self.only_optional_differs(expected, found.ty) {
             d = d.with_note(
-                "an optional field (`a?: T`) may be absent, so it is not a `T | null` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
+                "an optional field (`a?: T`) may be absent, so it is not a `T | undefined` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
             );
         } else if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
             // Instances are canonical (crate::anon), except a generic union whose members are

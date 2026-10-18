@@ -24,7 +24,6 @@ use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 use super::AsyncInfo;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::sequence::later_each;
 use crate::lower::{cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -36,7 +35,11 @@ impl FnLower<'_, '_> {
         }
         if let hir::ExprKind::Call { callee, args } = &inner.kind {
             match callee {
-                hir::Callee::Def(d, targs) if self.cx.is_async_fn(*d) => {
+                // A method of a proxiable class goes through `call_def`, which checks for a
+                // proxy receiver with a `get` trap (proxy_method.rs).
+                hir::Callee::Def(d, targs)
+                    if self.cx.is_async_fn(*d) && !self.proxiable_receiver(*d, args) =>
+                {
                     let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                     if let Some(info) = self.cx.async_info(*d, &targs) {
                         return self.await_child(*d, targs, info, args);
@@ -120,7 +123,7 @@ impl FnLower<'_, '_> {
         modes: &[PassMode],
     ) -> Vec<Option<Operand>> {
         let mut out = vec![];
-        let later = later_each(args);
+        let later = self.later_each(args);
         for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             let t = self.vty(a.ty);
             let v = match (t, mode) {

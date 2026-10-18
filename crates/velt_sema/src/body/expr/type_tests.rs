@@ -45,7 +45,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
             }
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
             if is_place(&s) {
@@ -63,8 +63,9 @@ impl FnCx<'_, '_> {
             return self.mk(H::Block(block), str_, span);
         }
         let mut arms = vec![];
+        let mut nothings = self.nothing_arms(sty).into_iter();
         for (pat, t) in self.member_patterns(sty, span) {
-            let none = match self.cx.ty.nothing_of(sty) {
+            let none = match t.is_none().then(|| nothings.next()).flatten() {
                 Some(Nothing::Undefined) => "undefined",
                 _ => "object",
             };
@@ -126,8 +127,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         if tag == "undefined" {
-            let undef = nothing.is_some_and(|n| n.has_undefined());
-            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, undef, span);
+            let undef = |n: Nothing| n == Nothing::Undefined;
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &undef, span);
             return self.negated(test.expr, negate, span);
         }
         if !TYPEOF_TAGS.contains(&tag) {
@@ -139,8 +140,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let null_is_object = tag == "object" && nothing.is_none_or(|n| n.has_null());
-        let test = self.type_test(s, &pred, null_is_object, span);
+        let null_is_object = |n: Nothing| tag == "object" && n == Nothing::Null;
+        let test = self.type_test(s, &pred, &null_is_object, span);
         if let Some(what) = test.never_msg {
             self.cx.err(
                 format!("this `typeof` test is always false: no member of {what} is a \"{tag}\""),
@@ -264,7 +265,7 @@ impl FnCx<'_, '_> {
     /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
     /// union with class members)?
     fn testable_instance(&mut self, t: TyId) -> bool {
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let inner = self.cx.ty.core(t).unwrap_or(t);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         candidates.iter().any(|t| {
             self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
@@ -289,7 +290,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let testable = |t: &TyId| {
             self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
@@ -326,11 +327,11 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
-        let inner = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
         // A value of one type that is not a promise (`5 instanceof Promise`).
         let single = (self.cx.union_def(inner).is_none() && !pred(self.cx, inner))
             .then(|| self.cx.display(s.ty));
-        let test = self.type_test(s, &pred, false, span);
+        let test = self.type_test(s, &pred, &|_| false, span);
         if let Some(what) = test.never_msg {
             self.cx.err(
                 format!(
@@ -421,7 +422,7 @@ impl FnCx<'_, '_> {
             Err(Some(other)) => other,
             Err(None) => self.expr(other_e, None, Want::Borrow),
         };
-        let inner = self.cx.ty.opt_payload(other.ty).unwrap_or(other.ty);
+        let inner = self.cx.ty.core(other.ty).unwrap_or(other.ty);
         if let Some(done) = self.impossible_literal(other_e, inner, &lit, span) {
             return Some(LitEq::Done(done));
         }
@@ -515,7 +516,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if s.ty != inner {
-            p = self.pat(P::Some(Box::new(p)), s.ty, span);
+            p = self.present_pat(p, s.ty, span);
         }
         self.bool_match(s, Some(p), span)
     }
@@ -583,16 +584,17 @@ impl FnCx<'_, '_> {
         &mut self,
         s: hir::Expr,
         pred: &dyn Fn(&Ctx, TyId) -> bool,
-        null_matches: bool,
+        nothing_matches: &dyn Fn(Nothing) -> bool,
         span: Span,
     ) -> TypeTest {
         let sty = s.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let is_union = self.cx.union_def(inner).is_some();
         let mut alts = vec![];
+        let mut nothings = self.nothing_arms(sty).into_iter();
         for (p, t) in self.member_patterns(sty, span) {
             let yes = match t {
-                None => null_matches,
+                None => nothings.next().is_some_and(nothing_matches),
                 Some(t) => pred(self.cx, t),
             };
             if yes {
@@ -616,13 +618,14 @@ impl FnCx<'_, '_> {
         sty: TyId,
         span: Span,
     ) -> Vec<(hir::Pat, Option<TyId>)> {
-        let (inner, nullable) = match self.cx.ty.opt_payload(sty) {
+        let (inner, nullable) = match self.present_payload(sty) {
             Some(p) => (p, true),
             None => (sty, false),
         };
         let mut out = vec![];
-        if nullable {
-            out.push((self.pat(P::None, sty, span), None));
+        // One arm per nothing, in `nothing_arms` order.
+        for n in self.nothing_arms(sty) {
+            out.push((self.one_nothing_pat(n, sty, span), None));
         }
         let parts: Vec<(hir::Pat, TyId)> = match self.cx.union_def(inner) {
             Some((def, _)) => {
@@ -637,13 +640,22 @@ impl FnCx<'_, '_> {
         };
         for (p, t) in parts {
             let p = if nullable {
-                self.pat(P::Some(Box::new(p)), sty, span)
+                self.present_pat(p, sty, span)
             } else {
                 p
             };
             out.push((p, Some(t)));
         }
         out
+    }
+
+    /// The nothings of `sty`, in the order `member_patterns` gives their arms.
+    pub(crate) fn nothing_arms(&self, sty: TyId) -> Vec<Nothing> {
+        match self.cx.ty.nothing_of(sty) {
+            Some(Nothing::Both) => vec![Nothing::Undefined, Nothing::Null],
+            Some(n) => vec![n],
+            None => vec![],
+        }
     }
 
     /// `Variant(_)` of union `u`.
@@ -714,7 +726,7 @@ impl FnCx<'_, '_> {
 
     /// Hint for using a member of a union (or nullable union) value without narrowing it.
     pub(crate) fn narrowing_note(&self, t: TyId) -> Option<String> {
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let inner = self.cx.ty.core(t).unwrap_or(t);
         self.cx.union_def(inner)?;
         Some(format!(
             "`{}` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`",

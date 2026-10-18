@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
     ) -> Scrut {
         // A branded value is compared as its primitive (`case "admin":` on a `UserId`).
         let h = self.unbrand(h);
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let kind = if self.cx.union_def(inner).is_some() {
             ScrutKind::Union
         } else {
@@ -209,14 +209,14 @@ impl FnCx<'_, '_> {
     /// Slots of a union / nullable / `typeof` scrutinee: `null` first, then the live members.
     fn member_slots(&mut self, s: &hir::Expr, kind: &ScrutKind) -> (Vec<Slot>, bool) {
         let live = self.narrowed_live(s);
-        let inner = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
         let is_union = self.cx.union_def(inner).is_some();
         let mut out = vec![];
         let mut partial = false;
         for (k, (pat, member)) in self.member_patterns(s.ty, s.span).into_iter().enumerate() {
-            let has_null = self.cx.ty.opt_payload(s.ty).is_some();
+            let nothings = self.nothing_arms(s.ty).len();
             let variant = match (member, is_union) {
-                (Some(_), true) => Some((k - usize::from(has_null)) as u32),
+                (Some(_), true) => Some((k - nothings) as u32),
                 _ => None,
             };
             if variant.is_some_and(|v| live.as_ref().is_some_and(|l| !l.contains(&v))) {

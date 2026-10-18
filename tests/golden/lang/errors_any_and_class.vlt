@@ -1,0 +1,33 @@
+// check: no leaks
+// A `try` whose body throws both a class error and an `any`: the `catch` variable is an `any`
+// that holds either one (the class error is boxed into it).
+class AppErr extends Error {}
+
+function f(n: number, x: any): number {
+  try {
+    if (n > 5) {
+      throw new AppErr("big");
+    }
+    if (n > 3) {
+      throw x;
+    }
+    return n;
+  } catch (e) {
+    console.log("caught", e instanceof AppErr);
+    throw e;
+  }
+}
+
+function main(): void {
+  try {
+    f(9, 1);
+  } catch (e) {
+    console.log("outer", (e as Error).message);
+  }
+  try {
+    f(4, new RangeError("ranged"));
+  } catch (e) {
+    console.log("outer", (e as Error).message);
+  }
+  console.log(f(2, null));
+}

@@ -16,21 +16,34 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, TyId, TyKind};
+use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, Nothing, TyId, TyKind};
 
 use super::{ice, Cx};
 use crate::vir::{Ty, STR_AGG};
 
 impl<'h> Cx<'h> {
+    /// The kind of `t`, with a `T | null | undefined` seen as what its value is: an option of
+    /// a `T | null` whose own nothing is `undefined` (hir_encodings.md "Undefined"), so glue
+    /// and layout treat it as two nested options.
     pub(super) fn kind(&self, t: TyId) -> TyKind {
-        self.types.kind(t).clone()
+        match self.types.kind(t) {
+            TyKind::Option(_, Nothing::Both) => {
+                let mid = self
+                    .types
+                    .payload(t)
+                    .expect("ICE: option without a payload");
+                TyKind::Option(mid, Nothing::Undefined)
+            }
+            k => k.clone(),
+        }
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
-        // `TyTable::intern` makes an option of an option the inner one; with another nothing
-        // that would lose one (issue #930): report it.
+        // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
+        // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
-            if matches!(self.types.kind(*e), TyKind::Option(_, m) if m != n) {
+            if matches!(self.types.kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
+            {
                 self.nothing_clashes.push(self.cur_def);
             }
         }

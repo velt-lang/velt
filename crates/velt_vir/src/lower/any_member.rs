@@ -39,7 +39,7 @@ pub(super) const ST_NOT_FN: i128 = 2;
 
 impl Cx<'_> {
     /// The type `any`.
-    pub(super) fn any_ty(&mut self) -> TyId {
+    pub(in crate::lower) fn any_ty(&mut self) -> TyId {
         let i = self
             .hir
             .any_impl
@@ -179,6 +179,10 @@ impl FnLower<'_, '_> {
         };
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         let table = self.vtable_addr(VtableKey::Impl(imp, t));
+        let (data, table) = match self.cx.proxiable(t) {
+            true => self.proxy_any_parts(data, table),
+            false => (data, table),
+        };
         self.assign(proj(out, Proj::Field(0)), Rvalue::Use(data));
         self.assign(proj(out, Proj::Field(1)), Rvalue::Use(table));
     }

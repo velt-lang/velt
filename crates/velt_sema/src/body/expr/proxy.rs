@@ -4,8 +4,9 @@
 //! A proxy is a dynamic value: the `Proxy` object `new Proxy(...)` builds is converted to `any`
 //! at once, so every operation on it goes through the descriptor of the `Proxy` class, whose
 //! slots call the handler's traps (velt_vir `lower/any_proxy.rs`). TypeScript gives the
-//! expression the target's type `T`; a typed proxy (the tagged pointer of #823's design) comes
-//! later, so a proxy converted straight to a typed value is a compile error that says so.
+//! expression the target's type `T`; here it is an `any`, which converts to the typed value the
+//! context expects: a tagged pointer to the same `Proxy` object (velt_vir
+//! `lower/proxy_typed.rs`), so typed reads and writes still run the traps.
 //!
 //! The prelude's own dynamic operations do not count as the program using `any` members
 //! (`FnCx::note_dyn_members`); constructing a `Proxy` or calling `Reflect` in the program's
@@ -48,41 +49,20 @@ impl FnCx<'_, '_> {
 
     /// The `Proxy` object `h` (`new Proxy(...)` of class `d`) as an `any`; `h` itself for
     /// another class.
-    pub(crate) fn proxy_new(
-        &mut self,
-        d: DefId,
-        h: hir::Expr,
-        exp: Option<hir::TyId>,
-        span: Span,
-    ) -> hir::Expr {
+    pub(crate) fn proxy_new(&mut self, d: DefId, h: hir::Expr, span: Span) -> hir::Expr {
         if !self.user_proxy(d) {
             return h;
         }
         let Some(defs) = self.cx.any else {
             return h;
         };
-        if let Some(t) = exp {
-            let typed = !self.cx.maybe_dynamic(t)
-                && !self.cx.ty.is_bottom(t)
-                && !matches!(self.cx.ty.kind(t), hir::TyKind::Param(_));
-            if typed {
-                let tn = self.cx.display(t);
-                self.cx.error(
-                    Diagnostic::error(
-                        format!("a proxy cannot be used as a `{tn}` yet: it is an `any` (#823)"),
-                        span,
-                    )
-                    .with_note("give the variable or parameter the type `any`; typed proxies, which TypeScript gives the target's type, come later"),
-                );
-                return self.error_expr(span);
-            }
-        }
         let Some(impl_index) = self.cx.any_impl() else {
             return h;
         };
         // No write is noted here: every write that reaches the target through a proxy starts
         // at a write the program's own code makes (`p.k = v`, `Reflect.set`), noted there.
         self.cx.note_dyn_members();
+        self.cx.object_copies.proxies = true;
         let any = self.cx.ty.intern(hir::TyKind::Dyn(defs.any, vec![]));
         let kind = H::ToDyn {
             expr: Box::new(h),

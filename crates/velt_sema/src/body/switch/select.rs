@@ -170,6 +170,19 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return self.never_sel(s, span);
         }
+        if self.is_three_state(s.expr.ty) {
+            // One of the two nothing slots (`nothing_arms` order: `undefined`, then `null`).
+            let (which, k) = match word {
+                "null" => (crate::hir::Nothing::Null, 1),
+                _ => (crate::hir::Nothing::Undefined, 0),
+            };
+            return Sel {
+                pat: self.one_nothing_pat(which, s.expr.ty, span),
+                guard: None,
+                touched: vec![k],
+                covered: vec![k],
+            };
+        }
         match self.slot_sel(s, span, &|_, slot| slot.member.is_none()) {
             Some(sel) => sel,
             None => Sel {
@@ -212,7 +225,7 @@ impl FnCx<'_, '_> {
     /// covered; a literal of a base-type member only tests that value).
     fn union_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let (v, m) = match self.lit_member(inner, l) {
             Ok(x) => x,
             Err(msg) => {
@@ -247,7 +260,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         let touched = (0..s.slots.len())
             .filter(|&k| s.slots[k].variant == Some(v))
@@ -263,7 +276,7 @@ impl FnCx<'_, '_> {
     /// `case 5:` / `case "a":` on a plain (possibly nullable) value.
     fn plain_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if let Some(v) = self.cx.lit_value(inner) {
             if !lit_matches(&v, l) {
                 let tn = self.cx.display(inner);
@@ -284,7 +297,7 @@ impl FnCx<'_, '_> {
         };
         let mut pat = self.pat(P::Lit(lit), inner, span);
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         Sel {
             pat,

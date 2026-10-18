@@ -95,8 +95,8 @@ export class ReadableStreamDefaultController<R> {
   private bytes: bool = false;
 
   private constructor(source: UnderlyingSource<R>, hwm: number) {
-    this.pullFn = source.pull;
-    this.cancelFn = source.cancel;
+    this.pullFn = source.pull ?? null;
+    this.cancelFn = source.cancel ?? null;
     this.hwm = hwm;
   }
 

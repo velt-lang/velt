@@ -156,6 +156,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         BodyState::Unchecked => {}
     }
     let (module, qual, owner, mutable) = (g.module, g.qual_name.clone(), g.src.owner, g.mutable);
+    // A `const` kept in module state from the start (`module_chunks`), like a `let`.
+    let kept = g.stored;
     let (ann, init_expr, decl_span) = (g.src.ann, g.src.init, g.src.span);
     set_global_state(cx, d, BodyState::InProgress);
     cx.literal_hosts.in_constants += 1;
@@ -182,8 +184,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
-    let mut stored = mutable;
-    if let (Some(i), false) = (&init, mutable) {
+    let mut stored = mutable || kept;
+    if let (Some(i), false) = (&init, stored) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
         let cycles = cx.global_cycles;
         let mut own = Vec::new();
@@ -199,13 +201,18 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                 crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
             );
         // A constant that depends on itself stays an error (its value is never known).
-        // So does one that may throw or is a promise: module state is initialized where
-        // nothing can catch or await.
+        // So does one that is async: module state is initialized where nothing can await. One
+        // that may throw is kept: an error it throws ends the process while the module state
+        // is initialized, as Node stops at an error thrown while it evaluates a module.
         let cycle = cx.global_cycles != cycles || own.iter().any(|o| o.fatal);
         if top_level && (!own.is_empty() || function) && !cycle && ty != cx.ty.error {
             stored = true;
         } else {
-            cx.diags.extend(own.into_iter().map(|o| o.diag));
+            // A top-level constant whose type is already an error (reported where it arose)
+            // would be module state otherwise: only an async initializer stays worth reporting.
+            let errored = top_level && ty == cx.ty.error;
+            let own = own.into_iter().filter(|o| o.fatal || !errored);
+            cx.diags.extend(own.map(|o| o.diag));
         }
     }
     if stored && ty != cx.ty.error {
@@ -378,6 +385,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     let mut frame = Frame::new(f.kind, frame_ret);
     frame.is_async = f.is_async || f.is_async_gen;
     frame.yield_ty = yield_ty;
+    if yield_ty.is_some() {
+        let n = cx.generator_next_ty(f.ret);
+        frame.next_ty = (!cx.ty.is_bottom(n)).then_some(n);
+    }
     let enclosing_locals = cx
         .nested_locals
         .get(&def)
@@ -398,12 +409,14 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
             .collect(),
         FnSource::Default(..) => vec![],
     };
+    frame.assign_ends = super::assign_ends::assignment_ends(&body.stmts, defaults.clone());
     let assigned = super::assigned::assigned_by_closures(&body.stmts, defaults);
     frame.closure_assigned = super::closure_assigned::owned(assigned);
     let decided = cx.literal_types.get(&def).cloned().unwrap_or_default();
     let mut fcx = FnCx::new(cx, f.module, env, frame);
     fcx.literal.decided = decided;
     fcx.bounds = f.generics.bounds.clone();
+    fcx.constraints = f.generics.constraints.clone();
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
     fcx.body_def = Some(def);
@@ -420,6 +433,15 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     }
     let diags_before = fcx.cx.diags.len();
     let sig_params = &crate::body::defaults::fn_sig_ast(src).params;
+    if !f.is_generator {
+        fcx.default_prologue(
+            sig_params
+                .iter()
+                .zip(&f.params)
+                .map(|(p, q)| (&p.name, p.default.as_ref(), p.optional, q.ty)),
+            &mut stmts,
+        );
+    }
     fcx.destructure_params(
         sig_params
             .iter()
@@ -458,7 +480,12 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         ret: body_ret.unwrap_or(frame_ret),
         is_async: f.is_async || f.is_async_gen,
         is_generator: f.is_generator,
-        self_ty: f.this.as_ref().map(|t| t.ty),
+        // A function's `this` parameter is no method's receiver.
+        self_ty: f
+            .this
+            .as_ref()
+            .filter(|_| !f.has_this_param())
+            .map(|t| t.ty),
         captures: vec![],
         shares_captures: false,
         body: hir::Body {

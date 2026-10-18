@@ -147,7 +147,7 @@ fn index_signatures() {
     };
     assert_eq!(a.name.name, "D");
     assert_eq!(a.generics.len(), 1);
-    assert_eq!(ty(&a.ty), "{n: (T | null); readonly [string]: T}");
+    assert_eq!(ty(&a.ty), "{n: (T | undefined); readonly [string]: T}");
     assert_eq!(
         errors("interface W { [k: string]: i64; size(): i64; }"),
         ["an interface with an index signature and methods is not supported yet (#937)"]
@@ -256,7 +256,7 @@ fn infer_in_patterns() {
     );
     assert_eq!(
         alias_ty("T extends { a?: infer M } ? M : {}"),
-        "(T extends {a: (infer M | null)} ? M : {})"
+        "(T extends {a: (infer M | undefined)} ? M : {})"
     );
     // `infer` alone is a type named `infer`.
     assert_eq!(alias_ty("infer"), "infer");

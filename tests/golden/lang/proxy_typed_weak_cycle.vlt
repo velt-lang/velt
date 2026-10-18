@@ -1,0 +1,79 @@
+// check: no leaks
+// Weak maps whose entries run through typed proxies (#823): a value that refers to its proxy
+// key, a proxy key next to a plain one with `WeakSet` and `WeakRef` handles, a list whose tail
+// is a proxy, and a `raw -> proxy` cache (the proxy's target is its key), all freed with their
+// keys.
+class Node2 {
+  n: number = 1;
+  other: Node2 | null = null;
+}
+function logged(target: any): any {
+  return new Proxy(target, {});
+}
+
+const wm = new WeakMap<Node2, Node2>();
+function cyc2(m: WeakMap<Node2, Node2>): void {
+  const k = logged(new Node2()) as Node2;
+  const v = new Node2();
+  v.other = k;
+  m.set(k, v);
+}
+cyc2(wm);
+const ws = new WeakSet<Node2>();
+function plain(s: WeakSet<Node2>): void {
+  const k = new Node2();
+  s.add(k);
+}
+plain(ws);
+
+function both(m: WeakMap<Node2, Node2>, s: WeakSet<Node2>): WeakRef<Node2> {
+  const k = logged(new Node2()) as Node2;
+  const v = new Node2();
+  v.other = k;
+  m.set(k, v);
+  s.add(k);
+  const pk = new Node2();
+  const pv = new Node2();
+  pv.other = pk;
+  m.set(pk, pv);
+  s.add(pk);
+  return new WeakRef<Node2>(k);
+}
+const r = both(wm, ws);
+console.log(typeof r);
+
+function list(s: WeakSet<Node2>): void {
+  const a = new Node2();
+  a.other = logged(new Node2()) as Node2;
+  const b = new Node2();
+  b.other = a;
+  s.add(b);
+  s.add(a);
+}
+list(ws);
+
+class State {
+  n: number = 0;
+}
+function cache(): void {
+  const c = new WeakMap<State, State>();
+  const raw = new State();
+  const p = logged(raw) as State;
+  c.set(raw, p);
+  p.n = 5;
+  console.log(c.get(raw) === p, raw.n);
+}
+cache();
+
+// The cycle `raw -> entry -> proxy -> raw` is garbage once `cached` returns: Velt frees it
+// then (the `WeakRef` is empty), where Node frees it at a later collection.
+const cm = new WeakMap<State, State>();
+function cached(): WeakRef<State> {
+  const raw = new State();
+  const p = logged(raw) as State;
+  cm.set(raw, p);
+  return new WeakRef<State>(raw);
+}
+const w = cached();
+console.log(w.deref() == null);
+console.log("ok");

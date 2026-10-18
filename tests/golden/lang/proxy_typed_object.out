@@ -1,0 +1,13 @@
+get count
+set count 2
+get count
+set count 12
+get name
+set name ab
+get count
+get name
+12 ab
+12 ab
+{ count: 12, name: 'ab' }
+get count
+true 12

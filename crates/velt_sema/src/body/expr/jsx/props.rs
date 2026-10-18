@@ -301,7 +301,7 @@ impl FnCx<'_, '_> {
             .map(|(i, (name, ty))| {
                 let optional = optional.get(i).copied().unwrap_or(false);
                 let shown = match optional {
-                    true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                    true => self.cx.ty.core(ty).unwrap_or(ty),
                     false => ty,
                 };
                 CommonField {
@@ -382,11 +382,11 @@ impl FnCx<'_, '_> {
                 let over = self.nullish_exprs(h, prev, span);
                 match still {
                     true => (over, true),
-                    false => (self.jsx_coerce(over, p.attr_value, &note), false),
+                    false => (self.attr_coerce(over, p.attr_value, &note), false),
                 }
             }
             None if maybe_absent => (h, true),
-            _ => (self.jsx_coerce(h, p.attr_value, &note), false),
+            _ => (self.attr_coerce(h, p.attr_value, &note), false),
         };
         filled.given.push((n.to_string(), given));
         let extra = Extra {

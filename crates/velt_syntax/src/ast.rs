@@ -155,6 +155,9 @@ pub struct FnSig {
     pub is_async: bool,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
+    /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
+    /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
+    pub this_param: Option<Box<TypeExpr>>,
     pub span: Span,
 }
 

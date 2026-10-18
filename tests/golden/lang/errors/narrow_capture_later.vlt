@@ -1,0 +1,44 @@
+// A closure sees the narrowing a variable has where the closure is created only when the
+// function assigns the variable nowhere after that (also not in a loop around the closure,
+// whose next iteration assigns it again): the closure may run after the assignment. Each read
+// below is an error, as in tsc. Before, the closures read `null` as a string and a `B` as an
+// `A`.
+class A {
+  a = 1;
+}
+
+class B {
+  b = "bee";
+}
+
+function nullAfter(): number {
+  let x: string | null = null;
+  x = "abc";
+  const f = (): number => x.length;
+  x = null;
+  return f();
+}
+
+function memberAfter(): number {
+  let p: A | B = new B();
+  p = new A();
+  const f = (): number => p.a;
+  p = new B();
+  return f();
+}
+
+function inLoop(n: number): number {
+  const fs: (() => number)[] = [];
+  let x: string | null = "first";
+  for (let i = 0; i < n; i++) {
+    if (x !== null) {
+      fs.push(() => x.length);
+    }
+    x = i > 0 ? null : "second";
+  }
+  return fs.length;
+}
+
+function main() {
+  console.log(nullAfter(), memberAfter(), inLoop(3));
+}

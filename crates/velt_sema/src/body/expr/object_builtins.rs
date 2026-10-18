@@ -269,7 +269,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &crate::ctx::Ctx, t: TyId| matches!(cx.ty.kind(t), TyKind::Array(_));
-        self.type_test(s, &pred, false, span).expr
+        self.type_test(s, &pred, &|_| false, span).expr
     }
 
     /// `Object.is(a, b)`.

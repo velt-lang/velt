@@ -1,0 +1,84 @@
+// Narrowing by assignment holds only until the next assignment or join (#1237): each read below
+// is an error, on the same line as in tsc.
+function reassigned(): number {
+  let u: string | number = "x";
+  u = 5;
+  return u.length;
+}
+
+function joined(c: boolean): number {
+  let u: string | number = "x";
+  if (c) { u = 1; }
+  return u.length;
+}
+
+function otherMember(c: boolean): number {
+  let u: string | number = 0;
+  if (c) { u = "a"; } else { u = 1; }
+  return u.length;
+}
+
+function caseNull(k: number): number {
+  let x: string | null = "s";
+  switch (k) {
+    case 1:
+      x = "a";
+      x = null;
+      break;
+    default:
+      x = "c";
+  }
+  return x.length;
+}
+
+function breakNull(k: number, c: boolean): number {
+  let x: string | null = "s";
+  switch (k) {
+    case 1:
+      if (c) { x = null; break; }
+      x = "b";
+      break;
+    default:
+      x = "c";
+  }
+  return x.length;
+}
+
+// tsc misses this one (Node throws reading `null.length`): the `finally` runs after the
+// `break` and sets `x` to `null`.
+function finallyNull(k: number): number {
+  let x: string | null = "s";
+  switch (k) {
+    case 1:
+      try { x = "a"; break; } finally { x = null; }
+    default:
+      x = "c";
+  }
+  return x.length;
+}
+
+function noBreakState(k: number): number {
+  let x: string | null = "s";
+  switch (k) {
+    case 1:
+      x = "a";
+      break;
+    case 2:
+      x = null;
+  }
+  return x.length;
+}
+
+function whileBreak(x: string | null, c: boolean): number {
+  let y = x;
+  while (y === null) {
+    if (c) break;
+    y = "w";
+  }
+  return y.length;
+}
+
+function main() {
+  console.log(reassigned(), joined(true), otherMember(true), caseNull(1), breakNull(1, true));
+  console.log(finallyNull(1), noBreakState(2), whileBreak(null, true));
+}

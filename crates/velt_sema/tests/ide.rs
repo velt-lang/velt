@@ -308,7 +308,7 @@ function main() { const e = <a href=\"/x\">x</a>; }";
     assert_eq!(anchor.kind, DefKind::Field);
     assert_eq!(
         ty,
-        "{ href: string | null; class: string | null; title: string | null }"
+        "{ href: string | undefined; class: string | undefined; title: string | undefined }"
     );
     // The tag in the source names the same field, and its attributes are the members.
     let used = a.def_at(file, at(src, "<a", 0, 1)).expect("tag");
@@ -318,7 +318,10 @@ function main() { const e = <a href=\"/x\">x</a>; }";
         .into_iter()
         .map(|(n, _, t)| (n, t))
         .collect();
-    assert_eq!(attrs[0], ("href".to_string(), "string | null".to_string()));
+    assert_eq!(
+        attrs[0],
+        ("href".to_string(), "string | undefined".to_string())
+    );
     assert_eq!(attrs.len(), 3);
     // A file without JSX has no tags.
     let (plain, plain_file) = analyze("function main() {}");

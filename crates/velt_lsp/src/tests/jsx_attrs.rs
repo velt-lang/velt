@@ -71,7 +71,7 @@ fn component_attributes_complete_after_the_props() {
     let items = completion(&page, "<Card ");
     assert_eq!(labels(&items), ["title", "client:load", "client:media"]);
     let load = &items[1];
-    assert_eq!(load["detail"], "boolean | null");
+    assert_eq!(load["detail"], "boolean | undefined");
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn hover_shows_the_declared_type_and_docs() {
         .to_string();
     client.shutdown();
     assert!(text.contains("client:load"), "{text}");
-    assert!(text.contains("boolean | null"), "{text}");
+    assert!(text.contains("boolean | undefined"), "{text}");
     assert!(
         text.contains("Hydrate as soon as the page loads."),
         "{text}"

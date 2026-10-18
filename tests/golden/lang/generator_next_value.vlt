@@ -1,0 +1,70 @@
+// check: no leaks
+// `Generator<T, TReturn, TNext>`: `next(value)` resumes the paused `yield` with `value` (the
+// first call's value is ignored, as nothing is paused yet). A `yield` whose type holds
+// `undefined` gets it from a `next()` without a value.
+function* accumulate(): Generator<number, void, number> {
+  let total = 0;
+  while (total < 10) {
+    const x = yield total;
+    total += x;
+  }
+  console.log("total", total);
+}
+
+function* conversation(): Generator<string, void, string> {
+  const name = yield "who are you?";
+  const mood = yield `hello ${name}, how are you?`;
+  yield `${name} is ${mood}`;
+}
+
+function* untyped(): Generator<number, void, unknown> {
+  const a = yield 1;
+  console.log("a is", typeof a, a === undefined);
+  const b = (yield 2) as string;
+  console.log("b is", b);
+}
+
+class Counter {
+  step = 1;
+  *counts(): Generator<number, void, number> {
+    let n = 0;
+    while (true) {
+      const next = yield n;
+      n += next * this.step;
+      if (n > 6) {
+        return;
+      }
+    }
+  }
+}
+
+function main(): void {
+  const acc = accumulate();
+  console.log(acc.next(100).value);
+  console.log(acc.next(3).value);
+  console.log(acc.next(4).value);
+  const last = acc.next(5);
+  console.log(last.done);
+
+  const c = conversation();
+  console.log(c.next().value);
+  console.log(c.next("Ada").value);
+  console.log(c.next("fine").value);
+  console.log(c.next("ignored").done);
+
+  const u = untyped();
+  console.log(u.next().value);
+  console.log(u.next().value);
+  console.log(u.next("bee").done);
+
+  const counter = new Counter();
+  counter.step = 2;
+  const it = counter.counts();
+  const seen: number[] = [];
+  let r = it.next(0);
+  while (!r.done) {
+    seen.push(r.value);
+    r = it.next(1);
+  }
+  console.log(seen.join(","));
+}

@@ -64,8 +64,9 @@ fn extension_impl(
     };
     let (iface_args, gen) = match cx.ty.kind(ret) {
         TyKind::Dyn(d, args) if *d == iterator => (args.clone(), None),
+        // `[T, E]` of a `Generator<T, E, N>`.
         TyKind::Adt(_, args) if is_generator && generator_of(cx, ret, iterator) => {
-            (args.clone(), Some(ret))
+            (args[..2].to_vec(), Some(ret))
         }
         _ => return None,
     };

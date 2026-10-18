@@ -1,0 +1,135 @@
+// check: no leaks
+// A fuller sigx-style `signal()` (#823): effects and computed values tracked per key, nested
+// objects made reactive on read and cached per raw object, `$set` answered by the `get` trap,
+// a `Signal` passed where its plain type is expected, and a class state whose methods run
+// with `this` the proxy (read through the `get` trap first).
+type Todo = { title: string; done: boolean };
+type State = { count: number; todo: Todo };
+type Signal = State & { $set(v: State): void };
+
+type Effect = { run: () => void; deps: number };
+let active: Effect | null = null;
+const deps: Map<string, Effect[]> = new Map();
+
+function track(key: string): void {
+  const e = active;
+  if (e === null) return;
+  const list = deps.get(key);
+  if (list == null) {
+    deps.set(key, [e]);
+    e.deps++;
+  } else if (!list.includes(e)) {
+    list.push(e);
+    e.deps++;
+  }
+}
+
+function trigger(key: string): void {
+  const list = deps.get(key);
+  if (list == null) return;
+  for (const e of list.slice()) runEffect(e);
+}
+
+function runEffect(e: Effect): void {
+  const prev = active;
+  active = e;
+  e.run();
+  active = prev;
+}
+
+function effect(fn: () => void): Effect {
+  const e: Effect = { run: fn, deps: 0 };
+  runEffect(e);
+  return e;
+}
+
+let nextId = 0;
+
+function reactive(target: any): any {
+  // Nested proxies, one per key (sigx caches them per raw object in a `WeakMap`).
+  const cache: Map<string, any> = new Map();
+  const prefix = `#${nextId++}.`;
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      if (key === "$set") {
+        return (v: any): void => {
+          Reflect.set(receiver, "count", v.count);
+          Reflect.set(receiver, "todo", v.todo);
+        };
+      }
+      if (key === "__raw") return t;
+      track(prefix + String(key));
+      const v = Reflect.get(t, key);
+      if (typeof v === "object" && v !== null) {
+        const k = String(key);
+        const c = cache.get(k);
+        if (c != null && Reflect.get(c, "__raw") === v) return c;
+        const n = reactive(v);
+        cache.set(k, n);
+        return n;
+      }
+      return v;
+    },
+    set(t: any, key: string | symbol, value: any, receiver: any): boolean {
+      const old = Reflect.get(t, key);
+      const ok = Reflect.set(t, key, value);
+      if (old !== value) trigger(prefix + String(key));
+      return ok;
+    },
+  });
+}
+
+function signal(target: State): Signal {
+  return reactive(target) as Signal;
+}
+
+function computed(fn: () => string): () => string {
+  let value = "";
+  let dirty = true;
+  effect(() => {
+    value = fn();
+    dirty = false;
+    console.log("computed:", value);
+  });
+  return (): string => {
+    if (dirty) value = fn();
+    return value;
+  };
+}
+
+function describe(st: State): string {
+  return `${st.todo.title}${st.todo.done ? " (done)" : ""} x${st.count}`;
+}
+
+const s = signal({ count: 0, todo: { title: "write", done: false } });
+const label = computed(() => describe(s));
+effect(() => {
+  console.log("render:", s.count, s.todo.done);
+});
+s.count = 1;
+s.count++;
+s.todo.title = "test";
+s.todo.done = true;
+console.log("same nested proxy:", (s.todo as any) === (s.todo as any));
+s.$set({ count: 10, todo: { title: "ship", done: false } });
+s.todo.done = true;
+console.log(describe(s), label());
+
+class Cart {
+  items: number = 0;
+  total: number = 0;
+  add(price: number): void {
+    this.items = this.items + 1;
+    this.total = this.total + price;
+  }
+  summary(): string {
+    return `${this.items} items, ${this.total}`;
+  }
+}
+
+const cart = reactive(new Cart()) as Cart;
+effect(() => {
+  console.log("cart:", cart.summary());
+});
+cart.add(5);
+cart.add(7);

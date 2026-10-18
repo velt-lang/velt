@@ -179,7 +179,7 @@ impl Ctx<'_> {
 
     /// Is `t` `any` or `unknown`, or one of them or `null` (`any | null`)?
     pub(crate) fn maybe_dynamic(&self, t: TyId) -> bool {
-        let t = self.ty.opt_payload(t).unwrap_or(t);
+        let t = self.ty.core(t).unwrap_or(t);
         self.dynamic(t).is_some()
     }
 

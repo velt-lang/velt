@@ -1,0 +1,41 @@
+// check: no leaks
+// A module array that nothing reassigns, emptied or grown in place while `for...of` walks it
+// (#1161): the loop keeps its own reference to the array, re-reads the length every step and
+// shares each element, as for an array in a closure's cell.
+
+class T { constructor(public name: string) {} }
+const XS: T[] = [];
+let YS: T[] = [];
+let NS: number[] = [];
+function clr(): void { XS.length = 0; }
+function clrY(): void { YS.splice(0, YS.length); }
+function fill(): void {
+  for (let k = 0; k < 3; k++) {
+    XS.push(new T("x" + String(k)));
+    YS.push(new T("y" + String(k)));
+    NS.push(k + 1);
+  }
+}
+function clrN(): void { NS.length = 0; }
+function grow(): void { for (let k = 0; k < 100; k++) NS.push(k); }
+async function tick(): Promise<void> {}
+async function walkLater(): Promise<void> {
+  for (const x of XS) {
+    await tick();
+    clr();
+    await tick();
+    console.log("later", x.name, XS.length);
+  }
+}
+fill();
+for (const x of XS) { clr(); console.log(x.name, XS.length); }
+for (const y of YS) { clrY(); console.log(y.name, YS.length); }
+let sum = 0;
+for (const n of NS) { clrN(); sum += n; }
+console.log(sum, NS.length);
+NS.push(1, 2, 3);
+for (const n of NS) { grow(); sum += n; if (sum > 1000) break; }
+console.log(sum, NS.length);
+fill();
+await walkLater();
+console.log(XS.length);

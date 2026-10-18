@@ -61,7 +61,8 @@ impl FnLower<'_, '_> {
         if self.cx.counted(ty) {
             let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(src)));
             self.assign(dst, Rvalue::Use(p.clone()));
-            self.retain(p);
+            let c = self.count_ptr(p, ty);
+            self.retain(c);
         } else if self.cx.is_class(ty) {
             // Placeholder for this pass: the class is counted in the next one.
             self.cx.facts.unmet = true;
@@ -133,7 +134,8 @@ impl FnLower<'_, '_> {
         self.cx.note_share(ty);
         let d = Operand::Copy(Place::local(data));
         let out = if self.cx.counted(ty) {
-            self.retain(d.clone());
+            let c = self.count_ptr(d.clone(), ty);
+            self.retain(c);
             d
         } else if self.cx.share_kind(ty) == ShareKind::Closure {
             // A new box with a share of the function value: the same environment, so the

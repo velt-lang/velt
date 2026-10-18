@@ -129,6 +129,21 @@ export class JSON {
     return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
   }
 
+  /**
+   * `JSON.parse(text)` with its type from the context (`JSON.parse(text) as T`,
+   * `const t: T = JSON.parse(text)`, TypeScript's forms; the compiler calls this for them):
+   * `parse<T>`, except that a JSON `null` for an optional field whose type has no `null`
+   * (`a?: string`) fails the decode, as a value of another type does (JavaScript would give the
+   * field a `null` its type can't hold).
+   */
+  static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
+    let flags: i64 = 2;
+    if (options != null && options.unknownKeys == "reject") {
+      flags = 3;
+    }
+    return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
+  }
+
   /** Parses any JSON document (throws `JsonError`); of the options only `maxDepth` applies. */
   static parseValue(text: string, options: JsonParseOptions | null = null): JsonValue {
     return JsonValue.parse(text, options);

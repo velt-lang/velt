@@ -80,7 +80,7 @@ impl FnCx<'_, '_> {
         if ret == want {
             return false;
         }
-        let inner = self.cx.ty.opt_payload(want).unwrap_or(want);
+        let inner = self.cx.ty.core(want).unwrap_or(want);
         inner == ret
             || self
                 .cx

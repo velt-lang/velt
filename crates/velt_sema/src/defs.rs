@@ -18,6 +18,11 @@ pub(crate) struct Generics {
     /// parameters before it), used when nothing infers it; `None` without one. Empty when
     /// no parameter has one (a type's defaults live in `crate::type_defaults`).
     pub defaults: Vec<Option<TyId>>,
+    /// Per parameter, a bound that is a type rather than an interface (`T extends Record<string,
+    /// V>`, `T extends string | number`, `T extends readonly X[]`), in terms of the parameters:
+    /// a type argument must be assignable to it (`crate::constraints`). Empty when no parameter
+    /// has one.
+    pub constraints: Vec<Option<TyId>>,
 }
 
 impl Generics {
@@ -246,6 +251,17 @@ pub(crate) struct FnInfo<'m> {
 }
 
 impl FnInfo<'_> {
+    /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose
+    /// `this` is a leading parameter that callers pass (`body::expr::this_param`)?
+    pub fn has_this_param(&self) -> bool {
+        matches!(self.kind, FnKind::Free | FnKind::Closure)
+            && self.this.is_some()
+            && self.source.is_some_and(|s| match s {
+                FnSource::Decl(d) => d.sig.this_param.is_some(),
+                _ => false,
+            })
+    }
+
     /// The type the polymorphic `this` type resolves to in this function: its class in an
     /// instance method.
     pub fn this_type(&self) -> Option<TyId> {
@@ -339,6 +355,7 @@ pub(crate) struct AdtInfo<'m> {
     pub decl: Option<&'m ast::TypeDecl>,
 }
 
+#[derive(Clone)]
 pub(crate) struct VariantInfo {
     pub name: String,
     pub payload: Vec<TyId>,

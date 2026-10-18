@@ -133,7 +133,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Handle the `Result` of a throwing `main`; yields the exit code for the Ok case.
-    fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
+    pub(super) fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
         let rty = self.cx.intern(TyKind::Result(ret, err));
         let rp = Place::local(res);
         let tag = Operand::Copy(proj(&rp, Proj::Field(0)));

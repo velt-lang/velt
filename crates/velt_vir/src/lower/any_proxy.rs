@@ -69,7 +69,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The proxy itself (`data`, of type `ty`) as an owned `any`: the receiver its traps see.
-    fn proxy_receiver(&mut self, data: vir::Local, ty: TyId) -> Place {
+    pub(super) fn proxy_receiver(&mut self, data: vir::Local, ty: TyId) -> Place {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let out = Place::local(self.temp(avt));

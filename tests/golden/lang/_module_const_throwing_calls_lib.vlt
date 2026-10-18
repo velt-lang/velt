@@ -1,0 +1,7 @@
+type Limits = { max: number };
+
+export const LIMITS: Limits = JSON.parse('{"max": 3}');
+
+export function limit(n: number): number {
+  return n > LIMITS.max ? LIMITS.max : n;
+}
