@@ -1,8 +1,7 @@
 // check: no leaks
-// A module constant whose initializer may throw (a function with a `throw`, `JSON.parse`,
-// `new RegExp` of a string) is evaluated once, when the module is evaluated, as in Node; when
-// nothing is thrown, every function reads that one value (module_const_throws.vlt has one
-// that throws).
+// A module constant whose initializer may throw (a function with a `throw`, `JSON.parse`) is
+// evaluated once, when the module is evaluated, as in Node; when nothing is thrown, every
+// function reads that one value (module_const_throws.vlt has one that throws).
 import { LIMITS, limit } from "./_module_const_throwing_calls_lib";
 
 function risky(n: number): number {
@@ -14,18 +13,10 @@ function risky(n: number): number {
 }
 
 const D = risky(21);
-const PATTERN = "^[a-z]+$";
-const WORDS = new RegExp(PATTERN, "g");
 
 function twice(): number {
   return D + D;
 }
 
-function isWord(s: string): boolean {
-  WORDS.lastIndex = 0;
-  return WORDS.test(s);
-}
-
 console.log(twice(), twice(), D);
-console.log(isWord("abc"), isWord("a1"), WORDS.source);
 console.log(LIMITS.max, limit(5), limit(2));

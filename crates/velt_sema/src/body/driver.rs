@@ -208,7 +208,11 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         if top_level && (!own.is_empty() || function) && !cycle && ty != cx.ty.error {
             stored = true;
         } else {
-            cx.diags.extend(own.into_iter().map(|o| o.diag));
+            // A top-level constant whose type is already an error (reported where it arose)
+            // would be module state otherwise: only an async initializer stays worth reporting.
+            let errored = top_level && ty == cx.ty.error;
+            let own = own.into_iter().filter(|o| o.fatal || !errored);
+            cx.diags.extend(own.map(|o| o.diag));
         }
     }
     if stored && ty != cx.ty.error {

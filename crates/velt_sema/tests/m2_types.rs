@@ -512,6 +512,12 @@ fn imports_exports_and_intrinsics() {
         "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
     );
     ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
+    // An initializer that may throw makes the constant module state; one whose type is an
+    // error reports only that error.
+    ok_src("function f(n: i64): i64 { if (n < 0) { throw new Error(\"x\"); } return n; } const D = f(1); function main() { console.log(D); }");
+    let r = err_src("const BAD = JSON.parse(\"{bad\"); function main() { console.log(BAD); }");
+    assert!(r.contains("cannot infer type parameter"), "{r}");
+    assert!(!r.contains("may throw"), "{r}");
     // A module-level `let` is module state; an imported one is read-only where imported.
     ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
     let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
