@@ -292,6 +292,9 @@ impl FnCx<'_, '_> {
             self.expr(rhs, exp, Want::Move);
             return self.error_expr(span);
         };
+        if payload == self.cx.ty.never {
+            return self.always_nullish(s, rhs, exp, span);
+        }
         let (l, mode) = self.option_binding(&s, payload, "<nullish>", !keep);
         if mode == UseMode::Move {
             self.force_move(&mut s);
@@ -303,6 +306,32 @@ impl FnCx<'_, '_> {
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
         self.nullish_match(s, l, mode, payload, d, span)
+    }
+
+    /// `s ?? rhs` where `s` is `null` or `undefined` alone (an option of `never`): `rhs`, after
+    /// `s` is evaluated.
+    fn always_nullish(
+        &mut self,
+        s: hir::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let hint = exp.filter(|_| !super::ops::untyped(rhs));
+        let d = self.expr(rhs, hint, Want::Move);
+        if matches!(s.kind, H::Lit(_) | H::Local(..)) {
+            return d;
+        }
+        let ty = d.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(s),
+                span,
+            }],
+            value: Some(Box::new(d)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
     }
 
     /// `s ?? d` for checked HIR operands (an optional field over an earlier one in an object

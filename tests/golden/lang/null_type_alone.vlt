@@ -21,6 +21,18 @@ function always(): null {
   return null;
 }
 
+function nothing(): undefined {
+  return undefined;
+}
+
+// `??` on a value that is always `null` (or always `undefined`) gives the right side.
+function defaults(s: State): string {
+  const n: null = null;
+  const u: undefined = undefined;
+  const v = s.st === "idle" ? s.value ?? 3 : 0;
+  return `${v} ${n ?? 4} ${always() ?? 5} ${u ?? 6} ${nothing() ?? 7}`;
+}
+
 function main() {
   const states: State[] = [
     { st: "idle", value: null, error: null },
@@ -32,4 +44,5 @@ function main() {
   const u: string | null = n;
   console.log(n, u, JSON.stringify(states[0]), typeof n, n === null, n ?? "fallback");
   console.log(states[1]);
+  console.log(defaults(states[0]));
 }
