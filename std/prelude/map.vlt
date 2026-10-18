@@ -126,15 +126,15 @@ export class Map<K, V> {
   }
 
   /**
-   * The value stored for `key`, or null. Like JS it is the stored value itself: an object is
-   * shared (another reference to it), a number or string is copied.
+   * The value stored for `key`, or `undefined` when it has none. Like JS it is the stored value
+   * itself: an object is shared (another reference to it), a number or string is copied.
    */
-  get(key: K): V | null {
+  get(key: K): V | undefined {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
-      return null;
+      return undefined;
     }
-    return __intrinsic_share(this.entryValues[e as usize]);
+    return sharedValue(this.entryValues[e as usize]);
   }
 
   /**

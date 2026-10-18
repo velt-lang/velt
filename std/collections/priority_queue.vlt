@@ -37,11 +37,11 @@ export class PriorityQueue<T> {
     this.siftUp(this.heap.length - 1);
   }
 
-  /** Removes and returns the first element in `cmp` order, or null if empty (O(log n)). */
-  pop(): T | null {
+  /** Removes and returns the first element in `cmp` order, or `undefined` if empty (O(log n)). */
+  pop(): T | undefined {
     const n = this.heap.length;
     if (n == 0) {
-      return null;
+      return undefined;
     }
     __intrinsic_array_swap(this.heap, 0, n - 1);
     const top = this.heap.pop();
@@ -49,10 +49,10 @@ export class PriorityQueue<T> {
     return top;
   }
 
-  /** A clone of the first element in `cmp` order, or null if empty. */
-  peek(): T | null {
+  /** A clone of the first element in `cmp` order, or `undefined` if empty. */
+  peek(): T | undefined {
     if (this.heap.length == 0) {
-      return null;
+      return undefined;
     }
     return this.heap[0].clone();
   }

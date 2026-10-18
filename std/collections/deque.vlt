@@ -59,19 +59,19 @@ export class Deque<T> {
     this.count++;
   }
 
-  /** Removes and returns the back element, or null if empty. */
-  popBack(): T | null {
+  /** Removes and returns the back element, or `undefined` if empty. */
+  popBack(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     this.count--;
     return this.take((this.head + this.count) & (this.capacity() - 1));
   }
 
-  /** Removes and returns the front element, or null if empty. */
-  popFront(): T | null {
+  /** Removes and returns the front element, or `undefined` if empty. */
+  popFront(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
     const value = this.take(this.head);
     this.head = (this.head + 1) & (this.capacity() - 1);
@@ -79,33 +79,33 @@ export class Deque<T> {
     return value;
   }
 
-  /** A clone of the front element, or null if empty. */
-  peekFront(): T | null {
+  /** A clone of the front element, or `undefined` if empty. */
+  peekFront(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
-    return this.slots[this.head].clone();
+    return this.slots[this.head].clone() ?? undefined;
   }
 
-  /** A clone of the back element, or null if empty. */
-  peekBack(): T | null {
+  /** A clone of the back element, or `undefined` if empty. */
+  peekBack(): T | undefined {
     if (this.count == 0) {
-      return null;
+      return undefined;
     }
-    return this.slots[(this.head + this.count - 1) & (this.capacity() - 1)].clone();
+    return this.slots[(this.head + this.count - 1) & (this.capacity() - 1)].clone() ?? undefined;
   }
 
   /**
    * A clone of the element `i` places from the front (negative `i` counts from the back, like
-   * `Array.prototype.at`), or null if out of range.
+   * `Array.prototype.at`), or `undefined` if out of range.
    */
-  at(i: i64): T | null {
+  at(i: i64): T | undefined {
     const n = this.count as i64;
     const k = i < 0 ? i + n : i;
     if (k < 0 || k >= n) {
-      return null;
+      return undefined;
     }
-    return this.slots[(this.head + (k as usize)) & (this.capacity() - 1)].clone();
+    return this.slots[(this.head + (k as usize)) & (this.capacity() - 1)].clone() ?? undefined;
   }
 
   /** Removes every element (keeps the buffer). */
@@ -140,13 +140,13 @@ export class Deque<T> {
   }
 
   // Moves the element out of ring slot `s`, leaving null behind (see the module comment).
-  private take(s: usize): T | null {
+  private take(s: usize): T | undefined {
     const spare = this.slots.length - 1;
     __intrinsic_array_swap(this.slots, s, spare);
     const value = this.slots.pop();
     this.slots.push(null);
     // `pop()` on `(T | null)[]` is a nested option for a generic `T`; flatten it.
-    return value ?? null;
+    return value ?? undefined;
   }
 
   // Makes room for one more element, doubling the ring when it is full.

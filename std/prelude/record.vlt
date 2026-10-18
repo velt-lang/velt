@@ -48,7 +48,7 @@ export class Record<K, V> {
   // JavaScript's order (`__perm`).
   private unordered: bool = false;
 
-  __get(key: K): V | null {
+  __get(key: K): V | undefined {
     return this.entries.get(key);
   }
 

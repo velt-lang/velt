@@ -224,13 +224,7 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(payload).is_none() {
             return h;
         }
-        // The standard library's `T | null` results are JavaScript's `undefined` when absent
-        // (`Map.get`, `find`, `pop`, a `Record` index).
-        let nothing = if self.std_result(&h) {
-            Nothing::Undefined
-        } else {
-            self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null)
-        };
+        let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
         if is_place(&h) {
             // A field or variable keeps its value: the result is a share of it.
             set_place_mode(&mut h, UseMode::Borrow);
