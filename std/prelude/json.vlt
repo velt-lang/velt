@@ -2,7 +2,7 @@
 //
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
-// throw `JsonError { message }` like "expected string at $.name". The stringify glue writes a
+// throw a `SyntaxError` `JsonError` ("expected string at $.name"). The stringify glue writes a
 // `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.#handle)`.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
@@ -65,8 +65,8 @@ struct JsonHandleSlot {
   handle: u64;
 }
 
-/** Invalid JSON, or JSON that does not match the type asked for. */
-export class JsonError extends Error {
+/** Invalid JSON, or JSON that does not match the type asked for: a `SyntaxError`, as in JS. */
+export class JsonError extends SyntaxError {
   /** An error with the given `message`, such as "expected string at $.name". */
   constructor(message: string) {
     super(message);

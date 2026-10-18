@@ -123,7 +123,10 @@ fn async_main_uncaught() {
     pb.add_main(f.build_async(body));
     let out = run(&pb.finish());
     assert_eq!(out.stdout, "before\n");
-    assert_eq!(out.stderr, "Uncaught IoError: no such file: nope\n");
+    assert_eq!(
+        out.stderr,
+        "Uncaught IoError { code: 'ENOENT', message: 'no such file: nope' }\n"
+    );
     assert_eq!(out.code, 1);
 }
 
@@ -197,7 +200,10 @@ fn stored_promises_of_throwing_fns() {
     assert_eq!(out.stdout, "[ 'A', 'BB' ]\nBB\n");
     let out = run(&stored_throwing_promises(true));
     assert_eq!(out.stdout, "[ 'A', 'BB' ]\n");
-    assert_eq!(out.stderr, "Uncaught IoError: no such file: missing.txt\n");
+    assert_eq!(
+        out.stderr,
+        "Uncaught IoError { code: 'ENOENT', message: 'no such file: missing.txt' }\n"
+    );
     assert_eq!(out.code, 1);
 }
 

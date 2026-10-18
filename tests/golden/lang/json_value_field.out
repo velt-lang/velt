@@ -2,5 +2,5 @@ n [1,2,{"x":true}] true
 {"handle":4096} 4096
 {"items":[null,"s",3.5,{}]}
 {"k":[true]}
-invalid JSON at $.v: unexpected character '}' (byte 19)
+Unexpected token '}', "{"name":"x","v":[1,}" is not valid JSON
 expected field "v" at $
