@@ -149,7 +149,12 @@ impl FnCx<'_, '_> {
             {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) if t != self.cx.ty.error && !self.cx.ty.has_error(t) => {
+            // A type argument still to infer (`tag(null)`): `null` alone.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.null_alone();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) if !self.cx.ty.has_error(t) => {
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -175,6 +180,11 @@ impl FnCx<'_, '_> {
         match exp {
             Some(t) if self.cx.dynamic(t).is_some() => {
                 self.dynamic_nothing(Nothing::Undefined, t, span)
+            }
+            // A type argument still to infer (`tag(undefined)`): `undefined` alone, as below.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
             }
             Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
             Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {

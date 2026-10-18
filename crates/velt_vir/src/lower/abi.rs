@@ -73,6 +73,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             proxy_recv: None,
             super_call: false,
             same_mode: false,
+            value_mode: false,
             key_mode: false,
             init_locals: false,
             ctor_self: None,

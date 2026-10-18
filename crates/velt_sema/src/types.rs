@@ -15,6 +15,8 @@ pub(crate) struct Types {
     pub u64: TyId,
     pub usize: TyId,
     pub f64: TyId,
+    /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
+    pub bigint_named: bool,
 }
 
 impl Types {
@@ -42,7 +44,14 @@ impl Types {
             u64,
             usize,
             f64,
+            bigint_named: false,
         }
+    }
+
+    /// The type `bigint` names: `never`, since no value is a `bigint` yet (#1088).
+    pub fn bigint(&mut self) -> TyId {
+        self.bigint_named = true;
+        self.never
     }
 
     pub fn intern(&mut self, k: TyKind) -> TyId {
