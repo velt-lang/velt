@@ -28,7 +28,7 @@ Infinity 2147483647 -2147483648 4294967295 0
 ties 16777220 4294967296 16777220 16777220
 index 0 1 2 3
 loadPartial -8 16 0 0
-loadPartial past the end 0 0 0 0
+loadPartial at the end 0 0 0 0
 storePartial 7 1.5 -2
 store 0 1.5 9 0
 add 1 0

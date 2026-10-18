@@ -11,6 +11,7 @@ use masks::mask;
 use reshape::{convert, narrow, widen, zip};
 
 mod masks;
+mod partial;
 mod reshape;
 
 /// The instruction sets a helper's body depends on.
@@ -171,6 +172,11 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
                 .push_str(&format!("  store {ty} {x}, ptr {p}, align {align}\n"));
             return None;
         }
+        Op::StorePartial => {
+            partial::store(b, lanes);
+            return None;
+        }
+        Op::LoadPartial => return Some(partial::load(b, lanes)),
         // These give something other than this vector type.
         Op::Fits => return Some(fits(b, lanes.count())),
         Op::As(_) => return Some("%a0".to_string()),

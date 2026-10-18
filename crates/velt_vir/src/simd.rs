@@ -128,6 +128,13 @@ pub enum Op {
     Load,
     /// `(v, array: ptr, at: u64)`: writes the lanes to elements `at..`, unchecked.
     Store,
+    /// `(array: ptr, at: u64, count: u64) -> v`: elements `at..at + count` in the low lanes and
+    /// 0 in the others, for `count` below the lane count, unchecked. A few scalar loads that
+    /// stay inside those elements, not one per lane.
+    LoadPartial,
+    /// `(v, array: ptr, at: u64, count: u64)`: writes the low `count` lanes (below the lane
+    /// count) to elements `at..`, unchecked, with a few scalar stores.
+    StorePartial,
     /// `(v, index: u64) -> lane`: one lane; the index is in range (the prelude checks it).
     Lane,
     /// `(v, index: u64, lane) -> v`: `v` with one lane replaced; the index is in range.
@@ -263,6 +270,8 @@ impl SimdCall {
                 Op::Fits => (vec![Ptr, U64], Bool),
                 Op::Load => (vec![Ptr, U64], V128),
                 Op::Store => (vec![V128, Ptr, U64], Unit),
+                Op::LoadPartial => (vec![Ptr, U64, U64], V128),
+                Op::StorePartial => (vec![V128, Ptr, U64, U64], Unit),
                 Op::Lane => (vec![V128, U64], lanes.scalar()),
                 Op::WithLane => (vec![V128, U64, lanes.scalar()], V128),
                 Op::Neg
@@ -320,6 +329,8 @@ fn vector_op(name: &str) -> Option<Op> {
         "fits" => Op::Fits,
         "load" => Op::Load,
         "store" => Op::Store,
+        "load_partial" => Op::LoadPartial,
+        "store_partial" => Op::StorePartial,
         "lane" => Op::Lane,
         "with_lane" => Op::WithLane,
         "add" => Op::Add,

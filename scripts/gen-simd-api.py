@@ -47,6 +47,7 @@ def vector(l,n):
     def decl(op,params,ret=None):
         d.append(f"declare function {P}{op}({params}){': '+ret if ret else ''};")
     decl("fits",f"xs: {l}[], at: u64","bool"); decl("splat",f"x: {l}",T); decl("index","",T); decl("load",f"from: {l}[], at: u64",T); decl("store",f"v: {T}, to: {l}[], at: u64")
+    decl("load_partial",f"from: {l}[], at: u64, count: u64",T); decl("store_partial",f"v: {T}, to: {l}[], at: u64, count: u64")
     decl("lane",f"v: {T}, index: u64",l); decl("with_lane",f"v: {T}, index: u64, x: {l}",T)
     decl("select",f"m: {M}, a: {T}, b: {T}",T)
     m.append(f"""  /** A vector with every lane `x`. */
@@ -82,19 +83,16 @@ def vector(l,n):
   /**
    * The elements of `from` starting at `at` that exist, up to {n}, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take {n} at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
    */
   static loadPartial(from: {l}[], at: usize = 0): {T} {{
     if ({T}.fits(from, at)) {{
       return {P}load(from, at as u64);
     }}
-    let v = {P}splat(0);
-    if (at < from.length) {{
-      const left = from.length - at;
-      for (let k: usize = 0; k < left; k++) {{
-        v = {P}with_lane(v, k as u64, from[at + k]);
-      }}
+    if (at > from.length) {{
+      panic("RangeError: {T}.loadPartial: position is out of range");
     }}
-    return v;
+    return {P}load_partial(from, at as u64, (from.length - at) as u64);
   }}
 
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
@@ -115,17 +113,18 @@ def vector(l,n):
 
   /**
    * Writes the low lanes to the elements of `to` starting at `at` that exist, up to {n} (the
-   * array does not grow): what `loadPartial` read, back.
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
    */
   storePartial(to: {l}[], at: usize = 0) {{
     if ({T}.fits(to, at)) {{
       {P}store(this, to, at as u64);
-    }} else if (at < to.length) {{
-      const left = to.length - at;
-      for (let k: usize = 0; k < left; k++) {{
-        to[at + k] = {P}lane(this, k as u64);
-      }}
+      return;
     }}
+    if (at > to.length) {{
+      panic("RangeError: {T}.storePartial: position is out of range");
+    }}
+    {P}store_partial(this, to, at as u64, (to.length - at) as u64);
   }}
 
   /** Lane `index` (0 to {n-1}; panics with a RangeError otherwise). */

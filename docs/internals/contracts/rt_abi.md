@@ -344,7 +344,8 @@ them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdC
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
-check it: the prelude's methods do.
+check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
+too, below the lane count, and touch only those elements.
 
 ## Module state [additive, #76]
 

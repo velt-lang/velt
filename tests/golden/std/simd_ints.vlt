@@ -542,6 +542,240 @@ function testI8x16(): i64 {
     65,
     126,
   ]);
+  n += lanesI8x16("i8x16.loadPartial(2)", i8x16.loadPartial(out, 2), [
+    1,
+    127,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(3)", i8x16.loadPartial(out, 3), [
+    127,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(4)", i8x16.loadPartial(out, 4), [
+    1,
+    -128,
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(5)", i8x16.loadPartial(out, 5), [
+    -128,
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(6)", i8x16.loadPartial(out, 6), [
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(7)", i8x16.loadPartial(out, 7), [
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(8)", i8x16.loadPartial(out, 8), [
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(9)", i8x16.loadPartial(out, 9), [
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(10)", i8x16.loadPartial(out, 10), [
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(11)", i8x16.loadPartial(out, 11), [
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(12)", i8x16.loadPartial(out, 12), [
+    3,
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(13)", i8x16.loadPartial(out, 13), [
+    100,
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.loadPartial(14)", i8x16.loadPartial(out, 14), [
+    0,
+    65,
+    126,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
   n += lanesI8x16("i8x16.loadPartial(15)", i8x16.loadPartial(out, 15), [
     65,
     126,
@@ -596,7 +830,7 @@ function testI8x16(): i64 {
     0,
     0,
   ]);
-  n += lanesI8x16("i8x16.loadPartial(23)", i8x16.loadPartial(out, 23), [
+  n += lanesI8x16("i8x16.loadPartial(18)", i8x16.loadPartial(out, 18), [
     0,
     0,
     0,
@@ -616,7 +850,7 @@ function testI8x16(): i64 {
   ]);
   const few: i8[] = [0, 1, 127, -128, 126, 5, 100, -127, 3, 77, 63, -64, 9, 64, 2];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 19);
+  vb.storePartial(few, 15);
   n += lanesI8x16("i8x16.storePartial", i8x16.loadPartial(few), [
     0,
     1,
@@ -1100,6 +1334,240 @@ function testU8x16(): i64 {
     65,
     254,
   ]);
+  n += lanesU8x16("u8x16.loadPartial(2)", u8x16.loadPartial(out, 2), [
+    1,
+    255,
+    1,
+    1,
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(3)", u8x16.loadPartial(out, 3), [
+    255,
+    1,
+    1,
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(4)", u8x16.loadPartial(out, 4), [
+    1,
+    1,
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(5)", u8x16.loadPartial(out, 5), [
+    1,
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(6)", u8x16.loadPartial(out, 6), [
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(7)", u8x16.loadPartial(out, 7), [
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(8)", u8x16.loadPartial(out, 8), [
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(9)", u8x16.loadPartial(out, 9), [
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(10)", u8x16.loadPartial(out, 10), [
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(11)", u8x16.loadPartial(out, 11), [
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(12)", u8x16.loadPartial(out, 12), [
+    3,
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(13)", u8x16.loadPartial(out, 13), [
+    100,
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.loadPartial(14)", u8x16.loadPartial(out, 14), [
+    0,
+    65,
+    254,
+    7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
   n += lanesU8x16("u8x16.loadPartial(15)", u8x16.loadPartial(out, 15), [
     65,
     254,
@@ -1154,7 +1622,7 @@ function testU8x16(): i64 {
     0,
     0,
   ]);
-  n += lanesU8x16("u8x16.loadPartial(23)", u8x16.loadPartial(out, 23), [
+  n += lanesU8x16("u8x16.loadPartial(18)", u8x16.loadPartial(out, 18), [
     0,
     0,
     0,
@@ -1174,7 +1642,7 @@ function testU8x16(): i64 {
   ]);
   const few: u8[] = [0, 1, 255, 0, 254, 5, 100, 1, 3, 77, 127, 200, 9, 64, 2];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 19);
+  vb.storePartial(few, 15);
   n += lanesU8x16("u8x16.storePartial", u8x16.loadPartial(few), [
     0,
     1,
@@ -1359,13 +1827,54 @@ function testI16x8(): i64 {
     5,
     27,
   ]);
+  n += lanesI16x8("i16x8.loadPartial(2)", i16x8.loadPartial(out, 2), [
+    1,
+    32767,
+    1,
+    -32768,
+    2,
+    5,
+    27,
+    32767,
+  ]);
+  n += lanesI16x8("i16x8.loadPartial(3)", i16x8.loadPartial(out, 3), [
+    32767,
+    1,
+    -32768,
+    2,
+    5,
+    27,
+    32767,
+    0,
+  ]);
+  n += lanesI16x8("i16x8.loadPartial(4)", i16x8.loadPartial(out, 4), [
+    1,
+    -32768,
+    2,
+    5,
+    27,
+    32767,
+    0,
+    0,
+  ]);
+  n += lanesI16x8("i16x8.loadPartial(5)", i16x8.loadPartial(out, 5), [
+    -32768,
+    2,
+    5,
+    27,
+    32767,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI16x8("i16x8.loadPartial(6)", i16x8.loadPartial(out, 6), [2, 5, 27, 32767, 0, 0, 0, 0]);
   n += lanesI16x8("i16x8.loadPartial(7)", i16x8.loadPartial(out, 7), [5, 27, 32767, 0, 0, 0, 0, 0]);
   n += lanesI16x8("i16x8.loadPartial(8)", i16x8.loadPartial(out, 8), [27, 32767, 0, 0, 0, 0, 0, 0]);
   n += lanesI16x8("i16x8.loadPartial(9)", i16x8.loadPartial(out, 9), [32767, 0, 0, 0, 0, 0, 0, 0]);
-  n += lanesI16x8("i16x8.loadPartial(15)", i16x8.loadPartial(out, 15), [0, 0, 0, 0, 0, 0, 0, 0]);
+  n += lanesI16x8("i16x8.loadPartial(10)", i16x8.loadPartial(out, 10), [0, 0, 0, 0, 0, 0, 0, 0]);
   const few: i16[] = [0, 1, 32767, -32768, 32766, 5, 100];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 11);
+  vb.storePartial(few, 7);
   n += lanesI16x8("i16x8.storePartial", i16x8.loadPartial(few), [0, 1, 32767, 1, -32768, 2, 5, 0]);
   n += bitmask("mask16x8.prefix(0)", mask16x8.prefix(0).bitmask(), 0);
   n += bitmask("mask16x8.prefix(1)", mask16x8.prefix(1).bitmask(), 1);
@@ -1509,13 +2018,36 @@ function testU16x8(): i64 {
   n += lanesU16x8("u16x8.index", u16x8.index(), [0, 1, 2, 3, 4, 5, 6, 7]);
   n += lanesU16x8("u16x8.loadPartial(0)", u16x8.loadPartial(out, 0), [0, 0, 1, 65535, 1, 1, 2, 5]);
   n += lanesU16x8("u16x8.loadPartial(1)", u16x8.loadPartial(out, 1), [0, 1, 65535, 1, 1, 2, 5, 27]);
+  n += lanesU16x8("u16x8.loadPartial(2)", u16x8.loadPartial(out, 2), [
+    1,
+    65535,
+    1,
+    1,
+    2,
+    5,
+    27,
+    65535,
+  ]);
+  n += lanesU16x8("u16x8.loadPartial(3)", u16x8.loadPartial(out, 3), [
+    65535,
+    1,
+    1,
+    2,
+    5,
+    27,
+    65535,
+    0,
+  ]);
+  n += lanesU16x8("u16x8.loadPartial(4)", u16x8.loadPartial(out, 4), [1, 1, 2, 5, 27, 65535, 0, 0]);
+  n += lanesU16x8("u16x8.loadPartial(5)", u16x8.loadPartial(out, 5), [1, 2, 5, 27, 65535, 0, 0, 0]);
+  n += lanesU16x8("u16x8.loadPartial(6)", u16x8.loadPartial(out, 6), [2, 5, 27, 65535, 0, 0, 0, 0]);
   n += lanesU16x8("u16x8.loadPartial(7)", u16x8.loadPartial(out, 7), [5, 27, 65535, 0, 0, 0, 0, 0]);
   n += lanesU16x8("u16x8.loadPartial(8)", u16x8.loadPartial(out, 8), [27, 65535, 0, 0, 0, 0, 0, 0]);
   n += lanesU16x8("u16x8.loadPartial(9)", u16x8.loadPartial(out, 9), [65535, 0, 0, 0, 0, 0, 0, 0]);
-  n += lanesU16x8("u16x8.loadPartial(15)", u16x8.loadPartial(out, 15), [0, 0, 0, 0, 0, 0, 0, 0]);
+  n += lanesU16x8("u16x8.loadPartial(10)", u16x8.loadPartial(out, 10), [0, 0, 0, 0, 0, 0, 0, 0]);
   const few: u16[] = [0, 1, 65535, 0, 65534, 5, 100];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 11);
+  vb.storePartial(few, 7);
   n += lanesU16x8("u16x8.storePartial", u16x8.loadPartial(few), [0, 1, 65535, 1, 1, 2, 5, 0]);
   n += bitmask("mask16x8.prefix(0)", mask16x8.prefix(0).bitmask(), 0);
   n += bitmask("mask16x8.prefix(1)", mask16x8.prefix(1).bitmask(), 1);
@@ -1651,6 +2183,12 @@ function testI32x4(): i64 {
   n += lanesI32x4("i32x4.index", i32x4.index(), [0, 1, 2, 3]);
   n += lanesI32x4("i32x4.loadPartial(0)", i32x4.loadPartial(out, 0), [0, 0, 1, 2147483647]);
   n += lanesI32x4("i32x4.loadPartial(1)", i32x4.loadPartial(out, 1), [0, 1, 2147483647, 1]);
+  n += lanesI32x4("i32x4.loadPartial(2)", i32x4.loadPartial(out, 2), [
+    1,
+    2147483647,
+    1,
+    -2147483648,
+  ]);
   n += lanesI32x4("i32x4.loadPartial(3)", i32x4.loadPartial(out, 3), [
     2147483647,
     1,
@@ -1659,10 +2197,10 @@ function testI32x4(): i64 {
   ]);
   n += lanesI32x4("i32x4.loadPartial(4)", i32x4.loadPartial(out, 4), [1, -2147483648, 0, 0]);
   n += lanesI32x4("i32x4.loadPartial(5)", i32x4.loadPartial(out, 5), [-2147483648, 0, 0, 0]);
-  n += lanesI32x4("i32x4.loadPartial(11)", i32x4.loadPartial(out, 11), [0, 0, 0, 0]);
+  n += lanesI32x4("i32x4.loadPartial(6)", i32x4.loadPartial(out, 6), [0, 0, 0, 0]);
   const few: i32[] = [0, 1, 2147483647];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 7);
+  vb.storePartial(few, 3);
   n += lanesI32x4("i32x4.storePartial", i32x4.loadPartial(few), [0, 1, 2147483647, 0]);
   n += bitmask("mask32x4.prefix(0)", mask32x4.prefix(0).bitmask(), 0);
   n += bitmask("mask32x4.prefix(1)", mask32x4.prefix(1).bitmask(), 1);
@@ -1771,13 +2309,14 @@ function testU32x4(): i64 {
   n += lanesU32x4("u32x4.index", u32x4.index(), [0, 1, 2, 3]);
   n += lanesU32x4("u32x4.loadPartial(0)", u32x4.loadPartial(out, 0), [0, 0, 1, 4294967295]);
   n += lanesU32x4("u32x4.loadPartial(1)", u32x4.loadPartial(out, 1), [0, 1, 4294967295, 1]);
+  n += lanesU32x4("u32x4.loadPartial(2)", u32x4.loadPartial(out, 2), [1, 4294967295, 1, 1]);
   n += lanesU32x4("u32x4.loadPartial(3)", u32x4.loadPartial(out, 3), [4294967295, 1, 1, 0]);
   n += lanesU32x4("u32x4.loadPartial(4)", u32x4.loadPartial(out, 4), [1, 1, 0, 0]);
   n += lanesU32x4("u32x4.loadPartial(5)", u32x4.loadPartial(out, 5), [1, 0, 0, 0]);
-  n += lanesU32x4("u32x4.loadPartial(11)", u32x4.loadPartial(out, 11), [0, 0, 0, 0]);
+  n += lanesU32x4("u32x4.loadPartial(6)", u32x4.loadPartial(out, 6), [0, 0, 0, 0]);
   const few: u32[] = [0, 1, 4294967295];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 7);
+  vb.storePartial(few, 3);
   n += lanesU32x4("u32x4.storePartial", u32x4.loadPartial(few), [0, 1, 4294967295, 0]);
   n += bitmask("mask32x4.prefix(0)", mask32x4.prefix(0).bitmask(), 0);
   n += bitmask("mask32x4.prefix(1)", mask32x4.prefix(1).bitmask(), 1);
@@ -1868,13 +2407,12 @@ function testI64x2(): i64 {
   n += lanesI64x2("i64x2.index", i64x2.index(), [0, 1]);
   n += lanesI64x2("i64x2.loadPartial(0)", i64x2.loadPartial(out, 0), [0, 0]);
   n += lanesI64x2("i64x2.loadPartial(1)", i64x2.loadPartial(out, 1), [0, 1]);
-  n += lanesI64x2("i64x2.loadPartial(1)", i64x2.loadPartial(out, 1), [0, 1]);
   n += lanesI64x2("i64x2.loadPartial(2)", i64x2.loadPartial(out, 2), [1, 9223372036854775807]);
   n += lanesI64x2("i64x2.loadPartial(3)", i64x2.loadPartial(out, 3), [9223372036854775807, 0]);
-  n += lanesI64x2("i64x2.loadPartial(9)", i64x2.loadPartial(out, 9), [0, 0]);
+  n += lanesI64x2("i64x2.loadPartial(4)", i64x2.loadPartial(out, 4), [0, 0]);
   const few: i64[] = [0];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 5);
+  vb.storePartial(few, 1);
   n += lanesI64x2("i64x2.storePartial", i64x2.loadPartial(few), [0, 0]);
   n += bitmask("mask64x2.prefix(0)", mask64x2.prefix(0).bitmask(), 0);
   n += bitmask("mask64x2.prefix(1)", mask64x2.prefix(1).bitmask(), 1);
@@ -1950,13 +2488,12 @@ function testU64x2(): i64 {
   n += lanesU64x2("u64x2.index", u64x2.index(), [0, 1]);
   n += lanesU64x2("u64x2.loadPartial(0)", u64x2.loadPartial(out, 0), [0, 0]);
   n += lanesU64x2("u64x2.loadPartial(1)", u64x2.loadPartial(out, 1), [0, 1]);
-  n += lanesU64x2("u64x2.loadPartial(1)", u64x2.loadPartial(out, 1), [0, 1]);
   n += lanesU64x2("u64x2.loadPartial(2)", u64x2.loadPartial(out, 2), [1, 18446744073709551615]);
   n += lanesU64x2("u64x2.loadPartial(3)", u64x2.loadPartial(out, 3), [18446744073709551615, 0]);
-  n += lanesU64x2("u64x2.loadPartial(9)", u64x2.loadPartial(out, 9), [0, 0]);
+  n += lanesU64x2("u64x2.loadPartial(4)", u64x2.loadPartial(out, 4), [0, 0]);
   const few: u64[] = [0];
   vb.storePartial(few, 1);
-  vb.storePartial(few, 5);
+  vb.storePartial(few, 1);
   n += lanesU64x2("u64x2.storePartial", u64x2.loadPartial(few), [0, 0]);
   n += bitmask("mask64x2.prefix(0)", mask64x2.prefix(0).bitmask(), 0);
   n += bitmask("mask64x2.prefix(1)", mask64x2.prefix(1).bitmask(), 1);

@@ -1,0 +1,202 @@
+// `loadPartial` and `storePartial` against element-by-element loops: for every array length
+// from 0 to two vectors and a half and every position from 0 to the length, each lane loaded
+// and each element after a store. `at` equal to the length is valid (nothing is left);
+// simd_partial_range covers the RangeError past it.
+// check: no leaks
+
+import { u8x16, i16x8, u32x4, i64x2, f32x4, f64x2 } from "velt:simd";
+
+function checkU8x16(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 40; len++) {
+    const xs: u8[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251) as u8);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = u8x16.loadPartial(xs, at);
+      for (let k: usize = 0; k < 16; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as u8);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: u8[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as u8);
+      }
+      u8x16.splat(9 as u8).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 16 ? (9 as u8) : (1 as u8);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function checkI16x8(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 20; len++) {
+    const xs: i16[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251 - 100) as i16);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = i16x8.loadPartial(xs, at);
+      for (let k: usize = 0; k < 8; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as i16);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: i16[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as i16);
+      }
+      i16x8.splat(9 as i16).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 8 ? (9 as i16) : (1 as i16);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function checkU32x4(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 10; len++) {
+    const xs: u32[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251) as u32);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = u32x4.loadPartial(xs, at);
+      for (let k: usize = 0; k < 4; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as u32);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: u32[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as u32);
+      }
+      u32x4.splat(9 as u32).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 4 ? (9 as u32) : (1 as u32);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function checkI64x2(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 5; len++) {
+    const xs: i64[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251) as i64);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = i64x2.loadPartial(xs, at);
+      for (let k: usize = 0; k < 2; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as i64);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: i64[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as i64);
+      }
+      i64x2.splat(9 as i64).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 2 ? (9 as i64) : (1 as i64);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function checkF32x4(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 10; len++) {
+    const xs: f32[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251) as f32);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = f32x4.loadPartial(xs, at);
+      for (let k: usize = 0; k < 4; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as f32);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: f32[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as f32);
+      }
+      f32x4.splat(9 as f32).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 4 ? (9 as f32) : (1 as f32);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function checkF64x2(): number {
+  let failures = 0;
+  for (let len: usize = 0; len <= 5; len++) {
+    const xs: f64[] = [];
+    for (let k: usize = 0; k < len; k++) {
+      xs.push(((k * 37 + 11) % 251) as f64);
+    }
+    for (let at: usize = 0; at <= len; at++) {
+      const v = f64x2.loadPartial(xs, at);
+      for (let k: usize = 0; k < 2; k++) {
+        const want = at + k < len ? xs[at + k] : (0 as f64);
+        if (v.lane(k) != want) {
+          failures++;
+        }
+      }
+      const out: f64[] = [];
+      for (let k: usize = 0; k < len; k++) {
+        out.push(1 as f64);
+      }
+      f64x2.splat(9 as f64).storePartial(out, at);
+      for (let k: usize = 0; k < len; k++) {
+        const want = k >= at && k < at + 2 ? (9 as f64) : (1 as f64);
+        if (out[k] != want) {
+          failures++;
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+function main() {
+  console.log("u8x16", checkU8x16());
+  console.log("i16x8", checkI16x8());
+  console.log("u32x4", checkU32x4());
+  console.log("i64x2", checkI64x2());
+  console.log("f32x4", checkF32x4());
+  console.log("f64x2", checkF64x2());
+}

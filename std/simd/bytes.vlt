@@ -20,6 +20,8 @@ declare function velt_simd_i8x16_splat(x: i8): i8x16;
 declare function velt_simd_i8x16_index(): i8x16;
 declare function velt_simd_i8x16_load(from: i8[], at: u64): i8x16;
 declare function velt_simd_i8x16_store(v: i8x16, to: i8[], at: u64);
+declare function velt_simd_i8x16_load_partial(from: i8[], at: u64, count: u64): i8x16;
+declare function velt_simd_i8x16_store_partial(v: i8x16, to: i8[], at: u64, count: u64);
 declare function velt_simd_i8x16_lane(v: i8x16, index: u64): i8;
 declare function velt_simd_i8x16_with_lane(v: i8x16, index: u64, x: i8): i8x16;
 declare function velt_simd_i8x16_select(m: mask8x16, a: i8x16, b: i8x16): i8x16;
@@ -83,19 +85,16 @@ extend i8x16 {
   /**
    * The elements of `from` starting at `at` that exist, up to 16, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take 16 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
    */
   static loadPartial(from: i8[], at: usize = 0): i8x16 {
     if (i8x16.fits(from, at)) {
       return velt_simd_i8x16_load(from, at as u64);
     }
-    let v = velt_simd_i8x16_splat(0);
-    if (at < from.length) {
-      const left = from.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        v = velt_simd_i8x16_with_lane(v, k as u64, from[at + k]);
-      }
+    if (at > from.length) {
+      panic("RangeError: i8x16.loadPartial: position is out of range");
     }
-    return v;
+    return velt_simd_i8x16_load_partial(from, at as u64, (from.length - at) as u64);
   }
 
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
@@ -116,17 +115,18 @@ extend i8x16 {
 
   /**
    * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 16 (the
-   * array does not grow): what `loadPartial` read, back.
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
    */
   storePartial(to: i8[], at: usize = 0) {
     if (i8x16.fits(to, at)) {
       velt_simd_i8x16_store(this, to, at as u64);
-    } else if (at < to.length) {
-      const left = to.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        to[at + k] = velt_simd_i8x16_lane(this, k as u64);
-      }
+      return;
     }
+    if (at > to.length) {
+      panic("RangeError: i8x16.storePartial: position is out of range");
+    }
+    velt_simd_i8x16_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 15; panics with a RangeError otherwise). */
@@ -276,6 +276,8 @@ declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_index(): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 declare function velt_simd_u8x16_lane(v: u8x16, index: u64): u8;
 declare function velt_simd_u8x16_with_lane(v: u8x16, index: u64, x: u8): u8x16;
 declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
@@ -345,19 +347,16 @@ extend u8x16 {
   /**
    * The elements of `from` starting at `at` that exist, up to 16, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take 16 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
    */
   static loadPartial(from: u8[], at: usize = 0): u8x16 {
     if (u8x16.fits(from, at)) {
       return velt_simd_u8x16_load(from, at as u64);
     }
-    let v = velt_simd_u8x16_splat(0);
-    if (at < from.length) {
-      const left = from.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        v = velt_simd_u8x16_with_lane(v, k as u64, from[at + k]);
-      }
+    if (at > from.length) {
+      panic("RangeError: u8x16.loadPartial: position is out of range");
     }
-    return v;
+    return velt_simd_u8x16_load_partial(from, at as u64, (from.length - at) as u64);
   }
 
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
@@ -378,17 +377,18 @@ extend u8x16 {
 
   /**
    * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 16 (the
-   * array does not grow): what `loadPartial` read, back.
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
    */
   storePartial(to: u8[], at: usize = 0) {
     if (u8x16.fits(to, at)) {
       velt_simd_u8x16_store(this, to, at as u64);
-    } else if (at < to.length) {
-      const left = to.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        to[at + k] = velt_simd_u8x16_lane(this, k as u64);
-      }
+      return;
     }
+    if (at > to.length) {
+      panic("RangeError: u8x16.storePartial: position is out of range");
+    }
+    velt_simd_u8x16_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 15; panics with a RangeError otherwise). */
@@ -568,6 +568,8 @@ declare function velt_simd_i16x8_splat(x: i16): i16x8;
 declare function velt_simd_i16x8_index(): i16x8;
 declare function velt_simd_i16x8_load(from: i16[], at: u64): i16x8;
 declare function velt_simd_i16x8_store(v: i16x8, to: i16[], at: u64);
+declare function velt_simd_i16x8_load_partial(from: i16[], at: u64, count: u64): i16x8;
+declare function velt_simd_i16x8_store_partial(v: i16x8, to: i16[], at: u64, count: u64);
 declare function velt_simd_i16x8_lane(v: i16x8, index: u64): i16;
 declare function velt_simd_i16x8_with_lane(v: i16x8, index: u64, x: i16): i16x8;
 declare function velt_simd_i16x8_select(m: mask16x8, a: i16x8, b: i16x8): i16x8;
@@ -634,19 +636,16 @@ extend i16x8 {
   /**
    * The elements of `from` starting at `at` that exist, up to 8, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take 8 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
    */
   static loadPartial(from: i16[], at: usize = 0): i16x8 {
     if (i16x8.fits(from, at)) {
       return velt_simd_i16x8_load(from, at as u64);
     }
-    let v = velt_simd_i16x8_splat(0);
-    if (at < from.length) {
-      const left = from.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        v = velt_simd_i16x8_with_lane(v, k as u64, from[at + k]);
-      }
+    if (at > from.length) {
+      panic("RangeError: i16x8.loadPartial: position is out of range");
     }
-    return v;
+    return velt_simd_i16x8_load_partial(from, at as u64, (from.length - at) as u64);
   }
 
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
@@ -667,17 +666,18 @@ extend i16x8 {
 
   /**
    * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 8 (the
-   * array does not grow): what `loadPartial` read, back.
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
    */
   storePartial(to: i16[], at: usize = 0) {
     if (i16x8.fits(to, at)) {
       velt_simd_i16x8_store(this, to, at as u64);
-    } else if (at < to.length) {
-      const left = to.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        to[at + k] = velt_simd_i16x8_lane(this, k as u64);
-      }
+      return;
     }
+    if (at > to.length) {
+      panic("RangeError: i16x8.storePartial: position is out of range");
+    }
+    velt_simd_i16x8_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 7; panics with a RangeError otherwise). */
@@ -845,6 +845,8 @@ declare function velt_simd_u16x8_splat(x: u16): u16x8;
 declare function velt_simd_u16x8_index(): u16x8;
 declare function velt_simd_u16x8_load(from: u16[], at: u64): u16x8;
 declare function velt_simd_u16x8_store(v: u16x8, to: u16[], at: u64);
+declare function velt_simd_u16x8_load_partial(from: u16[], at: u64, count: u64): u16x8;
+declare function velt_simd_u16x8_store_partial(v: u16x8, to: u16[], at: u64, count: u64);
 declare function velt_simd_u16x8_lane(v: u16x8, index: u64): u16;
 declare function velt_simd_u16x8_with_lane(v: u16x8, index: u64, x: u16): u16x8;
 declare function velt_simd_u16x8_select(m: mask16x8, a: u16x8, b: u16x8): u16x8;
@@ -909,19 +911,16 @@ extend u16x8 {
   /**
    * The elements of `from` starting at `at` that exist, up to 8, in the low lanes; the other
    * lanes are 0. For the last elements of an array, after the steps that take 8 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
    */
   static loadPartial(from: u16[], at: usize = 0): u16x8 {
     if (u16x8.fits(from, at)) {
       return velt_simd_u16x8_load(from, at as u64);
     }
-    let v = velt_simd_u16x8_splat(0);
-    if (at < from.length) {
-      const left = from.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        v = velt_simd_u16x8_with_lane(v, k as u64, from[at + k]);
-      }
+    if (at > from.length) {
+      panic("RangeError: u16x8.loadPartial: position is out of range");
     }
-    return v;
+    return velt_simd_u16x8_load_partial(from, at as u64, (from.length - at) as u64);
   }
 
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
@@ -942,17 +941,18 @@ extend u16x8 {
 
   /**
    * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 8 (the
-   * array does not grow): what `loadPartial` read, back.
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
    */
   storePartial(to: u16[], at: usize = 0) {
     if (u16x8.fits(to, at)) {
       velt_simd_u16x8_store(this, to, at as u64);
-    } else if (at < to.length) {
-      const left = to.length - at;
-      for (let k: usize = 0; k < left; k++) {
-        to[at + k] = velt_simd_u16x8_lane(this, k as u64);
-      }
+      return;
     }
+    if (at > to.length) {
+      panic("RangeError: u16x8.storePartial: position is out of range");
+    }
+    velt_simd_u16x8_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 7; panics with a RangeError otherwise). */

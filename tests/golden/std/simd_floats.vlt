@@ -72,7 +72,7 @@ function f32s() {
 
   show4("index", f32x4.index());
   show4("loadPartial", f32x4.loadPartial(b, 2));
-  show4("loadPartial past the end", f32x4.loadPartial(b, 9));
+  show4("loadPartial at the end", f32x4.loadPartial(b, 4));
   const short: f32[] = [7, 7, 7];
   va.storePartial(short, 1);
   console.log("storePartial", short[0], short[1], short[2]);

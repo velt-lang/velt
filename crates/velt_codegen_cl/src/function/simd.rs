@@ -74,7 +74,7 @@ impl<M: Module> Translator<'_, '_, M> {
     }
 
     /// `v` reinterpreted as a vector of type `ty`.
-    fn lanes_of(&mut self, v: ir::Value, ty: ir::Type) -> ir::Value {
+    pub(super) fn lanes_of(&mut self, v: ir::Value, ty: ir::Type) -> ir::Value {
         if self.builder.func.dfg.value_type(v) == ty {
             return v;
         }
@@ -124,6 +124,17 @@ impl<M: Module> Translator<'_, '_, M> {
                 let p = self.simd_element(lanes, values[1], values[2]);
                 self.builder.ins().store(mem_flags(), x, p, 0);
                 return Inlined::Unit;
+            }
+            Op::StorePartial => {
+                let [v, array, at, count] = values[..4] else {
+                    unreachable!("ICE: store_partial takes four operands");
+                };
+                self.simd_store_partial(lanes, v, array, at, count);
+                return Inlined::Unit;
+            }
+            Op::LoadPartial => {
+                let v = self.simd_load_partial(lanes, values[0], values[1], values[2]);
+                return Inlined::Value(v);
             }
             Op::Fits => return Inlined::Value(self.simd_fits(lanes, values[0], values[1])),
             Op::Lane => return Inlined::Value(self.simd_lane(lanes, &args[1], values)),
@@ -230,7 +241,12 @@ impl<M: Module> Translator<'_, '_, M> {
 
     /// Address of element `at` of the array whose header `array` points to (the `{ data, len, cap }`
     /// header of docs/internals/design/semantics-stage2.md).
-    fn simd_element(&mut self, lanes: Lanes, array: ir::Value, at: ir::Value) -> ir::Value {
+    pub(super) fn simd_element(
+        &mut self,
+        lanes: Lanes,
+        array: ir::Value,
+        at: ir::Value,
+    ) -> ir::Value {
         let data = self.builder.ins().load(types::I64, mem_flags(), array, 0);
         let offset = self.builder.ins().imul_imm(at, i64::from(lanes.bits() / 8));
         self.builder.ins().iadd(data, offset)

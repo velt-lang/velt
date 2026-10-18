@@ -20,8 +20,8 @@ browser, Node.js, wasmtime and wasmer do).
 | `T.fits(xs, at = 0)` | whether the `n` elements of the `L[]` from `at` are inside it: what `load` and `store` check |
 | `T.load(xs, at = 0)` | the `n` elements of the `L[]` from `at`; a RangeError panic unless all are inside the array |
 | `v.store(xs, at = 0)` | writes the lanes to the `L[]` from `at`; a RangeError panic unless they fit (the array does not grow) |
-| `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others |
-| `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist |
+| `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others; `at` may be the length (all 0), a RangeError panic past it |
+| `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist; `at` may be the length (nothing written), a RangeError panic past it |
 | `T.index()` | each lane its own index: 0, 1, 2, … |
 | `v.lane(i)`, `v.withLane(i, x)` | lane `i`; the vector with lane `i` set to `x` (a RangeError panic unless `i < n`) |
 | `add` `sub` `mul` | lane by lane; integers wrap (`mul`: not 8-bit lanes) |
@@ -53,7 +53,8 @@ A mask `m`:
 | `and` `or` `xor` `not` | lane by lane |
 
 The methods keep the types they declare: a lane of a `u8x16` is a `u8`, `first()` a `usize`.
-A position or lane index (`at` of `fits`, `load` and `store`, `i` of `lane` and `withLane`)
+A position or lane index (`at` of `fits`, `load`, `store`, `loadPartial` and `storePartial`,
+`i` of `lane` and `withLane`)
 given as a `number` is used as itself when it is a whole number from 0 up; any other number
 (negative, fractional, NaN, ±Infinity) is out of range: `fits` gives `false` and the others
 panic with their RangeError. A negative literal written there (`v.lane(-1)`) is a compile
@@ -131,7 +132,9 @@ such a loop the compiler removes theirs; a condition written by hand (`i + 16 <=
 works too, with the check left in.
 
 The last elements, fewer than a vector, can be done one at a time as in `dot` above, or as one
-more vector with `loadPartial` and `storePartial`, which is shorter and usually faster:
+more vector with `loadPartial` and `storePartial`, which is shorter and, past a few elements,
+faster: each reads or writes only the elements that exist, with two overlapping scalar
+accesses (single bytes for fewer than four), not one per lane:
 
 ```ts
 import { mask8x16, u8x16 } from "velt:simd";
