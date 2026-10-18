@@ -354,4 +354,47 @@ impl FnCx<'_, '_> {
             false => value,
         })
     }
+
+    /// A `T | null | undefined` value `h` known not to be `null` (`x === null` ruled out by a
+    /// test, #1218) as the `T | undefined` it reads as: a match whose `null` arm is unreachable.
+    /// `consume`: the value moves out of a place.
+    pub(crate) fn three_state_without_null(
+        &mut self,
+        mut h: hir::Expr,
+        consume: bool,
+    ) -> hir::Expr {
+        let span = h.span;
+        let hty = h.ty;
+        let core = self
+            .cx
+            .ty
+            .core(hty)
+            .expect("ICE: `T | null | undefined` without a payload");
+        let exp = self.cx.ty.option_of(core, Nothing::Undefined);
+        let (l, mode) = self.option_binding(&h, core, "<defined>", consume);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let v = self.mk(H::Local(l, mode), core, span);
+        let present = self.mk(H::WrapSome(Box::new(v)), exp, span);
+        let bind = self.pat(P::Binding(l, mode), core, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.present_pat(bind, hty, span),
+                guard: None,
+                body: present,
+            },
+            hir::Arm {
+                pat: self.one_nothing_pat(Nothing::Undefined, hty, span),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Null), exp, span),
+            },
+            self.unreachable_arm(hty, span),
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, exp, span)
+    }
 }

@@ -1,0 +1,11 @@
+true true true true true true false false true true false false true false
+true true true false true true true false true false false false false false false true false false false false false
+[ false, true, false ] [ false, true, true ]
+undefined
+1
+was null undefined s
+{ n: -1 } undefined { n: 2 }
+0 number 0 number 0 true true
+null object undefined undefined null false true
+undefined undefined null object undefined false true
+3 number 3 number undefined true true
