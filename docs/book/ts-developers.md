@@ -109,9 +109,9 @@ function connect(c: Config, timeout?: i64): string {
 console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
-For now, the standard library returns `null` where TypeScript returns `undefined` (issue #930
-moves it to `undefined`), and it prints as `null`: `m.get(k)` for a key a `Map` lacks,
-`arr.find(…)` without a match, `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
+The standard library returns `undefined` where TypeScript's lib.d.ts does, and it prints as
+`undefined`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match, `arr.pop()` of
+an empty array, `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 
@@ -318,7 +318,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
-| `null` and `undefined` | both, as in Node, and `a?: T` is `T \| undefined`; the standard library still gives `null` for a missing value (#930) | — |
+| `null` and `undefined` | both, as in Node, and `a?: T` is `T \| undefined`, and the standard library gives `undefined` where lib.d.ts does (`Map.get`, `find`, `pop`) | — |
 | `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `\|\|` and `&&` return an operand) | — |
 | `==` coerces | no coercion: `==` is `===` except that `x == null` also matches `undefined`, and the reverse (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
