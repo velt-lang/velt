@@ -228,9 +228,19 @@ impl FnLower<'_, '_> {
             let join = self.new_block();
             self.branch(c, fail, join);
             self.switch_to(fail);
-            self.panic_msg(
-                "TypeError: a type predicate returned true for an object, which its type rules out",
-            );
+            let name = match &test.kind {
+                hir::ExprKind::Call {
+                    callee: hir::Callee::Def(d, _),
+                    ..
+                } => match self.cx.hir.def(*d) {
+                    hir::Def::Fn(f) => f.name.rsplit("::").next().unwrap_or("").to_string(),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            };
+            self.panic_msg(&format!(
+                "TypeError: the type predicate `{name}` returned true for an object, which its type rules out"
+            ));
             self.goto(join);
             self.switch_to(join);
             if let Some(els) = els {
