@@ -63,6 +63,27 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
+    /// `let local = init` in a global's initializer, lowered by the module state's initializer
+    /// (`init_locals`): the local belongs to no function body (each initializer numbers its own
+    /// from 0), so it gets a fresh VIR local of the initializer's type here.
+    pub(super) fn declare_init_local(&mut self, local: hir::LocalId, init: Option<&hir::Expr>) {
+        let Some(e) = init else {
+            super::ice("a `let` without an initializer in a global's initializer")
+        };
+        let i = local.0 as usize;
+        let ty = self.sub(e.ty);
+        let t = self.cx.ty(ty);
+        let vir = (t != Ty::Unit).then(|| self.new_local(t, Some(format!("init.{i}"))));
+        let droppable = vir.is_some() && self.cx.needs_drop(ty);
+        let li = super::LInfo::new(vir, ty, false, droppable, super::LState::Uninit);
+        if self.info.len() <= i {
+            self.info.resize_with(i + 1, || {
+                super::LInfo::new(None, ty, false, false, super::LState::Uninit)
+            });
+        }
+        self.info[i] = li;
+    }
+
     /// The module state block (a `Ptr`), to reach slot `slot` (the runtime stops with a
     /// `ReferenceError` when that slot's initializer has not run yet).
     fn module_block(&mut self, slot: u32) -> Operand {
@@ -145,6 +166,7 @@ impl FnLower<'_, '_> {
             .map(|m| m.slots.clone())
             .unwrap_or_default();
         let mut lw = FnLower::bare(cx, vec![]);
+        lw.init_locals = true;
         let state = lw.new_local(Ty::Ptr, Some("state".into()));
         lw.push_scope(ScopeKind::Block);
         for (i, d) in slots.into_iter().enumerate() {

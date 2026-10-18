@@ -436,6 +436,7 @@ impl FnCx<'_, '_> {
         }
         let local = self.declare_local(name, ty, kind);
         self.note_readonly_array(local, v.ty.as_ref());
+        self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
         }

@@ -116,6 +116,13 @@ impl Types {
         self.option_of(never, Nothing::Undefined)
     }
 
+    /// `null` alone as a type (a field that is always `null` in one member of a discriminated
+    /// union): an option of `never`, like `undefined` alone.
+    pub fn null_alone(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Null)
+    }
+
     /// `T` of `T | null`, `T | undefined` and `T | null | undefined`.
     pub fn core(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {

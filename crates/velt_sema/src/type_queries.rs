@@ -33,6 +33,9 @@ pub(crate) struct SigQueries<'m> {
     /// Those being filled now, each with the name of the parameter (or function) whose type is
     /// being resolved: a query reaching one of them is a cycle (TS2502).
     pub filling_sigs: Vec<(DefId, String)>,
+    /// The name spans of the parameters declared with a read-only array type (`xs: readonly
+    /// string[]`): an argument for one may be a copy (`widen_fresh::readonly_array_arg`).
+    pub readonly_params: std::collections::HashSet<velt_common::Span>,
 }
 
 impl Ctx<'_> {

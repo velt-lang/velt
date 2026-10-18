@@ -283,8 +283,11 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 ```
 
 A key of a `Record<string, V>` may be missing, so counting needs a starting value:
-`r[k] += 1` is an error there, and `??` supplies it. `r[k] ||= v` and `r[k] &&= v` are errors
-too; `r[k] ??= v` sets the key only when it is missing.
+`r[k] += 1` is an error there, and `??` supplies it. The logical assignments are defined for a
+missing key, which reads as `undefined`: `r[k] ??= v` sets the key only when it is missing,
+`r[k] ||= v` also when its value is falsy (`""`, `0`, `false`, `NaN`), and `r[k] &&= v` only when
+it is present and truthy. As in JavaScript, the record and the key are evaluated once, `v` only
+when it is stored, and the expression's value is the value stored or kept.
 
 ```ts
 const seen: Record<string, i64> = {};
@@ -292,6 +295,11 @@ for (const w of ["a", "b", "a"]) {
   seen[w] = (seen[w] ?? 0) + 1;
 }
 console.log(seen); // { a: 2, b: 1 }
+
+const kebab: Record<string, string> = {};
+const prop = "backgroundColor";
+const css = (kebab[prop] ||= prop.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase());
+console.log(css, kebab); // background-color { backgroundColor: 'background-color' }
 ```
 
 ## Nullable values

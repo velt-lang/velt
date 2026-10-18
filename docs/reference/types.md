@@ -109,6 +109,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
+  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
+  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
+  `T = U | null` a `null` is a `T`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -467,7 +471,9 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
-`undefined`.
+`undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
+number }`).
 
 ```ts
 function show(x: string | null | undefined): string {
@@ -710,8 +716,13 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is: Velt arrays and literals need no
-  `readonly` or literal-type annotation for it.
+- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
+  more different ones) keeps their literal types and is read-only, like TypeScript's
+  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+  `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
+  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  apart, since it cannot write through the parameter). Other values need no `readonly` or
+  literal-type annotation for it.
 
 ## Union types
 
@@ -734,7 +745,9 @@ the nullable type; `void` cannot be a member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
-    until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    until it is reassigned; `a || b` narrows to the members either side allows
+    (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
+    `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed by these tests ([Null](#null-and-undefined)).
   - Assigning a member's value narrows to that member until the next assignment or join, also
     in the declaration (`let u: string | number = "x"; u.length`, `else { p = new B(); }

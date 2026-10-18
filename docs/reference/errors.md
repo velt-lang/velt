@@ -19,7 +19,8 @@ compiler knows exactly what each function and each `try` block can throw.
   (`get name() { … }`), which `toString()` then reads. A union of error classes
   (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
   `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
-  concatenation (`null` for `null`, `undefined` for `undefined`). Arrays of errors are written as
+  concatenation (`null` for `null`, `undefined` for `undefined`); so is an error held by an `any`
+  or an `unknown` (`` `${e}` `` is `Error: boom`, or a subclass's own `toString()`). Arrays of errors are written as
   JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
   `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
   `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
