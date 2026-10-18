@@ -26,7 +26,7 @@ impl FnCx<'_, '_> {
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
         let span = e.span;
-        let s = self.expr(object, None, Want::Borrow);
+        let s = self.test_operand(object, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
             // The rest is still checked (its own errors), on the link's object bound as an
             // error value: the synthetic name must not be reported as unknown.

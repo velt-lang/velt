@@ -1,0 +1,15 @@
+// A variable that a closure assigns stays narrowed after a null check until the next assignment
+// in the same function (#1199), but a call in between may run that closure. Each read checks
+// the value again and stops with a TypeError, where Node throws one when it calls `null`.
+function main() {
+  let cleanupFn = (() => console.log("cleaned")) as (() => void) | null;
+  const clear = (): void => {
+    cleanupFn = null;
+  };
+  if (cleanupFn) {
+    cleanupFn();
+    clear();
+    console.log("cleared");
+    cleanupFn();
+  }
+}

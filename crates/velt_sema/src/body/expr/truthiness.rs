@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
     /// Check `e` as a condition, as a `bool`.
     pub(crate) fn cond(&mut self, e: &ast::Expr) -> hir::Expr {
         let b = self.cx.ty.bool_;
-        let h = self.expr(e, Some(b), Want::Borrow);
+        let h = self.test_operand(e, Some(b), Want::Borrow);
         self.truthy(h)
     }
 
@@ -338,7 +338,7 @@ impl FnCx<'_, '_> {
     /// `!operand`.
     pub(crate) fn not_expr(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
         let b = self.cx.ty.bool_;
-        let inner = self.expr(operand, Some(b), Want::Borrow);
+        let inner = self.test_operand(operand, Some(b), Want::Borrow);
         if self.rejected(inner.ty) {
             self.report_condition(&inner);
             return self.error_expr(span);
@@ -367,7 +367,7 @@ impl FnCx<'_, '_> {
         let facts = if is_and { when_true } else { when_false };
         // No `bool` hint unless one is expected: `a && a.b && a.b.c` chains values.
         let hint = exp.filter(|t| *t == b);
-        let l = self.expr(lhs, hint, Want::Borrow);
+        let l = self.test_operand(lhs, hint, Want::Borrow);
         if self.rejected(l.ty) {
             self.report_condition(&l);
             self.scoped(&facts, |s| s.expr(rhs, None, Want::Borrow));

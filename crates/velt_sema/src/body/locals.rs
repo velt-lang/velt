@@ -178,7 +178,17 @@ impl FnCx<'_, '_> {
             None => (j, prev),
         };
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
-        let mut narrowing = frame_narrowing(&self.outer[j], prev);
+        // A variable some closure assigns is not narrowed in the closures that capture it: the
+        // check outside may no longer hold when they run (TS does not narrow it there either).
+        let by_closure = self.assigned_by_closure_in(j, prev);
+        let assigned = by_closure || self.assigned_after(j, prev, span.lo);
+        // What a closure assigning the variable keeps the closure from seeing (for the note).
+        let dropped = by_closure.then(|| frame_narrowing(&self.outer[j], prev));
+        let none: Narrowing = (false, None, None);
+        let mut narrowing = match assigned {
+            true => none.clone(),
+            false => frame_narrowing(&self.outer[j], prev),
+        };
         // A captured closure `const` is still that closure: a call through the capture fills
         // in its parameters' defaults (`FnCx::call_value`).
         let closure = self.outer[j].closure_consts.get(&prev).copied();
@@ -193,9 +203,15 @@ impl FnCx<'_, '_> {
                 f.method_values.insert(prev);
             }
             ty = f.locals[prev.0 as usize].ty;
-            narrowing = frame_narrowing(f, prev);
+            narrowing = match assigned {
+                true => none.clone(),
+                false => frame_narrowing(f, prev),
+            };
         }
         let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        if let Some(n) = dropped {
+            self.note_dropped_capture(inner, name, n);
+        }
         if let Some(c) = closure {
             self.f.closure_consts.insert(inner, c);
         }
@@ -203,6 +219,40 @@ impl FnCx<'_, '_> {
             self.f.method_values.insert(inner);
         }
         Some(inner)
+    }
+
+    /// Does a closure assign local `l` of enclosing frame `outer[j]` (or the variable it
+    /// captures)?
+    fn assigned_by_closure_in(&self, j: usize, l: LocalId) -> bool {
+        let mut l = l;
+        for f in self.outer[..=j].iter().rev() {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => {
+                    let name = &f.locals[l.0 as usize].name;
+                    return f.closure_assigned.contains_key(name);
+                }
+            }
+        }
+        false
+    }
+
+    /// Does the function declaring local `l` of enclosing frame `outer[j]` (or the variable it
+    /// captures) assign it after source offset `at` (`Frame::assign_ends`)? A closure created
+    /// at `at` may run after that assignment, so the narrowing where it is created may not
+    /// hold when it runs (TS keeps it only when nothing assigns the variable later).
+    fn assigned_after(&self, j: usize, l: LocalId, at: u32) -> bool {
+        let mut l = l;
+        for f in self.outer[..=j].iter().rev() {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => {
+                    let name = &f.locals[l.0 as usize].name;
+                    return f.assign_ends.get(name).is_some_and(|end| *end > at);
+                }
+            }
+        }
+        false
     }
 
     /// Lookup without creating captures (for "is this name a local?" questions).
@@ -420,6 +470,25 @@ impl FnCx<'_, '_> {
                 )
             })
             .collect()
+    }
+
+    /// [`narrow_state`](Self::narrow_state) for the outermost `depth` scopes only, with what
+    /// the inner ones hold folded into the last of them: the state a jump out to code at that
+    /// depth (a `break` out of a `switch`) carries there.
+    pub fn narrow_state_at(&self, depth: usize) -> NarrowState {
+        let mut st = self.narrow_state();
+        if depth == 0 || st.len() <= depth {
+            return st;
+        }
+        let inner = st.split_off(depth);
+        let last = st.last_mut().expect("ICE: no scope");
+        for (n, m, c, x) in inner {
+            last.0.extend(n);
+            last.1.extend(m);
+            last.2.extend(c);
+            last.3.extend(x);
+        }
+        st
     }
 
     /// The facts the innermost scope holds now about locals declared outside it: what a branch

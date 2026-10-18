@@ -1,0 +1,63 @@
+// check: no leaks
+// An optional member of function type can be called after a check narrowed it, as in
+// TypeScript (#1206): `if (o.onError) o.onError(e)`, `o.f ? o.f(x) : d`, `if (!o.f) return;`,
+// `if (o?.f) o.f(x)` (which narrows `o` too).
+interface Config {
+  name: string;
+  onError?: (err: Error, info: string) => boolean;
+  format?: (n: number) => string;
+}
+
+class Hooks {
+  created?: (el: string) => void;
+  count = 0;
+}
+
+function report(config: Config, err: Error): boolean {
+  if (config.onError) return config.onError(err, "render");
+  return false;
+}
+
+function show(config: Config, n: number): string {
+  return config.format ? config.format(n) : String(n);
+}
+
+function early(config: Config, n: number): string {
+  if (!config.format) return "-";
+  const s = config.format(n);
+  return config.format(n + 1) + s;
+}
+
+function maybe(config: Config | null, n: number): string {
+  if (config?.format) return config.format(n);
+  return "none";
+}
+
+function run(h: Hooks, el: string): void {
+  if (h.created) {
+    h.created(el);
+  }
+  h.count++;
+}
+
+function main() {
+  const logs: string[] = [];
+  const c: Config = {
+    name: "a",
+    onError: (e, i) => {
+      logs.push(e.message + "@" + i);
+      return true;
+    },
+    format: (n) => "#" + n,
+  };
+  console.log(report(c, new Error("x")), report({ name: "b" }, new Error("y")), logs.join(","));
+  console.log(show(c, 3), show({ name: "b" }, 4), early(c, 1), early({ name: "b" }, 1));
+  console.log(maybe(c, 5), maybe(null, 5), maybe({ name: "b" }, 5));
+  const h = new Hooks();
+  run(h, "div");
+  h.created = (el) => {
+    logs.push("created " + el);
+  };
+  run(h, "span");
+  console.log(h.count, logs.join(","));
+}

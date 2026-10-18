@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 
 use velt_common::{Label, Span};
+use velt_syntax::ast;
 
 use super::narrow::Fact;
 use super::FnCx;
@@ -64,6 +65,12 @@ impl FnCx<'_, '_> {
         let Some(at) = self.closure_assignment(root) else {
             return false;
         };
+        // A null check of the variable itself holds until the next assignment in this
+        // function, as in TypeScript; its reads check the value again (`checked_narrowed_read`)
+        // in case a closure it called set it in between.
+        if path.is_empty() && matches!(fact, Fact::NonNull(_) | Fact::Excludes(..)) {
+            return false;
+        }
         let name = self.f.locals[root.0 as usize].name.clone();
         let note = self.refusal_note(fact, &name, &format!("{name}{path}"));
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
@@ -71,6 +78,71 @@ impl FnCx<'_, '_> {
             scope.refused.push((l, Refused { note, at }));
         }
         true
+    }
+
+    /// A read of local `l` (of nullable type `ty`, which a closure assigns) that a null check
+    /// narrowed: its value, checked again, because a call since the check may have run the
+    /// closure. JavaScript would go on with `null` and throw a `TypeError` where it is used
+    /// (`cleanupFn()`); Velt stops at the read with one.
+    pub(crate) fn checked_narrowed_read(
+        &mut self,
+        l: LocalId,
+        ty: crate::hir::TyId,
+        want: super::Want,
+        span: Span,
+    ) -> crate::hir::Expr {
+        let name = self.f.locals[l.0 as usize].name.clone();
+        let what = self.cx.ty.nothing_of(ty).map_or("null", |n| match n {
+            crate::hir::Nothing::Both => "null or undefined",
+            n => n.word(),
+        });
+        let msg = format!(
+            "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
+        );
+        let mode = self.use_mode(ty, super::Want::Borrow);
+        let h = self.mk(crate::hir::ExprKind::Local(l, mode), ty, span);
+        self.checked_present(h, &msg, None, want != super::Want::Move, span)
+    }
+
+    /// `e` checked as the operand of a null or truthiness test: a variable that a closure
+    /// assigns is read as it is (the test is what checks it).
+    pub(crate) fn test_operand(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<crate::hir::TyId>,
+        want: super::Want,
+    ) -> crate::hir::Expr {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        if matches!(inner.kind, ast::ExprKind::Ident(_)) {
+            self.raw_read = Some(inner.span);
+        }
+        let h = self.expr(e, exp, want);
+        self.raw_read = None;
+        h
+    }
+
+    /// Capture `inner` of a variable `name` that a closure assigns was not given the narrowing
+    /// `n` the variable has where the closure is created: errors at its reads get the note.
+    pub(crate) fn note_dropped_capture(
+        &mut self,
+        inner: LocalId,
+        name: &str,
+        n: (bool, Option<Vec<u32>>, Option<crate::hir::TyId>),
+    ) {
+        let fact = match n {
+            (_, _, Some(t)) => Fact::Class(inner, t),
+            (_, Some(vs), _) => Fact::Members(inner, vs),
+            (true, _, _) => Fact::NonNull(inner),
+            _ => return,
+        };
+        let Some(at) = self.closure_assignment(inner) else {
+            return;
+        };
+        let note = self.refusal_note(&fact, name, name);
+        self.f.scopes[0].refused.push((inner, Refused { note, at }));
     }
 
     /// The note for errors at reads of `what` (`x`, `k.ro`), a variable `name` or a field path
