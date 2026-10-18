@@ -188,15 +188,13 @@ impl FnCx<'_, '_> {
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
-        let narrow = matches!(
-            self.cx.dynamic(exp),
-            Some(Dynamic::Object | Dynamic::Function)
-        );
         match self.cx.ty.kind(h.ty) {
             // A type parameter bound by `object` / `Function` holds no `null` and no primitive
-            // to unpack (issue #926); lowering boxes the instantiation's value.
-            TyKind::Param(_) if narrow => {}
-            TyKind::Unit | TyKind::Never | TyKind::Error | TyKind::Param(_) => return Err(h),
+            // to unpack (issue #926); lowering boxes the instantiation's value. Into `any` or
+            // `unknown`, lowering unpacks an instantiation that is an option, a union or a
+            // literal type (issue #1241).
+            TyKind::Param(_) => {}
+            TyKind::Unit | TyKind::Never | TyKind::Error => return Err(h),
             TyKind::Promise(..) => return Err(h),
             _ => {}
         }

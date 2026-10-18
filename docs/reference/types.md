@@ -1815,7 +1815,11 @@ twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | unde
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
-a left-out optional field `q?: any` holds `undefined`. An enum value is its number or string
+a left-out optional field `q?: any` holds `undefined`. A value whose type is a type parameter
+converts to `any` and `unknown` too (`const a: any = t` with `t: T`, `t as unknown as X`): the
+value of the instantiation goes in as above, so a `T` that is `number | null` holding `null`
+gives the dynamic `null`, a union the member it holds and a literal type its value (an
+instantiation with an enum stops with a `TypeError` for now, #1241). An enum value is its number or string
 in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
 value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
 `a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is

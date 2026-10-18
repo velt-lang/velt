@@ -1,0 +1,5 @@
+1 1
+1 number number s string string true boolean boolean null object object
+5 number number undefined undefined undefined b string string
+object false object false object false object true
+2 x null
