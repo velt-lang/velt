@@ -7,8 +7,9 @@
 //! - `cargo fmt --check -p <crates with changed Rust files>` (`--all` when the build
 //!   configuration changed);
 //! - the gate's own `velt fmt --check std examples` when anything under `std/` or `examples/`
-//!   changed (it takes about a second, and it picks the `.vlt` files and the `.ts`/`.tsx` files
-//!   of packages exactly as the gate does);
+//!   changed, or when the formatter (`velt_fmt`) or a crate it depends on did (it takes about a
+//!   second, and it picks the `.vlt` files and the `.ts`/`.tsx` files of packages exactly as the
+//!   gate does);
 //! - the file-size rule (crates/xtask/src/file_size.rs) on the changed Rust files;
 //! - `cargo clippy -p <changed crates and their dependents> --all-targets -- -D warnings`, or
 //!   `--workspace` when the build configuration changed;
@@ -41,6 +42,10 @@ const WORKSPACE_CONFIG: &[&str] = &[
 /// The directories `velt fmt --check` checks (as crates/xtask/src/check.rs does): a change under
 /// them runs the same command on them.
 const FORMATTED: &[&str] = &["std", "examples"];
+
+/// The formatter's crate: a change to it or to a crate it depends on can change how the files
+/// under [`FORMATTED`] format.
+const FORMATTER: &str = "velt_fmt";
 
 /// The file-size rule, which veltc's `standards` test includes with `#[path]`.
 const FILE_SIZE_RS: &str = "crates/xtask/src/file_size.rs";
@@ -87,7 +92,8 @@ pub struct Selection {
     pub rustfmt: Crates,
     /// Clippy: the crates with changed Rust files or manifests, and their dependents.
     pub clippy: Crates,
-    /// `velt fmt --check std examples`.
+    /// `velt fmt --check std examples`: something under them changed, or the formatter or a
+    /// crate it depends on did.
     pub velt_fmt: bool,
     /// Changed Rust files the file-size rule covers.
     pub sized: Vec<String>,
@@ -147,6 +153,13 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         sel.rustfmt = Crates::of(graph, formatted);
         sel.clippy = Crates::of(graph, graph.with_dependents(&changed));
     }
+    // Clippy covers the changed crates and their dependents: when that includes the formatter,
+    // the formatter itself or one of its dependencies changed.
+    sel.velt_fmt |= match &sel.clippy {
+        Crates::None => false,
+        Crates::Workspace => true,
+        Crates::Packages(packages) => packages.contains(FORMATTER),
+    };
     sel
 }
 
@@ -358,7 +371,22 @@ mod tests {
         assert_eq!(s.rustfmt, packages(&["velt_syntax"]));
         assert_eq!(s.clippy, packages(&["velt_fmt", "velt_syntax"]));
         assert_eq!(s.sized, ["crates/velt_syntax/src/lexer.rs"]);
-        assert!(!s.velt_fmt && !s.difftest);
+        // velt_fmt depends on velt_syntax: the gate's `velt fmt --check` runs with the new parser.
+        assert!(s.velt_fmt);
+        assert!(!s.difftest);
+        assert!(!sel(&["crates/xtask/src/main.rs"]).velt_fmt);
+    }
+
+    #[test]
+    fn a_formatter_change_runs_the_gates_velt_fmt() {
+        for path in [
+            "crates/velt_fmt/src/lib.rs",
+            "crates/velt_fmt/Cargo.toml",
+            "crates/velt_common/src/span.rs",
+            "Cargo.lock",
+        ] {
+            assert!(sel(&[path]).velt_fmt, "{path}");
+        }
     }
 
     #[test]

@@ -89,7 +89,8 @@ compilation on (CI turns it off).
 **Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
 files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
 `cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
-anything under `std/` or `examples/` changed, the file-size rule (below) on the changed Rust files, and clippy with
+anything under `std/` or `examples/` changed or the formatter (`velt_fmt`) or a crate it depends on
+did, the file-size rule (below) on the changed Rust files, and clippy with
 `-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
 it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
 well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
