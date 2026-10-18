@@ -21,6 +21,6 @@ null null null {"x":null,"ab":null,"n":null}
 x null "x" null
 a null "a" null
 [ 'x', null, 'x' ] ["x",null,"x"]
-null t {"v":1} {"tag":"t","v":2}
+undefined t {"v":1} {"tag":"t","v":2}
 expected "x" at $.x
 expected "x" at $

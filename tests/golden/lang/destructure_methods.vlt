@@ -1,0 +1,68 @@
+// check: no leaks
+// Destructuring methods and function-typed members out of an interface value (#1207):
+// `const { insert, createText } = options;` gives each name the member as a function value,
+// also in a generic function over the interface's type argument, and a method's optional
+// parameters stay optional. Expected output: Node's.
+interface RendererOptions<N> {
+  insert(child: N, parent: N, anchor?: string | null): void;
+  createText(text: string): N;
+}
+
+function createRenderer<N>(options: RendererOptions<N>): (s: string, p: N) => void {
+  const { insert: hostInsert, createText: hostCreateText } = options;
+  return (s, p) => {
+    hostInsert(hostCreateText(s), p);
+    hostInsert(hostCreateText(s), p, "!");
+  };
+}
+
+interface Counter {
+  name: string;
+  inc(by: number): number;
+  label(): string;
+}
+
+function make(): Counter {
+  let n = 0;
+  return {
+    name: "c",
+    inc(by: number): number {
+      n += by;
+      return n;
+    },
+    label(): string {
+      return "counter";
+    },
+  };
+}
+
+interface Ops {
+  add: (a: number, b: number) => number;
+  neg?: (a: number) => number;
+}
+
+function main() {
+  const r = createRenderer<string[]>({
+    insert(c, p, anchor) {
+      p.push(...c);
+      if (anchor != null) p.push(anchor);
+    },
+    createText(t) {
+      return [t];
+    },
+  });
+  const root: string[] = [];
+  r("hello", root);
+  r("world", root);
+  console.log(root);
+
+  const c = make();
+  const { name, inc, label } = c;
+  console.log(name, inc(2), inc(3), label());
+  const { inc: bump } = make();
+  console.log(bump(10), bump(1));
+
+  const ops: Ops = { add: (a, b) => a + b };
+  const { add, neg } = ops;
+  console.log(add(1, 2), neg == null);
+}

@@ -34,11 +34,11 @@ mod nothing;
 mod numeric;
 mod table;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
-pub use fields::{FieldDef, FieldInit};
+pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{FloatTy, IntTy, SimdTy};
@@ -117,6 +117,10 @@ pub enum TyOp {
     /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
     /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
     Alias(u32),
+    /// `A & B & …` with a part that is a type parameter or another deferred type (`T & { $set:
+    /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
+    /// reduces to the object type `crate::intersections` builds from them.
+    Intersect,
 }
 
 /// The value of a literal type.
@@ -151,6 +155,9 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The program's module state (module-level `let`s), `None` when it has none
+    /// (hir_encodings.md "Module state").
+    pub module_state: Option<ModuleState>,
     /// Every deferred type (`TyKind::Op`) with concrete arguments that an instantiation of a
     /// generic definition reaches, and the type it reduces to (no `Op` in it).
     pub type_ops: HashMap<TyId, TyId>,
@@ -159,6 +166,33 @@ pub struct Program {
     /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
     /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
     pub unknown: Option<DefId>,
+    /// The prelude's `object` and `Function` interfaces when `any_impl` is set (issue #926):
+    /// `Dyn(object, [])` and `Dyn(Function, [])` are dynamic types too, with the same
+    /// representation and tables as `any`.
+    pub object: Option<DefId>,
+    pub function: Option<DefId>,
+    /// The spans of the `super.m(args)` calls (hir_encodings.md "Classes"): each is a
+    /// `Callee::Def` call of the base implementation with `this` as `args[0]`, which JavaScript
+    /// makes without reading `m` from `this` (so no proxy trap runs, typed proxies, #823).
+    pub super_calls: HashSet<Span>,
+    /// The methods and accessors of each struct / class / object type by name, own ones before
+    /// inherited ones, when the program reads or calls a member of an `any`
+    /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
+    /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
+    pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
+    /// The program may call a generator's `throw()` (hir_encodings.md "Generators"): a
+    /// generator's resume function then also handles an error thrown in at each `yield`;
+    /// otherwise it has no code for that.
+    pub generator_throw: bool,
+}
+
+/// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
+#[derive(Clone, Debug)]
+pub struct ModuleState {
+    /// The state tuple: element `i` is the type of slot `i`.
+    pub ty: TyId,
+    /// The global of each slot, in initialization order (Node's module evaluation order).
+    pub slots: Vec<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -387,9 +421,13 @@ pub struct GlobalDef {
     pub name: String,
     pub ty: TyId,
     /// Evaluated at each use (a constant expression, or pure calls and closures, sema
-    /// `body::pure_init`), except a table: an array literal that lowering stores once as data.
+    /// `body::pure_init`), except a table: an array literal that lowering stores once as data,
+    /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
     pub init: Expr,
     pub span: Span,
+    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
+    /// that is read, written and borrowed like a field.
+    pub slot: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -477,6 +515,21 @@ pub struct Expr {
     pub kind: ExprKind,
     pub ty: TyId,
     pub span: Span,
+}
+
+/// Whether an `AdtLit` converts an object to another object type (hir_encodings.md "Object
+/// conversions"): its fields are then each absent or a read of one source place, and a
+/// source holding a typed proxy gives that proxy instead of the literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Conversion {
+    /// An ordinary literal.
+    No,
+    /// A conversion: a plain source is copied.
+    Copy,
+    /// A conversion whose copy the program could tell from the original (a later write, `===`,
+    /// ...), allowed only because the program creates proxies: a plain source throws a
+    /// `TypeError` instead of being copied.
+    ProxyOnly,
 }
 
 /// How a place is used by the expression that reads it (sema's ownership analysis).
@@ -639,6 +692,9 @@ pub enum ExprKind {
         def: DefId,
         type_args: Vec<TyId>,
         fields: Vec<Expr>,
+        /// Whether the literal converts an object to another object type by copying its
+        /// fields (hir_encodings.md "Object conversions").
+        converted: Conversion,
     },
     Variant {
         def: DefId,

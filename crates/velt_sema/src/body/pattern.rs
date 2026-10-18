@@ -61,8 +61,11 @@ impl FnCx<'_, '_> {
             ast::PatternKind::Ident(name) => self.binding(name, ty, ctx),
             ast::PatternKind::Object { fields, rest } => {
                 if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
+                    // Declarations and parameters take the rest (`object_rest.rs`).
+                    self.cx.err(
+                        "`...rest` in this object pattern is not supported yet (only in `const` and `let` declarations and parameters)",
+                        r.span,
+                    );
                 }
                 self.object_pattern(fields, ty, ctx)
             }
@@ -119,7 +122,9 @@ impl FnCx<'_, '_> {
                     x
                 }
                 None => {
-                    if !self.cx.ty.is_bottom(ty) {
+                    if !self.cx.ty.is_bottom(ty)
+                        && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
+                    {
                         let tn = self.cx.display(ty);
                         self.cx.err(
                             format!("no field `{}` on type `{tn}`", name.name),

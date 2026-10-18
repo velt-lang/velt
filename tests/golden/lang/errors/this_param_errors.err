@@ -1,0 +1,5 @@
+the 'this' context of type 'void' is not assignable to method's 'this' of type 'Counter' (TypeScript's TS2684)
+expected Counter, found null
+expected Counter, found string
+expected f64, found string
+the 'this' context of type 'void' is not assignable to method's 'this' of type 'Counter | undefined' (TypeScript's TS2684)

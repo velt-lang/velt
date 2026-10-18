@@ -39,7 +39,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
         };
         if item.exported {
             for n in &imp.names {
-                exported_item(cx, t, imp, n);
+                exported_item(cx, m, t, imp, n);
             }
         } else if let Some(ns) = &imp.namespace {
             bind_namespace(cx, m, t, ns);
@@ -59,6 +59,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
 /// `n` of `import { n } from` / `export { n } from` module `t`: its item, or an error.
 fn exported_item(
     cx: &mut Ctx,
+    m: usize,
     t: usize,
     imp: &ast::Import,
     n: &ast::ImportName,
@@ -71,6 +72,12 @@ fn exported_item(
         return None; // a namespace: its members are bound by `import_name`
     }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
+        if super::exports::maybe_dropped(cx, t, &n.name.name) {
+            // The parser may have dropped its declaration: that error is reported already.
+            let file = cx.modules[m].file;
+            cx.poisoned.insert((file, bound_name(n).name.clone()));
+            return None;
+        }
         let mut d = Diagnostic::error(
             format!("module `{}` has no member `{}`", imp.from, n.name.name),
             n.name.span,
@@ -147,7 +154,7 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
             return;
         }
     }
-    let Some(it) = exported_item(cx, t, imp, n) else {
+    let Some(it) = exported_item(cx, m, t, imp, n) else {
         return;
     };
     let local = bound_name(n);

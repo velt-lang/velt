@@ -1,0 +1,15 @@
+// An array constant that is not a table (strings, nested arrays, computed elements) is module
+// state: evaluated once, as in Node.
+
+function one(): u8 {
+  return 1;
+}
+
+const NAMES: string[] = ["a", "b"];
+const NESTED: u8[][] = [[1], [2]];
+const CALLS: u8[] = [one(), 2];
+const SUMS: u8[] = [1 + 2, 3];
+
+function main() {
+  console.log(NAMES, NESTED, CALLS, SUMS);
+}

@@ -1,0 +1,18 @@
+// Intersections with a type parameter part (#350) whose type arguments make no value: each is
+// reported at the argument that fixes them. A class is no part (Velt classes are nominal), and
+// parts whose shared field has two types have no value in common (TypeScript: `never`, TS2322).
+class C {
+  x = 1;
+  id = "a";
+}
+
+function stamp<T>(x: T & { id: string }): T & { id: string } {
+  return x;
+}
+
+function main() {
+  const c = stamp<C>(new C());
+  const n = stamp<{ id: number }>({ id: 1 });
+  const m = stamp({ a: 1, id: 2 });
+  console.log(c, n, m);
+}

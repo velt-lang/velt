@@ -5,7 +5,6 @@
 use velt_sema::hir::{self, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
-use super::sequence::{later_each, Later};
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{self, Const, Operand, Place, Rvalue, Ty};
 
@@ -15,6 +14,8 @@ impl FnLower<'_, '_> {
     pub(super) fn consume(&mut self, e: &hir::Expr) -> Operand {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
+            let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+            self.cx.note_proxy_cast(from, to);
             return self.consume(inner);
         }
         if let K::Downcast(inner) = &e.kind {
@@ -39,9 +40,12 @@ impl FnLower<'_, '_> {
                 mode: UseMode::Move,
                 ..
             } => match &v {
-                Operand::Copy(p) => {
-                    self.take_temp(&p.clone());
-                    v
+                Operand::Copy(p) if self.take_temp(&p.clone()) => v,
+                // Out of a variable that only borrows its value (`const s = this.f`, narrowed):
+                // nothing was transferred, so the consumer gets another reference (#1140).
+                _ if self.borrowed_root(e) => {
+                    let ty = self.sub(e.ty);
+                    self.share_value(v, ty)
                 }
                 _ => v,
             },
@@ -54,6 +58,15 @@ impl FnLower<'_, '_> {
                 }
             },
         }
+    }
+
+    /// Is the moved part `e` (`x.f`, `x!`, a narrowed member of `x`) rooted at a variable that
+    /// does not own its value (a binding by reference, or a borrowed parameter)?
+    fn borrowed_root(&self, e: &hir::Expr) -> bool {
+        super::place::part_root(e).is_some_and(|id| {
+            let info = &self.info[id.0 as usize];
+            !info.droppable && info.vir.is_some()
+        })
     }
 
     /// Deep copy of a value of concrete type `ty` into a fresh (unregistered) temporary.
@@ -78,7 +91,7 @@ impl FnLower<'_, '_> {
     /// `consume` each of `es` in order, snapshotting a value that a later one may change
     /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
-        let later = later_each(es);
+        let later = self.later_each(es);
         let mut vals = Vec::with_capacity(es.len());
         for (e, later) in es.iter().zip(later) {
             let v = self.consume(e);
@@ -108,7 +121,8 @@ impl FnLower<'_, '_> {
                 if let Some(v) = self.float_param_ordering(*op, lhs, rhs, e.ty) {
                     return v;
                 }
-                let l = self.expr_held(lhs, Later::of(rhs));
+                let later = self.later_of(rhs);
+                let l = self.expr_held(lhs, later);
                 let r = self.expr(rhs);
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
@@ -119,7 +133,14 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
                 ..
             } => self.source_location(e.span),
-            K::Call { callee, args } => self.call_value(callee, args, e.ty),
+            K::Call { callee, args } => {
+                // `super.m(args)` (`Program::super_calls`), taken by `call_def`.
+                let sup = self.cx.hir.super_calls.contains(&e.span);
+                let prev = std::mem::replace(&mut self.super_call, sup);
+                let v = self.call_value(callee, args, e.ty);
+                self.super_call = prev;
+                v
+            }
             K::Cast(inner) => {
                 let v = self.expr(inner);
                 let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
@@ -139,6 +160,11 @@ impl FnLower<'_, '_> {
             K::FnRef(d, targs) => self.fn_ref(*d, targs, e.ty),
             K::Field { base, index, mode } => self.field_expr(base, *index, *mode),
             K::Index { base, index, .. } => self.index_expr(base, index),
+            K::AdtLit {
+                fields,
+                converted: c @ (hir::Conversion::Copy | hir::Conversion::ProxyOnly),
+                ..
+            } => self.converted_lit(e.ty, fields, *c == hir::Conversion::ProxyOnly),
             K::AdtLit { fields, .. } => self.adt_lit(e.ty, fields),
             K::Variant { variant, args, .. } => self.variant(e.ty, *variant, args),
             K::ArrayLit(es) => self.array_lit(es, e.ty),
@@ -153,7 +179,11 @@ impl FnLower<'_, '_> {
                 mode,
             } => self.unwrap_variant(expr, *variant, *mode),
             K::New { args, .. } => self.new_object(e.ty, args),
-            K::Upcast(inner) => self.expr(inner),
+            K::Upcast(inner) => {
+                let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                self.cx.note_proxy_cast(from, to);
+                self.expr(inner)
+            }
             K::Downcast(inner) => {
                 let v = self.expr(inner);
                 self.downcast_value(v, inner.ty)
@@ -182,6 +212,10 @@ impl FnLower<'_, '_> {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
         };
+        if let Some(slot) = g.slot {
+            // A module-level `let`: its slot, read in place (sema shares what it moves out).
+            return Operand::Copy(self.module_slot(slot));
+        }
         let saved = std::mem::take(&mut self.targs);
         let v = self.consume(&g.init);
         self.targs = saved;
@@ -219,6 +253,12 @@ impl FnLower<'_, '_> {
                 let hir::Def::Global(g) = self.cx.hir.def(d) else {
                     return None;
                 };
+                // A module-level `let` (its slot holds the array, which code may replace or
+                // modify) is never read from the stored initializer.
+                if g.slot.is_some() {
+                    self.cx.tables.insert(d, None);
+                    return None;
+                }
                 let stored = self.store_table(g);
                 self.cx.tables.insert(d, stored);
                 stored?
@@ -429,6 +469,9 @@ impl FnLower<'_, '_> {
 
     /// Block expression (`x++`/`++x` encodings, match arms): its value outlives its scope.
     fn block_expr(&mut self, b: &hir::Block, ty: TyId) -> Operand {
+        if let Some(v) = self.proxy_update_block(b) {
+            return v;
+        }
         self.note_scope_ends(b, false);
         self.push_scope(ScopeKind::Block);
         for s in &b.stmts {

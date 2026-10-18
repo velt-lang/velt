@@ -22,6 +22,38 @@ impl Cx<'_> {
         self.facts.weak_seeds.insert(t);
     }
 
+    /// Record that `object` is a weak key or a `WeakRef` target (issue #926).
+    pub(in crate::lower) fn note_weak_object(&mut self) {
+        self.facts.weak_object = true;
+    }
+
+    /// Record that dynamic values hold values of the concrete type `t` (an `any` table).
+    pub(in crate::lower) fn note_dyn_type(&mut self, t: TyId) {
+        self.facts.dyn_types.insert(t);
+    }
+
+    /// Record that values of the concrete type `t` convert to `object` (`None`: an `any`,
+    /// `unknown` or interface value does, which may hold any type).
+    pub(in crate::lower) fn note_to_object(&mut self, t: Option<TyId>) {
+        match t {
+            Some(t) => {
+                self.facts.object_types.insert(t);
+            }
+            None => self.facts.object_from_dyn = true,
+        }
+    }
+
+    /// Is `object` a weak key or `WeakRef` target in this program (see `Boxing::weak_object`)?
+    pub(in crate::lower) fn weak_object(&self) -> bool {
+        self.boxing.weak_object
+    }
+
+    /// Can a dynamic value holding a `t` be a weak key: is its data pointer a counted,
+    /// weak-capable object (not a box made by the conversion)?
+    pub(in crate::lower) fn weak_keyable(&mut self, t: TyId) -> bool {
+        (self.is_class(t) || self.boxed(t)) && self.counted(t) && self.weak_capable(t)
+    }
+
     /// Does the program use weak references at all (are there weak-capable types)?
     pub(in crate::lower) fn has_weak(&self) -> bool {
         !self.boxing.weak.is_empty() || !self.boxing.weak_roots.is_empty()
@@ -73,6 +105,14 @@ impl Cx<'_> {
             if !out.contains(&t) {
                 out.push(t);
             }
+            // A typed proxy (#823) is its `Proxy` object, which the trace glue visits instead.
+            let proxy = b.unwrap_or(&self.boxing).proxy_class;
+            if let Some(d) = proxy.filter(|_| self.proxiable_in(b.unwrap_or(&self.boxing), t)) {
+                let pty = self.intern(TyKind::Adt(d, vec![]));
+                if !out.contains(&pty) {
+                    out.push(pty);
+                }
+            }
             return;
         }
         if !seen.insert(t) {
@@ -80,6 +120,24 @@ impl Cx<'_> {
         }
         match self.kind(t) {
             TyKind::Option(e, _) | TyKind::Array(e) => self.refs_inline(b, e, out, seen),
+            // A dynamic value may hold any counted type a dynamic value holds (issue #926);
+            // the trace glue asks its descriptor (weak_object.rs).
+            TyKind::Dyn(..) if self.is_dynamic(t) => {
+                let bx = b.unwrap_or(&self.boxing);
+                if bx.weak_object {
+                    let mut tys: Vec<TyId> = bx.dyn_types.iter().copied().collect();
+                    tys.sort_by_key(|t| t.0);
+                    for d in tys {
+                        let counted = match b {
+                            Some(b) => self.counted_in(b, d),
+                            None => self.counted(d),
+                        };
+                        if counted && !out.contains(&d) {
+                            out.push(d);
+                        }
+                    }
+                }
+            }
             // An uncounted object is opaque: nothing is traced through it (a leak at worst).
             TyKind::Adt(..) if self.is_class(t) => {}
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
@@ -107,7 +165,27 @@ impl Cx<'_> {
         for p in parts {
             self.refs_inline(b, p, &mut out, &mut seen);
         }
+        for c in self.proxy_traced_as(b, t) {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
         out
+    }
+
+    /// For the `Proxy` class `t`: the counted types its target is traced as (glue/trace.rs,
+    /// `Boxing::proxy_traced`); none for any other type.
+    pub(in crate::lower) fn proxy_traced_as(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
+        let bx = b.unwrap_or(&self.boxing);
+        let is_proxy = matches!(self.kind(t), TyKind::Adt(d, _) if Some(d) == bx.proxy_class);
+        if !is_proxy {
+            return vec![];
+        }
+        let cands: Vec<TyId> = bx.proxy_traced.iter().copied().collect();
+        cands
+            .into_iter()
+            .filter(|&c| self.counted_in(b.unwrap_or(&self.boxing), c) && self.traceable(c))
+            .collect()
     }
 
     /// Display names of the weak-capable types (`VELT_DEBUG_COUNTED=1`).
@@ -128,7 +206,11 @@ impl Cx<'_> {
 
     /// Fill `next`'s weak-capable types from this pass's seeds.
     pub(super) fn close_weak(&mut self, next: &mut Boxing) {
-        let seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
+        let mut seeds: Vec<TyId> = self.facts.weak_seeds.iter().copied().collect();
+        if next.weak_object {
+            // Every type converted to a dynamic type may reach a weak `object` key.
+            seeds.extend(next.dyn_types.iter().copied());
+        }
         let mut work = vec![];
         for s in seeds {
             let refs = self.weak_refs_inline(Some(next), s);

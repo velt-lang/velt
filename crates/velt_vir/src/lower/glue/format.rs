@@ -225,7 +225,16 @@ impl FnLower<'_, '_> {
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_format_split(&buf, &place, &depth, done);
+            done
+        });
         self.format_expand(&buf, &place, ty, &depth);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
@@ -387,6 +396,14 @@ impl FnLower<'_, '_> {
             return;
         }
         let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
+        if self.is_proxy(ty) {
+            // Node prints a proxy as its target, without running traps (`showProxy: false`).
+            let any = self.cx.member_ty(ty, 0);
+            let target = self.field_place(&place, ty, 0);
+            self.format_expand(&buf, &target, any, &depth);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         if let Some(m) = self.hook(ty, Hook::Inspect) {
             self.format_inspect(&buf, p, ty, m, &depth);
         } else if !self.format_collection(&buf, &place, ty, &depth) {

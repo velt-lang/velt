@@ -220,9 +220,10 @@ function* range(n: i64): Generator<i64> {
   like Node. A generator's state cannot be copied, so sema rejects every deep copy of a value
   holding one (`known.rs` `holds_generator`, `body/generators.rs` `no_generator_copy`):
   `clone()`, an argument (or receiver) of a spawned call, a value sent on a std `Channel`, and
-  a capture of an async closure (whose state copies its captures when it runs), each with
-  "a generator cannot be copied" / "... cannot be passed to another task" / "an async closure
-  cannot capture the generator `g`". A generator coerced to an interface value at the spawned
+  a capture of an async closure that may run on another thread (whose state copies its
+  captures when it runs; `ownership/local_async` decides, and a local one shares the
+  generator), each with "a generator cannot be copied" / "... cannot be passed to another
+  task" / "an async closure that may run on another thread cannot capture the generator `g`". A generator coerced to an interface value at the spawned
   call itself (`spawn(sum(gen()))` with `sum(it: Iterable<T>)`) is caught too (the argument's
   `ToDyn` operand). An interface value made earlier is not looked into: one backed by a
   generator that reaches a spawned task still panics at run time (`a generator cannot be

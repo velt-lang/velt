@@ -23,6 +23,12 @@ mod abi;
 mod adt;
 mod any;
 mod any_eq;
+mod any_glue;
+mod any_has;
+mod any_member;
+mod any_proxy;
+mod any_set;
+mod any_set_site;
 mod append;
 mod array;
 mod assign_target;
@@ -58,13 +64,19 @@ mod keys;
 mod layout;
 mod match_switch;
 mod matching;
+mod module_state;
 mod operand;
 mod ops;
 mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_call;
+mod proxy_method;
+mod proxy_typed;
+mod proxy_write;
 mod rc;
+mod receiver;
 mod rt;
 mod same;
 mod sequence;
@@ -82,6 +94,7 @@ mod transfer;
 mod truthy;
 mod types;
 mod weak;
+mod weak_object;
 mod widen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -145,6 +158,9 @@ pub(crate) fn lower_program(
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
+            if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
+                eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
+            }
             let diags = cx.nothing_clash_diagnostics();
             let types_now = cx.types.clone();
             let program = cx.finish();
@@ -188,6 +204,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
+    /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
+    /// called on its own (without the proxy as `this`) it throws a `TypeError`.
+    Unbound,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -224,6 +244,9 @@ enum Work {
     /// `(state: ptr)`: request the awaited close of an async generator instance (sets
     /// `CLOSE_BIT`; async_fn/generator.rs).
     AsyncCloseStart(DefId, Vec<TyId>),
+    /// `(state: ptr, error: ptr) -> u32`: resume a generator instance with an error thrown in
+    /// (`throw()`; async_fn/gen_send.rs).
+    GenThrow(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),
@@ -251,6 +274,8 @@ enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
+    /// `(state: ptr)`: the module state's initializer (module_state.rs).
+    ModuleInit,
 }
 
 /// Program-level lowering state.
@@ -274,6 +299,12 @@ struct Cx<'h> {
     externs: Vec<ExternFn>,
     extern_map: HashMap<String, ExternId>,
     statics: Vec<StaticData>,
+    /// The module state's descriptor, once a slot is used (module_state.rs).
+    module_desc: Option<StaticId>,
+    /// The module state slots some code assigns as a whole, once asked (module_state.rs).
+    reassigned_slots: Option<HashSet<hir::DefId>>,
+    /// The prelude's `Error` class, once looked up (js_string.rs).
+    prelude_error: Option<Option<hir::DefId>>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
@@ -408,6 +439,10 @@ enum ScopeKind {
     },
     /// Inside a `try` with `finally`: the block runs on every exit (taken while being lowered).
     Finally(Option<Rc<hir::Block>>),
+    /// A module state initializer: an error thrown in it and not caught there prints
+    /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
+    /// evaluates a module (module_state.rs).
+    Uncaught,
 }
 
 struct Scope {
@@ -465,11 +500,22 @@ struct FnLower<'c, 'h> {
     /// The next call lowered is spawned through a function value, vtable or interface: its
     /// arguments are transferred (transfer.rs). Taken by that call before anything else.
     transfer_call: bool,
+    /// The direct method call being lowered has a receiver of a proxiable class: once the
+    /// receiver is lowered, a proxy with a `get` trap reads the method through it
+    /// (proxy_method.rs), before the other arguments.
+    proxy_recv: Option<(DefId, Vec<TyId>)>,
+    /// The call being lowered is `super.m(args)` (`Program::super_calls`): its receiver is not
+    /// read through a proxy (`call_def` takes it).
+    super_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
     /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
     /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Lowering the module state's initializer (module_state.rs): the locals of each global's
+    /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and
+    /// are declared at their `let` (`declare_init_local`).
+    init_locals: bool,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
@@ -479,4 +525,12 @@ struct FnLower<'c, 'h> {
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
     frame_closures: HashSet<DefId>,
+    /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
+    /// (frame_envs.rs).
+    direct_siblings: HashMap<LocalId, DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
+    /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
+    /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
+    in_reflect: bool,
 }

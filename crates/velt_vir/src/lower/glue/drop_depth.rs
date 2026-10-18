@@ -196,6 +196,11 @@ impl FnLower<'_, '_> {
     /// The `Glue::Drop` body of `ty` for the value at `*p`, bracketed when it can nest.
     pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_drop_split(&place, done);
+            done
+        });
         if !self.cx.value_drop_reenters(ty) {
             self.drop_expand(&place, ty);
         } else if self.cx.boxed(ty) {
@@ -203,6 +208,10 @@ impl FnLower<'_, '_> {
         } else {
             let at = place.clone();
             self.bracket(|lw| lw.queue_value(at, ty), |lw| lw.drop_expand(&place, ty));
+        }
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
         }
         self.terminate(Terminator::Return(unit()));
     }

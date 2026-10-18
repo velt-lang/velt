@@ -20,9 +20,36 @@ last.
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
 `await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
 
+An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
+that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
+promise settles as the returned one does. The steps are Node's: the promise is adopted after the
+function has left every scope it returns from (`finally` blocks run, `using` values are disposed
+and the iterator of a `for…of` is closed first, and an enclosing `catch` does not see the
+rejection), and one microtask later than `return await` would settle. A `return` that a
+`finally` block cancels (with `continue`, `break` or another `return`) adopts nothing. A plain
+value of a `T | Promise<T>` is returned at once. Without a written result type the function's result is the promise's value type, as in
+TypeScript: `const f = async (n: number) => load(n)` with `load(n): Promise<number>` is a
+`(n: number) => Promise<number>`.
+
+```ts
+async function load(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function viaLoad(n: number): Promise<number> {
+  return load(n);
+}
+
+async function main() {
+  console.log(await viaLoad(21));
+}
+```
+
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
-TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+TypeScript: its body returns `View`. The same holds for such an arrow as the value of a
+module-level constant or a field initializer (`const load: () => number | Promise<number> = async
+() => 1;`). Such a result is told apart with `r instanceof Promise`
 ([unions](types.md#union-types)):
 
 ```ts
@@ -466,6 +493,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     promise (`m.with((f) => f())`) is an error when a synchronous closure of its type captured
     objects: the promise would use them after the lock is released. An async closure there is
     fine, since each call gets its own copy of what it captured.
+  - The callback cannot use module state (module-level `let`s and kept constants), directly
+    or through a function it calls, a field initializer, or a `toString()`, `toJSON()` or
+    `[Symbol.dispose]()` method that std or a drop calls ([Module state](variables.md#module-state)).
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

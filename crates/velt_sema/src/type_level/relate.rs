@@ -7,6 +7,7 @@ use velt_common::Span;
 
 use super::{INFER_BASE, UNKNOWN, WILDCARD};
 use crate::anon::ShapeField;
+use crate::any::Dynamic;
 use crate::ctx::Ctx;
 use crate::hir::{AdtKind, LitValue, Nothing, TyId, TyKind};
 
@@ -33,6 +34,9 @@ impl Slots {
 impl Ctx<'_> {
     /// Does `null` / `undefined` extend `p`?
     pub(super) fn relate_nothing(&self, n: Nothing, p: TyId) -> bool {
+        if matches!(self.dynamic(p), Some(Dynamic::Any | Dynamic::Unknown)) {
+            return true;
+        }
         match *self.ty.kind(p) {
             TyKind::Param(WILDCARD | UNKNOWN) => true,
             TyKind::Option(_, m) => n.within(m),
@@ -68,6 +72,10 @@ impl Ctx<'_> {
             }
         }
         if s == self.ty.never || s == self.ty.error || p == self.ty.error {
+            return true;
+        }
+        // `any` and `unknown` written in a type bound (patterns have placeholders for them).
+        if matches!(self.dynamic(p), Some(Dynamic::Any | Dynamic::Unknown)) {
             return true;
         }
         let sk = self.ty.kind(s).clone();
@@ -111,6 +119,14 @@ impl Ctx<'_> {
             return false;
         }
         match (sk, pk) {
+            (_, TyKind::Dyn(..)) if self.dynamic(p) == Some(Dynamic::Object) => {
+                self.is_object_ty(s)
+            }
+            (TyKind::FnPtr { .. } | TyKind::Closure(_), TyKind::Dyn(..))
+                if self.dynamic(p) == Some(Dynamic::Function) =>
+            {
+                true
+            }
             (_, TyKind::Adt(pd, _)) if self.is_structural_object(pd) => {
                 self.relate_fields(s, p, slots)
             }
@@ -171,6 +187,15 @@ impl Ctx<'_> {
             }
             _ => false,
         }
+    }
+
+    /// Does type argument `s` satisfy the type bound `c` (`T extends c`, `Generics::constraints`)
+    /// as TypeScript relates them? `c` with type parameters still unknown is not tested.
+    pub(crate) fn satisfies_constraint(&mut self, s: TyId, c: TyId) -> bool {
+        if self.dynamic(s) == Some(Dynamic::Any) || self.has_type_params(c) {
+            return true;
+        }
+        self.relate(s, c, &mut Slots::default())
     }
 
     /// Is `p` an `infer` placeholder or a wildcard (which take `null` and `undefined` too)?

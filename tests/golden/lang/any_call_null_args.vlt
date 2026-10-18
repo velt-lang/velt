@@ -1,0 +1,11 @@
+// A method call on a `null` held in an `any` stops with Node's `TypeError` before its
+// arguments are evaluated (#924).
+function arg(): number {
+  console.log("arg evaluated");
+  return 1;
+}
+function main(): void {
+  const n: any = null;
+  console.log("before");
+  console.log(n.f(arg()));
+}

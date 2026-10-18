@@ -10,6 +10,7 @@
 //! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
+//! | 5..8 | member reads and calls (any_member.rs), when the program has them |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -35,7 +36,7 @@ pub(super) const TAG_BOOLEAN: u64 = 2;
 pub(super) const TAG_NUMBER: u64 = 3;
 pub(super) const TAG_STRING: u64 = 4;
 const TAG_SYMBOL: u64 = 5;
-const TAG_FUNCTION: u64 = 6;
+pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 
 /// `typeof` text of each tag.
@@ -63,14 +64,28 @@ const FOUND: [&str; 8] = [
 ];
 
 impl Cx<'_> {
-    /// Is `t` `any` or `unknown`?
+    /// Is `t` `any`, `unknown`, `object` or `Function`?
     pub(super) fn is_dynamic(&self, t: TyId) -> bool {
         let Some(i) = self.hir.any_impl else {
             return false;
         };
         let any = self.hir.impls[i as usize].iface;
         match self.types.kind(t) {
-            TyKind::Dyn(d, args) if args.is_empty() => *d == any || Some(*d) == self.hir.unknown,
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                *d == any
+                    || [self.hir.unknown, self.hir.object, self.hir.function].contains(&Some(*d))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `t` `object` or `Function` (issue #926)?
+    pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Dyn(d, args) if args.is_empty() => {
+                self.hir.any_impl.is_some()
+                    && [self.hir.object, self.hir.function].contains(&Some(*d))
+            }
             _ => false,
         }
     }
@@ -135,6 +150,7 @@ impl Cx<'_> {
                 Const::Func(self.func(Work::Glue(Glue::AnyNumber, ty))),
             ));
         }
+        e.extend(self.any_member_entries(ty));
         e
     }
 }
@@ -377,6 +393,15 @@ impl FnLower<'_, '_> {
             return self.zero_value(vt);
         }
         if self.cx.is_dynamic(ty) {
+            if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
+                // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
+                // `null` and `undefined` are what `object | null` holds.
+                self.cx.note_to_object(None);
+                let fvt = self.cx.ty(from);
+                let p = Place::local(self.copy_to_temp(v, fvt));
+                self.check_not_primitive(&p, ty);
+                return self.own_value(Operand::Copy(p), ty);
+            }
             return self.own_value(v, ty);
         }
         let fvt = self.cx.ty(from);
@@ -385,8 +410,169 @@ impl FnLower<'_, '_> {
         self.own_value(r, ty)
     }
 
+    /// Does a value of the concrete type `t` need unpacking or checking on its way into
+    /// `object` (issue #926: `x as object` of an unbounded `T`)? Options, unions, primitives,
+    /// literal and enum types, `void`, and `any` / `unknown`, which may hold a primitive.
+    pub(super) fn object_unpacks(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(..)
+            | TyKind::Unit
+            | TyKind::Bool
+            | TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Str
+            | TyKind::Symbol
+            | TyKind::Literal(_) => true,
+            TyKind::Dyn(..) => self.cx.is_dynamic(t) && !self.cx.is_narrow_dynamic(t),
+            _ => self.is_enum(t),
+        }
+    }
+
+    /// The owned value `v` of the concrete type `t` as the `object` `ty`: an option holds its
+    /// payload or the dynamic `null` / `undefined`, a union the member it holds; a primitive
+    /// (in an `any`, or a member) stops with a `TypeError`, as `x as object` of an `unknown`.
+    pub(super) fn object_unpack(&mut self, v: Operand, t: TyId, ty: TyId) -> Operand {
+        let vt = self.cx.ty(ty);
+        let out = Place::local(self.temp(vt));
+        // Assigned on every path: a union's switch has a default edge.
+        let zero = self.zero_value(vt);
+        self.assign(out.clone(), Rvalue::Use(zero));
+        self.object_into(v, t, ty, &out);
+        self.own_value(Operand::Copy(out), ty)
+    }
+
+    fn object_into(&mut self, v: Operand, t: TyId, ty: TyId, out: &Place) {
+        if self.dead() {
+            return;
+        }
+        if matches!(self.cx.kind(t), TyKind::Dyn(..)) {
+            self.cx.note_to_object(None);
+        }
+        match self.cx.kind(t) {
+            TyKind::Dyn(..) if self.cx.is_dynamic(t) => {
+                self.assign(out.clone(), Rvalue::Use(v));
+                if !self.cx.is_narrow_dynamic(t) {
+                    self.check_not_primitive(out, ty);
+                }
+            }
+            TyKind::Dyn(..) => {
+                let o = self.make_dyn_any(v, t, ty);
+                self.move_into(o, out);
+            }
+            TyKind::Unit => self.any_nothing_into(hir::Nothing::Undefined, out),
+            TyKind::Option(inner, n) => {
+                let vt = self.cx.ty(t);
+                let p = Place::local(self.copy_to_temp(v, vt));
+                let some = self.option_is_some(&p, t);
+                let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+                self.branch(some, yes, no);
+                self.switch_to(yes);
+                let pp = self.some_payload(&p, t);
+                self.object_into(Operand::Copy(pp), inner, ty, out);
+                self.goto(done);
+                self.switch_to(no);
+                self.any_nothing_into(n, out);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ if self.is_enum(t) && self.union_payloads(t) => {
+                let vt = self.cx.ty(t);
+                let p = Place::local(self.copy_to_temp(v, vt));
+                self.for_each_variant(&p, t, |lw, k, parts| match parts.as_slice() {
+                    [(pp, pt)] => lw.object_into(Operand::Copy(pp.clone()), *pt, ty, out),
+                    _ => match lw.variant_literal(t, k) {
+                        Some(l) => {
+                            let lt = lw.cx.intern(TyKind::Literal(l));
+                            lw.not_object_error(lt, ty);
+                        }
+                        None => lw.any_nothing_into(hir::Nothing::Undefined, out),
+                    },
+                });
+            }
+            _ if self.object_unpacks(t) => self.not_object_error(t, ty),
+            _ => {
+                let o = self.object_leaf(v, t, ty);
+                self.move_into(o, out);
+            }
+        }
+    }
+
+    /// Store the owned temporary `o` into `out`, which takes over its ownership.
+    fn move_into(&mut self, o: Operand, out: &Place) {
+        if let Operand::Copy(p) = &o {
+            self.take_temp(p);
+        }
+        self.assign(out.clone(), Rvalue::Use(o));
+    }
+
+    /// Does the enum type `t` hold payloads (a union, not a C-like or string enum)?
+    fn union_payloads(&mut self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(t) else {
+            return false;
+        };
+        let n = self.cx.enum_def(d).variants.len() as u32;
+        (0..n).any(|k| !self.cx.variant_tys(t, k).is_empty())
+    }
+
+    /// Stop with the `TypeError` of a value of the primitive type `t` converted to `object`.
+    fn not_object_error(&mut self, t: TyId, ty: TyId) {
+        let tag = match self.enum_strings(t) {
+            Some(_) => TAG_STRING,
+            None if self.is_enum(t) => TAG_NUMBER,
+            None => self.cx.any_tag(t),
+        };
+        let msg = format!(
+            "TypeError: the value is not an {} (it is {})",
+            self.any_target_name(ty),
+            FOUND[tag as usize]
+        );
+        self.panic_msg(&msg);
+        self.terminate(Terminator::Unreachable);
+        let next = self.new_block();
+        self.switch_to(next);
+    }
+
+    /// An object value of the concrete type `t` as the `object` `ty`, as `make_dyn` boxes it.
+    fn object_leaf(&mut self, v: Operand, t: TyId, ty: TyId) -> Operand {
+        self.cx.note_dyn_identity(ty, t);
+        self.cx.note_to_object(Some(t));
+        let data = if self.cx.is_class(t) || self.cx.boxed(t) {
+            v
+        } else {
+            let vt = self.cx.ty(t);
+            let b = self.alloc(vt);
+            let bp = self.operand_place(b.clone(), Ty::Ptr);
+            self.store(proj(&bp, Proj::Deref(vt)), v);
+            b
+        };
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let table = self.vtable_addr(VtableKey::Impl(imp, t));
+        self.build_agg(ty, vec![data, table])
+    }
+
+    /// Is `t` TypeScript's `object` (issue #926)?
+    pub(super) fn is_object_ty(&self, t: TyId) -> bool {
+        matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
+    }
+
+    /// Stop with a `TypeError` when the dynamic value at `p` holds a boolean, number, string
+    /// or symbol (converted to `object`, `ty`).
+    fn check_not_primitive(&mut self, p: &Place, ty: TyId) {
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc.clone());
+        let lo = cint(TAG_BOOLEAN as i128, Ty::U64);
+        let k = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, tag, lo));
+        let n = cint((TAG_SYMBOL - TAG_BOOLEAN) as i128, Ty::U64);
+        let bad = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, k, n));
+        let (bad_bb, ok_bb) = (self.new_block(), self.new_block());
+        self.branch(bad, bad_bb, ok_bb);
+        self.switch_to(bad_bb);
+        self.any_type_error(desc, ty);
+        self.switch_to(ok_bb);
+    }
+
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
-    fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
+    pub(super) fn any_unbox(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
         if self.cx.is_dynamic(ty) {
             // The payload of an `any | null`: the value itself.
             return Operand::Copy(p.clone());
@@ -429,6 +615,9 @@ impl FnLower<'_, '_> {
             return Operand::Copy(out);
         }
         let (ok_bb, bad_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        if matches!(self.cx.kind(ty), TyKind::Adt(..)) {
+            self.cx.note_proxy_target(ty);
+        }
         // A class without type arguments: an instance of it or of a subclass. A generic class
         // (`Box<number>`, `Map<string, string>`): the table of that very instantiation, since
         // its class id does not say what its type arguments are.
@@ -478,13 +667,27 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);
         self.switch_to(bad_bb);
+        if self.cx.proxiable(ty) {
+            // A proxy converted to a type that may hold one: the tagged `Proxy` object.
+            let err = self.new_block();
+            let data = Operand::Copy(proj(p, Proj::Field(0)));
+            self.proxy_unbox(data, desc.clone(), &out, done, err);
+            self.switch_to(err);
+        }
         self.any_type_error(desc, ty);
         self.switch_to(done);
         Operand::Copy(out)
     }
 
     /// The name of `ty` in a `TypeError`, with its type arguments (`Box<number>`).
-    fn any_target_name(&self, ty: TyId) -> String {
+    pub(super) fn any_target_name(&self, ty: TyId) -> String {
+        if let TyKind::Array(e) = self.cx.kind(ty) {
+            let e = self.any_target_name(e);
+            return match e.contains(' ') {
+                true => format!("({e})[]"),
+                false => format!("{e}[]"),
+            };
+        }
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
             TyKind::Adt(_, args) if !args.is_empty() => {
@@ -498,11 +701,23 @@ impl FnLower<'_, '_> {
     /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
     fn any_type_error(&mut self, desc: Operand, ty: TyId) {
         let want = self.any_target_name(ty);
-        let article = match want.chars().next() {
-            Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
-            _ => "a",
+        let an = article(&want);
+        // A value of the expected generic class (or an array) with other type arguments is
+        // named as one: "it is a Map", "it is an array".
+        let (same_id, same_name) = match self.cx.kind(ty) {
+            TyKind::Array(_) => (Some(super::any_set_site::ARRAY_ID), "an array".to_string()),
+            TyKind::Adt(d, args)
+                if self.cx.is_class(ty) && !args.is_empty() && !self.cx.has_header(d) =>
+            {
+                let name = self.cx.type_name(ty);
+                (
+                    Some(self.cx.class_range(d).0),
+                    format!("{} {name}", article(&name)),
+                )
+            }
+            _ => (None, String::new()),
         };
-        let tag = self.any_tag_of(desc);
+        let tag = self.any_tag_of(desc.clone());
         let blocks: Vec<_> = (0..FOUND.len()).map(|_| self.new_block()).collect();
         let cases = blocks
             .iter()
@@ -516,13 +731,38 @@ impl FnLower<'_, '_> {
         });
         for (k, b) in blocks.into_iter().enumerate() {
             self.switch_to(b);
-            let msg = format!(
-                "TypeError: the value is not {article} {want} (it is {})",
+            if let (Some(id), true) = (same_id, k == TAG_OBJECT as usize) {
+                let (yes, no) = (self.new_block(), self.new_block());
+                let have = self.vtable_class_id(desc.clone());
+                let want_id = cint(id as i128, Ty::U64);
+                let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, have, want_id));
+                self.branch(same, yes, no);
+                self.switch_to(yes);
+                self.panic_msg(&format!(
+                    "TypeError: the value is not {an} {want} (it is {same_name})"
+                ));
+                self.terminate(Terminator::Unreachable);
+                self.switch_to(no);
+            }
+            let mut msg = format!(
+                "TypeError: the value is not {an} {want} (it is {})",
                 FOUND[k]
             );
+            if k == TAG_OBJECT as usize && self.prelude_record(ty).is_some() {
+                // Node reads any object as a record; Velt's objects of a fixed shape are not one.
+                msg.push_str(": only a Record converts to a Record (an object of a fixed shape does not yet, #1219)");
+            }
             self.panic_msg(&msg);
             self.terminate(Terminator::Unreachable);
         }
+    }
+}
+
+/// The indefinite article before `word` ("an Animal", "a Map").
+fn article(word: &str) -> &'static str {
+    match word.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
     }
 }
 

@@ -1,0 +1,76 @@
+// check: no leaks
+// Writing members through `any` (#924): fields of classes and object types (converted to the
+// field's type, checked), setters, `any` fields, nested objects, array elements and record keys;
+// a write reaches the object itself, as in Node.
+class Point {
+  x: number = 1;
+  label: string | null = null;
+  tags: string[] = [];
+  extra: any = null;
+  private _scale = 1;
+  get scale(): number {
+    return this._scale;
+  }
+  set scale(v: number) {
+    console.log("set scale", v);
+    this._scale = v * 10;
+  }
+}
+class Named extends Point {
+  name: string = "n";
+}
+class Line {
+  from: Point = new Point();
+  to: Point | null = null;
+}
+function main(): void {
+  const p = new Point();
+  const a: any = p;
+  a.x = 5;
+  a["label"] = "pa";
+  const key = "x";
+  a[key] = a.x === 5 ? 6 : 0;
+  a.scale = 4;
+  a.tags = ["t1", "t2"];
+  a.extra = { deep: true };
+  console.log(p.x, p.label, p.scale, a.scale, p.tags, a.extra.deep);
+  a.label = null;
+  a.extra = 3;
+  console.log(p.label, p.extra);
+  const n: any = new Named();
+  n.name = "renamed";
+  n.x = 2;
+  console.log(n.name, n.x);
+  const l = new Line();
+  const al: any = l;
+  al.from.x = 9;
+  al.to = new Named();
+  al.to.x = 10;
+  console.log(l.from.x, l.to?.x, l.to instanceof Named);
+  const o = { n: 1, s: "a" };
+  const b: any = o;
+  b.n = 42;
+  b.s = "zz";
+  console.log(o.n, o.s, o);
+  const xs = [1, 2, 3];
+  const c: any = xs;
+  c[1] = 20;
+  c[2.0] = 30;
+  console.log(xs, c.length);
+  const names = ["a", "b"];
+  const d: any = names;
+  d[0] = "first";
+  console.log(names);
+  const r: Record<string, number> = { a: 1 };
+  const e: any = r;
+  e.b = 2;
+  e["a"] = 10;
+  const k: any = "c";
+  e[k] = 3;
+  console.log(r, e.a, e.b, e.zz);
+  const v = (a.x = 99);
+  console.log(v, p.x);
+  const ik: any = 0;
+  c[ik] = 7;
+  console.log(xs[0]);
+}

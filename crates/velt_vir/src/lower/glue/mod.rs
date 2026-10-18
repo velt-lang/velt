@@ -29,6 +29,7 @@
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
+//! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -99,6 +100,15 @@ pub(crate) enum Glue {
     AnySame,
     AnyNumber,
     AnyHash,
+    AnyGet,
+    AnyIndex,
+    AnyCall,
+    AnyApply,
+    AnySet,
+    AnySetIndex,
+    AnyHas,
+    ProxyGet,
+    ProxySet,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -149,6 +159,15 @@ impl Glue {
             Glue::AnySame => "anysame",
             Glue::AnyNumber => "anynumber",
             Glue::AnyHash => "anyhash",
+            Glue::AnyGet => "anyget",
+            Glue::AnyIndex => "anyindex",
+            Glue::AnyCall => "anycall",
+            Glue::AnyApply => "anyapply",
+            Glue::AnySet => "anyset",
+            Glue::AnySetIndex => "anysetindex",
+            Glue::AnyHas => "anyhas",
+            Glue::ProxyGet => "proxyget",
+            Glue::ProxySet => "proxyset",
         }
     }
 
@@ -182,6 +201,14 @@ impl Glue {
             Glue::AnySame => (vec![Ptr, Ptr], Bool),
             Glue::AnyNumber => (vec![Ptr], F64),
             Glue::AnyHash => (vec![Ptr], U64),
+            Glue::AnyGet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnyIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyCall => (vec![Ptr, Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyHas => (vec![Ptr, Ptr], U8),
+            Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
         }
     }
 }
@@ -229,6 +256,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
             Glue::AnyNumber => lw.any_number_body(args[0], ty),
             Glue::AnyHash => lw.any_hash_body(args[0], ty),
+            Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {
+                lw.any_member_glue(g, &args, ty)
+            }
+            Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
+            Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
+            Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
+            Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

@@ -196,49 +196,14 @@ impl<'a> Parser<'a> {
     fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
-        // `value: undefined` (its position).
-        let mut undefined_value = None;
         while !self.at(Tok::RBrace) {
-            let prop = self.parse_object_prop()?;
-            if let ObjectProp::KeyValue(k, v) = &prop {
-                if k.name == "value" && matches!(v.kind, ExprKind::Lit(Lit::Undefined)) {
-                    undefined_value = Some((props.len(), v.span));
-                }
-            }
-            props.push(prop);
+            props.push(self.parse_object_prop()?);
             if !self.eat(Tok::Comma) {
                 break;
             }
         }
         self.expect(Tok::RBrace)?;
-        if let Some((i, span)) = undefined_value {
-            self.finished_result_value(&mut props, i, span);
-        }
         Ok(props)
-    }
-
-    /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
-    /// `value`. Says so, and drops the property.
-    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, span: Span) {
-        let done = props.iter().any(|p| {
-            matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
-                if k.name == "done")
-        });
-        if !done {
-            return;
-        }
-        if self.speculating == 0 {
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    "`value: undefined` in a finished iterator result is not supported",
-                    span,
-                )
-                .with_note(
-                    "TypeScript allows this; a finished `IteratorResult` in Velt has no `value`; write `{ done: true }`",
-                ),
-            );
-        }
-        props.remove(i);
     }
 
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {
@@ -383,16 +348,30 @@ impl<'a> Parser<'a> {
             && self.nth(2) == Tok::LParen
         {
             let kw = self.cur_span();
+            let setter = self.at_word("set");
             self.bump();
             let name = self.parse_prop_key()?;
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    "getters and setters in object literals are not supported yet",
-                    Span::new(self.file, kw.lo, name.span.hi),
-                )
-                .with_note("TypeScript allows this; Velt doesn't yet because an object literal is plain data: its fields hold values; store the value in a field, or declare a class with the accessor"),
+            let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)?
+            else {
+                unreachable!("ICE: a method property is a key and a value");
+            };
+            self.check_accessor_params(&arrow, setter, kw);
+            let f = if setter { OBJECT_SET_FN } else { OBJECT_GET_FN };
+            let callee = self.mk_expr(
+                ExprKind::Ident(Ident {
+                    name: f.into(),
+                    span: kw,
+                }),
+                kw,
             );
-            return self.finish_method_prop(lo, name, false).map(Some);
+            let span = arrow.span;
+            let call = ExprKind::Call {
+                callee: Box::new(callee),
+                type_args: vec![],
+                args: vec![arrow],
+                optional: false,
+            };
+            return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
         }
         let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
             || (self.at_kw(Kw::Async)
@@ -435,6 +414,31 @@ impl<'a> Parser<'a> {
             body,
             overloads: vec![],
         }))))
+    }
+
+    /// A getter takes no parameters and a setter one (as in TypeScript).
+    fn check_accessor_params(&mut self, arrow: &Expr, setter: bool, kw: Span) {
+        let ExprKind::Arrow {
+            params,
+            ret,
+            type_params,
+            ..
+        } = &arrow.kind
+        else {
+            return;
+        };
+        let msg = match (setter, params.len()) {
+            (false, 0) | (true, 1) => None,
+            (false, _) => Some("a getter cannot have parameters"),
+            (true, _) => Some("a setter must have exactly one parameter"),
+        };
+        if let Some(msg) = msg {
+            self.error(msg, kw);
+        } else if setter && ret.is_some() {
+            self.error("a setter cannot have a return type annotation", kw);
+        } else if !type_params.is_empty() {
+            self.error("an accessor cannot have type parameters", kw);
+        }
     }
 
     /// `*name(params) { body }` (`async *name`) in an object literal, after the name: a property

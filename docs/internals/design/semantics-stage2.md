@@ -111,12 +111,42 @@ shares. A variable held in a shared cell (`LocalDef::boxed`, shared with the esc
 that capture it) is like a counted container: a call of the closure may replace what it holds,
 so by-reference `const`s, destructured bindings and `for...of` loops over a place rooted in it
 are stabilized the same way (#819); so are destructured bindings by reference of a counted value
-itself (`const { a } = o`). A destructured binding of a value stored inline (a string, tuple,
-object literal or union, bound by reference) refers to a share of it held by the scope; the
-parts that can be changed in place are counted first, so writes through the binding
+itself (`const { a } = o`). A module state slot (a module-level `let`, or a module `const`
+evaluated once) is such a cell too, one every function reaches. A place inside a slot is
+stabilized the same way. So is the slot itself when a call may change what it holds: when some
+code reassigns it (one walk over the program finds those), or when what it holds can be
+changed in place. That is an array (or an optional one), which any function may empty or grow
+(`XS.length = 0`, `splice`, `push`) while a loop, a callback method or a callee walks it, and a
+struct, class, object or tuple with a part that owns something, which a call may replace
+(`REG.items = []`) while a method borrows it through `this` or a callee through a parameter.
+Such a type is counted, as for a variable in a cell, so `for...of` over it, its callback
+methods, methods and functions it is passed to share what they borrow from it. Other slots
+nothing reassigns keep their value while a call runs: maps re-read their entries every step of
+a loop and pass shares to callbacks, so `const seen = new Map<string, number>()` stays
+uncounted. A value held in the slot (not
+behind a counted object) is shared like an array element, since any callee may replace it there
+and drop it (#1161). A virtual call's receiver is stabilized like a class method's. A program
+without module state is unaffected, apart from that receiver. The function value of a
+call through a function value is kept alive the same way when it is read from such a place (a
+field or element reached through a counted object, or a variable in a shared cell): the call
+runs on a share of it, dropped after the statement, since the function may replace its holder
+(`this.f = …`) and so drop its own environment while it runs (#1146); one read from a variable
+or parameter of the caller needs nothing. A destructured binding of a value stored inline (a
+string, tuple, object literal or union, bound by reference) refers to a share of it held by the
+scope; the parts that can be changed in place are counted first, so writes through the binding
 (`t[1] = 7`) still reach the original. Every stabilized borrow is a fact: a container that
 becomes counted makes the values borrowed through it counted too, so uncounted values stay
 reachable only through unique owners.
+
+A method's receiver (`this`) is kept alive for the call the same way when the method may
+replace the place it is read from (receiver.rs, #1188): `cur.bump()` where `bump` calls a
+function that assigns `cur = new State()`, `holder.shape.area()` where an override replaces
+`holder.shape`. Virtual calls and direct method calls stabilize the receiver like an argument
+(`stable_borrow`, with the module state rules above). An interface call holds a receiver read
+from a field or element reached through a counted object, a variable in a shared cell or a
+module state slot (the rule of the function value above): the method is only known at run time.
+The held receiver is a share (its class counted), dropped after the statement. A receiver in a
+variable, a parameter or `this` is passed as before.
 
 ### 3.4 `noalias`, `readonly` and exclusivity
 `noalias` (and, for borrowed params, `readonly`) is set only when `Cx::unique_refs` holds: the

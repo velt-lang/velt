@@ -28,13 +28,13 @@ interface HostOps {
 
 class Host implements HostOps {
   name = "host";
-  querySelector: ((selector: string) => string | null) | null = null;
+  querySelector: ((selector: string) => string | null) | undefined = undefined;
   remove(id: number): boolean {
     return id > 0;
   }
 }
 const ops: HostOps = new Host();
-console.log(ops.name, ops.remove(3), ops.querySelector === null);
+console.log(ops.name, ops.remove(3), ops.querySelector === undefined);
 
 // In an inline parameter type.
 function defineHandler(handler: { test(value: string): boolean; encode(value: string): number }): number {

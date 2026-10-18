@@ -116,7 +116,7 @@ impl FnCx<'_, '_> {
             None if !as_value => {
                 let mut stmts = vec![];
                 self.push_scope();
-                let recv = self.receiver_once(obj, object, &mut stmts);
+                let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
                 let idx = self.index_once(index, &mut stmts);
                 let v = self.expr(value, None, Want::Move);
                 self.bind_temp(NEW, v, &mut stmts);
@@ -164,7 +164,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let later = match rmw {
+            Rmw::Compound(_, v) | Rmw::Logical(_, v) => Some(v),
+            Rmw::Update(..) => None,
+        };
+        let recv = self.receiver_once(obj, object, later, &mut stmts);
         let idx = self.index_once(index, &mut stmts);
         let e = self.indexer_rmw_in(recv, idx, rmw, as_value, span, &mut stmts);
         self.pop_scope();
@@ -264,7 +268,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
         let idx = self.index_once(index, &mut stmts);
         let v = self.expr(value, None, Want::Move);
         let ty = v.ty;

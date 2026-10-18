@@ -28,6 +28,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));
             return lw.finish_export();
         };
+        // Every module's initializers run before `main`, as Node evaluates the modules first
+        // (one module state per process; an async `main` hands it to the tasks).
+        lw.init_module_state();
         let f = lw.cx.fn_def(def);
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
@@ -130,7 +133,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Handle the `Result` of a throwing `main`; yields the exit code for the Ok case.
-    fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
+    pub(super) fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
         let rty = self.cx.intern(TyKind::Result(ret, err));
         let rp = Place::local(res);
         let tag = Operand::Copy(proj(&rp, Proj::Field(0)));

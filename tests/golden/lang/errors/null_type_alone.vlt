@@ -1,0 +1,10 @@
+// A field typed `null` holds only `null` (#1205): each line below is an error, on the same line
+// as in tsc.
+type Idle = { readonly st: "idle"; readonly value: null };
+
+function main() {
+  const a: Idle = { st: "idle", value: 1 };
+  const n: null = "x";
+  const m: number = a.value;
+  console.log(a, n, m);
+}

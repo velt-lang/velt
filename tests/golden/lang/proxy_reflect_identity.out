@@ -1,0 +1,9 @@
+reflect true true true true reflect reflect true
+receiver true true true true receiver receiver true
+member true true true true member member true
+index true true true true index index true
+class true true true true class class true
+array true true true true array array true
+element true true true true element element true
+object/unknown: true true true
+7 4 5 11 true false

@@ -18,7 +18,28 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   an interface use the interface's defaults. A default is evaluated where the function is
   called, so it cannot use an earlier parameter yet (`q: number = p + 1` is an error saying so;
   take `q?: number` and write `const r = q ?? p + 1;` in the body).
-- An optional parameter `q?: T` is `q: T | null = null`.
+- The default of a parameter of a dynamic type (`x: any = "d"`, `x: unknown = 0`) also applies to
+  a passed `undefined`, as in JavaScript. The function applies it itself when the call starts,
+  so it is the function's own default whichever way it is called: through an interface whose
+  method takes `x?: any`, through a base class whose method the class overrides, through a
+  function value (`const g = d; g(undefined)`), or as a callback (`xs.map((v: any = 0) => …)`).
+- An optional parameter `q?: T` is `q: T | undefined = undefined`, as in TypeScript. Left out,
+  it is `undefined`: it prints `undefined`, `typeof q` is `"undefined"`, `q === undefined` is
+  true and `q === null` false. A call may also pass `undefined` for it (or a value that may be
+  `undefined`). `q?: T | null` is `T | null | undefined`: left out it is `undefined`, and a call
+  may pass `null`, which stays `null`. Passing `null` for a `q?: T` is an error (TS2322), as in
+  TypeScript: leave the argument out or pass `undefined`.
+
+  ```ts
+  function show(z?: string, n?: number | null): string {
+    return `${z} ${typeof z} ${n} ${n === null}`;
+  }
+  console.log(show());           // undefined undefined undefined false
+  console.log(show("a", null));  // a string null true
+  ```
+
+  `q === null` on such a parameter is always `false`: tsc accepts it, and Velt warns, since an
+  omitted argument is `undefined`. Write `q == null` to test for either nothing.
 - A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
   not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
   parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
@@ -27,6 +48,27 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   arity error (TS2554).
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
+  Its type may be any array type: `readonly T[]`, or an alias of an array type
+  (`...xs: Nums` with `type Nums = number[]`); another type is an error, as in TypeScript
+  (TS2370). A rest parameter typed by a type parameter (`...args: A` with
+  `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
+  supported yet (#943).
+  A module-level constant arrow function or function expression may have one too, typed the
+  same ways: `const total = (...xs: Nums) => …` is the function `function total(...xs: Nums)`
+  (its parameters must be typed). Rest parameters of other arrows and function expressions are
+  not supported yet (see below).
+
+  ```ts
+  type Nums = number[];
+  const total = (...xs: Nums): number => xs.reduce((a, b) => a + b, 0);
+  const join = function (sep: string, ...parts: readonly string[]) {
+    return parts.join(sep);
+  };
+  function main() {
+    console.log(total(1, 2, 3), join("-", "a", "b")); // 6 a-b
+  }
+  ```
+
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
   `String.fromCharCode`, an array's `push`) accept a spread anywhere.
 - A **spread into fixed parameters** passes the elements of a value whose length is known when
@@ -50,8 +92,48 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   console.log(label(...p), label(...p, "!")); // x=4 x=4!
   ```
 - A function or method may have [overloads](#overloads) in TypeScript's form.
-- **Nested functions** may be declared inside blocks but cannot capture locals
-  (``` `x` cannot be captured by a nested function```); use an arrow function.
+- **Nested functions** may be declared inside blocks, and are hoisted to the start of their
+  block as in JS (a call before the declaration works). One that uses the enclosing function's
+  locals (or another such nested function) is a closure, with the
+  [captures](#captures) of an arrow function: it sees every later change of what it uses, may
+  assign it, and may be passed on or returned as a value. Such closures may call themselves
+  and each other (`mount` / `patch` / `unmount` of a renderer), async ones too. Nested
+  functions calling each other this way share one environment holding what they use, so
+  returning or storing them makes no reference cycle: the environment is freed with the last of
+  them. Each one's parameter types and result type must be known before the bodies are
+  checked, so one that returns a value needs its result type written (``…calls itself: not
+  supported yet`` with ``write its result type``); without `return value;` it is `void`
+  (`Promise<void>` when `async`). Not supported yet: a generator calling itself this way (pass
+  the locals it uses as parameters, or declare it at module level), and a use before a local
+  it uses is declared, which JS allows when the call runs later (declare the local first). A
+  generic nested function cannot use the enclosing function's locals.
+
+  ```ts
+  function tally(words: string[]): string {
+    const seen = new Map<string, number>();
+    let total = 0;
+    for (const w of words) add(w);   // before the declaration
+    return `${total} ${seen.get("a")}`;
+
+    function add(w: string): void {
+      seen.set(w, (seen.get(w) ?? 0) + 1);
+      total += 1;
+    }
+  }
+  console.log(tally(["a", "b", "a"])); // 3 2
+
+  function parity(base: number): Array<(n: number) => number> {
+    function even(n: number): number {
+      return n === 0 ? base : odd(n - 1);   // calls each other
+    }
+    function odd(n: number): number {
+      return n === 0 ? -base : even(n - 1);
+    }
+    return [even, odd];
+  }
+  const [even, odd] = parity(7);
+  console.log(even(4), odd(4)); // 7 -7
+  ```
 
 ## Overloads
 
@@ -73,9 +155,10 @@ function main() {
 ```
 
 - A call takes the first signature, in order, that accepts its arguments (after inferring its
-  type arguments) and has that signature's result type. When none does, the error lists why
-  each one didn't (TypeScript's TS2769). The implementation's own signature is not one of the
-  forms: `describe(v)` with `v: string | number` is an error, as in TypeScript.
+  type arguments, which must satisfy their bounds) and has that signature's result type. When
+  none does, the error lists why each one didn't (TypeScript's TS2769). The implementation's
+  own signature is not one of the forms: `describe(v)` with `v: string | number` is an error,
+  as in TypeScript.
 - Signatures may be generic and have optional and rest parameters. The implementation takes
   every signature's arguments: a signature it can't take is an error at the signature (TS2394).
   A signature with fewer parameters, or an optional one left out of a call, leaves the
@@ -193,8 +276,9 @@ against it.
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
 separately, so there is no boxing and bounds resolve to direct calls. Type arguments are
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
-([Generics](classes.md#generics)). A `const` type parameter (`function tag<const K>(k: K)`,
-TypeScript 5.0) is accepted and treated as an ordinary type parameter.
+([Generics](classes.md#generics)) or, as in TypeScript, other types (see below). A `const` type
+parameter (`function tag<const K>(k: K)`, TypeScript 5.0) is accepted and treated as an ordinary
+type parameter.
 
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
@@ -235,6 +319,52 @@ function main() {
   console.log(inc(1), lengths[0]("abc")); // 2 3
 }
 ```
+
+A bound that is not an interface is a type the type argument must be assignable to, as in
+TypeScript: `T extends Record<string, V>`, `T extends readonly X[]`, `T extends string | number`,
+`T extends "a" | "b"`, an alias of one (`type Primitive = string | number | boolean | null`), a
+function type. The type argument is related to it as `tsc` relates types (structurally for object
+types); one that is not assignable is an error (``the type `boolean` does not satisfy the
+constraint `string | number` ``, TypeScript's TS2345 and TS2344). A literal argument for a type
+parameter whose bound has literal types keeps its literal type (`same("a")` of
+`same<T extends "a" | "b">` is `same<"a">`), also where the parameter's type contains the type
+parameter (`t?: T`, `t: T | null`, `t: T[]`, `o: { k: T }`). An overloaded call takes the first
+signature whose bounds its arguments satisfy ([Overloads](#overloads)), so the bounds choose the
+form as they do in TypeScript:
+
+```ts
+type Primitive = string | number | boolean | null;
+
+function wrap<T extends Primitive>(v: T): { value: T };
+function wrap<T extends object>(v: T): { inner: T; tag: string };
+function wrap<T>(v: T): { value: T } | { inner: T; tag: string } {
+  return String(v) === "[object Object]" ? boxed(v) : plain(v);
+}
+
+function plain<T>(v: T): { value: T } {
+  return { value: v };
+}
+
+function boxed<T>(v: T): { inner: T; tag: string } {
+  return { inner: v, tag: "object" };
+}
+
+function same<T extends "a" | "b">(t: T): T {
+  return t;
+}
+
+function main() {
+  const n = wrap(5); // the first signature: `{ value: number }`
+  const o = wrap({ st: "idle" }); // `{ st: string }` is no `Primitive`: the second
+  const a: "a" = same("a");
+  console.log(n.value, o.inner.st, o.tag, a); // 5 idle object a
+}
+```
+
+Not yet: in the body, a value of such a type parameter has none of its bound's members
+(`Object.keys(o)` on a `T extends Record<string, V>`, `xs[0]` on a `T extends X[]`; take the
+bound's type as the parameter's where the body needs them, #1212), and a parameter has at most
+one such bound (`T extends A & B` with both no interfaces).
 
 A type parameter may have a **default** (`<T = string>`), as in TypeScript: a type parameter
 nothing infers takes it, an inferred one ignores it, and explicit type arguments may leave out
@@ -306,24 +436,59 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   `static *name()` or `*[Symbol.iterator]()`. Calling one creates a `Generator<T, E>`
   ([prelude](../std/prelude.md#iteration)) without running the body. Each `next()` runs the
   body up to its next `yield v` and returns `{ value: v, done: false }`; when the body ends it
-  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
+  returns `{ done: true }`, and keeps doing so (`next().value` is then `null`; `undefined` in a
+  `Generator<any>` or `Generator<unknown>`, as in JS). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
 - The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
   `IterableIterator<T>` or `IteratorObject<T>`, where `T` is the type of the yielded values; a
   call has that type, with the generator's error type as `E`.
   `return;` ends the generator; there is no `TReturn`, so `return value` is an error. A bare
-  `yield` is allowed in a `Generator<void>` only, and a `yield` has no value (`const x = yield
-  1` is an error: there is no `next(value)`), so it is a statement of its own (also as a
-  branch of `c ? yield a : yield b`).
-- TypeScript's spellings `Generator<T, void>`, `Generator<T, void, unknown>` (any `TNext`) and
-  the same with `undefined`, `unknown` or `any` as `TReturn` mean `Generator<T>`, so TS
-  signatures compile as they are; so do `Iterator`, `Iterable` and their async twins. Any other
-  second type argument is the error type `E` and must be one (a class extending `Error`, a union
-  of them, an interface or a type parameter): `Generator<number, string>` is an error naming the
-  fix, since there it can only be TS's return type.
+  `yield` is allowed in a `Generator<void>` only.
+- TypeScript's spellings `Generator<T, void>` and the same with `undefined`, `unknown` or `any`
+  as `TReturn` mean `Generator<T>`, so TS signatures compile as they are; so do `Iterator`,
+  `Iterable` and their async twins. Any other second type argument is the error type `E` and
+  must be one (a class extending `Error`, a union of them, an interface or a type parameter):
+  `Generator<number, string>` is an error naming the fix, since there it can only be TS's
+  return type.
+- **`next(value)`**: the third type argument of `Generator<T, X, N>` is TypeScript's `TNext`,
+  the type of a `yield` expression's value and of `next(value)`'s argument
+  (`Generator<number, void, string>`: `const s = yield 1` is a `string`). The first `next()`
+  starts the body, so its value is ignored, as in JS. A `next()` without a value resumes a
+  `yield` with `undefined` when `N` holds it (`unknown`, `any`, `T | undefined`); for another
+  `N`, a `yield` whose value is used then panics (TS gives it `undefined` whatever `N` says).
+  Without `N` (`Generator<T>`, also `void`, `undefined` or `never` as `N`), `next(value)` and
+  using the value of a `yield` are errors, so a `yield` is a statement of its own (also as a
+  branch of `c ? yield a : yield b`). The other protocol types (`Iterator<T, X, N>`, …) and
+  async generators ignore `N`.
+- **`throw(e)`** resumes the body with `e` thrown at the paused `yield`: a `try`/`catch` around
+  it catches it (`e` is an `any` there, as `throw(e: any)` takes it) and the body goes on to
+  its next `yield` or its end, which is what `throw()` returns; otherwise the generator is
+  closed (its `finally` blocks run, as for `return()`) and `throw()` throws `e`. A generator
+  that has not started, or has finished, throws `e` at once (and is done), as in JS. Only a
+  program that calls `throw()` gets the code that handles it; there the `catch` of a `try`
+  around a `yield` also catches an `any`.
+
+  ```ts
+  function* worker(): Generator<string, void, number> {
+    try {
+      const n = yield "ready";
+      yield `got ${n}`;
+    } catch (e) {
+      yield `stopped: ${(e as Error).message}`;
+    }
+  }
+
+  const w = worker();
+  console.log(w.next().value, w.next(7).value);        // ready got 7
+  const v = worker();
+  v.next();
+  console.log(v.throw(new Error("cancelled")).value);   // stopped: cancelled
+  ```
 - `yield* src` yields every value of `src`: another generator, an array, or any iterable
-  `for...of` takes.
+  `for...of` takes. In a generator that takes `next(value)` (or in a program that calls
+  `throw()`), `yield*` of a generator of the same `T` (and `N`, or none) passes `next(value)`,
+  `throw(e)` and closing on to it; an error it does not catch is thrown at the `yield*`.
 - **Errors**: `E` is what the body throws, inferred like a function's `throws` (or written:
   `Generator<T, E>`, also through a type alias such as `type Gen = Generator<i64, A>`, or
   `throws E` after the return type). `next()` throws it, and so does
@@ -339,6 +504,10 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   Because closing runs `finally` blocks where the generator can neither pause, report an
   error, nor go on with its body, a `finally` block in a generator cannot `yield`, throw, or
   `break` / `continue` to a loop outside it (TS allows all three).
+- A generator's parameter defaults are evaluated when it is called, before the body runs, as
+  in JS; a default of a parameter of a dynamic type (`x: any = "g"`) also applies to a passed
+  `undefined`, whether the generator is called directly or through a function value
+  (`const gv = gen; gv(undefined)`).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Calling `next()` or `return()` on a generator from inside its
@@ -347,13 +516,16 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   (`this.gen = other()`) finishes its step, and the generator is closed and freed after it.
 - A generator cannot be copied or leave its thread: `clone()` of one, passing one to a spawned
   task (or sending it on a channel), putting one in `shared(...)` (also inside a `Mutex` or an
-  object) and capturing one in an async closure are errors, like for a promise. Behind an
+  object) and capturing one in an async closure that may run on another thread (see
+  [Captures](#captures)) are errors, like for a promise. An async closure that stays on its
+  task shares a generator it captured, as in JS (a stream's `pull` reading a generator:
+  `async () => (await chunks.next()).value`). Behind an
   interface value (`Iterator<T>`) the compiler cannot see it, and handing it to another thread
   stops the program instead. Pass the arguments and create the generator where it is used.
-- Not supported: `next(value)` (TS's `TNext`), `throw()`, and `await` in a (sync) generator
-  (write an [async generator](#async-generators)). `return()` returns `{ done: true }`, as in
-  TS (where it may carry a value). Arrow functions cannot be generators (as in
-  TS).
+- Not supported: a return value (TS's `TReturn`), `return(value)`, `await` in a (sync)
+  generator (write an [async generator](#async-generators)), and `next(value)` / `throw()` on
+  an async generator. `return()` returns `{ done: true }`, as in TS (where it may carry a
+  value). Arrow functions cannot be generators (as in TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
@@ -553,14 +725,15 @@ async function main() {
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
   annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
-  (`function (this: T, …)`) it is not supported yet: take the object as an ordinary parameter,
-  or write a class method. In a function expression that is the value of an object-literal
-  property (`{ v: 1, get: function () { return this.v; } }`), where TS types `this` as the
-  literal, `this` is not supported yet either.
+  (`function (this: T, …)`) it is not supported yet as a value (a function value has no
+  receiver): declare the function and call it with `call` or `apply` (below), take the object as
+  an ordinary parameter, or write a class method. In a function expression that is the value of
+  an object-literal property (`{ v: 1, get: function () { return this.v; } }`), where TS types
+  `this` as the literal, `this` is not supported yet either.
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
-  `this` and is no parameter: callers don't pass it. `this: void` says the function doesn't
-  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet, so it leaves
-  a file with one as written and reports it.
+  `this` and is no parameter. `this: void` says the function doesn't use `this`. An arrow cannot
+  have one (TS2730). `velt fmt` does not keep it yet, so it leaves a file with one as written
+  and reports it. See [`this` parameters](#this-parameters) for function declarations.
 - The name of a named expression inside its own body (recursion) is not supported yet: declare
   the function with `function name(…) { … }`.
 
@@ -629,8 +802,8 @@ async function main() {
   type of its body or its `return`s, by the rules of [Return types](#return-types)
   (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
   level it is an ordinary generic function; in a function body it is a generic function nested
-  there, so each call instantiates it, and like any [nested function](#declarations) it cannot
-  use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
+  there, so each call instantiates it, and like any generic [nested function](#declarations) it
+  cannot use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
   a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
   anywhere else (an argument, a `let`) is an error:
 
@@ -693,16 +866,48 @@ async function main() {
   cannot be a value, and neither can a generic function that keeps a parameter whose type is a
   promise at the value's type arguments or still depends on a type parameter.
 - **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
-  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`), generic
+  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`, other than
+  a module-level constant's), generic
   function types (`<T>(description: string) => Token<T>`, a value each call instantiates)
   and construct signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value).
   They parse, and using one is an error saying it is not supported yet. A function type's
   parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
   which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
-  type is `Options | null`, as for a function's optional parameter, and a required parameter
+  type is `Options | undefined`, as for a function's optional parameter, and a required parameter
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for
   now; leaving the optional one out (`install(app)`) is not supported yet.
+
+### `this` parameters
+
+A function declaration whose body uses `this` may declare its type with a `this` parameter,
+`function f(this: T, a: A)`, as in TypeScript. The caller passes `this`:
+`f.call(obj, a)` and `f.apply(obj, [a])` run the body with `this` = `obj`, which must be a `T`
+(TypeScript's TS2345 otherwise). A plain call `f(a)` passes `undefined`, which only `this: any`
+and `this: unknown` accept; for another `T` it is TypeScript's TS2684 ("The 'this' context of
+type 'void' is not assignable to method's 'this' of type 'T'"), also for `T | undefined`.
+
+```ts
+interface Counter {
+  n: number;
+}
+function bump(this: Counter, by: number): number {
+  this.n += by;
+  return this.n;
+}
+const c: Counter = { n: 1 };
+console.log(bump.call(c, 2), bump.apply(c, [3])); // 3 6
+function kind(this: unknown): string {
+  return typeof this;
+}
+console.log(kind(), kind.call("s")); // undefined string
+```
+
+A function with a `this` parameter that its body doesn't use is called like any other function.
+Not supported yet: using a function whose body uses its `this` parameter as a value (`const g =
+f`, `{ m: f }`, `xs.map(f)`), a function expression whose body uses one, one with overloads, a
+generator with one, and `this` in a function type (`(this: T, a: A) => R` is `(a: A) => R` for
+now).
 
 ### `call` and `apply`
 
@@ -713,7 +918,8 @@ parameters one by one, and an array of unknown length only a rest parameter
 (`String.fromCharCode.apply(null, codes)`, `Math.max.apply(null, xs)`), as TypeScript's
 `strictBindCallApply` checks it.
 
-`this` matters only to a function that reads it. Function declarations, arrow functions and the
+`this` matters only to a function that reads it. A function declaration with a [`this`
+parameter](#this-parameters) runs on the `thisArg`. Other function declarations, arrow functions and the
 static functions of built-in namespaces read none, so any `thisArg` works for them
 (`Math.max.apply(Math, xs)`), except `Promise`'s, which take `Promise`. A method read as a value
 (`o.m`, `C.m`) keeps the object or class it was read from: `o.m.call(o, x)` works, and `null` or

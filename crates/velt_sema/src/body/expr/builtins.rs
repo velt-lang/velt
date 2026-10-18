@@ -130,7 +130,10 @@ impl FnCx<'_, '_> {
         if i == Intrinsic::JsonParse {
             self.json_parse_throws(span);
         }
-        if i == Intrinsic::GeneratorResume {
+        if matches!(
+            i,
+            Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
+        ) {
             // Resuming throws what the generator's body throws (its `E`).
             if let Some(&e) = ck.type_args.get(1) {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
@@ -258,6 +261,7 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            constraints: vec![],
             js_numbers: false,
             positions: false,
             js_api: false,

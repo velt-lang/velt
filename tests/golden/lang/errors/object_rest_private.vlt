@@ -1,0 +1,61 @@
+// `...rest` of a class instance with TypeScript `private` fields (#1200): JavaScript copies
+// them into the rest (they are own properties), while TypeScript leaves them out of the rest's
+// type, which Velt cannot express yet, so it is an error rather than a rest without them. A
+// pattern that takes the private field by name (inside the class) and `#private` fields, which
+// JS leaves out, are fine.
+class Acct {
+  id: number;
+  private secret: string;
+  private level: number;
+  #hidden = 7;
+  name = "decl";
+  constructor(id: number) {
+    this.id = id;
+    this.secret = "s";
+    this.level = 2;
+  }
+  hidden(): number {
+    return this.#hidden;
+  }
+}
+
+class Self {
+  a = 1;
+  private b = 2;
+  copy(): void {
+    const { a, ...r } = this;
+    console.log(a, r, JSON.stringify(r));
+  }
+  taken(): void {
+    const { b, ...r } = this;
+    console.log(b, r);
+  }
+}
+
+class P {
+  private p = 1;
+  q = 2;
+}
+
+class Q extends P {
+  r = 3;
+}
+
+class Open {
+  #hidden = 1;
+  shown = 2;
+  peek(): number {
+    return this.#hidden;
+  }
+}
+
+function main() {
+  const { id, ...ar } = new Acct(1);
+  console.log(id, ar, JSON.stringify(ar), Object.keys(ar));
+  new Self().copy();
+  new Self().taken();
+  const { r, ...qr } = new Q();
+  console.log(r, qr);
+  const { ...open } = new Open();
+  console.log(open);
+}

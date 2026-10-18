@@ -1,0 +1,10 @@
+// Velt objects have a fixed shape: adding a property through `any` stops with a `TypeError`
+// naming #924 (Node adds it).
+class P {
+  x: number = 1;
+}
+function main(): void {
+  const a: any = new P();
+  console.log(a.y);
+  a.y = 2;
+}

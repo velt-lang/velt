@@ -9,7 +9,8 @@
 # The merge queue checks everything against the pull request merged with the latest main, as two
 # jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
 # when the change touches OS-specific code (crates/xtask/src/os.rs). The single required check is
-# `ci`, which summarizes whichever jobs ran.
+# `ci`, which summarizes whichever jobs ran. The pull request's text and commits are checked by
+# the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
 # Each push to main checks everything on Windows and macOS (opening an issue when that fails),
 # which covers the changes the queue checked on Linux only, and refreshes the build cache every

@@ -1,0 +1,53 @@
+// check: no leaks
+// A receiver, argument or operand borrowed from a module-level `let` whose call replaces or
+// clears that `let` (#1161): typed field writes, methods, getters and setters, arguments, and
+// an array held in a module `let` emptied during `push` or an element's call. Identical to Node.
+
+class Box { name: string = "box" + String(1); n: number = 0;
+  kill(): string { B = null; return this.name + " killed"; }
+  set s(v: number) { B = null; this.n = v; console.log("set", this.name, this.n); }
+  get g(): string { B = new Box(); return this.name + "g"; }
+  swap(): string { B = new Box(); return this.name + " swapped"; } }
+let B: Box | null = new Box();
+function clearB(): number { B = null; return 7; }
+function clearBs(): string { B = null; return "s" + String(2); }
+function take(b: Box): string { B = null; return b.name + "/" + b.n; }
+function takeS(s: string): string { S = "other"; return s + "!"; }
+let S: string = "str" + String(3);
+
+let XS: Box[] = [new Box(), new Box()];
+function makeBox(): Box { XS = []; const b = new Box(); b.n = 9; return b; }
+function showBox(b: Box): string { XS = []; return b.name + ":" + b.n; }
+function popAll(): number { XS.length = 0; return 4; }
+
+function main(): void {
+  B!.n = clearB();
+  console.log(B);
+  B = new Box();
+  B!.name = clearBs();
+  console.log(B);
+  B = new Box();
+  console.log(B!.kill(), B);
+  B = new Box();
+  console.log(B!.swap(), B!.name);
+  B = new Box();
+  console.log(take(B!), B);
+  B = new Box();
+  B!.s = 4;
+  console.log(B);
+  B = new Box();
+  console.log(B!.g, B!.n);
+  console.log(takeS(S), S);
+  S = "str" + String(4);
+  B = new Box();
+  console.log(B!.name, clearB());
+  S = "a" + String(5);
+  console.log(S, takeS("x"));
+
+  XS.push(makeBox());
+  console.log(XS.length);
+  XS = [new Box()];
+  console.log(showBox(XS[0]), XS.length);
+  XS = [new Box(), new Box()];
+  console.log(XS[1].name, popAll(), XS.length);
+}

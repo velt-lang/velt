@@ -1,0 +1,17 @@
+// A constant arrow function (or function expression) whose rest parameter is typed by an alias
+// of an array type, at module level and in a script.
+type Nums = number[];
+
+const total = (...xs: Nums): number => {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+};
+const count = function (label: string, ...xs: Nums) {
+  return label + xs.length;
+};
+
+console.log(total(1, 2, 3), total());
+console.log(count("n=", 4, 5), count("n="));

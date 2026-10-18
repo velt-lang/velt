@@ -1,5 +1,6 @@
 // Prelude: `any` and `unknown`, the dynamic value (issue #924, docs/reference/types.md "any
-// and unknown").
+// and unknown"), and `object` and `Function`, the dynamic value restricted to objects and to
+// functions (issue #926, docs/reference/types.md "object and Function").
 //
 // Both are interfaces every type implements (the compiler adds the implementation): a value
 // converted to one is boxed with its type's descriptor, the interface table. They share one
@@ -14,3 +15,9 @@ export interface any {}
 
 /** A value of any type that must be narrowed (`typeof`, `instanceof`, `as`) before use. */
 export interface unknown {}
+
+/** Any value that is not a primitive: a class instance, object, array, map, set or function. */
+export interface object {}
+
+/** Any function, called like an `any` that holds one (its arguments and result are `any`). */
+export interface Function {}

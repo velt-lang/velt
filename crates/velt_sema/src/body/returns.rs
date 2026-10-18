@@ -15,7 +15,7 @@ use velt_syntax::ast;
 use super::{ensure_body, FnCx, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, RetSource, RetWant};
-use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId, TyKind};
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
@@ -28,6 +28,9 @@ pub(crate) struct Returns {
     nothing: Option<Nothing>,
     /// `return;`
     bare: Vec<Span>,
+    /// An async body returns a promise: its value type counts (`promise_value`), and the
+    /// promise converts to the result.
+    promises: bool,
 }
 
 #[derive(Clone)]
@@ -152,7 +155,144 @@ impl FnCx<'_, '_> {
             }
             return self.coerce(h, ret);
         }
+        if self.f.is_async && self.f.yield_ty.is_none() && self.adopts_promise(ret) {
+            return self.async_returned(e, ret);
+        }
         self.expr_coerce(e, ret, Want::Move)
+    }
+
+    /// Can an async function returning `ret` adopt a returned promise? Not when `ret` is itself
+    /// a promise (an async function's value is never one) or a function type (checked with the
+    /// adapter of `expr_coerce`), nor where `ret` is not known.
+    fn adopts_promise(&self, ret: TyId) -> bool {
+        let t = self.cx.ty.core(ret).unwrap_or(ret);
+        !matches!(
+            self.cx.ty.kind(t),
+            TyKind::Promise(..) | TyKind::FnPtr { .. } | TyKind::Error
+        )
+    }
+
+    /// The body `block` of an async function that returns promises (`async_returned`): as in
+    /// JS, the promise of the `return` that completes the body is awaited once every scope of
+    /// the body is left. The body becomes `let <adopted_i> = null; let <adopt_which> = 0;
+    /// <adopt>: while (true) { body; <adopt_which> = 0; break; }` (the last two only when the
+    /// body may fall off its end), then `match (<adopt_which>) { i => return value_i, … }`.
+    /// Each store sets `<adopt_which>`, so a `return p` that a `finally` cancels (`continue`,
+    /// `break`, another `return`) is not adopted, and falling off the end adopts none.
+    pub(crate) fn wrap_adopted(&mut self, block: &mut hir::Block) {
+        let adopted = std::mem::take(&mut self.f.adopted);
+        let which = self.f.adopt_which.take();
+        let (Some(which), false) = (which, adopted.is_empty()) else {
+            return;
+        };
+        let span = block.span;
+        let (unit, never, bool_, i32_) = (
+            self.cx.ty.unit,
+            self.cx.ty.never,
+            self.cx.ty.bool_,
+            self.cx.ty.i32,
+        );
+        let label = super::ADOPT_LABEL.to_string();
+        let stmt = |kind| hir::Stmt { kind, span };
+        let falls_off = !crate::flow::block_diverges(block, &self.cx.ty);
+        let mut body = std::mem::take(&mut block.stmts);
+        if let Some(v) = block.value.take() {
+            body.push(stmt(S::Expr(*v)));
+        }
+        if falls_off {
+            let place = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+            let zero = self.mk(H::Lit(hir::Lit::Int(0)), i32_, span);
+            let reset = self.mk(
+                H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(zero),
+                },
+                unit,
+                span,
+            );
+            body.push(stmt(S::Expr(reset)));
+            body.push(stmt(S::Break(Some(label.clone()))));
+        }
+        let mut stmts = vec![];
+        for a in &adopted {
+            let ty = self.f.locals[a.slot.0 as usize].ty;
+            let null = self.mk(H::Lit(hir::Lit::Null), ty, span);
+            stmts.push(stmt(S::Let {
+                local: a.slot,
+                init: Some(null),
+            }));
+        }
+        let zero = self.mk(H::Lit(hir::Lit::Int(0)), i32_, span);
+        stmts.push(stmt(S::Let {
+            local: which,
+            init: Some(zero),
+        }));
+        let cond = self.mk(H::Lit(hir::Lit::Bool(true)), bool_, span);
+        stmts.push(stmt(S::While {
+            label: Some(label),
+            cond,
+            body: hir::Block {
+                stmts: body,
+                value: None,
+                span,
+            },
+            step: None,
+        }));
+        let last = adopted.len() - 1;
+        let mut arms = vec![];
+        for (i, a) in adopted.into_iter().enumerate() {
+            let slot_ty = self.f.locals[a.slot.0 as usize].ty;
+            let pty = self.f.locals[a.bind.0 as usize].ty;
+            // Only a stored promise leads to its arm.
+            let read = self.mk(H::Local(a.slot, hir::UseMode::Move), slot_ty, span);
+            let p = self.mk(H::UnwrapSome(Box::new(read), hir::UseMode::Move), pty, span);
+            let returns = hir::Block {
+                stmts: vec![
+                    stmt(S::Let {
+                        local: a.bind,
+                        init: Some(p),
+                    }),
+                    stmt(S::Return(Some(a.value))),
+                ],
+                value: None,
+                span,
+            };
+            // When the body cannot fall off its end, the loop is only left through a store.
+            let pat = if i == last && !falls_off {
+                hir::PatKind::Wildcard
+            } else {
+                hir::PatKind::Lit(hir::Lit::Int(i as u128 + 1))
+            };
+            arms.push(hir::Arm {
+                pat: self.pat(pat, i32_, span),
+                guard: None,
+                body: self.mk(H::Block(returns), never, span),
+            });
+        }
+        if falls_off {
+            let none = hir::Block {
+                stmts: vec![],
+                value: None,
+                span,
+            };
+            arms.push(hir::Arm {
+                pat: self.pat(hir::PatKind::Wildcard, i32_, span),
+                guard: None,
+                body: self.mk(H::Block(none), unit, span),
+            });
+        }
+        let read = self.mk(H::Local(which, hir::UseMode::Copy), i32_, span);
+        let ty = if falls_off { unit } else { never };
+        let m = self.mk(
+            H::Match {
+                scrutinee: Box::new(read),
+                arms,
+            },
+            ty,
+            span,
+        );
+        stmts.push(stmt(S::Expr(m)));
+        block.stmts = stmts;
     }
 
     /// `return e` / `return;` in a body whose result type is being inferred.
@@ -184,27 +324,76 @@ impl FnCx<'_, '_> {
         let outer = std::mem::replace(&mut self.cx.rec.in_return, true);
         let h = self.expr(e, hint, Want::Move);
         self.cx.rec.in_return = outer;
-        let ty = self.cx.widened(h.ty);
+        let ty = match self.promise_value(h.ty) {
+            Some(t) => {
+                self.f.returns.promises = true;
+                t
+            }
+            None => h.ty,
+        };
+        let ty = self.cx.widened(ty);
         self.f.returns.values.push(Value { ty, span: h.span });
         Some(h)
     }
 
+    /// `T` when an async body (not a generator) returns a `Promise<T>`: like TypeScript, its
+    /// result is `T` (the function's `Promise<T>`), not a promise of a promise (issue #1166).
+    pub(crate) fn promise_value(&self, t: TyId) -> Option<TyId> {
+        if !self.f.is_async || self.f.yield_ty.is_some() {
+            return None;
+        }
+        self.cx.ty.promise_payload(t)
+    }
+
+    /// The promise `h` returned where an async body's inferred result is its value type `t`
+    /// (`promise_value`): adopted like one returned with a written result type
+    /// (`async_returned`), so the `return` becomes the statement that stores it.
+    pub(crate) fn inferred_promise_return(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
+        let span = h.span;
+        self.await_throws(&h);
+        self.f.adopt_stmt = true;
+        self.adopt(h, t, span)
+    }
+
     /// The inferred result type of the body `block` (whose `return`s were recorded); converts
-    /// every returned value to it. `who` names the function in messages.
-    pub(crate) fn finish_inferred_ret(&mut self, block: &mut hir::Block, who: &str) -> TyId {
-        let r = std::mem::take(&mut self.f.returns);
+    /// every returned value to it.
+    pub(crate) fn finish_inferred_ret(&mut self, block: &mut hir::Block) -> TyId {
+        let mut r = std::mem::take(&mut self.f.returns);
+        self.undefined_returns(&mut r, block);
         let ty = self.common_ret(&r, block);
         self.f.ret = Some(ty);
-        let (unit, error) = (self.cx.ty.unit, self.cx.ty.error);
-        if ty != unit && ty != error {
-            for &span in &r.bare {
-                self.bare_return(span, who, ty);
-            }
-        }
-        if !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
+        if r.promises || !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
             visit::block(block, &mut CoerceReturns { fcx: self, to: ty });
         }
         ty
+    }
+
+    /// A body that returns values and also `return;` or falls off its end returns `undefined`
+    /// there, as in TypeScript: its result type allows `undefined` (issue #930). The bare
+    /// returns become `return undefined;`; `check_returns` adds the one at the end.
+    fn undefined_returns(&mut self, r: &mut Returns, block: &mut hir::Block) {
+        let (never, unit) = (self.cx.ty.never, self.cx.ty.unit);
+        let values = !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != never && v.ty != unit);
+        if !values || self.f.yield_ty.is_some() {
+            return;
+        }
+        let falls_off = !crate::flow::block_diverges(block, &self.cx.ty);
+        if r.bare.is_empty() && !falls_off {
+            return;
+        }
+        self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
+        r.nothing = Some(
+            r.nothing
+                .map_or(Nothing::Undefined, |m| m.join(Nothing::Undefined)),
+        );
+        if r.bare.is_empty() {
+            // Only the end: `nulls` gives the result its `undefined` (and a span for it).
+            r.nulls
+                .push(Span::new(block.span.file, block.span.hi, block.span.hi));
+            return;
+        }
+        r.nulls.append(&mut r.bare);
+        visit::block(block, &mut BareReturns { fcx: self });
     }
 
     fn common_ret(&mut self, r: &Returns, block: &hir::Block) -> TyId {
@@ -298,25 +487,6 @@ impl FnCx<'_, '_> {
         }
         false
     }
-
-    /// `return;` where the function returns `ty` elsewhere: TS would return `undefined`.
-    fn bare_return(&mut self, span: Span, who: &str, ty: TyId) {
-        let tn = self.cx.display(ty);
-        let (word, nullable) = match self.cx.ty.nothing_of(ty) {
-            Some(Nothing::Null) => ("null", tn.clone()),
-            Some(_) => ("undefined", tn.clone()),
-            None => ("undefined", format!("{tn} | undefined")),
-        };
-        self.cx.error(
-            Diagnostic::error(
-                format!("`return;` needs a value: {who} returns `{tn}` on other paths"),
-                span,
-            )
-            .with_note(format!(
-                "a bare `return;` beside returned values is not supported yet: write `return {word};` and the return type `{nullable}`"
-            )),
-        );
-    }
 }
 
 /// Converts every `return` value of a body to the inferred result type.
@@ -334,10 +504,33 @@ impl VisitMut for CoerceReturns<'_, '_, '_> {
             e.ty = self.to;
             return;
         }
+        if self.fcx.promise_value(e.ty).is_some() && self.fcx.promise_value(self.to).is_none() {
+            let placeholder = self.fcx.mk(H::Lit(hir::Lit::Unit), self.to, e.span);
+            let h = std::mem::replace(e, placeholder);
+            let stored = self.fcx.inferred_promise_return(h, self.to);
+            self.fcx.f.adopt_stmt = false;
+            s.kind = S::Expr(stored);
+            return;
+        }
         if e.ty != self.to {
             let placeholder = self.fcx.mk(H::Lit(hir::Lit::Unit), self.to, e.span);
             let h = std::mem::replace(e, placeholder);
             *e = self.fcx.coerce(h, self.to);
+        }
+    }
+}
+
+/// Turns every `return;` of a body into `return undefined;` (typed by `CoerceReturns`).
+struct BareReturns<'f, 'a, 'm> {
+    fcx: &'f mut FnCx<'a, 'm>,
+}
+
+impl VisitMut for BareReturns<'_, '_, '_> {
+    fn stmt(&mut self, s: &mut hir::Stmt) {
+        if let S::Return(None) = s.kind {
+            let error = self.fcx.cx.ty.error;
+            let value = self.fcx.mk(H::Lit(hir::Lit::Null), error, s.span);
+            s.kind = S::Return(Some(value));
         }
     }
 }

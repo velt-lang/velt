@@ -69,10 +69,20 @@ fn narrowing_applies_to_captures() {
 
 #[test]
 fn variables_closures_assign_are_not_narrowed() {
+    // A null check narrows until the next assignment in the same function (#1199); the read
+    // checks the value again, as `clear()` may have run the closure.
+    ok_src(
+        "function f(u: string | null): number {
+           const clear = () => { u = null; };
+           if (u != null) { clear(); return u.length; } return 0; }
+         function main() { console.log(f(\"a\")); }",
+    );
+    // Not in a closure that captures it: the closure may run after the other one did.
     let r = err_src(
         "function f(u: string | null): usize {
            const clear = () => { u = null; };
-           if (u != null) { clear(); return u.length; } return 0; }
+           if (u != null) { const len = (): usize => u.length; clear(); return len(); }
+           return 0; }
          function main() { console.log(f(\"a\")); }",
     );
     assert!(

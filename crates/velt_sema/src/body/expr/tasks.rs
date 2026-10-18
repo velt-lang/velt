@@ -11,7 +11,7 @@ use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
 use crate::defs::{FnKind, ThrowSrc};
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 impl FnCx<'_, '_> {
@@ -77,9 +77,145 @@ impl FnCx<'_, '_> {
         self.coerce(h, t)
     }
 
+    /// The value `e` returned from an async function whose result type is `ret` (not itself a
+    /// promise): a promise (`return Promise.resolve(x)`, `return fetchIt()`) or a union holding
+    /// one (`return fn()` with `fn: () => T | Promise<T>`) is adopted, as in JS (issue #1148).
+    /// JS settles the function's promise as the returned one only after every enclosing scope
+    /// is left (`finally` blocks, `using` disposal, closing the iterator of a `for…of`), and
+    /// one microtask later than `return await` would. So the promise is stored and the scopes
+    /// are left (a `break` out of the loop `wrap_adopted` puts around the body); after it the
+    /// function takes one step and returns the awaited promise. A plain value of a union is
+    /// returned at once, as `return 5` adds no steps in JS.
+    pub(crate) fn async_returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        let h = self.expr(e, Some(ret), Want::Move);
+        if self.in_place_misuse(e, &h, ret) {
+            return self.error_expr(e.span);
+        }
+        let span = h.span;
+        // The promise is awaited after the enclosing `try` statements are left: what it
+        // rejects with is thrown from the function, not into their `catch` blocks.
+        let tries = std::mem::take(&mut self.f.tries);
+        let h = match self.cx.ty.kind(h.ty) {
+            TyKind::Promise(..) => {
+                self.await_throws(&h);
+                self.f.adopt_stmt = true;
+                Ok(self.adopt(h, ret, span))
+            }
+            _ => self.await_union_with(h, span, &mut |s, read, _| s.adopt(read, ret, span)),
+        };
+        self.f.tries = tries;
+        match h {
+            Ok(h) if h.ty == self.cx.ty.never => h,
+            Ok(h) | Err(h) => self.coerce(h, ret),
+        }
+    }
+
+    /// `{ <adopted> = p; break <adopt>; }`: stores the returned promise `p` for the function to
+    /// await once its scopes are left (`async_returned`); records how it is returned then.
+    pub(crate) fn adopt(&mut self, p: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
+        let (pty, unit, never) = (p.ty, self.cx.ty.unit, self.cx.ty.never);
+        let payload = self.cx.ty.promise_payload(pty).unwrap_or(self.cx.ty.error);
+        let slot_ty = self.cx.ty.option(pty);
+        let slot = self.new_local("<adopted>", slot_ty, true, span, LocalKind::Temp);
+        let bind = self.new_local("<adopted>", pty, false, span, LocalKind::Bind);
+        // After the scopes: one step (`await Promise.resolve()`), then `await p`.
+        let hop = match self.cx.prelude.get("promiseResolveVoid").cloned() {
+            Some(Item::Def(d)) => {
+                let mut report = |s: &mut Self, _: &str, expected: TyId, found: &hir::Expr| {
+                    s.report_mismatch(expected, found);
+                };
+                let call = self.call_checked(d, vec![], span, &mut report);
+                Some(self.mk(H::Await(Box::new(call)), unit, span))
+            }
+            _ => None,
+        };
+        let read = self.mk(H::Local(bind, hir::UseMode::Move), pty, span);
+        let awaited = self.mk(H::Await(Box::new(read)), payload, span);
+        let awaited = self.coerce(awaited, ret);
+        let stmts = hop
+            .into_iter()
+            .map(|h| hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            })
+            .collect();
+        let value = self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: Some(Box::new(awaited)),
+                span,
+            }),
+            ret,
+            span,
+        );
+        self.f
+            .adopted
+            .push(crate::body::Adopted { slot, bind, value });
+        let which = self.adopt_which(span);
+        let i32_ = self.cx.ty.i32;
+        let site = self.mk(
+            H::Lit(hir::Lit::Int(self.f.adopted.len() as u128)),
+            i32_,
+            span,
+        );
+        let which = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+        let mark = self.mk(
+            H::Assign {
+                place: Box::new(which),
+                value: Box::new(site),
+            },
+            unit,
+            span,
+        );
+        let place = self.mk(H::Local(slot, hir::UseMode::BorrowMut), slot_ty, span);
+        let some = self.mk(H::WrapSome(Box::new(p)), slot_ty, span);
+        let store = self.mk(
+            H::Assign {
+                place: Box::new(place),
+                value: Box::new(some),
+            },
+            unit,
+            span,
+        );
+        let stmts = vec![
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(store),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(mark),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Break(Some(crate::body::ADOPT_LABEL.to_string())),
+                span,
+            },
+        ];
+        self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: None,
+                span,
+            }),
+            never,
+            span,
+        )
+    }
+
+    /// The function's `<adopt_which>` local: which stored promise is adopted (`Frame::adopt_which`).
+    pub(crate) fn adopt_which(&mut self, span: Span) -> LocalId {
+        if let Some(w) = self.f.adopt_which {
+            return w;
+        }
+        let i32_ = self.cx.ty.i32;
+        let w = self.new_local("<adopt_which>", i32_, true, span, LocalKind::Temp);
+        self.f.adopt_which = Some(w);
+        w
+    }
+
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
-    pub(super) fn await_throws(&mut self, h: &hir::Expr) {
+    pub(crate) fn await_throws(&mut self, h: &hir::Expr) {
         if let H::Call {
             callee: Callee::Def(d, targs),
             ..

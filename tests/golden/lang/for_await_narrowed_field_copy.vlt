@@ -1,0 +1,40 @@
+// check: no leaks
+// A narrowed const copy of a nullable field passed to an async function that iterates it with
+// `for await`, its iterator held in a field: the copy is another reference, the field keeps its
+// own (#1115).
+class Src {
+  it: AsyncIterator<number>;
+  constructor(it: AsyncIterator<number>) {
+    this.it = it;
+  }
+  [Symbol.asyncIterator](): AsyncIterator<number> {
+    return this.it;
+  }
+}
+async function* gen(): AsyncGenerator<number> {
+  yield 1;
+}
+async function count(s: Src): Promise<number> {
+  let n = 0;
+  for await (const c of s) {
+    n += c;
+  }
+  return n;
+}
+class Holder {
+  s: Src | null = null;
+  constructor(s: Src) {
+    this.s = s;
+  }
+  async total(): Promise<number> {
+    const s = this.s;
+    if (s != null) {
+      return await count(s);
+    }
+    return 0;
+  }
+}
+async function main() {
+  const h = new Holder(new Src(gen()));
+  console.log(await h.total());
+}

@@ -123,7 +123,7 @@ export class Response {
   }
 
   // The constructor's work; `type` (if not 0) replaces the `content-type` the body implies.
-  private setUp(body: BodyInit | null, init: ResponseInit | null, type: u32) {
+  private setUp(body: BodyInit | null, init: ResponseInit | null | undefined, type: u32) {
     if (init != null) {
       this.init(init);
     }
@@ -310,18 +310,14 @@ export class Response {
     return this.#remote != null ? "basic" : "default";
   }
 
-  /**
-   * The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
-   * `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
-   * 304), for a `HEAD` request's response and for a response made without one.
-   */
-  get body(): BodyStream | null {
+  // `body` is in velt:fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
+
+  // Whether the response has a body to stream (`body` is not null).
+  private streams(): bool {
     const code = this.#code;
     const none = code == 101 || code == 103 || code == 204 || code == 205;
-    if (none || code == 304 || this.#source == NONE || this.#source == BUILT) {
-      return null;
-    }
-    return BodyStream.adopt(this.chunks(), this.#used);
+    return !(none || code == 304 || this.#source == NONE || this.#source == BUILT);
   }
 
   /** Whether the body has been read. */
@@ -341,7 +337,9 @@ export class Response {
       return this.#str;
     }
     let d = this.#data ?? [];
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == STREAM && s != null) {
       d = await collect(s);
     }
@@ -370,7 +368,9 @@ export class Response {
     if (this.#source == TEXT) {
       return utf8Encode(this.#str);
     }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == STREAM && s != null) {
       return await collect(s);
     }
@@ -394,7 +394,9 @@ export class Response {
         yield chunk;
       }
     }
+    // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
     const s = this.#stream;
+    this.#stream = null;
     if (this.#source == TEXT) {
       yield utf8Encode(this.#str);
     } else if (this.#source == STREAM && s != null) {
@@ -491,7 +493,7 @@ export class Response {
   // when the body is not streamed.
   private serverStream(): BodyStream | null {
     if (this.#source == RUNTIME) {
-      return this.body;
+      return this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null;
     }
     return this.#stream;
   }
@@ -523,7 +525,8 @@ export class Response {
       status: this.status,
       statusText: this.statusText,
       headers: this.headers,
-      body: this.body,
+      // As Node shows a body stream (printed without loading velt:streams).
+      body: this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null,
       bodyUsed: this.bodyUsed,
       ok: this.ok,
       redirected: this.redirected,

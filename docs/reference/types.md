@@ -109,6 +109,10 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  An assertion that narrows, `x as T` with `x: T | null` (or `| undefined`) and `u as A` with
+  `A` a member of union `u`, is checked like `x!`: TypeScript trusts it, Velt panics with
+  `type assertion failed: …` when the value is not a `T` (not in generic code, where at
+  `T = U | null` a `null` is a `T`).
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
   bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
@@ -445,8 +449,9 @@ one that stops early, or a sum of floats, whose order it must keep.
 ## Null and undefined
 
 `null` and `undefined` are two values, as in JavaScript. A value that may be absent has type
-`T | null` or `T | undefined` (`A | B | undefined` for a union), stored without an extra
-allocation where possible; the two types take the same space. `undefined` behaves as in Node:
+`T | null`, `T | undefined` or `T | null | undefined` (`A | B | undefined` for a union), stored
+without an extra allocation where possible; `T | null` and `T | undefined` take the same space,
+and `T | null | undefined` holds a `T | null` with one more flag. `undefined` behaves as in Node:
 
 ```ts
 function find(xs: string[], s: string): string | undefined {
@@ -460,21 +465,60 @@ console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [nu
 const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
 ```
 
+A `T | null | undefined` keeps the two apart: `x === null` and `x === undefined` each test
+one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one it holds.
+`x !== undefined` narrows it to `T | null`, `x !== null` to `T | undefined`, and both tests (or
+`x != null`, or truthiness) narrow it to `T`. Compared with a `T | null` or a `T | undefined`,
+`===` tells the nothings apart and `==` does not, as in Node. A conditional with both a `null`
+and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
+A generic union whose type argument brings a nothing (`T | string | undefined` at
+`T = number | null`) holds it like the union written out (`number | string | null | undefined`):
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+alone is a type too (its only value is `undefined`), and an
+`undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
+`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
+field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
+number }`).
+
+```ts
+function show(x: string | null | undefined): string {
+  if (x === undefined) return "undefined";
+  if (x === null) return "null";
+  return x.toUpperCase();
+}
+
+const xs: (string | null | undefined)[] = ["a", null, undefined];
+console.log(xs.map(show), xs.map((x) => typeof x)); // [ 'A', 'null', 'undefined' ] [ 'string', 'object', 'undefined' ]
+console.log(JSON.stringify({ a: xs[1], b: xs[2] }), xs[2] ?? "d"); // {"a":null} d
+let later: number | undefined;
+console.log(later, [1, undefined]); // undefined [ 1, undefined ]
+```
+
 `x == null` and `x == undefined` match either nothing; `x === undefined` tests a
 `T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
-and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
-narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
+and narrows nothing, as in Node. tsc accepts it; Velt warns (``this `=== null` is always false:
+`string | undefined` is never `null` ``), since it is usually a test of an optional parameter or
+field written for `null`, which is `undefined` when left out: write `x == null` to test for
+either nothing, or `x === undefined`. `switch` compares like `===`. `typeof x === "undefined"`
+narrows, `?.` on a value that may be `undefined` gives `undefined` (a `T | null` result
+becomes `T | null | undefined`), and `JSON.stringify` leaves out a field
 holding `undefined` and writes an array element as `null`. A destructuring default applies where
 the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
-the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
+the `null` of a field `a: T | null`, and of an optional `a?: T | null` that holds `null`. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
-those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `T | void` is
+`T | undefined` (a `void` function's value is `undefined`), so a callback typed
+`(e: Error) => boolean | void` may return a `boolean` or nothing. A function whose result type
+allows `undefined` returns it from a bare `return;` and when it reaches its end; one whose result
+type is inferred, that returns values and also `return;` or can reach its end, returns
+`T | undefined`, as in TypeScript. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
@@ -482,26 +526,21 @@ the nothing the type lacks; `as` between `T | undefined` and `T | null`; a param
 other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
 a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
 of it, directly or through what it calls (a `T | undefined` for `Map.set`,
-`Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
-a `T | undefined`), which includes a generic alias applied that way (`type Nullable<T> = T | null`
-as `Nullable<number | undefined>`). Also not supported yet, although TypeScript accepts them:
+`Array.prototype.find` or a generic function holding a `T | null`), which includes a generic
+alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
+other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
+`T | null | undefined`. Also not supported yet, although TypeScript accepts them:
 
-- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
-  parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
-  leave the argument out;
-- `undefined` as the value of an optional field (`{ a: undefined }` for `a?: number`): leave the
-  field out (also for a conditional with an `undefined` branch, `c ? v : undefined`, given
-  for either);
+- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for a parameter
+  with a default (`f(undefined)` for `function f(x = 5)`): leave the argument out (an optional
+  parameter, `f(x?: number)`, takes `undefined`);
 - a `T | null` from the standard library where a `T | undefined` is expected
   (`return m.get(k);` in a function returning `number | undefined`): write `m.get(k) ?? undefined`;
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
   reach the comparator;
 - `JSON.stringify` of a value holding a class whose `toJSON()` may return `undefined` (its
-  own or a subclass's);
-- a destructuring default for an optional **class** field declared `T | null`
-  (`class C { b?: number | null }`, `const { b = 6 } = c`): a class does not keep an unset field
-  apart from one set to `null`.
+  own or a subclass's).
 
 ### Silent differences until phase 3
 
@@ -513,46 +552,57 @@ These compile and print or test differently from Node, with no error, until late
   `Map<string, number | null>`);
 - a missing key of a `Record`: `r["z"]` on a `Record<string, number>` or
   `Record<string, number | null>` is `null` likewise;
-- an absent optional field or a left-out optional parameter (`a?: T`), `?.` on a `T | null`
-  and the rest of the standard library (`find`, `at`, `shift`, …) give `null` where Node gives
-  `undefined` (phases 2 and 3); `a?: T | undefined` is reported as a type with both nothings.
+- the rest of the standard library (`find`, `at`, `pop`, `shift`, …) gives `null` where Node
+  gives `undefined`.
 
 `x == null` tests for either nothing and `x ?? d` treats both alike, so code written with them
 behaves as in Node.
 
-### Optional values and `null`
+### Optional values
 
-Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the standard library use
-`null` for now:
+Optional fields and parameters (`a?: T`) hold `undefined` when left out, as in TypeScript; the
+standard library still gives `null` (see above). `??`, `?.`, `!` and `x != null` treat both
+nothings alike:
 
-- `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
+- `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result may be `undefined`),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
-  when `d` converts to it, else `d`'s type when `x`'s non-null type converts to that, else
-  their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
+  see below); `switch` supports `case null` and `case undefined`. The type of `x ?? d` is `x`'s
+  non-null type when `d` converts to it, else `d`'s type when `x`'s non-null type converts to
+  that, else their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
   `number | string`.
-- `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
-  The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
-- `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
-  checks it: a `null` panics with `non-null assertion failed`.
-- `a?: T` reads as `T | null`: an optional parameter `b?: T` is `b: T | null = null` (callers
-  may leave it out or pass `null`; it cannot also have a default), and an optional field of a
-  class, interface or object type starts as `null`, meaning absent: `JSON.stringify` leaves it
-  out, and so does `console.log` in an object type, as JavaScript leaves out a missing key (a
-  class shows it, as Node shows a class's optional field); a spread (`{ ...a, ...b }`) doesn't
-  copy it over an earlier value. A `b: T | null` field holding `null` is written.
-- A field declared `a?: T | null` in an object type keeps an absent key apart from a present
-  `null`, as JavaScript does: it prints and serializes `null` when present, `JSON.parse` keeps
-  the difference, and a spread copies a present `null` (`update(u, { deletedAt: null })`
-  clears the field). In a class, such a field is still absent while it is `null`.
-- An object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+- `x ??= d` assigns `d` when `x` is `null` or `undefined` and narrows `x` (likewise `x ||= d`
+  and `x &&= d`). The target may not call a function yet (`m[key()] ??= v`): store the key in a
+  variable first.
+- `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
+  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`.
+- `a?: T` reads as `T | undefined`, and `a?: T | null` as `T | null | undefined`. An optional
+  parameter `b?: T` is `b: T | undefined = undefined` ([Functions](functions.md)): callers may
+  leave it out or pass `undefined` (or a value that may be `undefined`), but not `null`
+  (TS2322), and it cannot also have a default.
+- An optional field of a class without an initializer is an own property holding `undefined`,
+  as in Node with ES2022 class fields: `console.log` shows `a: undefined`, `JSON.stringify`
+  leaves it out, and `"a" in o` is `true`. It can be set to `null` only when declared
+  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`.
+- An optional field of an object type or of an interface with only fields keeps an absent key
+  apart from a key holding `undefined`, as Node does. An absent field is not printed by
+  `console.log`, and `"a" in o` is `false`; `{ a: undefined }` is allowed, prints
+  `{ a: undefined }`, and `"a" in o` is `true`. `JSON.stringify` leaves out both, and writes a
+  present `null` (of an `a?: T | null`). A spread (`{ ...a, ...b }`) copies a field `b` has over
+  an earlier value, also one holding `undefined` or `null`, and keeps the earlier value where `b`
+  lacks the field (`update(u, { deletedAt: undefined })` below clears `deletedAt`, as in Node).
+  Where the target field is required and cannot hold `undefined` (a `Partial<U>` spread back into
+  a `U`), a source that lacks the field keeps the earlier value, and one that holds `undefined`
+  stops the program with a `TypeError` (``a spread copies `undefined` into a field of type
+  `string` ``): Node would copy the `undefined`, which the field's type can't hold.
+- An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
+  `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
+  then `null`.
 - In an object type, `?` is part of the type, as in TypeScript: `{ a?: string }` and
-  `{ a: string | null }` read alike but are different types (the first may be absent), with no
-  implicit conversion between them; copy with `{ ...x }`.
-  Difference from TypeScript: TypeScript also accepts a `{ a: F | null }` where a
-  `{ a?: F | null }` is expected; in Velt the two are different types (the second keeps a
-  presence flag), so copy with `{ ...x }` there too.
+  `{ a: string | undefined }` read alike but are different types (the first may be absent),
+  with no implicit conversion between them; copy with `{ ...x }`.
+  Difference from TypeScript: TypeScript also accepts a `{ a: F | undefined }` where a
+  `{ a?: F }` is expected; in Velt the two are different types (the second keeps a presence
+  flag), so copy with `{ ...x }` there.
 
 ```ts
 type User = { name: string; deletedAt?: string | null };
@@ -564,34 +614,62 @@ function update(u: User, patch: Partial<User>): User {
 const u: User = { name: "ann", deletedAt: "2026-01-01" };
 console.log(JSON.stringify(update(u, {}))); // {"name":"ann","deletedAt":"2026-01-01"}
 console.log(JSON.stringify(update(u, { deletedAt: null }))); // {"name":"ann","deletedAt":null}
+console.log(update(u, { deletedAt: undefined })); // { name: 'ann', deletedAt: undefined }
 const v: User = { name: "bo" };
-console.log(JSON.stringify(v)); // {"name":"bo"}
+console.log(JSON.stringify(v), "deletedAt" in v); // {"name":"bo"} false
 console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 ```
 
-- `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
-  missing), except for an `a?: T | null` field of an object type, which records whether the key
-  was there. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
-- `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
-  never evaluated). Parentheses end a chain: `(x?.a).b` needs `x?.a` to be non-null.
+- `JSON.parse<T>`: an absent key leaves an optional field absent (`undefined`). An explicit
+  `null` for an `a?: T` field, whose type has no `null`, leaves it absent too (a Velt rule: the
+  type cannot hold the `null`); for an `a?: T | null` field it is a present `null`. The
+  TypeScript forms that take the type from the context, `JSON.parse(text) as T` and
+  `const t: T = JSON.parse(text)`, reject that `null` instead (`expected string at $.a`), as
+  they reject a value of another type. A field
+  declared `a: T | null` (not optional) may be missing, and is then `null`, as for an explicit
+  `null`. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
+- `x?.a.b` short-circuits the rest of the chain like TypeScript (`undefined` when `x` is `null`
+  or `undefined`; `.b` is never evaluated). This holds for a `T | null` `x` too, as in
+  JavaScript: with `u: User | null`, `u?.name` is a `string | undefined`, and a rest of type
+  `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
+  be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
-  so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed.
-- A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
-  `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
-  may run the closure, and then the variable no longer holds what was checked. Test a `const`
-  copy instead, which nothing can reassign; the error at such a use says so:
+  TypeScript; assigning a non-null value narrows too (also in the declaration: `let x: string
+  | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
+  facts of the condition a branch started from unless it reassigned the variable, and what its
+  own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
+  null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
+  `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
+  narrowed field is re-checked when read, so a call that set it to `null` in between panics
+  instead of reading `null`. An optional member of function type can be called once a check
+  narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
+  a closure, a variable narrowed where the closure is created stays narrowed when the function
+  assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
+  closure may run after such an assignment.
+- `x == null`, `x != null`, `x === undefined` and `x ?? d` are allowed on a value whose type has
+  neither `null` nor `undefined`, as in TypeScript (a defensive check): the test is `false`
+  (`!=`: `true`) and `d` is not evaluated. On an element read of an array, a string or
+  a typed array (`xs[i] ?? d`, `xs[i] == null`) the index is checked instead, so past the end the result is `d` (`true`),
+  as in JavaScript, where reading past the end gives `undefined`.
+- A null check (`!= null`, `!== undefined`, truthiness) of a variable that a closure assigns
+  narrows it in the function that makes the check until the next assignment there, as in
+  TypeScript (`if (cleanupFn) cleanupFn();`). A call in between may run the closure, so each
+  such read checks the value again and stops with a `TypeError` if the closure set it to `null`
+  (JavaScript throws one where it calls or reads through the `null`). The closures that capture
+  the variable do not see the narrowing. Other tests (`typeof`, `instanceof`, union members)
+  do not narrow such a variable, where TypeScript keeps the narrowing: the variable may no
+  longer hold what was checked. Test a `const` copy instead, which nothing can reassign; the
+  error at such a use says so:
 
   ```ts
   class Conn {
     send(msg: string): string { return `sent ${msg}`; }
   }
 
-  let conn: Conn | null = new Conn();
-  const close = () => { conn = null; };
-  const c = conn;                 // `if (conn !== null) { conn.send(…) }` is an error here
-  if (c !== null) {
+  let conn: Conn | string = new Conn();
+  const close = () => { conn = "closed"; };
+  const c = conn;                 // `if (conn instanceof Conn) { conn.send(…) }` is an error
+  if (c instanceof Conn) {
     close();
     console.log(c.send("bye"));   // sent bye
   }
@@ -603,11 +681,11 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 ```ts
 class User {
   name: string = "ann";
-  nickname?: string;              // starts as null
+  nickname?: string;              // starts as undefined
 }
 
 function greet(name: string, greeting?: string): string {
-  return `${greeting ?? "Hello"}, ${name}`;   // greet("ann") works: greeting is null
+  return `${greeting ?? "Hello"}, ${name}`;   // greet("ann") works: greeting is undefined
 }
 
 function first(xs: i64[]): i64 | null {
@@ -644,8 +722,13 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is: Velt arrays and literals need no
-  `readonly` or literal-type annotation for it.
+- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
+  more different ones) keeps their literal types and is read-only, like TypeScript's
+  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+  `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
+  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  apart, since it cannot write through the parameter). Other values need no `readonly` or
+  literal-type annotation for it.
 
 ## Union types
 
@@ -667,9 +750,19 @@ the nullable type; `void` cannot be a member.
   - `x == literal` / `x != literal` selects the literal's member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
+  - `typeof` tests narrow a field path of a local too (`typeof node.text === "string"`,
+    `this.label`, `h.node.text`), as in TypeScript, until the path or a part of it is
+    assigned. A call between the test and a read may change the field, so each read checks
+    the member again and stops the program if the field now holds another member (Node would
+    go on with the new value).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
-    until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
-    A local that a closure assigns is not narrowed ([Null](#null-and-undefined)).
+    until it is reassigned; `a || b` narrows to the members either side allows
+    (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
+    `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    A local that a closure assigns is not narrowed by these tests ([Null](#null-and-undefined)).
+  - Assigning a member's value narrows to that member until the next assignment or join, also
+    in the declaration (`let u: string | number = "x"; u.length`, `else { p = new B(); }
+    p.b`), as in TypeScript.
 - Printing and template literals show the active member's value. A union with a member that
   cannot be printed (a closure) prints once a test has narrowed it to members that can
   (`typeof v !== "function"`). `JSON.stringify` works on
@@ -677,6 +770,32 @@ the nullable type; `void` cannot be a member.
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
+- A union alias may name itself behind an indirection: as an array's element, an index
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
+  may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
+  Child[]`). Elsewhere
+  (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
+  give such a type a nominal member, such as an interface or a class.
+
+```ts
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+type Tree = number | Tree[];
+
+function depth(t: Tree): number {
+  if (typeof t === "number") {
+    return 0;
+  }
+  let max = 0;
+  for (const k of t) {
+    max = Math.max(max, depth(k));
+  }
+  return max + 1;
+}
+
+const v: Json = { a: [1, "x", { b: null }] };
+console.log(JSON.stringify(v)); // {"a":[1,"x",{"b":null}]}
+console.log(depth([1, [2, [3]]])); // 3
+```
 
 ```ts
 class NotFound {
@@ -747,9 +866,9 @@ for (const s of shapes) {
   narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
-- Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
-  to itself.
+- A discriminated union may name itself behind an indirection
+  (`type Tree = { kind: "leaf"; v: number } | { kind: "node"; kids: Tree[] }`; see
+  [Union types](#union-types)).
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
@@ -861,7 +980,13 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
   expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
-  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`).
+  Keys compared by identity count as `===`: a `WeakMap`, `WeakSet` or `WeakRef` of the
+  expected type. So does converting a value that may be the copy (followed through variables,
+  parameters and results; anywhere once the copy is stored in a field or an array) to `any`,
+  `unknown` or `object` when the program compares two such values that may be objects
+  (`(a as any) === (ab as any)`, not `x !== undefined`), keys a `Set<any>`, `Map<object, V>`
+  or weak collection by them, or prints, spreads or lists the keys of one. An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -891,6 +1016,49 @@ const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
 console.log(t.kids[0].v); // 2
 ```
 
+A part may be a **type parameter** (`T & { $set: (v: T) => void }`, `TMain & TSub`), in a
+generic alias or written in a generic signature: the intersection is worked out where the type
+arguments are known, so a caller sees the object type with both parts' fields, and a type
+argument that can't be a part (a class, say) is reported there. A type argument inferred
+through such a parameter comes from the fields the object part names (`T = { n: number }` for a
+`Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
+for a value declared `A & { id: string }`), else from the whole argument
+(`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
+TypeScript. `any`, `unknown` and
+`object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
+`object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+`object & X` keeps only the members of `X` that are objects, and has no value (`never`) when
+none is: `T & object` at `number` is `never`, so sigx's `PrimitiveSignal<T> | Signal<T & object>`
+at a `number` is `PrimitiveSignal<number>`; `never & X` is `never`. In a generic body,
+`T & object` is `T` under a `T extends object` bound (an overload returning `Signal<T>` fits an
+implementation returning `Signal<T & object>`), and a value of `T & object` (or of an
+intersection with such a part) is an `object`, so it can be a `WeakMap` key. `Omit<T, never>`
+and `Pick<T, never>` name no fields.
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function relay<T extends object>(s: Signal<T>): Signal<T> {
+  return s;
+}
+
+function stamp<T>(x: T & { id: string }): T & { id: string } {
+  return x;
+}
+
+let last = 0;
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v.n;
+  },
+};
+const r = relay(s); // Signal<{ n: number }>: `n` and `$set`
+r.$set({ n: r.n + 1 });
+const t = stamp({ a: 1, id: "x" });
+console.log(last, t.a, t.id); // 2 1 x
+```
+
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
@@ -899,8 +1067,14 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
   `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
-- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
-  yet (#350). A generic alias works, since each use has concrete type arguments.
+- In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
+  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
+  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+- An intersection is the same type as the object type with its fields written out, so where a
+  program has both forms, inference through `T & { id: string }` treats them alike: an object
+  literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type
+  `A & { id: string }` (TypeScript: `{ a: number; id: string }`). It differs only where code
+  depends on `T` itself, such as `JSON.parse(s)` returned as a `T`.
 - Interface declarations merge as in TypeScript
   ([declaration merging](classes.md#declaration-merging)).
 
@@ -1129,8 +1303,10 @@ console.log(b.v); // hi
 - **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
-  a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data). A generic method (`match<R>(arms: Arms<R>): R { ... }`)
+  a method is not supported yet (an object literal is plain data). Getters and setters
+  (`get x() {}`, `set x(v) {}`) are supported where the literal implements an interface with
+  methods ([Object literals implementing interfaces](#object-literals-implementing-interfaces)),
+  not yet in a literal of an object type. A generic method (`match<R>(arms: Arms<R>): R { ... }`)
   parses as a property holding a generic arrow, which is not supported yet there (a generic
   arrow must be the value of a `const`, [Functions](functions.md#arrow-functions-and-function-types)). A generator method `*name() { ... }` (`async *name()`) is
   a property holding a [generator function](functions.md#generator-function-expressions), as
@@ -1139,8 +1315,8 @@ console.log(b.v); // hi
   ([Iterable object literals](#iterable-object-literals)).
 - **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
-  `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
-  left out as `null`; call it as `o.label?.(p)`). A generic method signature
+  `label?(p: string): string` an optional one (`((p: string) => string) | undefined`, absent
+  when left out; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) declares a method in an interface; in an object type, and as an
   optional one in an interface (`wrap?<A>(a: A): A`), it declares a field of generic function
   type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
@@ -1274,14 +1450,36 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
   (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
-  is called (`const { area } = rect;`).
+  is called (`const { area } = rect;`). A method or function-typed member destructured out of
+  an object or interface value is a function value (`const { insert, remove } = options;`),
+  bound to the object it was read from (in JS it is unbound, so the two differ only where JS
+  would throw a `TypeError` for a method that uses `this`).
+- **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
+  next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
+  other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
+  type or an interface of fields, the object type of the other fields (`Omit<P, "children">`;
+  an optional field is copied only while present); on a class instance, the other fields (its
+  methods and getters live on the prototype, so the rest has none, nor `#private` fields); on a `Record<string, V>`,
+  a `Record<string, V>` of the other keys. The rest is a new object: its fields are copied
+  (a nested object or array is shared, as in JS). Not supported yet (each is an error): the rest of a value
+  whose type is a type parameter, an interface with methods, a record with a closed key
+  type, or a class with a TypeScript `private` field the pattern doesn't take (JS copies it,
+  but the rest's type leaves it out), and `...rest` in `for...of` patterns.
+
+  ```ts
+  interface Props { id: number; title: string; hidden?: boolean }
+  function main() {
+    const props: Props = { id: 1, title: "t" };
+    const { id, ...rest } = props;
+    console.log(id, rest); // 1 { title: 't' }
+  }
+  ```
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
-  a field or element declared `T | null` keeps its `null`, and so does an optional field of an
-  object type declared `a?: T | null` when it is present (for a class field declared that way a
-  default is [not supported yet](#null-and-undefined)). Defaults in `for...of` patterns and parameter patterns
-  are not supported.
+  a field or element declared `T | null` keeps its `null`, and so does an optional field
+  declared `a?: T | null` that holds `null`. Defaults in `for...of` patterns and parameter
+  patterns are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:
   `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
@@ -1351,7 +1549,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
   may spread another record (`{ ...r, x: 1 }`) and have computed keys (`{ [k]: v, [a + b]: w }`,
   in order with the other keys); an object literal with a computed key that is not a module
-  constant is a `Record<string, V>` also where no record is expected. A string or integer
+  constant, or one that spreads a variable `r` of type `Record<string, V>`, is a
+  `Record<string, V>` also where no record is expected (spreading a record into an object of a
+  fixed shape is an error: its keys are known only at run time). A string or integer
   literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
   property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
   is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
@@ -1367,10 +1567,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not ES private `#x` fields, static fields or methods). A struct's optional field is
-  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  listed only when it is present. On a class with subclasses it lists the fields of the
   object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
   interface value those of the class it holds (an interface also implemented by a struct is an
-  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
+  error: struct values carry no class). On an `any` it lists the fields of the class instance
+  held, when every value the program converts to a dynamic type is a class instance; in a
+  program that also converts other values (an array, a string, an object type, a function) it
+  is a compile error for now (#924, #926). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - **Index signatures**: an object type or interface with an index signature and no other
@@ -1441,11 +1644,11 @@ or accessor its object type, class (or a base class) or interface declares is al
 one it doesn't declare is not. A setter makes its name a member (`"w" in o` for `set w(v)`);
 static members are the class's, not its instances', and a `#private` name is never a string key
 (`"#p" in o` is `false`). An optional field of an object type or interface (`b?: T`) is tested
-at run time: it is there once the object has it, also holding `null`, where the type keeps that
-apart. A class's optional field is always there (TypeScript-compiled classes define it). A value
-whose class is known only at run time is tested for it: a `Base` holding a `Sub` has the members
-`Sub` declares, and an interface value has those of the class it holds, an optional field the
-interface declares included. The members every object inherits from `Object.prototype`
+at run time: it is there once the object has it, also holding `undefined` or `null`
+(`"b" in { b: undefined }` is `true`, as in Node). A class's optional field is always there
+(TypeScript-compiled classes define it). A value whose class is known only at run time is
+tested for it: a `Base` holding a `Sub` has the members `Sub` declares, and an interface value
+has those of the class it holds, an optional field the interface declares included. The members every object inherits from `Object.prototype`
 (`"toString"`, `"constructor"`, `"hasOwnProperty"`, …) are there on every object, as in Node. A
 `Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
 then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
@@ -1462,15 +1665,13 @@ may hold (structs carry no class to tell them apart), and a string key on a buil
 library value (an array, a `Map`). A value converted to a narrower object type by copying its
 fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
 tests it for a key the copy left out, since Node would find it on the original. An optional
-field (`b?: T`) is its value or nothing, while Node also finds a key that holds `undefined`
-(`"b" in { b: undefined }` is `true`). So a program that tests such a field with `in` and
-somewhere stores a value that may be `undefined` in a field of that name (`{ kind, b }` with an
-optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, a spread of a `b: T | null` field) is
-an error (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the
-first such store and says how many others there are): store the value only
-when there is one (`if (v != null) o.b = v`), or test the value (`o.b != null`). Leaving the
-field out, a value that cannot be null and a spread of an object with the same optional field
-are fine. A primitive
+field of a dynamic type (`b?: any`, `b?: unknown`) holds its own `undefined` and keeps no
+presence flag, while Node also finds a key that holds `undefined`. So a program that tests such
+a field with `in` and somewhere stores a value that may be `undefined` in a field of that name
+(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`) is an error
+(``` cannot tell an absent `b` from one holding `undefined` ```, which points at the first such
+store and says how many others there are): store the value only when there is one
+(`if (v !== undefined) o.b = v`), or test the value (`o.b !== undefined`). A primitive
 right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
 possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
 symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under
@@ -1536,6 +1737,60 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
 
+### Object literals implementing interfaces
+
+Where an interface with methods is expected (an annotation, a parameter, a return type or
+`satisfies`), an object literal implements it, as a class that declares `implements` does:
+
+- A method is a function value: `m(x) { … }`, `m: (x) => …` or `async m(x) { … }`. Its
+  parameter types may be left out: they come from the interface's method.
+- A field is a value, or a **getter** `get f() { … }`, which runs on each read. A getter
+  method of the interface (`get f(): T`) takes a getter or a value (`f: 5`), and a setter method
+  (`set f(v: T)`) a setter `set f(v) { … }`, which runs on each `x.f = v`. A field of the
+  interface can't be written through the interface value yet (`x.f = v` is an error), so a
+  setter given for a field never runs: declare a setter method in the interface instead.
+- A method with a default body and an optional field may be left out (the field is `undefined`);
+  every other member must be given, and a member the interface doesn't declare is an error.
+- The value is an interface value: its members are read and called through the interface.
+- Such a literal may be a module constant, exported or not (`export const upper: Handler = {
+  … }`). Like every module constant it is evaluated at each use, so comparing it by identity
+  (`===`) is an error, and each use passed on is a new value, as for a function-valued constant
+  ([Variables](variables.md#module-constants-initialized-by-a-call)).
+
+```ts
+interface Counter {
+  next(step: number): number;
+  readonly count: number;
+}
+
+function counter(): Counter {
+  let n = 0;
+  return {
+    next(step) {
+      n += step;
+      return n;
+    },
+    get count() {
+      return n;
+    },
+  };
+}
+
+const c = counter();
+c.next(2);
+c.next(3);
+console.log(c.count); // 5
+```
+
+- The methods use the variables around them, as arrows do; `this` in them is not supported yet.
+- A generic interface method (`map<R>(f: (x: T) => R): R`) cannot be a function value: declare a
+  class that implements the interface.
+- A method that throws must be allowed to by the interface method's function type, as for any
+  function value: an optional method (`m?(x: T): R`) is a field of function type, which
+  doesn't allow throwing unless it says `throws`.
+- `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
+  interface values).
+
 ## any and unknown
 
 `any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
@@ -1568,7 +1823,9 @@ function main(): void {
 
 What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
 `T | null`, unions and class instances, checked against the class and its subclasses, and an
-instance of a generic class against that very instantiation (`Box<number>`); into a
+instance of a generic class against that very instantiation (`Box<number>`, so a
+`Record<string, number>` converts only from a record of that type: an object of a fixed shape
+stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
 `typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
 literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
@@ -1576,7 +1833,7 @@ literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
 converted (a class instance through its base class, an interface value, a function converted
-twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
+twice), and one object converted twice is one value (`u1 === u2`, one `Set<unknown>` entry). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
@@ -1589,9 +1846,359 @@ Differences from Node: `null` and `undefined` converted to `T | null` both give 
 (a `T | null` has no `undefined`; convert to `T | undefined` to keep it); `==` between an
 object and a boolean, number or string stops with a `TypeError` (JavaScript converts the object
 with `ToPrimitive`: `[] == 0` is `true`); an instance of a subclass of a generic class does not
-convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); a left-out
-optional parameter `x?: any` holds `null`, not `undefined` (as with every optional parameter
-today); and a function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`). **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
-`x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
-`JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
-error.
+convert to that class (`Sub extends Box<number>` to `Box<number>`: a `TypeError`); and a
+function prints as `[Function (anonymous)]` (Node prints its name, `[Function: f]`).
+
+Members of an `any` are read and called as in JavaScript: `x.f`, `x["f"]`, `x[k]` with a
+`string`, `number` or `any` key (any expression: `x[key()]`, `x[i + 1]`), `x.m(a, b)` (a method,
+or a field holding a function, typed or `any`) and `x(a, b)` when `x` holds a function. The member
+is found at run time in the value the `any` holds: a field, getter or method of a class
+instance (a subclass's too when it was converted through its base class), an object type's
+field, `length` and elements of an array, `length` of a string, and the members of the standard
+library's classes (`size`, `get`, `set` and `has` of a `Map`). The result is an `any`; each
+argument is converted to the parameter's type with the same check as above, a left-out one is
+`undefined`, and extra ones are ignored.
+
+```ts
+class Counter {
+  n: number = 0;
+  get double(): number {
+    return this.n * 2;
+  }
+  add(k: number): number {
+    this.n += k;
+    return this.n;
+  }
+}
+
+function main(): void {
+  const c: any = new Counter();
+  console.log(c.add(5), c.double, c.missing); // 5 10 undefined
+  const m: any = new Map<string, number>();
+  m.set("a", 1);
+  console.log(m.get("a"), m.size); // 1 1
+  const xs: any = [10, 20];
+  console.log(xs.length, xs[1], xs[2]); // 2 20 undefined
+  const f: any = (s: string) => s.toUpperCase();
+  console.log(f("hi")); // HI
+}
+```
+
+A member the value's fixed shape does not have reads as `undefined`, as in Node. A `null` or
+`undefined` receiver stops with Node's `TypeError: Cannot read properties of undefined (reading
+'f')` before the call's arguments are evaluated, calling something that is not a function with
+`TypeError: x.f is not a function`, and an argument of the wrong type with the conversion's
+`TypeError`. Optional chaining short-circuits as in Node: `x?.f`, `x?.m()`, `x?.[0]` and
+`x.f?.()` are `undefined` when the link is `null` or `undefined`, and the rest of the chain
+(`x?.a.b`) is not evaluated. What this phase cannot reach yet
+stops with a `TypeError` naming #924 rather than giving a wrong value: a method read without a
+call, methods of arrays and strings, string indexing, methods that throw or are generic, and
+members whose type is a union, enum or interface.
+
+Members of an `any` are written as in JavaScript too: `x.f = v`, `x["f"] = v` and `x[k] = v`
+with a `string`, `number` or `any` key. The value is converted to the member's type with the
+same check as above (a value of another type stops with its `TypeError`, and the member keeps
+its old value) and stored in the object itself, so every other reference to it sees the write;
+a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
+in Node; an array takes its elements inside its length. The other values have a fixed shape:
+adding a property stops with `TypeError: Cannot add property k: an object of a fixed shape gets
+no new properties through `any` (#924)` (Node adds it), writing a getter that has no setter with
+Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
+gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
+`TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
+Writing a `readonly` field, a method, an element past the end of an array or a member of a
+string, number or function stops with a `TypeError` naming #924. Compound assignments
+(`x.n += 1`, `x.n ??= v`) and `x.n++` are compile errors until the operators of `any` come.
+
+`Array.isArray(x)`, `x instanceof C` for a generic class `C` (TypeScript's `C<any>`, including
+`Map` and `Set`) and `typeof x === "function"` narrow an `unknown` to an `any` (and leave an
+`any` one): the value stays as it is, and its members are read, called and written as above.
+`typeof` tests for `number`, `string` and `boolean` and `instanceof` of a class without type
+parameters narrow to that type itself, so member access after them is typed and direct.
+
+```ts
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function describe(u: unknown): string {
+  if (Array.isArray(u)) {
+    return `${u.length} items, first ${u[0]}`;
+  }
+  if (u instanceof Box) {
+    return `a box of ${u.v}`;
+  }
+  return "something else";
+}
+
+function main(): void {
+  console.log(describe([3, 4])); // 2 items, first 3
+  console.log(describe(new Box("s"))); // a box of s
+  const p: any = { x: 1, y: 2 };
+  p.x = 10;
+  p["y"] = 20;
+  console.log(p.x, p.y); // 10 20
+  const r: any = { a: 1 } as Record<string, number>;
+  r.b = 2;
+  console.log(r.b); // 2
+}
+```
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
+operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
+warning on a written `any`; until then each is a compile error.
+
+`key in x` on an `any` asks the value held: a class instance or object type has its fields,
+methods and accessors and what every object has from `Object.prototype` (`toString`), a
+`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
+(which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+
+### Generic interfaces with `unknown` arguments
+
+A value of a generic interface type with concrete type arguments converts to the same interface
+with `unknown` (or `any`) arguments: a `Handler<Date, number>` is a `Handler<unknown, unknown>`,
+so a table of handlers written for different types can be one `Handler[]`. TypeScript accepts
+this because it compares method parameters bivariantly (an interface's type parameter may be a
+method parameter's type, `serialize(value: T)`), which lets a wrong argument through unnoticed.
+Velt checks it instead: the converted value wraps the original, and every call through it
+converts each argument to the original's own type, checked at run time as a conversion out of
+`any` is (a value of another type stops the program with a `TypeError`; Node would run the
+method with it). Results and fields need no check (an `unknown` takes any value), and a function
+value in a parameter, a result or a field (an optional method `revive?(e: E): T` is a field of
+function type) is wrapped the same way, as is an interface value of a result.
+
+```ts
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  test(value: unknown): boolean;
+  serialize(value: T): E;
+}
+
+const dateHandler: Handler<Date, number> = {
+  name: "date",
+  test: (v) => v instanceof Date,
+  serialize: (d) => d.getTime(),
+};
+
+function encode(value: unknown, handlers: Handler[]): void {
+  for (const h of handlers) {
+    if (h.test(value)) {
+      console.log(h.name, h.serialize(value)); // date 0
+    }
+  }
+}
+
+function main(): void {
+  encode(new Date(0), [dateHandler]);
+}
+```
+
+Calling `serialize("x")` through the `Handler[]` stops with `TypeError: the value is not a Date
+(it is a string)`. The wrapped value is the original object: a write through one is seen
+through the other, and every copy of the converted value (an array element read into a
+`const`, a second conversion to `Handler<any, any>`) wraps that same object.
+
+A parameter of type `unknown[]`, `Map<unknown, unknown>` or `Set<unknown>` (a handler for
+arrays, maps or sets, as in a serializer's table) takes an array, map or set of any element
+types. The method receives a copy holding the elements boxed, and when it returns the copy is
+written back into the caller's array, map or set. Each element written back converts to the
+original's own element type, checked as above. Reads and changes the method makes during the
+call match Node: it sees every element, and the caller sees what it added, deleted or replaced.
+Differences from Node, tracked in #1185:
+
+- the method's container is not the caller's: `===` between the two is `false`, and a
+  reference the method keeps after it returns no longer follows the caller's container;
+- changing the length of an `unknown[]` (`push`, `pop`) stops with a `TypeError` naming #1185.
+
+```ts
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+const mapHandler: Handler<Map<unknown, unknown>, [unknown, unknown][]> = {
+  name: "map",
+  serialize: (m) => [...m.entries()],
+};
+
+function main(): void {
+  const all: Handler[] = [mapHandler];
+  const scores = new Map<string, number>([["ann", 3]]);
+  console.log(all[0].serialize(scores)); // [ [ 'ann', 3 ] ]
+}
+```
+
+The conversion applies where each type argument is the original's or `unknown` / `any`, and
+each parameter and result converts as described. It is a compile error, with a note naming the
+case, when a method's parameter has another type holding `unknown` or `any` (a generic class
+such as `Box<unknown>`, or `Map<string, unknown>`; #1185) or is an interface (#924), and when a
+result is a promise of another type, a parameter is an array of the type parameter, or a method
+has type parameters of its own. A parameter of a function value (an optional method
+`revive?(e: E): T` with `E` an `unknown[]`) is checked against its own type as it is (#1185),
+except a generic class with `unknown` arguments, which is a compile error. A program without
+such a conversion is unchanged.
+
+### Proxy and Reflect
+
+`new Proxy(target, handler)` makes a proxy as in JavaScript: reading a member of it runs the
+handler's `get` trap, writing one its `set` trap and `key in p` its `has` trap, each with the
+target, the key (a string; an index arrives as its string, `"1"`) and, for `get` and `set`, the
+proxy itself as the receiver. A trap the handler leaves out forwards the operation to the
+target, and `p.m(a)` reads `m` through `get` and calls what it returns. A `set` trap that
+returns `false` makes the assignment throw Node's `TypeError: 'set' on proxy: trap returned
+falsish for property 'k'` (what strict code gets). `Reflect.get(t, k)`, `Reflect.set(t, k, v)`
+and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a receiver, `Reflect.get`
+and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
+target, without running traps, as Node does.
+
+The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
+TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). `new Proxy(target, handler)`
+is an `any`, which converts to the class or object type the context expects (`as State`, an
+annotation, a return type, an argument). The typed value is the same proxy: reading `s.count`,
+writing `s.count = 1`, `s.count += 1` and passing it on run the traps as before, `s === t` and
+converting it back to `any` see one object, and `console.log(s)` prints the target. A field
+read through the `get` trap is checked against the field's type when it arrives (a `TypeError`
+on a mismatch), so a proxy may stand for a type whose fields its target doesn't have (an empty
+target whose `get` trap answers every key). A method called through a typed proxy runs with
+`this` the proxy, so its reads and writes of `this` run the traps too. When the handler has a
+`get` trap, `s.m(a)` first reads `m` through it, before `a` is evaluated, as JavaScript does; a
+trap that forwards with `Reflect.get(target, key)` or `Reflect.get(target, key, receiver)` gives
+the target's method, which then runs with `this` the proxy. A typed proxy passed where an object
+type with fewer fields is expected (a `State & { $set(v: State): void }` passed as a `State`)
+stays the same proxy, so writes through the `State` run the `set` trap and reach the target.
+(Where a copy of a plain object could be told from the original, such a conversion is a compile
+error in a program without proxies; in one that creates proxies, a plain object there throws a
+`TypeError` naming #823 instead of being copied.)
+Calling a function-typed field of a typed proxy (`s.$set(v)`) reads it through the `get` trap
+before the arguments, then calls the function the trap answered, whatever its own parameter
+types (a closure taking `any`), and checks its result against the field's result type.
+`s.count++` used as a
+value runs the `get` trap once, and `(s.count = v)` used as a value is `v` without a `get`, as
+in JavaScript. A field read through a typed proxy runs after the operands before it, as any
+call would (`console.log(n, s.count, n)` reads the first `n` before the trap runs).
+
+`s instanceof C` answers for the proxy's target, as JavaScript does when the handler has no
+`getPrototypeOf` trap. A typed proxy as a `WeakMap` or `WeakSet` key, or a `WeakRef` target, is
+the proxy itself, not its target, and `deref()` gives the proxy back. An entry that refers back
+to its key through a typed proxy (a `raw -> proxy` cache, or a value holding its proxy key) goes
+away with the key, as other such entries do. A typed proxy that goes to
+another task (`spawn`, a `shared` value or `Mutex`, a channel) is copied like any other value
+there: the proxy object together with its target and handler, so it is still a proxy on that
+task, and changes there don't reach the original.
+
+Only the types a proxy is converted to (and the classes related to them) check for one, and only
+in a program that creates a proxy, so other programs and other types pay nothing.
+
+```ts
+let reads = 0;
+
+function counted(target: any): any {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      reads++;
+      return Reflect.get(obj, prop);
+    },
+    set(obj, prop, value, receiver) {
+      console.log("set", prop, value);
+      return Reflect.set(obj, prop, value);
+    },
+  });
+}
+
+function main(): void {
+  const raw = { count: 0 };
+  const state = counted(raw);
+  state.count = 5; // set count 5
+  console.log(state.count, raw.count, reads); // 5 5 1
+  console.log("count" in state, "other" in state); // true false
+}
+```
+
+**Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
+`defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
+as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
+as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
+of a class; an async method called through a proxy with a `get` trap; a method call through an
+interface value holding a proxy whose handler has a `get` trap; a method read as a value through
+`any` and called on its own; `Array.isArray` of an array proxy; proxies of functions (`apply`,
+`construct`); `Reflect.get` / `Reflect.set` with a receiver
+that is neither the target nor a proxy; destructuring a typed proxy
+(`const { n, label } = s`) and `JSON.stringify` of one. Until then each is a compile error or a `TypeError`
+naming #823. A method call through an `any` proxy whose handler has no traps is the call on
+the target. When the receiver is a proxy, a getter of a plain target read by
+`Reflect.get(t, k, receiver)` runs with `this` the target, and so does a setter written by
+`Reflect.set(t, k, v, receiver)` (Node: the receiver).
+
+## object and Function
+
+`object` holds any value that is not a primitive: a class instance, an object, an array, a map,
+a set or a function, but not a `number`, `string`, `boolean`, `symbol`, `null` or `undefined`.
+`Function` holds any function. Both are the dynamic value of `any` restricted to those values,
+with TypeScript's rules:
+
+- Only objects convert to `object`, and only functions to `Function` (a `Point | null` does not
+  convert to `object`: test it for `null` first). Both convert to `any` and `unknown`, a
+  `Function` to `object`, and an `any` to either.
+- `T extends object` takes only types whose values are objects, so overloads can tell objects
+  from primitives; inside, a `T` converts to `object`.
+- An `object` converts back with `as T`, checked like an `any` (a `TypeError` when it holds
+  something else). Its members are TypeScript errors until it is narrowed or converted.
+- Calling a `Function` is a call through `any`: the arguments are converted to the parameters'
+  types when the function runs, and the result is an `any`. A field of type `Function` is
+  called the same way (`plugin.setup(app)`).
+- `Set<object>` and `Map<object, V>` (and `Map<Function, V>`) key their entries by identity, as
+  in JavaScript.
+- An `any` or `unknown` converts to `object` with `as object` (an `any` also without it),
+  checked at run time: a `boolean`, `number`, `string` or `symbol` is a `TypeError` (Node would
+  keep the primitive); `null` and `undefined` pass.
+- A value of a type parameter without an `object` bound converts with `as object` too
+  (`function toRaw<T>(observed: T) { ... observed as object ... }`): a `T | null` or a union
+  is unpacked to the value it holds, and a primitive is the same `TypeError`.
+- `object` can be a `WeakMap` key, a `WeakSet` member and a `WeakRef` target
+  ([WeakMap, WeakSet and WeakRef](../std/prelude.md#weakmap-weakset-and-weakref)): the key is
+  the object it holds, whichever type it reached `object` through. A primitive (passed as an
+  `any`), `null` or `undefined` finds nothing in `get`, `has` and `delete`, and is
+  JavaScript's `TypeError` in `set`, `add` and `new WeakRef`; a value Velt cannot hold weakly
+  yet (a function value, a tuple) is a `TypeError` there too. A variable passed as a key or
+  target stays alive to the end of its scope. `Function` keys are not supported yet.
+- `typeof u === "object"` narrows an `unknown` to `object` and `typeof u === "function"` to
+  `Function`; a union with `object` or
+  `Function` is that type when its other members are objects (or functions), `null` and
+  `undefined` included, and `unknown` otherwise (`string | Function`). `f?.(x)` on a
+  `Function | undefined` (an optional `onClick?: Function` field) skips the call when it holds
+  `null` or `undefined`, as in JavaScript.
+
+```ts
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function brand<T extends object>(v: T, seen: Set<object>): T {
+  seen.add(v);
+  return v;
+}
+
+function main(): void {
+  const seen = new Set<object>();
+  const p = brand(new Point(1), seen);
+  const o = brand({ name: "a" }, seen);
+  console.log(seen.has(p), seen.has(o), seen.has(new Point(1))); // true true false
+  const handlers: Record<string, Function> = {};
+  handlers["double"] = (n: number): number => n * 2;
+  console.log(handlers["double"](21)); // 42
+  const back = [...seen][0] as Point;
+  console.log(back.x); // 1
+}
+```
+
+**Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
+members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
+(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
+without the `object` bound converted with `as object`. Each is a compile error.

@@ -27,16 +27,14 @@ The differences come from three rules:
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
-  statements run in a generated `main`; only the root file may have them
-  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
-- Module scope holds no mutable state: a top-level variable that functions use stays a module
-  constant, and a module-level `let` that a function uses is an error ("mutable module-level
-  state is not allowed"). *Why*: no hidden global state means request handlers can't race on
-  it, and `velt dev` can hot-swap code without migrating globals.
-- A module constant may be initialized by a call of a function without effects
-  (`const Counter = component(...)`): it is evaluated at each use, with the same result as
-  TypeScript's evaluation at load. Its identity is the one difference: `Counter === Counter` is
-  an error, and two copies of it in locals compare unequal
+  statements run in a generated `main`; an imported module's run once when it is evaluated,
+  in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+- A module-level `let` works as in Node: one per process, which every task (spawned tasks,
+  HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
+  Node's single thread between `await`s, so updates are never lost
+  ([module state](../reference/variables.md#module-state)). A module constant that is not a
+  constant value (`new Map()`, a call with effects, a function from a call) is evaluated once
+  per process in the same way
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
@@ -96,13 +94,12 @@ accept; compiler messages and editors print `boolean` either way
 
 `null` and `undefined` are two values, as in Node: `T | undefined` prints, compares, tests with
 `typeof` and serializes to JSON as in JavaScript ([Null and undefined](../reference/types.md#null-and-undefined)).
-For now, `a?: T` still means `T | null`, and the standard library returns `null` where
-TypeScript returns `undefined` (issue #930 moves them to `undefined`):
+Optional fields and parameters (`a?: T`) are `T | undefined`, as in TypeScript:
 
 ```ts
 class Config {
   host: string = "localhost";
-  port?: i64;                       // T | null, starts as null
+  port?: i64;                       // i64 | undefined, starts as undefined
 }
 
 function connect(c: Config, timeout?: i64): string {
@@ -112,10 +109,9 @@ function connect(c: Config, timeout?: i64): string {
 console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
-Until then, `JSON.parse` treats an absent key like
-`null`; only `JsonValue` tells them apart. What JS gives as `undefined` for a missing value is
-`null`, and prints as `null`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match,
-`s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
+For now, the standard library returns `null` where TypeScript returns `undefined` (issue #930
+moves it to `undefined`), and it prints as `null`: `m.get(k)` for a key a `Map` lacks,
+`arr.find(…)` without a match, `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 
@@ -322,7 +318,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
-| `null` and `undefined` | both, as in Node; `a?: T` is still `T \| null` (#930) | — |
+| `null` and `undefined` | both, as in Node, and `a?: T` is `T \| undefined`; the standard library still gives `null` for a missing value (#930) | — |
 | `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `\|\|` and `&&` return an operand) | — |
 | `==` coerces | no coercion: `==` is `===` except that `x == null` also matches `undefined`, and the reverse (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
@@ -336,7 +332,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
-| top-level statements | run in a generated `main` (root file only) | — |
+| top-level statements | the root file's run in a generated `main`; an imported module's run once when it is evaluated, in Node's order (no top-level `await` there) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted), but a chained access reads the changed array as in TypeScript (`xs.sort().join(",")`); other uses of the result are an error with the fix; `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |

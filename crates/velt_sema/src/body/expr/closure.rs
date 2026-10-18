@@ -29,7 +29,7 @@ use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
 
 /// What [`FnCx::trial_frames`] saves.
-pub(super) struct TrialFrames {
+pub(crate) struct TrialFrames {
     f: Frame,
     outer: Vec<Frame>,
     refused_reads: Vec<(Span, crate::body::closure_assigned::Refused)>,
@@ -71,7 +71,7 @@ impl FnCx<'_, '_> {
     /// The function's state a trial check changes, to restore after rolling it back (`Mark`
     /// restores the context): locals, captures, throws, moves, literal-local uses and the
     /// pending callback notes of the call being checked.
-    pub(super) fn trial_frames(&self) -> TrialFrames {
+    pub(crate) fn trial_frames(&self) -> TrialFrames {
         TrialFrames {
             f: self.f.clone(),
             outer: self.outer.clone(),
@@ -84,7 +84,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(super) fn restore_trial_frames(&mut self, t: TrialFrames) {
+    pub(crate) fn restore_trial_frames(&mut self, t: TrialFrames) {
         self.f = t.f;
         self.outer = t.outer;
         self.refused_reads = t.refused_reads;
@@ -161,6 +161,8 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        // A member of a recursive closure group (`closure_group`).
+        let member = self.pending_member.take();
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
@@ -172,6 +174,14 @@ impl FnCx<'_, '_> {
             return self.error_expr(e.span);
         }
         if let Some(p) = params.iter().find(|p| p.rest) {
+            // Its type is checked as a function's is; one of an array type is not supported yet
+            // (a module-level constant is lifted into a function, `generic_arrows`).
+            if let Some(t) = &p.ty {
+                let ty = self.resolve(t);
+                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                    return self.error_expr(e.span);
+                }
+            }
             self.cx.error(
                 velt_common::Diagnostic::error(
                     "rest parameters of arrow functions are not supported yet",
@@ -246,10 +256,22 @@ impl FnCx<'_, '_> {
                 })
                 .filter(|r| !self.cx.ty.has_error(*r)),
         };
-        let def = self.alloc_closure(span);
+        let def = match member {
+            Some((_, _, d)) => d,
+            None => self.alloc_closure(span),
+        };
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
         frame.closure_assigned = closure_assigned_in(params, body);
+        let defaults = params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends = match body {
+            ast::ArrowBody::Block(b) => {
+                crate::body::assign_ends::assignment_ends(&b.stmts, defaults)
+            }
+            ast::ArrowBody::Expr(e) => {
+                crate::body::assign_ends::assignment_ends(&[], defaults.chain([&**e]))
+            }
+        };
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
@@ -261,6 +283,9 @@ impl FnCx<'_, '_> {
             std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
+        if let Some((g, m, _)) = member {
+            self.enter_group_member(g, m, span);
+        }
         let mut declared = vec![];
         let mut locals = vec![];
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
@@ -289,6 +314,14 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
+        self.default_prologue(
+            params
+                .iter()
+                .zip(&ptys)
+                .take(n_params)
+                .map(|(p, ty)| (&p.name, p.default.as_ref(), p.optional, *ty)),
+            &mut locals,
+        );
         self.destructure_params(
             params
                 .iter()
@@ -312,13 +345,20 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        let peers = self.group_peer_lets(&frame, span);
+        block.stmts.splice(0..0, peers);
         if is_async {
-            self.no_captured_generators(&frame);
+            // A captured generator is checked once it is known whether the closure stays on
+            // its task (`ownership::local_async`).
+            self.no_captured_weak(&frame);
         }
         // Allowed while the closure stays on its task (`ownership::local_async`).
         let mutated = mutated_captures(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
+        if declared_err.is_none() {
+            self.provisional_slot(span, &frame.uncaught);
+        }
         let err = self.closure_error(def, declared_err, &frame, clause);
         let fn_ty = self.closure_type(ptys.clone(), body_ret, err, is_async);
         let ret = if is_async {
@@ -341,7 +381,7 @@ impl FnCx<'_, '_> {
             generator: None,
             span,
         });
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params, true);
         self.mk(H::Closure(def), fn_ty, span)
     }
 
@@ -359,7 +399,19 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An async closure copies its captures when it runs: none may hold a generator.
+    /// An async closure that may run on another thread copies its captures when it runs: none
+    /// may hold a weak collection.
+    fn no_captured_weak(&mut self, frame: &Frame) {
+        for c in &frame.captures {
+            let l = &frame.locals[c.inner.0 as usize];
+            if self.cx.holds_weak(l.ty) {
+                let (ty, name, at) = (l.ty, l.name.clone(), l.span);
+                self.no_weak_copy(ty, crate::body::GenCopy::Capture(name), at);
+            }
+        }
+    }
+
+    /// A generator function expression captures no generator (nor weak collection).
     pub(super) fn no_captured_generators(&mut self, frame: &Frame) {
         for c in &frame.captures {
             let l = &frame.locals[c.inner.0 as usize];
@@ -368,7 +420,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(super) fn alloc_closure(&mut self, span: Span) -> DefId {
+    pub(crate) fn alloc_closure(&mut self, span: Span) -> DefId {
         let n = self
             .cx
             .closure_counts
@@ -379,6 +431,7 @@ impl FnCx<'_, '_> {
         let mut info = fn_placeholder(name, span, span, self.module, FnKind::Closure, None);
         info.generics.names = self.env.params.clone();
         info.generics.bounds = self.bounds.clone();
+        info.generics.constraints = self.constraints.clone();
         info.generics
             .bounds
             .resize(info.generics.names.len(), vec![]);
@@ -408,20 +461,31 @@ impl FnCx<'_, '_> {
                     Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };
+                let h = match (self.f.ret, self.promise_value(h.ty)) {
+                    // An async arrow giving a promise: its result is the promise's value.
+                    (None, Some(t)) => {
+                        self.f.ret = Some(t);
+                        self.inferred_promise_return(h, t)
+                    }
+                    _ => h,
+                };
                 if self.f.ret.is_none() {
                     self.f.ret = Some(h.ty);
                 }
                 let hs = h.span;
-                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value {
+                let adopt = std::mem::take(&mut self.f.adopt_stmt);
+                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value || adopt {
                     S::Expr(h)
                 } else {
                     S::Return(Some(h))
                 };
-                hir::Block {
+                let mut block = hir::Block {
                     stmts: vec![hir::Stmt { kind, span: hs }],
                     value: None,
                     span: e.span,
-                }
+                };
+                self.wrap_adopted(&mut block);
+                block
             }
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
@@ -433,9 +497,10 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => self.finish_inferred_ret(&mut block, "this arrow function"),
+                    None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &block);
+                self.check_returns("closure", ret, span, &mut block);
+                self.wrap_adopted(&mut block);
                 block
             }
         }

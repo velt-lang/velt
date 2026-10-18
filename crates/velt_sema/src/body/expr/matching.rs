@@ -48,27 +48,83 @@ impl FnCx<'_, '_> {
         is_eq: bool,
         span: Span,
     ) -> hir::Expr {
-        let mut s = self.expr(other, None, Want::Borrow);
+        let mut s = self.test_operand(other, None, Want::Borrow);
         // A narrowed value may be tested again (TS allows it): compare the value itself.
-        if let H::UnwrapSome(base, _) = s.kind {
+        while let H::UnwrapSome(base, _) = s.kind {
             s = *base;
         }
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_null_compare(s, word, strict, is_eq, span);
         }
-        if self.cx.ty.opt_payload(s.ty).is_none() && !self.cx.ty.is_bottom(s.ty) {
-            let tn = self.cx.display(s.ty);
-            self.cx.error(
-                Diagnostic::error(
-                    format!("comparison with `{word}`, but `{tn}` is never {word}"),
-                    span,
-                )
-                .with_note(format!("only `T | {word}` values can be {word}")),
-            );
+        // A type parameter (or a union with one, `T | string`): which nothings the value holds
+        // depends on the instantiation (`T = number | null`), so the test is made there.
+        if self.param_shaped(s.ty) {
+            let b = self.cx.ty.bool_;
+            let e = match (strict, word) {
+                (true, "null") => self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span),
+                (true, _) => self.undefined_test(s, span),
+                _ => self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span),
+            };
+            return self.negated(e, !is_eq, span);
+        }
+        if self.never_nullish(s.ty) {
+            // TS accepts a test of a value that is never nullish (a defensive check).
+            return self.never_null_compare(other, s, is_eq, span);
+        }
+        // An option of a type parameter that allows `undefined` (`x?: T`): which nothings the
+        // value can hold depends on the instantiation (`T = string | null` holds `null` too), so
+        // the test is made there. (A `T | null` keeps its one test: its `null` is `T`'s too.)
+        // So is a union with a type parameter among its members (`T | string | undefined` at
+        // `T = number | null` holds `null` as its `T` member, #1268).
+        if self.param_payload(s.ty) {
+            let union = self.param_union(s.ty);
+            match (strict, word, self.cx.ty.nothing_of(s.ty)) {
+                (true, "null", Some(Nothing::Undefined)) => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (true, "null", Some(_)) if union => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (true, "undefined", Some(Nothing::Undefined)) if union => {
+                    let e = self.undefined_test(s, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (false, _, Some(n)) if n.has_undefined() || union => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                _ => {}
+            }
         }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
-            // A `T | undefined` is never `null`: still evaluated, then constant.
-            (true, "null", Some(Nothing::Undefined)) => self.constant_test(s, !is_eq, span),
+            // A `T | undefined` is never `null`: still evaluated, then constant. TypeScript
+            // accepts it; a warning says so, since an optional parameter or field left out is
+            // `undefined`, not `null` (code written when it was `null` tests the wrong one).
+            (true, "null", Some(Nothing::Undefined)) => {
+                if !self.cx.scopes[self.module].is_std {
+                    let tn = self.cx.display(s.ty);
+                    let (op, value, loose) = match is_eq {
+                        true => ("===", "false", "=="),
+                        false => ("!==", "true", "!="),
+                    };
+                    let mut d = Diagnostic::error(
+                        format!("this `{op} null` is always {value}: `{tn}` is never `null`"),
+                        span,
+                    )
+                    .with_note("an optional parameter or field left out is `undefined`, not `null`")
+                    .with_note(format!(
+                        "write `{loose} null` to test for either, or `{op} undefined`"
+                    ));
+                    d.severity = velt_common::Severity::Warning;
+                    self.cx.error(d);
+                }
+                self.constant_test(s, !is_eq, span)
+            }
             // The `null` of a `T | null` may stand for JavaScript's `undefined` in this phase
             // (an absent optional field, `Map.get`, `find`): which one is not known.
             (true, "undefined", Some(Nothing::Null)) => {
@@ -85,12 +141,99 @@ impl FnCx<'_, '_> {
                 );
                 self.error_expr(span)
             }
+            // One nothing of a `T | null | undefined`.
+            (true, _, Some(Nothing::Both)) => {
+                let which = if word == "null" {
+                    Nothing::Null
+                } else {
+                    Nothing::Undefined
+                };
+                let sty = s.ty;
+                let arms = vec![
+                    hir::Arm {
+                        pat: self.one_nothing_pat(which, sty, span),
+                        guard: None,
+                        body: self.bool_lit(is_eq, span),
+                    },
+                    hir::Arm {
+                        pat: self.pat(P::Wildcard, sty, span),
+                        guard: None,
+                        body: self.bool_lit(!is_eq, span),
+                    },
+                ];
+                let kind = H::Match {
+                    scrutinee: Box::new(s),
+                    arms,
+                };
+                self.mk(kind, self.cx.ty.bool_, span)
+            }
             _ => self.null_test(s, is_eq, span),
         }
     }
 
+    /// Is `t` an option whose value type is a type parameter, or a union with one among its
+    /// members (`T | undefined`, `T | string | undefined`)?
+    fn param_payload(&self, t: TyId) -> bool {
+        let Some(core) = self.cx.ty.core(t) else {
+            return false;
+        };
+        let members = match self.cx.union_def(core) {
+            Some((_, members)) => members,
+            None => vec![core],
+        };
+        members
+            .iter()
+            .any(|m| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_)))
+    }
+
+    /// Is `t` a union (or an option of one) with a type parameter among its members?
+    pub(super) fn param_union(&mut self, t: TyId) -> bool {
+        let core = self.cx.ty.core(t).unwrap_or(t);
+        let members = self.cx.union_members(core).unwrap_or_default();
+        let is_param = |m: &TyId| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_));
+        members.iter().any(is_param)
+    }
+
+    /// Is `t` a type parameter, or a union (not an option) with one among its members?
+    pub(super) fn param_shaped(&mut self, t: TyId) -> bool {
+        if self.cx.ty.opt_payload(t).is_some() {
+            return false;
+        }
+        matches!(self.cx.ty.kind(t), hir::TyKind::Param(_)) || self.param_union(t)
+    }
+
+    /// `s === undefined` of a `T | string | undefined` (`param_union`), tested for the
+    /// instantiated type: nullish and not `null`.
+    pub(super) fn undefined_test(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        let (sty, b) = (s.ty, self.cx.ty.bool_);
+        let (l, mode) = self.option_binding(&s, sty, "<tested>", false);
+        let mut s = s;
+        if mode == UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let v = |this: &Self| this.mk(H::Local(l, UseMode::Borrow), sty, span);
+        let nullish = self.intrinsic(hir::Intrinsic::IsNullish, vec![v(self)], b, span);
+        let null = self.intrinsic(hir::Intrinsic::IsNull, vec![v(self)], b, span);
+        let not_null = self.negated(null, true, span);
+        let test = H::Logical {
+            op: hir::LogicOp::And,
+            lhs: Box::new(nullish),
+            rhs: Box::new(not_null),
+        };
+        let arms = vec![hir::Arm {
+            pat: self.pat(P::Binding(l, mode), sty, span),
+            guard: None,
+            body: self.mk(test, b, span),
+        }];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, b, span)
+    }
+
     /// `s`, evaluated, then `value`.
-    fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
+    pub(super) fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
         let sty = s.ty;
         let arms = vec![hir::Arm {
             pat: self.pat(P::Wildcard, sty, span),
@@ -107,18 +250,34 @@ impl FnCx<'_, '_> {
     /// `s == null` / `s != null` of a checked `T | null` value.
     pub(crate) fn null_test(&mut self, s: hir::Expr, is_eq: bool, span: Span) -> hir::Expr {
         let sty = s.ty;
-        let arms = vec![
-            hir::Arm {
-                pat: self.pat(P::None, sty, span),
-                guard: None,
-                body: self.bool_lit(is_eq, span),
-            },
-            hir::Arm {
-                pat: self.pat(P::Wildcard, sty, span),
-                guard: None,
-                body: self.bool_lit(!is_eq, span),
-            },
-        ];
+        let arms = if self.is_three_state(sty) {
+            let any = self.pat(P::Wildcard, self.present_payload(sty).unwrap_or(sty), span);
+            vec![
+                hir::Arm {
+                    pat: self.present_pat(any, sty, span),
+                    guard: None,
+                    body: self.bool_lit(!is_eq, span),
+                },
+                hir::Arm {
+                    pat: self.pat(P::Wildcard, sty, span),
+                    guard: None,
+                    body: self.bool_lit(is_eq, span),
+                },
+            ]
+        } else {
+            vec![
+                hir::Arm {
+                    pat: self.pat(P::None, sty, span),
+                    guard: None,
+                    body: self.bool_lit(is_eq, span),
+                },
+                hir::Arm {
+                    pat: self.pat(P::Wildcard, sty, span),
+                    guard: None,
+                    body: self.bool_lit(!is_eq, span),
+                },
+            ]
+        };
         let kind = H::Match {
             scrutinee: Box::new(s),
             arms,
@@ -136,14 +295,59 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        self.non_null_of(inner, exp, want, false, span)
+    }
+
+    /// `x!` passed for a borrowed parameter: a variable (or a path of fields) stays where it
+    /// is and the callee gets another reference to its value, as it gets the variable itself
+    /// for `x` (#1196: `new WeakRef(k!)` keeps its target while `k` lives, as in JS, where the
+    /// moved value would be dropped after the call).
+    pub(crate) fn non_null_arg(
+        &mut self,
+        inner: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        self.non_null_of(inner, exp, Want::Borrow, true, span)
+    }
+
+    /// `inner!`; with `keep`, a place is not consumed (`non_null_arg`).
+    fn non_null_of(
+        &mut self,
+        inner: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
+        let mut h = self.expr(inner, None, Want::Borrow);
+        if self.cx.ty.opt_payload(h.ty).is_none() {
+            // `const v = K!` takes over what `K` names, as `const v = K` does.
+            if want == Want::Move && matches!(h.kind, H::Global(_)) {
+                self.force_move(&mut h);
+            }
+            return h;
+        }
+        let msg = "non-null assertion failed: the value is null";
+        self.checked_present(h, msg, exp, keep, span)
+    }
+
+    /// The payload of the nullable value `h`, or a panic with `msg` when it is nullish; with
+    /// `keep`, a place is borrowed, not consumed.
+    pub(crate) fn checked_present(
+        &mut self,
+        h: hir::Expr,
+        msg: &str,
+        exp: Option<TyId>,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
             span,
         };
-        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(
-            "non-null assertion failed: the value is null".into(),
-        )));
+        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(msg.into())));
         let panic = mk(ast::ExprKind::Call {
             callee: Box::new(mk(ast::ExprKind::Ident(ast::Ident {
                 name: "panic".into(),
@@ -153,15 +357,8 @@ impl FnCx<'_, '_> {
             args: vec![msg],
             optional: false,
         });
-        let mut h = self.expr(inner, None, Want::Borrow);
-        if self.cx.ty.opt_payload(h.ty).is_none() {
-            // `const v = K!` takes over what `K` names, as `const v = K` does.
-            if want == Want::Move && matches!(h.kind, H::Global(_)) {
-                self.force_move(&mut h);
-            }
-            return h;
-        }
-        self.nullish_checked(h, &panic, exp, span)
+        let keep = keep && is_place(&h) && self.cx.dynamic(h.ty).is_none();
+        self.nullish_checked_keeping(h, &panic, exp, keep, span)
     }
 
     pub(crate) fn nullish(
@@ -171,23 +368,44 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let s = self.expr(lhs, None, Want::Borrow);
+        let s = self.test_operand(lhs, None, Want::Borrow);
+        if self.param_shaped(s.ty) {
+            return self.param_nullish(s, rhs, span);
+        }
+        if self.never_nullish(s.ty) {
+            // TS accepts `??` on a value that is never nullish: the value itself.
+            return self.never_null_nullish(lhs, s, rhs, span);
+        }
         self.nullish_checked(s, rhs, exp, span)
     }
 
     /// `s ?? rhs` of a checked left side (also `s || rhs` on a nullable object).
     pub(crate) fn nullish_checked(
         &mut self,
+        s: hir::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        self.nullish_checked_keeping(s, rhs, exp, false, span)
+    }
+
+    /// `s ?? rhs`; with `keep`, a place `s` is borrowed, not consumed (its payload, used as a
+    /// value, is another reference to it).
+    fn nullish_checked_keeping(
+        &mut self,
         mut s: hir::Expr,
         rhs: &ast::Expr,
         exp: Option<TyId>,
+        keep: bool,
         span: Span,
     ) -> hir::Expr {
         let lhs_span = s.span;
         if self.cx.dynamic(s.ty).is_some() {
             return self.dynamic_nullish(s, rhs, span);
         }
-        let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
+        s = self.flatten_chain(s);
+        let Some(payload) = self.present_payload(s.ty) else {
             if !self.cx.ty.is_bottom(s.ty) {
                 let tn = self.cx.display(s.ty);
                 self.cx.error(
@@ -201,17 +419,49 @@ impl FnCx<'_, '_> {
             self.expr(rhs, exp, Want::Move);
             return self.error_expr(span);
         };
-        let (l, mode) = self.option_binding(&s, payload, "<nullish>", true);
+        if payload == self.cx.ty.never {
+            return self.always_nullish(s, rhs, exp, span);
+        }
+        let (l, mode) = self.option_binding(&s, payload, "<nullish>", !keep);
         if mode == UseMode::Move {
             self.force_move(&mut s);
         }
-        // An untyped default (`n ?? 0`) takes the payload's type.
-        let hint = match exp {
-            Some(e) if !super::ops::untyped(rhs) => e,
+        // An untyped default (`n ?? 0`) takes the payload's type; `x ?? null` and
+        // `x ?? undefined` give the payload's option with that nothing (`string | undefined`
+        // `?? null` is a `string | null`, as in TypeScript).
+        let hint = match (nothing_lit(rhs), exp) {
+            (Some(n), _) if !self.is_three_state(s.ty) => self.cx.ty.option_of(payload, n),
+            (_, Some(e)) if !super::ops::untyped(rhs) => e,
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
         self.nullish_match(s, l, mode, payload, d, span)
+    }
+
+    /// `s ?? rhs` where `s` is `null` or `undefined` alone (an option of `never`): `rhs`, after
+    /// `s` is evaluated.
+    fn always_nullish(
+        &mut self,
+        s: hir::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let hint = exp.filter(|_| !super::ops::untyped(rhs));
+        let d = self.expr(rhs, hint, Want::Move);
+        if matches!(s.kind, H::Lit(_) | H::Local(..)) {
+            return d;
+        }
+        let ty = d.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(s),
+                span,
+            }],
+            value: Some(Box::new(d)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
     }
 
     /// `s ?? d` for checked HIR operands (an optional field over an earlier one in an object
@@ -223,9 +473,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let payload = self
-            .cx
-            .ty
-            .opt_payload(s.ty)
+            .present_payload(s.ty)
             .expect("ICE: `??` of a non-option");
         let (l, mode) = self.option_binding(&s, payload, "<spread>", true);
         if mode == UseMode::Move {
@@ -246,9 +494,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
         let mut v = self.mk(H::Local(l, mode), payload, span);
-        let (ty, d) = if d.ty == opt {
-            v = self.mk(H::WrapSome(Box::new(v)), opt, span);
-            (opt, d)
+        let two_state = |cx: &crate::ctx::Ctx, t: TyId| {
+            cx.ty.core(t) == Some(payload) && cx.ty.nothing_of(t) != Some(Nothing::Both)
+        };
+        let (ty, d) = if d.ty == opt || two_state(self.cx, d.ty) {
+            let dty = d.ty;
+            v = self.mk(H::WrapSome(Box::new(v)), dty, span);
+            (dty, d)
         } else {
             let (value, d, ty) = self.nullish_join(v, d, payload);
             v = value;
@@ -256,14 +508,36 @@ impl FnCx<'_, '_> {
         };
         let sty = s.ty;
         let some = self.pat(P::Binding(l, mode), payload, span);
+        // An option of a type parameter that allows `undefined` (`x?: T`): at `T = X | null`
+        // the present value may be `null`, which `??` replaces too, as in JavaScript. The
+        // payload is tested at run time for the instantiated type (`Intrinsic::IsNullish`).
+        let (guard, rest) = match self.param_payload(sty)
+            && (self.param_union(sty)
+                || self
+                    .cx
+                    .ty
+                    .nothing_of(sty)
+                    .is_some_and(|n| n.has_undefined()))
+        {
+            true => {
+                let b = self.cx.ty.bool_;
+                let bound = self.mk(H::Local(l, UseMode::Borrow), payload, span);
+                let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
+                (
+                    Some(self.negated(test, true, span)),
+                    self.pat(P::Wildcard, sty, span),
+                )
+            }
+            false => (None, self.nothing_pat(sty, span)),
+        };
         let arms = vec![
             hir::Arm {
-                pat: self.pat(P::Some(Box::new(some)), sty, span),
-                guard: None,
+                pat: self.present_pat(some, sty, span),
+                guard,
                 body: v,
             },
             hir::Arm {
-                pat: self.pat(P::None, sty, span),
+                pat: rest,
                 guard: None,
                 body: d,
             },
@@ -278,7 +552,7 @@ impl FnCx<'_, '_> {
     /// The type of `s ?? d` with `v` the non-null payload of `s`: the payload's type when `d`
     /// converts to it, else `d`'s when the payload converts to that, else their union, as in
     /// TypeScript (`n ?? "none"` with `n: number | null` is a `number | string`).
-    fn nullish_join(
+    pub(crate) fn nullish_join(
         &mut self,
         v: hir::Expr,
         d: hir::Expr,
@@ -303,15 +577,32 @@ impl FnCx<'_, '_> {
         (v, d, union)
     }
 
-    /// `object?.<rest>`: apply `f` to the non-null payload; null short-circuits to `null`.
+    /// `object?.<rest>`: apply `f` to the present payload; `null` or `undefined` short-circuits
+    /// to `undefined`.
     pub(crate) fn optional_chain(
         &mut self,
         object: &ast::Expr,
         span: Span,
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
-        let s = self.expr(object, None, Want::Borrow);
-        let Some(payload) = self.cx.ty.opt_payload(s.ty) else {
+        let s = self.test_operand(object, None, Want::Borrow);
+        let s = self.flatten_chain(s);
+        // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
+        if self
+            .cx
+            .dynamic(s.ty)
+            .is_some_and(|d| d != crate::any::Dynamic::Unknown)
+        {
+            let (l, mode) = self.option_binding(&s, s.ty, "<chain>", false);
+            let use_mode = match mode {
+                UseMode::Move => UseMode::Borrow,
+                m => m,
+            };
+            let v = self.mk(H::Local(l, use_mode), s.ty, span);
+            let r = f(self, v);
+            return self.dynamic_chain_match(s, l, mode, r, span);
+        }
+        let Some(payload) = self.present_payload(s.ty) else {
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
@@ -332,7 +623,7 @@ impl FnCx<'_, '_> {
         self.chain_match(s, l, mode, payload, r, span)
     }
 
-    /// `match (s) { l => r (wrapped as `T | null`), null => null }`: the null short-circuit of
+    /// `match (s) { l => r (wrapped as `T | undefined`), nothing => undefined }`: the short-circuit of
     /// an optional chain whose rest `r` was checked on the payload bound to `l`.
     pub(super) fn chain_match(
         &mut self,
@@ -346,24 +637,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
-        // On a `T | undefined` object, the short-circuit gives `undefined`, as in JavaScript
-        // (issue #930; on a `T | null` one it is still `null` in this phase).
-        let nothing = match self.cx.ty.nothing_of(s.ty) {
-            Some(Nothing::Undefined) => Nothing::Undefined,
-            _ => Nothing::Null,
-        };
-        if nothing == Nothing::Undefined && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null) {
-            let tn = self.cx.display(r.ty);
-            self.cx.error(
-                Diagnostic::error(
-                    format!("`?.` on a value that may be `undefined`, giving a `{tn}`, is not supported yet"),
-                    span,
-                )
-                .with_note("its type would hold both `null` and `undefined`, which is not supported yet"),
-            );
-            return self.error_expr(span);
-        }
-        let (ty, body) = if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
+        // The short-circuit gives `undefined`, on a `T | null` object too, as in JavaScript
+        // (issue #930).
+        let nothing = Nothing::Undefined;
+        let (ty, body) = if nothing == Nothing::Undefined
+            && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null)
+        {
+            // A `T | null` rest: the chain gives `T | null | undefined`.
+            let t = self.cx.ty.option_of(r.ty, Nothing::Undefined);
+            (t, self.mk(H::WrapSome(Box::new(r)), t, span))
+        } else if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
             (r.ty, r)
         } else {
             let t = self.cx.ty.option_of(r.ty, nothing);
@@ -378,12 +661,12 @@ impl FnCx<'_, '_> {
         let some = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![
             hir::Arm {
-                pat: self.pat(P::Some(Box::new(some)), sty, span),
+                pat: self.present_pat(some, sty, span),
                 guard: None,
                 body,
             },
             hir::Arm {
-                pat: self.pat(P::None, sty, span),
+                pat: self.nothing_pat(sty, span),
                 guard: None,
                 body: none_body,
             },
@@ -405,5 +688,15 @@ fn moves_out(e: &hir::Expr) -> bool {
         H::UnwrapVariant { mode, .. } => *mode == UseMode::Move,
         H::Downcast(x) => moves_out(x),
         _ => false,
+    }
+}
+
+/// The nothing `e` is written as (`null`, `undefined`), if it is one of those literals.
+fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),
+        ast::ExprKind::Paren(inner) => nothing_lit(inner),
+        _ => None,
     }
 }

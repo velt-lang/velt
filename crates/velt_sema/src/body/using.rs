@@ -31,7 +31,7 @@ pub(super) enum Disposal {
 impl FnCx<'_, '_> {
     /// Check that a `using` value (`await using` when `is_await`) of type `ty` can be disposed.
     pub(super) fn check_disposable(&mut self, ty: TyId, is_await: bool, span: Span) -> Disposal {
-        let inner = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let inner = self.cx.ty.core(ty).unwrap_or(ty);
         if self.cx.ty.is_bottom(inner) {
             return Disposal::Skip;
         }

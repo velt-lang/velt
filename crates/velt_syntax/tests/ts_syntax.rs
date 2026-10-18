@@ -108,7 +108,7 @@ fn method_signatures_in_object_types_and_optional_interface_methods() {
     );
     assert_eq!(
         alias_ty(&m, 0),
-        "{stop: fn() => void; size: fn(number) => number; label: (fn(string) => string | null)}"
+        "{stop: fn() => void; size: fn(number) => number; label: (fn(string) => string | undefined)}"
     );
     let ItemKind::Interface(i) = &m.items[1].kind else {
         panic!()
@@ -131,7 +131,7 @@ fn generic_method_signatures_are_fields_of_generic_function_type() {
     };
     assert_eq!(i.fields[0].name.name, "wrap");
     assert!(i.fields[0].optional);
-    assert_eq!(ty(&i.fields[0].ty), "(<A>fn(A) => A | null)");
+    assert_eq!(ty(&i.fields[0].ty), "(<A>fn(A) => A | undefined)");
 }
 
 #[test]
@@ -181,9 +181,9 @@ fn object_literal_async_generic_methods() {
 #[test]
 fn optional_parameters_in_function_types() {
     let m = parse_ok("type F = (app: App, options?: Options) => void;");
-    assert_eq!(alias_ty(&m, 0), "fn(App, (Options | null)) => void");
+    assert_eq!(alias_ty(&m, 0), "fn(App, (Options | undefined)) => void");
     let m = parse_ok("type F = (scoped?: any) => any[];");
-    assert_eq!(alias_ty(&m, 0), "fn((any | null)) => any[]");
+    assert_eq!(alias_ty(&m, 0), "fn((any | undefined)) => any[]");
     assert_eq!(
         errors("type F = (a?: number, b: string) => void;"),
         ["a required parameter cannot follow an optional parameter"]
@@ -267,10 +267,44 @@ fn object_literal_methods_are_arrow_properties() {
         errors("const o = { n: 1, m() { return this.n; } };"),
         vec!["`this` in the object-literal method `m` is not supported yet"]
     );
+    assert!(errors("const o = { get v() { return 1; }, set v(x: number) {} };").is_empty());
     assert_eq!(
-        errors("const o = { get v() { return 1; } };"),
-        vec!["getters and setters in object literals are not supported yet"]
+        errors("const o = { get v(x) { return 1; } };"),
+        vec!["a getter cannot have parameters"]
     );
+    assert_eq!(
+        errors("const o = { set v() {} };"),
+        vec!["a setter must have exactly one parameter"]
+    );
+}
+
+#[test]
+fn object_literal_accessors_are_calls_of_the_prelude_functions() {
+    let e = expr("x = { get v(): number { return 1; }, set v(n: number) {} }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(ps) = &value.kind else {
+        panic!()
+    };
+    let names: Vec<&str> = ps
+        .iter()
+        .map(|p| {
+            let ObjectProp::KeyValue(k, v) = p else {
+                panic!("expected a property, got {p:?}")
+            };
+            assert_eq!(k.name, "v");
+            let ExprKind::Call { callee, args, .. } = &v.kind else {
+                panic!("expected a call, got {v:?}")
+            };
+            assert!(matches!(args[0].kind, ExprKind::Arrow { .. }));
+            match &callee.kind {
+                ExprKind::Ident(f) => f.name.as_str(),
+                k => panic!("expected a name, got {k:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(names, [OBJECT_GET_FN, OBJECT_SET_FN]);
 }
 
 #[test]
@@ -514,9 +548,29 @@ fn this_parameters_and_the_this_type() {
         velt_syntax::first_this_param("const t = this; f(this);"),
         None
     );
+    // A function whose body uses `this` keeps the type (the type checker passes the receiver).
+    let m = parse_ok("function f(this: { n: number }) { return this.n; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(f.sig.params.is_empty());
+    assert!(f.sig.this_param.is_some());
+    let m = parse_ok("function f(this: { n: number }, x: number) { return x; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(f.sig.this_param.is_none());
+    let m = parse_ok("const f = function (this: { n: number }) { return this.n; };");
+    let ItemKind::Var(v) = &m.items[0].kind else {
+        panic!()
+    };
+    let Some(ExprKind::Function(d)) = v.init.as_ref().map(|e| &e.kind) else {
+        panic!()
+    };
+    assert!(d.sig.this_param.is_some());
     assert_eq!(
-        errors("function f(this: { n: number }) { return this.n; }"),
-        vec!["`this` in a function with a `this` parameter is not supported yet"]
+        errors("const f = function (this: { n: number }, x) { return this.n + x; };"),
+        vec!["`this` in a generator, or in a function with overloads or parameters without a written type, that has a `this` parameter is not supported yet"]
     );
     assert_eq!(
         errors("const f = (this: number) => 1;"),

@@ -1,0 +1,22 @@
+// An `as const` array of strings is read-only, and its elements are only the literals it was
+// written with (#1255): each line below is an error, on the same line as in tsc.
+type Name = "a" | "b";
+
+function f(n: Name): string {
+  return n;
+}
+
+function main() {
+  const names = ["a", "b"] as const;
+  names.push("a");
+  names[0] = "b";
+  const more = ["a", "c"] as const;
+  for (const m of more) console.log(f(m));
+  console.log(f(names[1]));
+  console.log(grow(names));
+}
+
+function grow(xs: string[]): number {
+  xs.push("c");
+  return xs.length;
+}

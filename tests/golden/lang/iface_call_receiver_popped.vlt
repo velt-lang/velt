@@ -1,0 +1,17 @@
+// check: no leaks
+// `arr[0].m(clear())` where `clear` empties `arr`: the method runs on the element `arr[0]` held
+// before the argument was evaluated, which stays alive for the call.
+interface N { val: string; m(s: string): string; }
+class Node1 implements N {
+  val: string;
+  constructor(v: string) { this.val = v; }
+  m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+}
+const arr: N[] = [new Node1("a")];
+function clear(): string { arr.pop(); return "cleared"; }
+console.log(arr[0].m(clear()));
+console.log(arr.length);
+const kept: N[] = [new Node1("b")];
+const first: N = kept[0];
+function empty(): string { kept.length = 0; return "emptied"; }
+console.log(kept[0].m(empty()), kept.length, first.val);

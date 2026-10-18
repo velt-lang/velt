@@ -222,9 +222,9 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(|f| ObjectTypeField {
                 name: f.name,
-                // An object type's optional field has the `| null` an interface's leaves out.
+                // An object type's optional field has the `| undefined` an interface's leaves out.
                 ty: if f.optional {
-                    super::types::or_null(f.ty)
+                    super::types::or_undefined(f.ty)
                 } else {
                     f.ty
                 },

@@ -1,11 +1,13 @@
 //! Type expressions: named types with generic arguments, `T[]`, tuples, function types, unions,
 //! literal types (`"circle"`, `-1`, `true`), object types (`{ kind: "circle"; r: f64 }`), `null`
-//! and `void`; `name?: T` (optional parameters and object-type fields) as `T | null`.
+//! and `void`; `name?: T` (optional parameters and object-type fields) as `T | undefined`.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::Span;
+
+pub(super) use super::optional_types::{optional_param, or_undefined};
 
 impl<'a> Parser<'a> {
     /// A union type (no conditional type at the top level). Unguarded: its callers are
@@ -28,7 +30,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `A & B & …` (a leading `&` is allowed), or one type without a top-level union.
-    fn parse_intersection(&mut self) -> PResult<TypeExpr> {
+    pub(super) fn parse_intersection(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.eat(Tok::Amp);
         let first = self.parse_type_no_union()?;
@@ -400,7 +402,7 @@ impl<'a> Parser<'a> {
                 self.parse_type()?
             };
             if optional {
-                ty = or_null(ty);
+                ty = or_undefined(ty);
             }
             fields.push(ObjectTypeField {
                 name,
@@ -576,7 +578,7 @@ impl<'a> Parser<'a> {
             }
             rest = self.eat(Tok::DotDotDot);
             let name_span = self.cur_span();
-            // `x?: T`: an optional parameter, typed `T | null` as in a declaration.
+            // `x?: T`: an optional parameter, typed `T | undefined` as in a declaration.
             let mut optional = false;
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();
@@ -612,7 +614,7 @@ impl<'a> Parser<'a> {
                 );
             }
             seen_optional |= optional;
-            params.push(if optional { or_null(ty) } else { ty });
+            params.push(if optional { optional_param(ty) } else { ty });
             if !self.eat(Tok::Comma) {
                 break;
             }
@@ -732,36 +734,6 @@ const PROTOCOL_TYPES: [&str; 10] = [
     "IteratorObject",
     "IteratorResult",
 ];
-
-/// `T | null` for the written type of an optional parameter or field (`name?: T`), keeping
-/// `T`'s span; a type that already admits `null` stays as it is.
-pub(super) fn or_null(ty: TypeExpr) -> TypeExpr {
-    let null = TypeExpr {
-        kind: TypeExprKind::Null,
-        span: Span::new(ty.span.file, ty.span.hi, ty.span.hi),
-    };
-    let span = ty.span;
-    match ty.kind {
-        TypeExprKind::Null => ty,
-        TypeExprKind::Union(ms) if ms.iter().any(|m| matches!(m.kind, TypeExprKind::Null)) => {
-            TypeExpr {
-                kind: TypeExprKind::Union(ms),
-                span,
-            }
-        }
-        TypeExprKind::Union(mut ms) => {
-            ms.push(null);
-            TypeExpr {
-                kind: TypeExprKind::Union(ms),
-                span,
-            }
-        }
-        _ => TypeExpr {
-            kind: TypeExprKind::Union(vec![ty, null]),
-            span,
-        },
-    }
-}
 
 /// An index signature while its object type or interface is parsed.
 pub(super) struct IndexSignature {

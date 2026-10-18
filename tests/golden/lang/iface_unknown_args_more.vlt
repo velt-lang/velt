@@ -1,0 +1,53 @@
+// check: no leaks
+// Generic interface values converted to the same interface with `unknown` or `any` type
+// arguments (#1153): a class instance directly, an object literal, a method whose function
+// parameter and interface-typed result are adapted in turn, and the original value still used
+// (and written through the adapter) afterwards.
+interface Box<T> {
+  get(): T;
+  set(v: T): void;
+  map(f: (v: T) => T): Box<T>;
+  readonly label: string;
+}
+
+class NumBox implements Box<number> {
+  label = "num";
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+  get(): number {
+    return this.v;
+  }
+  set(v: number): void {
+    this.v = v;
+  }
+  map(f: (v: number) => number): Box<number> {
+    return new NumBox(f(this.v));
+  }
+}
+
+interface Pair<A, B> {
+  first(): A;
+  second(): B;
+}
+
+function show(b: Box<unknown>): void {
+  console.log(b.label, b.get());
+}
+
+function main(): void {
+  const n = new NumBox(5);
+  const b: Box<unknown> = n;
+  b.set(7);
+  console.log(n.v, b.get());
+  const m = b.map((x) => x);
+  show(m);
+  const typed: Box<number> = new NumBox(1);
+  const anyBox: Box<any> = typed;
+  console.log(anyBox.get(), typed.get());
+  const p: Pair<string, number> = { first: () => "a", second: () => 1 };
+  const q: Pair<string, unknown> = p;
+  console.log(q.first().length, q.second());
+  show(new NumBox(9));
+}

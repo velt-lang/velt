@@ -263,29 +263,29 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// The type of a parameter `name?: T` as written: the parser added `| null` (a written
-    /// `| null` is redundant there and dropped too).
+    /// The type of a parameter `name?: T` as written: without the `| undefined` the parser
+    /// added (a zero-width `undefined`). A written `| null` stays: `p?: T | null` is
+    /// `T | null | undefined`, not `p?: T`.
     pub(super) fn ty_optional(&mut self, t: &TypeExpr) -> Doc {
-        self.ty_without_nulls(t, |_| true)
+        self.ty_optional_field(t)
     }
 
-    /// The type of a field `name?: T` as written: without the `| null` the parser added (a
-    /// zero-width `null`). A written `| null` stays: `a?: T | null` keeps an absent key apart
-    /// from a present `null`, so it is not `a?: T`.
+    /// The type of a field `name?: T` as written: without the `| undefined` the parser added (a
+    /// zero-width `undefined`).
     fn ty_optional_field(&mut self, t: &TypeExpr) -> Doc {
-        self.ty_without_nulls(t, |m| m.span.lo == m.span.hi)
-    }
-
-    /// Union `t` without its `null` members that `drop` selects.
-    fn ty_without_nulls(&mut self, t: &TypeExpr, drop: impl Fn(&TypeExpr) -> bool) -> Doc {
         let TypeExprKind::Union(members) = &t.kind else {
             return self.ty(t);
         };
-        let docs: Vec<Doc> = members
+        let kept: Vec<&TypeExpr> = members
             .iter()
-            .filter(|m| !(matches!(m.kind, TypeExprKind::Null) && drop(m)))
-            .map(|m| self.ty_operand(m))
+            .filter(|m| !(matches!(m.kind, TypeExprKind::Undefined) && m.span.lo == m.span.hi))
             .collect();
+        // One member left (`f?: (x: T) => R`): the type as written, without the parentheses
+        // it would need as an operand of `|`.
+        if let [only] = kept.as_slice() {
+            return self.ty(only);
+        }
+        let docs: Vec<Doc> = kept.iter().map(|m| self.ty_operand(m)).collect();
         join(&text(" | "), docs)
     }
 

@@ -14,6 +14,20 @@ use crate::hir::{
     self, ExprKind as H, Intrinsic, LocalId, Nothing, PatKind as P, TyId, TyKind, UseMode,
 };
 
+/// Does a value of the dynamic type `from` convert to the dynamic type `to`? Every one converts
+/// to `any` and `unknown`, an `any` and a `Function` to `object`, an `any` to `Function`; the
+/// others only with `as` (`checked`), as in TypeScript. They share one representation.
+fn dynamic_converts(from: Dynamic, to: Dynamic, checked: bool) -> bool {
+    checked
+        || from == to
+        || matches!(
+            (from, to),
+            (_, Dynamic::Any | Dynamic::Unknown)
+                | (Dynamic::Any, _)
+                | (Dynamic::Function, Dynamic::Object)
+        )
+}
+
 impl FnCx<'_, '_> {
     /// `h` converted to `exp`, one of them `any` or `unknown`. `checked_from_unknown`: an
     /// `unknown` may convert to a typed value (`as T`).
@@ -27,10 +41,119 @@ impl FnCx<'_, '_> {
         let from = self.cx.dynamic(h.ty);
         match (from, to) {
             (None, None) => Err(h),
+            (None, Some(d)) if !self.dynamic_takes_static(d, h.ty) => Err(h),
             (None, Some(_)) => self.box_dynamic(h, exp),
-            (Some(Dynamic::Unknown), None) if !checked_from_unknown => Err(h),
-            (Some(_), _) => Ok(self.unbox_dynamic(h, exp)),
+            (Some(f), Some(t)) if !dynamic_converts(f, t, checked_from_unknown) => Err(h),
+            (Some(Dynamic::Any), _) | (Some(_), Some(_)) => Ok(self.unbox_dynamic(h, exp)),
+            (Some(_), None) if !checked_from_unknown => Err(h),
+            (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),
         }
+    }
+
+    /// Does the dynamic type `d` take a value of the static type `t`? `object` takes
+    /// non-primitive types (a type parameter through its bound, `T extends object`), `Function`
+    /// function types; `any` and `unknown` take every type.
+    fn dynamic_takes_static(&mut self, d: Dynamic, t: TyId) -> bool {
+        let Some(defs) = self.cx.any else {
+            return false;
+        };
+        let iface = match d {
+            Dynamic::Any | Dynamic::Unknown => return true,
+            Dynamic::Object => defs.object,
+            Dynamic::Function => defs.function,
+        };
+        if let TyKind::Param(_) = self.cx.ty.kind(t) {
+            let b = crate::defs::Bound {
+                iface,
+                args: vec![],
+            };
+            let bounds = self.bounds.clone();
+            return self.cx.satisfies(t, &b, &bounds);
+        }
+        // `T & object` (or `T & …` at a `T extends object`) holds objects at every instance.
+        if d == Dynamic::Object {
+            if let TyKind::Op(crate::hir::TyOp::Intersect, _) = self.cx.ty.kind(t) {
+                let objects = self.object_params();
+                if self.cx.holds_objects(t, &objects) {
+                    return true;
+                }
+            }
+        }
+        self.cx.dynamic_takes(iface, t).unwrap_or(false)
+    }
+
+    /// `h as object` for an `h` whose type is a type parameter without an `object` bound, or
+    /// one or `null` (sigx's `toRaw<T>`, issue #926): lowering unpacks the instantiation (a
+    /// `T | null`, a union) at run time, and a primitive is a `TypeError` there. `Err` when `h`
+    /// is no such value or `exp` is not `object`.
+    pub(crate) fn param_as_object(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return Err(h);
+        }
+        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        if !matches!(self.cx.ty.kind(inner), TyKind::Param(_)) {
+            return Err(h);
+        }
+        self.box_dynamic(h, exp)
+    }
+
+    /// The key of a weak operation (`WeakMap.set` / `get` / `has` / `delete`, `WeakSet`'s,
+    /// `new WeakRef`) converted to its parameter `exp` (issue #926). A variable stays its own:
+    /// the conversion to `object` takes a share of it, so the key (a fresh `WeakRef`'s target)
+    /// lives to the end of the variable's scope, as a typed key does. An `any` enters `object`
+    /// unchecked: a primitive reaches the operation, which finds nothing or throws
+    /// JavaScript's `TypeError` (velt_vir `weak_object.rs`).
+    pub(crate) fn weak_key_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) {
+            return self.coerce(h, exp);
+        }
+        match self.cx.dynamic(h.ty) {
+            Some(Dynamic::Any) => {
+                let Some(imp) = self.cx.any_impl() else {
+                    return self.coerce(h, exp);
+                };
+                let mut h = self.share_if_place(h);
+                self.force_move(&mut h);
+                let span = h.span;
+                self.mk(
+                    H::ToDyn {
+                        expr: Box::new(h),
+                        impl_index: imp,
+                    },
+                    exp,
+                    span,
+                )
+            }
+            Some(_) => self.coerce(h, exp),
+            None => {
+                let h = self.share_place(h);
+                self.coerce(h, exp)
+            }
+        }
+    }
+
+    /// A typed variable (a place) passed for a borrowed `object` parameter (issue #926): a
+    /// share of it, so the variable lives to the end of its scope as it does when passed to a
+    /// typed parameter (a `WeakRef` made from the parameter keeps its target).
+    pub(crate) fn object_arg_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        if self.cx.dynamic(exp) != Some(Dynamic::Object) || self.cx.dynamic(h.ty).is_some() {
+            return self.coerce(h, exp);
+        }
+        let h = self.share_place(h);
+        self.coerce(h, exp)
+    }
+
+    fn share_place(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if is_place(&h) {
+            set_place_mode(&mut h, UseMode::Borrow);
+            let (ty, span) = (h.ty, h.span);
+            h = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
+        }
+        h
     }
 
     /// A typed value boxed as `exp` (`any` or `unknown`).
@@ -65,11 +188,23 @@ impl FnCx<'_, '_> {
         }
         if let Some(payload) = self.cx.ty.opt_payload(h.ty) {
             if !matches!(h.kind, H::Lit(hir::Lit::Null)) {
-                let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
+                // A `T | null | undefined`'s own nothing is `undefined` (its payload is the
+                // `T | null`, boxed in turn).
+                let nothing = match self.cx.ty.nothing_of(h.ty) {
+                    Some(Nothing::Both) => Nothing::Undefined,
+                    n => n.unwrap_or(Nothing::Null),
+                };
                 return self.option_to_dynamic(h, payload, exp, nothing);
             }
         }
+        let narrow = matches!(
+            self.cx.dynamic(exp),
+            Some(Dynamic::Object | Dynamic::Function)
+        );
         match self.cx.ty.kind(h.ty) {
+            // A type parameter bound by `object` / `Function` holds no `null` and no primitive
+            // to unpack (issue #926); lowering boxes the instantiation's value.
+            TyKind::Param(_) if narrow => {}
             TyKind::Unit | TyKind::Never | TyKind::Error | TyKind::Param(_) => return Err(h),
             TyKind::Promise(..) => return Err(h),
             _ => {}

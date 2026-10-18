@@ -143,16 +143,10 @@ impl Ctx<'_> {
                     }
                 }
             }
-            ast::TypeExprKind::Null => {
-                self.err("`null` alone is not a type; write `T | null`", t.span);
-                self.ty.error
-            }
+            ast::TypeExprKind::Null => self.ty.null_alone(),
             ast::TypeExprKind::Undefined => {
-                self.err(
-                    "`undefined` alone as a type is not supported yet; write `T | undefined`",
-                    t.span,
-                );
-                self.ty.error
+                self.writes_undefined = true;
+                self.ty.undefined()
             }
         }
     }
@@ -195,8 +189,8 @@ impl Ctx<'_> {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            // The declared type: without the `| null` the parser adds for `name?: T`
-            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            // The declared type: without the `| undefined` the parser adds for `name?: T`
+            // (`velt_syntax` `or_undefined`), which the flag stands for.
             let written = if f.optional {
                 written_type(&f.ty)
             } else {
@@ -238,7 +232,8 @@ impl Ctx<'_> {
         for p in parts {
             let n = match p.kind {
                 ast::TypeExprKind::Null => Nothing::Null,
-                ast::TypeExprKind::Undefined => {
+                // `T | void` is `T | undefined` (`crate::unions`).
+                ast::TypeExprKind::Undefined | ast::TypeExprKind::Void => {
                     self.writes_undefined |= !self.scopes[env.module].is_std;
                     Nothing::Undefined
                 }
@@ -266,6 +261,18 @@ impl Ctx<'_> {
             if let (Some(item), Some(last)) = (item, path.last()) {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
+            }
+            // A member of a namespace import of a module the parser recovered may be a
+            // declaration it dropped (`Ctx::recovered`).
+            let recovered = self.scopes[env.module]
+                .namespaces
+                .get(&path[0].name)
+                .is_some_and(|&t| {
+                    let member = path.last().map_or("", |i| i.name.as_str());
+                    crate::collect::exports::maybe_dropped(self, t, member)
+                });
+            if recovered {
+                return self.ty.error;
             }
             // A namespace declaration's member that is missing or not exported (TS2694).
             let (ns, member) = name.rsplit_once('.').unwrap_or_default();
@@ -585,11 +592,14 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         if info.expanding {
+            if let Some(own) = self.recursive_union_ref(a) {
+                return own;
+            }
             let d = velt_common::Diagnostic::error(
                 format!("type alias `{}` refers to itself", decl.name.name),
                 t.span,
             )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class");
+            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
             self.error(d);
             return self.ty.error;
         }
@@ -597,6 +607,9 @@ impl Ctx<'_> {
         if args.len() != decl.generics.len() {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
+        }
+        if let Some(own) = self.recursive_union(a, t.span) {
+            return own;
         }
         self.alias_body(a, args, t.span)
     }
@@ -645,7 +658,7 @@ impl Ctx<'_> {
         }
         if self.mixes_nothings(body, &args) {
             self.err(
-                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                "this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)",
                 span,
             );
             return self.ty.error;
@@ -673,10 +686,19 @@ impl Ctx<'_> {
                     Some((_, members)) => members,
                     None => vec![*p],
                 };
+                let direct = members.len() == 1;
                 for m in members {
                     if let TyKind::Param(i) = self.ty.kind(m) {
                         let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
-                        if arg.is_some_and(|m| !m.within(*n)) {
+                        // `P | undefined` at `P = T | null` is `T | null | undefined`.
+                        let clash = |m: crate::hir::Nothing| {
+                            if direct {
+                                n.has_null() && m.has_undefined()
+                            } else {
+                                !m.within(*n)
+                            }
+                        };
+                        if arg.is_some_and(clash) {
                             return true;
                         }
                     }
@@ -728,15 +750,16 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
     cx.checking_unused_aliases = false;
 }
 
-/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
-/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
-/// that already admits `null` (`name?: T | null`) is kept as written.
+/// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
+/// adds (`velt_syntax` `or_undefined`; the added `undefined` is the zero-width one at the end).
+/// A written type that already admits `undefined` (`name?: T | undefined`) is kept as written.
 pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     let ast::TypeExprKind::Union(ms) = &ty.kind else {
         return ty.clone();
     };
-    let added =
-        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    let added = |m: &ast::TypeExpr| {
+        matches!(m.kind, ast::TypeExprKind::Undefined) && m.span.lo == m.span.hi
+    };
     match ms.last() {
         Some(last) if added(last) => {
             let rest = &ms[..ms.len() - 1];

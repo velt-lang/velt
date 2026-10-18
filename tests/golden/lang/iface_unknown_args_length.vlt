@@ -1,0 +1,23 @@
+// A method taking `unknown[]` through a generic interface converted to `unknown` arguments
+// (#1153) works on a copy of the caller's array, written back when it returns; a change of
+// its length cannot be written back yet (#1185) and stops the program with a `TypeError`.
+// Node prints `4 4 100 4`.
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  serialize(value: T): E;
+}
+
+const grow: Handler<unknown[], number> = {
+  name: "grow",
+  serialize: (v) => {
+    v[0] = 100;
+    v.push(4);
+    return v.length;
+  },
+};
+
+function main(): void {
+  const all: Handler[] = [grow];
+  const xs = [1, 2, 3];
+  console.log(all[0].serialize(xs), xs.length, xs[0], xs[3]);
+}

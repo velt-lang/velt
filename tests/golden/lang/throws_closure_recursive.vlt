@@ -1,0 +1,34 @@
+// check: no leaks
+// #1111: a closure inside a recursive function that throws.
+class Node2 {
+  kids: Node2[];
+  constructor(kids: Node2[]) {
+    this.kids = kids;
+  }
+}
+
+function depth(v: Node2, d: number): number {
+  if (d > 3) throw new TypeError("too deep");
+  let max = d;
+  v.kids.map((x) => depth(x, d + 1)).forEach((n) => {
+    if (n > max) max = n;
+  });
+  return max;
+}
+
+function encode(value: number[] | number, level: number): string {
+  if (level > 2) throw new RangeError("nesting");
+  if (typeof value === "number") return `${value}`;
+  return `[${value.map((item) => encode(item, level + 1)).join(",")}]`;
+}
+
+function main() {
+  const tree = new Node2([new Node2([new Node2([])]), new Node2([])]);
+  console.log(depth(tree, 0));
+  try {
+    depth(new Node2([new Node2([new Node2([new Node2([new Node2([])])])])]), 0);
+  } catch (e) {
+    console.log(e instanceof TypeError, (e as TypeError).message);
+  }
+  console.log(encode([1, 2, 3], 0));
+}

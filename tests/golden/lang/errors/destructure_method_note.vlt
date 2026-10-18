@@ -1,0 +1,26 @@
+// A method destructured out of a value (#1207) that has no single function type (a generic
+// method) is an error whose note names the value as written, not a hidden temporary.
+interface M {
+  map<U>(f: (x: number) => U): U[];
+  size(): number;
+}
+
+class Pair implements M {
+  map<U>(f: (x: number) => U): U[] {
+    return [f(1), f(2)];
+  }
+  size(): number {
+    return 2;
+  }
+}
+
+function make(): M {
+  return new Pair();
+}
+
+function main() {
+  const m = make();
+  const { map } = m;
+  const { map: again, size } = make();
+  console.log(map, again, size());
+}

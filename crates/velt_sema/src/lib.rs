@@ -29,12 +29,14 @@ pub mod hir;
 mod absent_fields;
 mod anon;
 mod any;
+mod any_keys;
 mod assigned_fields;
 mod ast_walk;
 mod body;
 mod brands;
 mod call_sigs;
 mod collect;
+mod copy_flow;
 mod ctx;
 mod defs;
 mod discriminants;
@@ -44,8 +46,10 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod holds_promise;
 mod hooks;
 pub mod ide;
+mod iface_writes;
 mod index_signatures;
 mod infer;
 mod inst_sites;
@@ -56,8 +60,12 @@ mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_chunks;
+mod module_scripts;
+mod module_state;
 mod moves;
 mod namespaces;
+mod nested_closures;
 mod object_copies;
 mod overloads;
 mod ownership;
@@ -66,6 +74,7 @@ pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
+mod recursive_unions;
 mod replaced_holders;
 mod resolve;
 mod suggest;
@@ -164,13 +173,43 @@ pub fn check_with(
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, SEMA_STACK_BUDGET)
+                check_on_current_thread(modules, root, opts, &[], SEMA_STACK_BUDGET)
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts, FALLBACK_STACK_BUDGET),
+            Err(_) => check_on_current_thread(modules, root, opts, &[], FALLBACK_STACK_BUDGET),
+        }
+    })
+}
+
+/// [`check_with`] of modules some of which the parser had to recover (`recovered`: their
+/// indices in `modules` with their source text), for `velt check` to report the errors of the
+/// other modules too. A name imported from a recovered module (directly or through re-exports)
+/// that it doesn't declare but whose source has that word may be a declaration the parser
+/// dropped: importing and using it reports nothing. The caller drops the diagnostics located in
+/// recovered modules (their syntax errors come first). Never builds a program.
+pub fn check_recovered(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    recovered: &[(usize, &str)],
+) -> Diagnostics {
+    std::thread::scope(|s| {
+        let spawned = std::thread::Builder::new()
+            .name("velt-sema".into())
+            .stack_size(SEMA_STACK_BYTES)
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, recovered, SEMA_STACK_BUDGET).1
+            });
+        match spawned {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => {
+                check_on_current_thread(modules, root, opts, recovered, FALLBACK_STACK_BUDGET).1
+            }
         }
     })
 }
@@ -179,9 +218,13 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
-    let mut merge_diags = call_sigs::check(modules);
+    let chunks = module_chunks::split(modules, root);
+    let modules = chunks.modules.as_deref().unwrap_or(modules);
+    let mut merge_diags = chunks.diags.clone();
+    merge_diags.extend(call_sigs::check(modules));
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
@@ -197,6 +240,8 @@ fn check_on_current_thread(
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let closures = nested_closures::rewrite(modules);
+    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
@@ -206,6 +251,7 @@ fn check_on_current_thread(
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
+        cx.gen_throw = ts_protocol::calls_throw(modules);
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -214,8 +260,17 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
+        cx.recovered = (recovered.iter())
+            .map(|&(m, src)| (m, collect::exports::words(src)))
+            .collect();
         cx.diags.extend(merge_diags.iter().cloned());
-        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        cx.promoted_consts = chunks.promoted.clone();
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
+        }
+        let entry = analyze(&mut cx, root, root_mod, opts);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
@@ -225,14 +280,16 @@ fn check_on_current_thread(
     if retry_sharing(&cx) {
         (cx, entry) = new_cx(false);
     }
-    if cx.diags.iter().any(|d| d.is_error()) {
+    if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let module_state = module_state::build(&mut cx);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
+    let dyn_members = any::dyn_members(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -240,6 +297,8 @@ fn check_on_current_thread(
         impls,
         counted_objects,
         any,
+        gen_throw,
+        super_calls,
         ..
     } = cx;
     let defs = defs
@@ -254,9 +313,15 @@ fn check_on_current_thread(
         anon_shapes,
         union_shapes,
         counted_objects,
+        module_state,
         type_ops,
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
+        object: any.and_then(|a| a.imp.map(|_| a.object)),
+        function: any.and_then(|a| a.imp.map(|_| a.function)),
+        dyn_members,
+        generator_throw: gen_throw,
+        super_calls,
     };
     (Some(program), diags)
 }
@@ -266,12 +331,10 @@ fn analyze(
     cx: &mut ctx::Ctx,
     root: usize,
     root_mod: &SourceModule,
-    modules: &[SourceModule],
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    check_imported_scripts(cx, root, modules);
     resolve::check_unused_aliases(cx);
     entry
 }
@@ -294,8 +357,10 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    module_scripts::declare(cx);
     absent_fields::check(cx);
     fresh_returns::check(cx);
+    any_keys::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if instantiation_cycles::check(cx) {
@@ -310,6 +375,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);
+    cx.module_slots = module_state::order(cx);
+    module_state::check_locked_access(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held
@@ -336,30 +403,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::check_many_threads(cx);
     promise_copies::check(cx);
     weak_threads::check(cx, weak);
-}
-
-/// Top-level statements run only in the root file: the parser turned an imported module's into
-/// a `main` whose name has an empty span (`velt_syntax` `parser::script`).
-fn check_imported_scripts(cx: &mut ctx::Ctx, root: usize, modules: &[SourceModule]) {
-    for (i, m) in modules.iter().enumerate() {
-        let script = m.ast.items.iter().find_map(|it| match &it.kind {
-            velt_syntax::ast::ItemKind::Function(f)
-                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-            {
-                Some(f.sig.span)
-            }
-            _ => None,
-        });
-        if let (true, Some(span)) = (i != root, script) {
-            cx.error(
-                Diagnostic::error(
-                    "top-level statements are only allowed in the file the program starts from",
-                    span,
-                )
-                .with_note("an imported module runs nothing when it loads; put this code in a function and call it"),
-            );
-        }
-    }
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.

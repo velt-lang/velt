@@ -205,12 +205,8 @@ impl<'a> Parser<'a> {
             if let Some(d) = &default {
                 self.param_error("a rest parameter cannot have a default value", d.span);
             }
-            if let Some(t) = ty.as_ref().filter(|t| !rest_type(t)) {
-                self.param_error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    t.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
         }
         let ty = match (optional, ty) {
             (true, ty) => {
@@ -223,8 +219,8 @@ impl<'a> Parser<'a> {
                 }
                 let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
                 let span = Span::new(self.file, at, at);
-                default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-                ty.map(super::types::or_null)
+                default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
+                ty.map(super::types::optional_param)
             }
             (false, ty) => ty,
         };
@@ -264,9 +260,4 @@ impl<'a> Parser<'a> {
             span,
         ))
     }
-}
-
-/// Can `t` type a rest parameter: an array.
-fn rest_type(t: &TypeExpr) -> bool {
-    matches!(t.kind, TypeExprKind::Array(_))
 }

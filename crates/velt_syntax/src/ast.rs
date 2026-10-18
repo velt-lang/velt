@@ -21,8 +21,8 @@ pub use type_parts::*;
 pub struct NodeId(pub u32);
 
 pub use crate::ast_names::{
-    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR,
-    SYMBOL_DISPOSE, SYMBOL_ITERATOR,
+    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, OBJECT_GET_FN, OBJECT_SET_FN,
+    SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR, SYMBOL_DISPOSE, SYMBOL_ITERATOR,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -155,6 +155,9 @@ pub struct FnSig {
     pub is_async: bool,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
+    /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
+    /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
+    pub this_param: Option<Box<TypeExpr>>,
     pub span: Span,
 }
 

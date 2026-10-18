@@ -17,24 +17,39 @@ impl FnCx<'_, '_> {
 
     /// A block whose scope starts with the `narrow` facts assumed.
     pub fn block_narrowed(&mut self, b: &ast::Block, narrow: &[Fact]) -> hir::Block {
+        self.block_narrowed_ending(b, narrow).0
+    }
+
+    /// [`block_narrowed`](Self::block_narrowed), and the facts that still hold at the end of
+    /// the block: those assumed at its start that its statements did not undo, and those its
+    /// own statements established (`y = "filled";`, `if (y == null) return;`).
+    fn block_narrowed_ending(
+        &mut self,
+        b: &ast::Block,
+        narrow: &[Fact],
+    ) -> (hir::Block, Vec<Fact>) {
         self.push_scope_until(b.span.hi);
         for fact in narrow {
             self.narrow(fact);
         }
         let mut stmts = vec![];
         self.stmts_into(&b.stmts, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: b.span,
-        }
+        };
+        (block, facts)
     }
 
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         self.stmts_in_scope(stmts, out);
         // A function body's own scope is never popped: its `let x;` never assigned end here.
-        if self.f.scopes.len() == 1 {
+        // (A member of a recursive closure group has its captures' scope outside it.)
+        let body_scopes = 1 + usize::from(self.f.groups.member_of.is_some());
+        if self.f.scopes.len() == body_scopes {
             let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
             self.report_untyped_lets(left.into_iter());
         }
@@ -91,6 +106,10 @@ impl FnCx<'_, '_> {
             A::Break(label) => {
                 if let Some(i) = self.loop_target(label.as_ref(), "break", span) {
                     self.f.loops[i].has_break = true;
+                    if self.f.loops[i].is_switch {
+                        let st = self.narrow_state_at(self.f.loops[i].depth);
+                        self.f.loops[i].break_states.push(st);
+                    }
                     Self::push(out, S::Break(label.as_ref().map(|l| l.name.clone())), span);
                 }
             }
@@ -148,10 +167,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `else` branch / braceless body: a one-statement block with its own scope.
-    pub fn stmt_as_block(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> hir::Block {
+    /// `else` branch / braceless body: a one-statement block with its own scope, and the facts
+    /// that still hold where it falls through (see [`block_narrowed_ending`]).
+    ///
+    /// [`block_narrowed_ending`]: Self::block_narrowed_ending
+    fn stmt_as_block_ending(&mut self, s: &ast::Stmt, narrow: &[Fact]) -> (hir::Block, Vec<Fact>) {
         if let ast::StmtKind::Block(b) = &s.kind {
-            return self.block_narrowed(b, narrow);
+            return self.block_narrowed_ending(b, narrow);
         }
         self.push_scope_until(s.span.hi);
         for fact in narrow {
@@ -159,12 +181,14 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         self.stmt(s, &mut stmts);
+        let facts = self.scope_end_facts();
         self.pop_scope();
-        hir::Block {
+        let block = hir::Block {
             stmts,
             value: None,
             span: s.span,
-        }
+        };
+        (block, facts)
     }
 
     /// Expression in statement position (value discarded).
@@ -212,20 +236,33 @@ impl FnCx<'_, '_> {
         let exhausted_before = self.exhausted_union_local();
         let before = self.narrow_state();
         let super_before = (self.f.super_called, self.f.before_super);
-        let t = self.block_narrowed(then, &when_true);
+        // Each branch starts from the state before the `if` with the condition's facts assumed,
+        // and ends with what still holds there: a branch's own assignments win over the facts it
+        // started from (#1226). Those end states are joined below.
+        let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        then_facts.iter().for_each(|f| self.narrow(f));
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
         // Each branch starts from the state before the `if`: `super(...)` once in each.
         let super_then = (self.f.super_called, self.f.before_super);
         (self.f.super_called, self.f.before_super) = super_before;
-        let e = els.map(|s| self.stmt_as_block(s, &when_false));
+        let (e, els_facts) = match els {
+            Some(s) => {
+                let (b, facts) = self.stmt_as_block_ending(s, &when_false);
+                (Some(b), facts)
+            }
+            // No `else`: the false facts hold where the `if` is skipped.
+            None => (None, when_false),
+        };
+        els_facts.iter().for_each(|f| self.narrow(f));
         self.f.super_called |= super_then.0;
         self.f.before_super &= super_then.1;
         let then_div = crate::flow::block_diverges(&t, &self.cx.ty);
         let els_div = e
             .as_ref()
             .is_some_and(|b| crate::flow::block_diverges(b, &self.cx.ty));
-        // Only the branches that fall through decide what still holds after the `if`.
+        // Only the branches that fall through decide what still holds after the `if`
+        // (`if (x == null) return;` narrows `x` for the rest of the block).
         match (then_div, els_div) {
             (false, false) => self.meet_narrowing(&after_then),
             (false, true) => self.restore_narrowing(&after_then),
@@ -240,13 +277,6 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        // `if (x == null) return;` narrows `x` for the rest of the block (also union tests).
-        if then_div && !els_div {
-            when_false.iter().for_each(|f| self.narrow(f));
-        }
-        if els_div && !then_div {
-            when_true.iter().for_each(|f| self.narrow(f));
-        }
         if !exhausted_before && self.exhausted_union_local() {
             // Every member of a union local was handled by a branch that left: the rest of
             // the block is unreachable (an `instanceof` / `typeof` chain is exhaustive).
@@ -273,7 +303,9 @@ impl FnCx<'_, '_> {
             );
             return;
         };
-        if super::pattern_defaults::has_default(&v.pattern) {
+        if super::pattern_defaults::has_default(&v.pattern)
+            || super::object_rest::has_object_rest(&v.pattern)
+        {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
                 Some(t) => self.typed_temp(e, t, out),
@@ -287,6 +319,9 @@ impl FnCx<'_, '_> {
         };
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
+                if let Some(src) = self.method_source(fields, e, init.clone(), out) {
+                    return self.object_decls(v.kind, fields, None, &src, out);
+                }
                 return self.property_decls(v.kind, fields, init, out);
             }
         }
@@ -330,6 +365,12 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if ann.is_none()
+            && v.kind == ast::VarKind::Const
+            && self.group_member_decl(v, name, span, out)
+        {
+            return;
+        }
         // Declared from a literal and used as one integer type: that type (`literal_locals`).
         let decided = ann
             .is_none()
@@ -346,6 +387,16 @@ impl FnCx<'_, '_> {
                 Some(t) => self.expr_coerce(e, t, Want::Move),
                 None => self.expr(e, None, Want::Move),
             }),
+        };
+        // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
+        let init = match (init, ann) {
+            (None, Some(t))
+                if v.kind == ast::VarKind::Let
+                    && self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) =>
+            {
+                Some(self.nothing_value(hir::Nothing::Undefined, t, name.span))
+            }
+            (init, _) => init,
         };
         let ty = match (ann, &init) {
             (Some(t), _) => t,
@@ -385,6 +436,7 @@ impl FnCx<'_, '_> {
         }
         let local = self.declare_local(name, ty, kind);
         self.note_readonly_array(local, v.ty.as_ref());
+        self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
         }
@@ -415,6 +467,11 @@ impl FnCx<'_, '_> {
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
         }
+        // `let u: string | number = "x"` holds a `string` until it is assigned (TS).
+        let cast = v.init.as_ref().is_some_and(super::assign_narrow::is_cast);
+        if let (Some(_), Some(h), false) = (ann, &init, cast) {
+            self.narrow_to_assigned(local, ty, h);
+        }
         Self::push(out, S::Let { local, init }, span);
     }
 
@@ -444,6 +501,16 @@ impl FnCx<'_, '_> {
             return;
         };
         match e {
+            // `return;` in a function whose result may be `undefined` returns it (issue #930).
+            None if self
+                .cx
+                .ty
+                .nothing_of(ret)
+                .is_some_and(|n| n.has_undefined()) =>
+            {
+                let value = self.mk(hir::ExprKind::Lit(hir::Lit::Null), ret, span);
+                Self::push(out, S::Return(Some(value)), span);
+            }
             None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
@@ -481,6 +548,11 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                if std::mem::take(&mut self.f.adopt_stmt) {
+                    // A promise to adopt: stored, then the scopes are left (`async_returned`).
+                    Self::push(out, S::Expr(h), span);
+                    return;
+                }
                 self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }

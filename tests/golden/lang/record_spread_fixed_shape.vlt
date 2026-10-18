@@ -1,0 +1,12 @@
+// Spreading a `Record` whose keys are known only at run time into an object of a fixed shape is
+// an error (its entries were silently left out before, #1211); `{ ...r, z: 1 }` of a variable
+// `r` builds a `Record<string, V>` (record_from_any.vlt).
+function make(): Record<string, number> {
+  return { a: 1 };
+}
+
+function main() {
+  const o = { ...make(), z: 1 };
+  const p: { a: number } = { ...make() };
+  console.log(o, p);
+}

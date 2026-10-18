@@ -1,0 +1,61 @@
+// TypeScript's finished iterator result `{ value: undefined, done: true }` (issue #930): accepted,
+// without the `value` (a finished result in Velt has none).
+class Doubler implements Iterator<number> {
+  i = 0;
+  xs: number[];
+  constructor(xs: number[]) {
+    this.xs = xs;
+  }
+  next(): IteratorResult<number> {
+    if (this.i >= this.xs.length) {
+      return { value: undefined, done: true };
+    }
+    return { value: this.xs[this.i++] * 2, done: false };
+  }
+}
+function nextOf(it: Iterator<number>): IteratorResult<number> {
+  const r = it.next();
+  if (r.done) {
+    return { done: true, value: undefined };
+  }
+  return r;
+}
+class Countdown implements Iterator<number> {
+  constructor(private n: number) {}
+  next(): IteratorResult<number> {
+    if (this.n === 0) {
+      return { value: undefined, done: true };
+    }
+    this.n -= 1;
+    return { value: this.n + 1, done: false };
+  }
+}
+class Doubled implements Iterator<number> {
+  constructor(private inner: Iterator<number>) {}
+  next(): IteratorResult<number> {
+    const r = this.inner.next();
+    if (r.done) {
+      return { done: true, value: undefined };
+    }
+    return { value: r.value * 2, done: false };
+  }
+}
+class Range implements Iterable<number> {
+  constructor(private n: number) {}
+  [Symbol.iterator](): Iterator<number> {
+    return new Doubled(new Countdown(this.n));
+  }
+}
+type Pair = { value: number | undefined; done: boolean };
+function main() {
+  const d = new Doubler([1, 2, 3]);
+  for (let r = nextOf(d); !r.done; r = nextOf(d)) {
+    console.log(r.value);
+  }
+  const p: Pair = { value: undefined, done: true };
+  console.log(p);
+  for (const x of new Range(3)) {
+    console.log(x);
+  }
+  console.log(new Countdown(0).next().done);
+}

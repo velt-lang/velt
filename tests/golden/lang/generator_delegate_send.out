@@ -1,0 +1,21 @@
+o1
+outer got 1
+a1
+a got 2
+a2
+a got 3
+a finally
+b1
+b finally
+outer caught into b
+c1
+c caught into c
+c-recovered
+c finally
+o-end
+true
+outer got 1
+a got 2
+a finally
+true
+true
