@@ -1,0 +1,20 @@
+// check: no leaks
+// `as const` on an array literal of strings keeps their literal types (#1255): iterating or
+// indexing it gives the literal union, which converts to a parameter of that type, as in
+// TypeScript (`readonly ["a", "b"]`).
+type Name = "small" | "large" | "deep";
+
+function build(n: Name): string {
+  return n.toUpperCase();
+}
+
+const SCENARIOS = ["small", "large", "deep"] as const;
+
+function main() {
+  for (const s of SCENARIOS) console.log(build(s));
+  const local = ["large", "small"] as const;
+  console.log(build(local[0]), local.length, local, SCENARIOS.map((s) => build(s)).join(","));
+  const once: Name[] = [];
+  for (const s of local) once.push(s);
+  console.log(once, local.includes("small"));
+}

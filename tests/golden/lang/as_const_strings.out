@@ -1,0 +1,5 @@
+SMALL
+LARGE
+DEEP
+LARGE 2 [ 'large', 'small' ] SMALL,LARGE,DEEP
+[ 'large', 'small' ] true
