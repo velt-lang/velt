@@ -201,13 +201,18 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                 crate::hir::TyKind::FnPtr { .. } | crate::hir::TyKind::Closure(_)
             );
         // A constant that depends on itself stays an error (its value is never known).
-        // So does one that may throw or is a promise: module state is initialized where
-        // nothing can catch or await.
+        // So does one that is async: module state is initialized where nothing can await. One
+        // that may throw is kept: an error it throws ends the process while the module state
+        // is initialized, as Node stops at an error thrown while it evaluates a module.
         let cycle = cx.global_cycles != cycles || own.iter().any(|o| o.fatal);
         if top_level && (!own.is_empty() || function) && !cycle && ty != cx.ty.error {
             stored = true;
         } else {
-            cx.diags.extend(own.into_iter().map(|o| o.diag));
+            // A top-level constant whose type is already an error (reported where it arose)
+            // would be module state otherwise: only an async initializer stays worth reporting.
+            let errored = top_level && ty == cx.ty.error;
+            let own = own.into_iter().filter(|o| o.fatal || !errored);
+            cx.diags.extend(own.map(|o| o.diag));
         }
     }
     if stored && ty != cx.ty.error {

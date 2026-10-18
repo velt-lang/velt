@@ -1,0 +1,6 @@
+// An error that a module constant's initializer throws stops the program while the modules
+// are evaluated: the statements of the module before it ran, those after it and the
+// importing module's don't (Node exits with code 1 too).
+import { parsed } from "./_module_const_throws_lib";
+
+console.log("never printed", parsed());

@@ -161,7 +161,13 @@ function main() {
   assigns it. Modifying its contents (`items.push(x)`) is fine.
 - A `const` whose value is not a constant (`new Map()`, an array of objects, a call with
   effects) is kept the same way, evaluated once per process, before `main`; every task sees
-  the same object. Assigning it is an error.
+  the same object. Assigning it is an error. A regex constant (`const RE = /a+/g;`) is one
+  `RegExp` object too, so the `lastIndex` of a `g` or `y` regex carries over from one
+  function's `RE.test(s)` to the next, as in Node.
+- An initializer that throws (`JSON.parse` of invalid text, `new RegExp` of an invalid
+  pattern, a function that throws) stops the program with `Uncaught …` and exit code 1, as an
+  error thrown while Node evaluates a module does: the rest of that module and the modules that
+  import it don't run.
 - An initializer that reads a `let` declared after it (whose initializer has not run yet) is
   an error (``` `b` is read before its initializer runs ```), where JavaScript throws a
   `ReferenceError`. A read through a function the initializer calls (also across a cyclic
@@ -311,8 +317,9 @@ function main() {
 A call that does not qualify makes the constant [module state](#module-state): it is
 evaluated once per process, before `main`, in module order, as Node evaluates it once at load;
 every task sees the same value.
-A call that may throw or is `async` stays an error (``it may throw``): nothing could catch or
-await it there.
+A call that is `async` stays an error (``it is async``): nothing could await it there. One
+that may throw is module state too; an error it throws
+[stops the program](#module-state) while the modules are evaluated, as in Node.
 A function from a call is kept the same way, so it is one value wherever it goes:
 
 ```ts
