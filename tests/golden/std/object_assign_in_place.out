@@ -9,3 +9,7 @@
 { name: 'y' } false
 { name: 'x', color: 'blue' }
 { n: 2, on: true } true
+[ { a: 42 }, { a: 1 } ]
+[ { a: 42 }, { a: 7 } ] 1
+[ { x: 5, y: 0 } ] true
+{ rows: [ { on: true } ] }

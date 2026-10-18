@@ -58,3 +58,22 @@ const w = { n: 1, on: false };
 const w2 = Object.assign(w, { n: 2 });
 w2.on = true;
 console.log(w, w2 === w);
+
+// Array elements are written in place too, each index evaluated once.
+const arr: { a: number }[] = [{ a: 0 }, { a: 1 }];
+Object.assign(arr[0], { a: 42 });
+console.log(arr);
+let calls = 0;
+function next(): number {
+  calls++;
+  return calls;
+}
+Object.assign(arr[next()], { a: 7 });
+console.log(arr, calls);
+const pts: { x: number; y: number }[] = [{ x: 0, y: 0 }];
+const moved = Object.assign(pts[0], { x: 4 });
+moved.x = 5;
+console.log(pts, moved === pts[0]);
+const grid = { rows: [{ on: false }] };
+Object.assign(grid.rows[0], { on: true });
+console.log(grid);

@@ -529,6 +529,11 @@ fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
             let (E::Member { object, prop, .. }, [arg]) = (&callee.kind, args.as_slice()) else {
                 return;
             };
+            // As `object_create` accepts it: `null` in any parentheses.
+            let mut arg = arg;
+            while let E::Paren(inner) = &arg.kind {
+                arg = inner;
+            }
             if prop.name == "create"
                 && matches!(&object.kind, E::Ident(o) if o.name == "Object")
                 && matches!(arg.kind, E::Lit(ast::Lit::Null))

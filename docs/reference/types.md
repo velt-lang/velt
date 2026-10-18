@@ -1634,11 +1634,12 @@ does is an error saying it is not supported yet, never a quiet difference.
   `-0`, in generic code too (`Object.is(oldValue, newValue)` with `T` a number compares numbers
   that way). Values of unrelated types are never the same.
 - `Array.isArray(x)` tests for the array members of `x`'s type and narrows `x` like `typeof`
-  (`Array.isArray(x) ? x.length : x` on a `number | number[]`); a tuple is an array. A value of
-  a type parameter, `any` or `unknown` is tested at run time. On a `JsonValue` it is
+  (`Array.isArray(x) ? x.length : x` on a `number | number[]`); a tuple is an array. An `any`
+  or `unknown` value is tested at run time; a type parameter's value is not supported yet. On a `JsonValue` it is
   `x.isArray()`.
 - `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
-  (through its setters, as JavaScript's assignment does; an absent optional field is not copied)
+  (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
+  and one holding `undefined` where the target can't hold it is a `TypeError`)
   and returns `target` itself. A `Record` target takes any keys; an object or class target only
   fields its type declares (adding one is not supported yet). Assigning onto a function (#921) or
   from a value that may hold another class is not supported yet.

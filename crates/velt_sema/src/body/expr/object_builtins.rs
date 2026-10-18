@@ -500,6 +500,16 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
+        // `in`, printing and `structuredClone` test the mark only when the scan of the modules
+        // (`calls_object_create_null`) found this call.
+        // A form the scan doesn't see would make a record those don't tell apart.
+        if !self.cx.objects.null_proto_records && !self.cx.scopes[self.module].is_std {
+            self.cx.err(
+                "`Object.create(null)` written this way is not supported yet: write `Object.create(null)`",
+                span,
+            );
+            return self.error_expr(span);
+        }
         let empty = synth(ast::ExprKind::Object(vec![]), span);
         let h = self.expr(&empty, Some(record), Want::Move);
         let mut lets = vec![];

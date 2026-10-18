@@ -9,7 +9,6 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::setters::synth;
-use crate::body::places::is_path;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, AdtKind, ExprKind as H, TyId, TyKind};
 
@@ -27,6 +26,57 @@ impl FnCx<'_, '_> {
             },
             _ => false,
         }
+    }
+
+    /// `const r = Object.assign(place, ...sources)`: the call as a statement, then the place
+    /// (each index evaluated once) for `r`'s initializer, so `r` is bound as `const r = place`
+    /// is: by reference to an element or field. `None`: another initializer.
+    pub(crate) fn assign_decl_split(
+        &mut self,
+        init: &ast::Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) -> Option<ast::Expr> {
+        let ast::ExprKind::Call {
+            callee,
+            type_args,
+            args,
+            optional: false,
+        } = &init.kind
+        else {
+            return None;
+        };
+        let target = args.first()?;
+        if !type_args.is_empty()
+            || args
+                .iter()
+                .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
+            || !is_place(target)
+            || !self.object_assign_callee(callee)
+        {
+            return None;
+        }
+        let probe = self.expr(target, None, Want::Borrow);
+        if self.cx.ty.is_bottom(probe.ty) || !reads_place(&probe) {
+            return None;
+        }
+        let place = self.place_once(target, init.span, out);
+        let mut args = args.clone();
+        args[0] = place.clone();
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: callee.clone(),
+                type_args: vec![],
+                args,
+                optional: false,
+            },
+            init.span,
+        );
+        let h = self.expr(&call, None, Want::Borrow);
+        out.push(hir::Stmt {
+            kind: hir::StmtKind::Expr(h),
+            span: init.span,
+        });
+        Some(place)
     }
 
     /// `Object.assign(...)` (`object_assign_callee`), its value used as `want` says.
@@ -81,9 +131,11 @@ impl FnCx<'_, '_> {
         self.push_scope();
         let mut lets = vec![];
         let tname = format!("<assign@{}>", span.lo);
-        // A variable or a field path is written in place: a temporary would be a copy of an
-        // object stored inline (one of numbers and booleans only), and the writes would miss it.
-        let in_place = (!record && is_place(target) && is_path(&t)).then(|| target.clone());
+        // A variable, field path or element is written in place (each index evaluated once):
+        // a temporary would be a copy of an object stored inline (one of numbers and booleans
+        // only), and the writes would miss it.
+        let in_place = (!record && is_place(target) && reads_place(&t))
+            .then(|| self.place_once(target, span, &mut lets));
         let t_read = match in_place {
             Some(_) => t,
             None => self.named_temp(&tname, t, &mut lets),
@@ -211,6 +263,15 @@ impl FnCx<'_, '_> {
                         span,
                     ),
                 };
+                if optional && defined_only {
+                    // A present `undefined` the target can't hold: a `TypeError` (Node would
+                    // copy it).
+                    let fail = self.undefined_copy_fails(&sname, &key, record, tty, span);
+                    lets.push(hir::Stmt {
+                        kind: hir::StmtKind::Expr(fail),
+                        span,
+                    });
+                }
                 let stmt = match optional {
                     false => ast::Stmt {
                         kind: ast::StmtKind::Expr(assign),
@@ -234,13 +295,121 @@ impl FnCx<'_, '_> {
                 self.stmt(&stmt, &mut lets);
             }
         }
-        self.pop_scope();
         // The place itself, read after the writes, as the consumer wants it.
         let t_read = match &in_place {
             Some(e) => self.expr(e, None, want),
             None => t_read,
         };
+        self.pop_scope();
         self.with_lets(lets, t_read)
+    }
+
+    /// `if ("k" in source && source.k === undefined)` fail with a `TypeError` naming `key`.
+    fn undefined_copy_fails(
+        &mut self,
+        sname: &str,
+        key: &str,
+        record: bool,
+        tty: TyId,
+        span: Span,
+    ) -> hir::Expr {
+        let read = synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: sname.to_string(),
+                span,
+            }),
+            span,
+        );
+        let key_lit = synth(ast::ExprKind::Lit(ast::Lit::Str(key.to_string())), span);
+        let field = synth(
+            ast::ExprKind::Member {
+                object: Box::new(read.clone()),
+                prop: ast::Ident {
+                    name: key.to_string(),
+                    span,
+                },
+                optional: false,
+            },
+            span,
+        );
+        let bin = |op, lhs, rhs| {
+            synth(
+                ast::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+                span,
+            )
+        };
+        let undef = synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+        let cond = bin(
+            ast::BinaryOp::And,
+            bin(ast::BinaryOp::In, key_lit, read),
+            bin(ast::BinaryOp::StrictEq, field, undef),
+        );
+        let cond = self.expr(&cond, None, Want::Borrow);
+        let tn = self.cx.display(tty);
+        let what = match record {
+            true => format!("the key `{key}` of a `{tn}`"),
+            false => format!("the field `{key}` of a `{tn}`"),
+        };
+        let msg = self.str_lit(
+            &format!(
+                "TypeError: Object.assign copies `undefined` into {what}, which can't hold it"
+            ),
+            span,
+        );
+        let never = self.cx.ty.never;
+        let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+        let unit = self.cx.ty.unit;
+        let nothing = self.mk(H::Lit(hir::Lit::Unit), unit, span);
+        self.mk(
+            H::If {
+                cond: Box::new(cond),
+                then: Box::new(fail),
+                els: Box::new(nothing),
+            },
+            unit,
+            span,
+        )
+    }
+
+    /// `e` (a place, `is_place`) with each index evaluated once into a temporary (appended to
+    /// `lets`), so it can be read and written again without effects.
+    pub(crate) fn place_once(
+        &mut self,
+        e: &ast::Expr,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
+        let kind = match &e.kind {
+            ast::ExprKind::Paren(inner) => return self.place_once(inner, span, lets),
+            ast::ExprKind::Member { object, prop, .. } => ast::ExprKind::Member {
+                object: Box::new(self.place_once(object, span, lets)),
+                prop: prop.clone(),
+                optional: false,
+            },
+            ast::ExprKind::Index { object, index, .. } => {
+                let object = self.place_once(object, span, lets);
+                let i = self.expr(index, None, Want::Move);
+                let name = format!("<assign@{}:index{}>", span.lo, lets.len());
+                self.named_temp(&name, i, lets);
+                ast::ExprKind::Index {
+                    object: Box::new(object),
+                    index: Box::new(synth(
+                        ast::ExprKind::Ident(ast::Ident {
+                            name,
+                            span: index.span,
+                        }),
+                        index.span,
+                    )),
+                    optional: false,
+                }
+            }
+            _ => return e.clone(),
+        };
+        synth(kind, e.span)
     }
 
     /// A temporary holding `init`, which synthesized code reads by `name` (in the current
@@ -371,7 +540,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Is `e` a variable, `this` or a path of fields of one (read again without effects)?
+/// Is `e` a variable, `this` or a path of fields and elements of one?
 fn is_place(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
@@ -380,7 +549,21 @@ fn is_place(e: &ast::Expr) -> bool {
             object,
             optional: false,
             ..
+        }
+        | ast::ExprKind::Index {
+            object,
+            optional: false,
+            ..
         } => is_place(object),
+        _ => false,
+    }
+}
+
+/// Does `e` read a variable, or a field or array element of one (no getter, no call)?
+fn reads_place(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) => true,
+        H::Field { base, .. } | H::Index { base, .. } => reads_place(base),
         _ => false,
     }
 }
