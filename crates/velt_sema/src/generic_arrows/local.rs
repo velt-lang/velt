@@ -3,11 +3,14 @@
 //! `function id<T>(x: T) { return x; }`, which `collect::nested` hoists like any nested
 //! declaration. Each call instantiates it, as for a local generic function; like one it
 //! captures no locals, and a use as a value needs a function type to instantiate it at.
+//! A local arrow constant naming itself (`super::recursive`) becomes a nested function the same
+//! way, without the generic arrow's restrictions.
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ItemKind as I, StmtKind as S};
 
 use super::arrow_function;
+use super::recursive::recursive_arrow;
 use crate::ast_walk::{children, children_mut};
 
 /// Does a body or initializer in `item` declare a local generic arrow constant?
@@ -50,7 +53,11 @@ fn block_has(b: &ast::Block) -> bool {
 
 fn stmt_has(s: &ast::Stmt) -> bool {
     match &s.kind {
-        S::Var(v) => arrow_function(v).is_some() || v.init.as_ref().is_some_and(expr_has),
+        S::Var(v) => {
+            arrow_function(v).is_some()
+                || recursive_arrow(v).is_some()
+                || v.init.as_ref().is_some_and(expr_has)
+        }
         S::Expr(e) | S::Throw(e) | S::Return(Some(e)) => expr_has(e),
         S::If { cond, then, els } => {
             expr_has(cond) || block_has(then) || els.as_deref().is_some_and(stmt_has)
@@ -175,6 +182,14 @@ impl Rewriter {
         if let S::Var(v) = &s.kind {
             if let Some(f) = arrow_function(v) {
                 self.lifted.push(f.sig.name.span);
+                let item = ast::Item {
+                    kind: I::Function(f),
+                    exported: false,
+                    span: s.span,
+                };
+                s.kind = S::Item(Box::new(item));
+            } else if let Some(f) = recursive_arrow(v) {
+                // A nested function, which may capture locals (`crate::nested_closures`).
                 let item = ast::Item {
                     kind: I::Function(f),
                     exported: false,

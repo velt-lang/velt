@@ -1082,3 +1082,66 @@ async function main() {
   console.log(await Promise.all([inc(1), inc(2)]), ctx.count);   // [ 302, 302 ] 3
 }
 ```
+
+### A closure using the constant it initializes
+
+A closure created in a `const`'s initializer may use that constant, as in JavaScript: an
+object literal whose methods return the object, a callback that stops its own timer, a
+function that refers to itself.
+
+```ts
+interface Counter {
+  n: number;
+  inc(): Counter;
+}
+
+function makeCounter(): Counter {
+  const c: Counter = {
+    n: 0,
+    inc() {
+      c.n += 1;
+      return c;               // the object being initialized
+    },
+  };
+  return c;
+}
+
+function show(): void {
+  const fact = (n: number): number => (n <= 1 ? 1 : n * fact(n - 1));
+  console.log(makeCounter().inc().inc().n, fact(5));   // 2 120
+}
+show();
+```
+
+- An arrow constant that names itself (`fact` above), with typed parameters (or a function
+  type annotation giving them, `const fib: (n: number) => number = (n) => …`), is the function
+  `function fact(n: number): number { … }`: at module level a module function, in a body a
+  nested function (which may use the enclosing function's variables, see
+  [Declarations](#declarations)). Nothing refers to itself, so nothing leaks. An arrow using
+  `this` stays a closure (a function would have a `this` of its own).
+- Any other closure (an object literal method, an arrow or function expression) that uses the
+  constant it is part of captures the variable, which the constant's value fills in once the
+  initializer has run, and reads it when it runs. Without an annotation, the constant's type
+  is the initializer's type with the closure checked first; when that type depends on the
+  constant itself (a method returning it without a written result type), write the type, as
+  TypeScript requires there too (TS7022, TS7023):
+  ``type annotation needed for `c`: a closure in its initializer uses it``.
+- A closure reading the constant while its initializer is still running (it is called from
+  the initializer) stops the program with JavaScript's error, `ReferenceError: Cannot access
+  'c' before initialization`. A read of the value checks this where it happens, so a read
+  on a path that does not run checks nothing (`ready ? x : 1`); a use of the object in place (a
+  field read, a method call) checks at the start of its statement (in an expression-bodied
+  arrow, when the arrow is called). A closure created inside such a closure shares the
+  constant too. In Velt this is a
+  panic, which `catch` does not intercept.
+- An object holding a closure that captures the object is a reference cycle, which reference
+  counting does not free: each such object stays allocated until the program exits (one per
+  constant initialized, for instance one per component created). Break the cycle when the
+  object is done with: give it a `[Symbol.dispose]()` that clears the closure fields (or
+  replaces them with closures that capture nothing) and declare it with `using`, or call that
+  method yourself. A recursive arrow constant (above) holds no cycle.
+- Not supported yet: a closure that runs on another task (a timer callback, a spawned
+  closure) using the constant it initializes (`const t = setInterval(() => clearInterval(t),
+  5)` reports ``…is used by a closure in its own initializer, which cannot share it``), and a
+  module-level constant other than a recursive arrow whose closures use it
+  (``module-level constant refers to itself``) (#1292). The cycle is tracked in #1291.
