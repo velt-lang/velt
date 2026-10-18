@@ -234,7 +234,7 @@ fn spreading_the_copy_tells_it_apart() {
         "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
            const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
     ));
-    assert!(e.contains("spreads a `A`"), "{e}");
+    assert!(e.contains("spreads an `A`"), "{e}");
     // Spreading the source keeps all its fields, as in Node.
     ok_src(&format!(
         "{src} function g(a: A): f64 {{ return a.a; }}
