@@ -318,7 +318,7 @@ export class Renderer {
       parts.push(`"media":${JSON.stringify(media)}`);
     }
     const manifest = this.manifest;
-    const chunk: IslandChunk | null = manifest == null ? null : manifest.islands[island.component];
+    const chunk: IslandChunk | undefined = manifest == null ? undefined : manifest.islands[island.component];
     if (chunk != null) {
       if (!this.preload.includes(chunk.chunkUrl)) {
         this.preload.push(chunk.chunkUrl);

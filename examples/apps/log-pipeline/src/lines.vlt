@@ -27,6 +27,6 @@ export class LineSplitter {
 
   // The next complete line (without "\n"), or null until more is fed.
   next(): string | null {
-    return this.pending.pop();
+    return this.pending.pop() ?? null;
   }
 }

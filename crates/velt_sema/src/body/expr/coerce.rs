@@ -13,7 +13,7 @@
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, Nothing, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Nothing, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
@@ -298,6 +298,26 @@ impl FnCx<'_, '_> {
             exp,
             span,
         ))
+    }
+
+    /// Is `h` the result of a standard library function or method (`Channel.receive`)?
+    pub(crate) fn std_result(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self
+                .cx
+                .try_fn(*d)
+                .is_some_and(|fi| self.cx.scopes[fi.module].is_std),
+            H::Call {
+                callee: Callee::Intrinsic(_),
+                ..
+            } => true,
+            H::Block(b) => b.value.as_deref().is_some_and(|v| self.std_result(v)),
+            H::Await(x) => self.std_result(x),
+            _ => false,
+        }
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {

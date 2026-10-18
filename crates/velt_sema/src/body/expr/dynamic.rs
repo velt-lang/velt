@@ -224,7 +224,13 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(payload).is_none() {
             return h;
         }
-        let nothing = self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null);
+        // A Velt-only standard library result that is `null` when absent (`Channel.receive` of
+        // a closed channel) is `undefined` in an `any`, as JavaScript's "nothing there" is.
+        let nothing = if self.std_result(&h) {
+            Nothing::Undefined
+        } else {
+            self.cx.ty.nothing_of(h.ty).unwrap_or(Nothing::Null)
+        };
         if is_place(&h) {
             // A field or variable keeps its value: the result is a share of it.
             set_place_mode(&mut h, UseMode::Borrow);
