@@ -151,7 +151,7 @@ fn narrowing_by_null_tests() {
 fn nullish_and_optional_chaining() {
     let p = ok_src(
         "class N { v: i64 = 1; next: N | null = null; get(): i64 { return this.v; } }
-         function main() { const n: N | null = new N(); console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs: i64[] | null = [1]; console.log(xs?.[0]); }",
+         function main() { const n = new N() as N | null; console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs = [1] as i64[] | null; console.log(xs?.[0]); }",
     );
     let main = func(&p, "main");
     let matches = exprs(main)
@@ -159,13 +159,8 @@ fn nullish_and_optional_chaining() {
         .filter(|e| matches!(e.kind, E::Match { .. }))
         .count();
     assert!(matches >= 6, "{matches}");
-    let r = err_src("function main() { const x = 5; console.log(x ?? 1); }");
-    assert!(
-        r.contains("`??` needs a `T | null` value on the left"),
-        "{r}"
-    );
-    let r = err_src("function main() { const x = 5; console.log(x == null); }");
-    assert!(r.contains("is never null"), "{r}");
+    // On a value that is never null, as in TS: the value itself, and `false` (#1203).
+    ok_src("function main() { const x = 5; console.log(x ?? 1, x == null, x != undefined); }");
 }
 
 #[test]

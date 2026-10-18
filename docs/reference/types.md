@@ -622,27 +622,42 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   `T | null` gives `T | null | undefined`. Parentheses end a chain: `(x?.a).b` needs `x?.a` to
   be neither `null` nor `undefined`.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
-  TypeScript; assigning a non-null value narrows too. After an `if`, what holds is what each
-  branch that does not leave ends with: the facts of the condition it started from unless it
-  reassigned the variable, and what its own statements established (`if (x == null) { x = d; }`
-  narrows `x` after it; `if (x == null) return; else x = null;` does not). A narrowed field
-  is re-checked when read, so a call that set it to `null` in between panics instead of
-  reading `null`. Inside a closure, a variable narrowed where the closure is created stays
-  narrowed.
-- A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
-  `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
-  may run the closure, and then the variable no longer holds what was checked. Test a `const`
-  copy instead, which nothing can reassign; the error at such a use says so:
+  TypeScript; assigning a non-null value narrows too (also in the declaration: `let x: string
+  | null = "a"`). After an `if` or a `switch`, what holds is what each way out ends with: the
+  facts of the condition a branch started from unless it reassigned the variable, and what its
+  own statements established (`if (x == null) { x = d; }` narrows `x` after it; `if (x ==
+  null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
+  `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
+  narrowed field is re-checked when read, so a call that set it to `null` in between panics
+  instead of reading `null`. An optional member of function type can be called once a check
+  narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
+  a closure, a variable narrowed where the closure is created stays narrowed when the function
+  assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
+  closure may run after such an assignment.
+- `x == null`, `x != null`, `x === undefined` and `x ?? d` are allowed on a value whose type has
+  neither `null` nor `undefined`, as in TypeScript (a defensive check): the test is `false`
+  (`!=`: `true`) and `d` is not evaluated. On an element read of an array, a string or
+  a typed array (`xs[i] ?? d`, `xs[i] == null`) the index is checked instead, so past the end the result is `d` (`true`),
+  as in JavaScript, where reading past the end gives `undefined`.
+- A null check (`!= null`, `!== undefined`, truthiness) of a variable that a closure assigns
+  narrows it in the function that makes the check until the next assignment there, as in
+  TypeScript (`if (cleanupFn) cleanupFn();`). A call in between may run the closure, so each
+  such read checks the value again and stops with a `TypeError` if the closure set it to `null`
+  (JavaScript throws one where it calls or reads through the `null`). The closures that capture
+  the variable do not see the narrowing. Other tests (`typeof`, `instanceof`, union members)
+  do not narrow such a variable, where TypeScript keeps the narrowing: the variable may no
+  longer hold what was checked. Test a `const` copy instead, which nothing can reassign; the
+  error at such a use says so:
 
   ```ts
   class Conn {
     send(msg: string): string { return `sent ${msg}`; }
   }
 
-  let conn: Conn | null = new Conn();
-  const close = () => { conn = null; };
-  const c = conn;                 // `if (conn !== null) { conn.send(…) }` is an error here
-  if (c !== null) {
+  let conn: Conn | string = new Conn();
+  const close = () => { conn = "closed"; };
+  const c = conn;                 // `if (conn instanceof Conn) { conn.send(…) }` is an error
+  if (c instanceof Conn) {
     close();
     console.log(c.send("bye"));   // sent bye
   }
@@ -720,7 +735,10 @@ the nullable type; `void` cannot be a member.
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
-    A local that a closure assigns is not narrowed ([Null](#null-and-undefined)).
+    A local that a closure assigns is not narrowed by these tests ([Null](#null-and-undefined)).
+  - Assigning a member's value narrows to that member until the next assignment or join, also
+    in the declaration (`let u: string | number = "x"; u.length`, `else { p = new B(); }
+    p.b`), as in TypeScript.
 - Printing and template literals show the active member's value. A union with a member that
   cannot be printed (a closure) prints once a test has narrowed it to members that can
   (`typeof v !== "function"`). `JSON.stringify` works on
