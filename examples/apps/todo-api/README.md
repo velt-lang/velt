@@ -49,5 +49,5 @@ return their `ApiError` and two small adapters wrap the stores' ordinary throwin
 | `src/api.vlt` | `route(store, method, path, query, body)` → `{ status, body, changed }` (no sockets) |
 | `src/server.vlt` | `std/http` server, `shared<Mutex<S>>`, store selection, JSON persistence |
 | `tests/*.test.vlt` | `velt test` (router on both stores, validation, SQLite store on a file) |
-| `demo.vlt` / `demo.out` | real HTTP session incl. restart; a golden in `cargo test -p veltc --test golden` |
+| `demo.vlt` / `demo.out` | real HTTP session incl. restart; a golden in `cargo test --workspace --test golden` |
 | `demo_sqlite.vlt` / `demo_sqlite.out` | the same session on SQLite, then the rows read back with SQL |

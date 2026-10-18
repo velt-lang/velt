@@ -221,11 +221,7 @@ impl Gate<'_> {
             }
             c
         } else {
-            println!("note: cargo-nextest is not installed, so every test runs, one binary at a");
-            println!(
-                "      time (`cargo install cargo-nextest --locked` runs only the selected ones,"
-            );
-            println!("      in parallel).");
+            warn_no_nextest();
             let mut c = cargo(&["test"]);
             // Not `--doc`: the doctests are a step of their own below.
             c.args(ws)
@@ -331,7 +327,7 @@ impl Gate<'_> {
     }
 }
 
-fn cargo(args: &[&str]) -> Command {
+pub(crate) fn cargo(args: &[&str]) -> Command {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.args(args);
     c
@@ -339,7 +335,7 @@ fn cargo(args: &[&str]) -> Command {
 
 /// `--workspace`, minus the shared runtime on musl hosts (musl links statically and cannot build
 /// a cdylib; `velt` falls back to the static runtime).
-fn workspace_args(root: &Path) -> Vec<String> {
+pub(crate) fn workspace_args(root: &Path) -> Vec<String> {
     let mut args = vec!["--workspace".to_string()];
     let host = Command::new("rustc").arg("-vV").current_dir(root).output();
     let musl = host.is_ok_and(|o| {
@@ -355,6 +351,19 @@ fn workspace_args(root: &Path) -> Vec<String> {
 
 fn difftest_manifest(root: &Path) -> PathBuf {
     root.join(DIFFTEST).join("Cargo.toml")
+}
+
+/// Without cargo-nextest the selection can't be applied to the tests: say so loudly, since the
+/// fallback takes many times longer.
+fn warn_no_nextest() {
+    let bar = "!".repeat(78);
+    eprintln!("\x1b[1;33m{bar}");
+    eprintln!("WARNING: cargo-nextest is not installed. The test selection is IGNORED: every test");
+    eprintln!("of the workspace runs, one test binary after another (over 10 minutes).");
+    eprintln!("Install it once to run only the selected tests, in parallel:");
+    eprintln!();
+    eprintln!("    cargo install cargo-nextest --locked");
+    eprintln!("{bar}\x1b[0m");
 }
 
 fn has_nextest() -> bool {
@@ -383,11 +392,11 @@ fn host_triple() -> Result<String, String> {
         .ok_or_else(|| "rustc -vV printed no host".into())
 }
 
-fn exe(name: &str) -> String {
+pub(crate) fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn show(cmd: &Command) -> String {
+pub(crate) fn show(cmd: &Command) -> String {
     let program = Path::new(cmd.get_program());
     let mut s = match program.file_stem() {
         Some(stem) if stem == "cargo" => "cargo".to_string(),
