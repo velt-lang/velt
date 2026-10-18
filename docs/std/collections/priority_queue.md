@@ -4,7 +4,7 @@
 comparator. `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` gives a min-heap.
 
 - `new PriorityQueue<T>(cmp)`, `size` / `length`, `isEmpty()`, `clear()`.
-- `push(v)`, `pop(): T | null`: both O(log n). `peek(): T | null` returns a clone.
+- `push(v)`, `pop(): T | undefined`: both O(log n). `peek(): T | undefined` returns a clone (`undefined` when empty).
 - `toSortedArray()`: clones, stable for equal elements. `toArray()`: clones in heap order.
 
 ```ts

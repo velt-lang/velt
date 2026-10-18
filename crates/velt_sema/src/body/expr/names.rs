@@ -225,9 +225,11 @@ impl FnCx<'_, '_> {
         if self.untyped_use(id, false) {
             return self.error_expr(id.span);
         }
+        let checks = self.f.late.checks.len();
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
-            return self.local_expr(l, want, id.span);
+            let e = self.local_expr(l, want, id.span);
+            return self.late_checked_read(e, checks);
         }
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => return self.def_value(d, id, exp, want),

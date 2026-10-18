@@ -157,7 +157,11 @@ impl FnCx<'_, '_> {
             I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
             I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),
-            I::ArrayPop => (vec![(arr, M)], ty.option(t), true),
+            I::ArrayPop => (
+                vec![(arr, M)],
+                ty.option_of(t, crate::hir::Nothing::Undefined),
+                true,
+            ),
             I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),

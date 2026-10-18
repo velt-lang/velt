@@ -10,9 +10,11 @@
 //! expression) constant with a rest parameter and typed parameters, `const f = (...xs: T[]) =>
 //! body;`, the function `function f(...xs: T[]) { return body; }`: a function value cannot take
 //! rest arguments yet (#943), a function can. Local ones stay closures (a nested function
-//! cannot capture locals), which `body::expr::closure` reports.
+//! cannot capture locals), which `body::expr::closure` reports. An arrow constant naming
+//! itself becomes a function too, at module level and in bodies ([`recursive`]).
 
 mod local;
+mod recursive;
 
 use std::collections::HashSet;
 
@@ -92,7 +94,8 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     };
     let f = generator_function(v)
         .or_else(|| arrow_function(v))
-        .or_else(|| lifted_arrow(v, true))?;
+        .or_else(|| lifted_arrow(v, true))
+        .or_else(|| recursive::recursive_arrow(v))?;
     Some(ast::Item {
         kind: ast::ItemKind::Function(f),
         exported: item.exported,

@@ -1,0 +1,14 @@
+// Escapes TypeScript rejects in its strict module code are errors, on the same lines as in tsc
+// (#1265): legacy octal escapes (TS1487), `\8` and `\9` (TS1488), and a `\x` or `\u` escape
+// without its hex digits (TS1125), in strings and templates alike.
+function main() {
+  const a = "\1";
+  const b = "\101";
+  const c = "\08";
+  const d = "\9";
+  const e = `x\12`;
+  const f = "\x4";
+  const g = `\u12`;
+  const h = "\u{110000}";
+  console.log(a, b, c, d, e, f, g, h, "\0");
+}

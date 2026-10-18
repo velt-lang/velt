@@ -1,0 +1,70 @@
+// check: no leaks
+// Standard library results that are `undefined` in JavaScript (#930 phase 3): `Map.get` of a
+// missing key (also at a value type holding `null`), `find` / `findLast`, `pop` / `shift` of an
+// empty array, `at` out of range, a missing `Record` key, a finished iterator's `value`,
+// `WeakMap.get`, `Symbol.keyFor`, `description` and an unset environment variable. Node prints
+// the same (the file is valid TypeScript).
+
+class Box {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function* one(): Generator<number> {
+  yield 1;
+}
+
+function lookup(m: Map<string, number>, k: string): number | undefined {
+  return m.get(k);
+}
+
+function main() {
+  const m = new Map<string, number | null>();
+  m.set("a", null);
+  m.set("b", 2);
+  const z = m.get("z");
+  const a = m.get("a");
+  console.log(a, m.get("b"), z, typeof z, z === undefined, a === null, a === undefined);
+  console.log(z == null, a == null, m.get("z") ?? "none", m.has("a"));
+
+  const counts = new Map<string, number>([["x", 1]]);
+  console.log(lookup(counts, "x"), lookup(counts, "y"), (counts.get("y") ?? 0) + 1);
+  const boxes = new Map<string, Box>([["b", new Box(3)]]);
+  const hit = boxes.get("b");
+  const miss = boxes.get("c");
+  console.log(hit !== undefined ? hit.n : -1, miss === undefined, miss?.n);
+
+  const xs = [1, 2, 3];
+  const none: number[] = [];
+  console.log(xs.find((x) => x > 5), xs.findLast((x) => x > 1), xs.at(9), xs.at(-1));
+  console.log(none.pop(), none.shift(), typeof none.pop(), none.at(0) === undefined);
+  const found = xs.find((x) => x == 2);
+  if (found !== undefined) {
+    console.log(found * 10);
+  }
+  const words = ["a", "b"];
+  console.log(words.find((w) => w == "c"), words.pop(), words.shift(), words.shift());
+
+  const r: Record<string, number> = { a: 1 };
+  const nr: Record<string, number | null> = { n: null };
+  console.log(r["z"], r.a, typeof r["z"], nr["n"], nr["z"], nr["z"] === undefined);
+
+  const it = one();
+  it.next();
+  const done = it.next();
+  console.log(done.value, done.done, typeof done.value);
+
+  const wm = new WeakMap<Box, number>();
+  const key = new Box(1);
+  wm.set(key, 5);
+  console.log(wm.get(key), wm.get(new Box(2)));
+
+  const sym = Symbol.for("y");
+  console.log("abc".at(5), Symbol().description, Symbol.keyFor(Symbol("x")), Symbol.keyFor(sym));
+  const unset = process.env.VELT_TEST_SURELY_UNSET_VARIABLE;
+  console.log(unset, typeof unset);
+  console.log(JSON.stringify({ a: m.get("z"), b: xs.find((x) => x > 9), c: m.get("a"), d: 1 }));
+  console.log([m.get("z"), xs.at(7)]);
+}

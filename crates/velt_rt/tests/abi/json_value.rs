@@ -173,50 +173,47 @@ fn large_objects_use_the_index() {
 #[test]
 fn syntax_errors() {
     let cases = [
-        (
-            "[1,]",
-            "invalid JSON at $[1]: unexpected character ']' (byte 3)",
-        ),
-        ("", "invalid JSON at $: unexpected end of input (byte 0)"),
+        ("[1,]", "Unexpected token ']', \"[1,]\" is not valid JSON"),
+        ("", "Unexpected end of JSON input"),
         (
             "{} x",
-            "invalid JSON at $: unexpected trailing characters (byte 3)",
+            "Unexpected non-whitespace character after JSON at position 3 (line 1 column 4)",
         ),
-        (r#"{"a" 1}"#, "invalid JSON at $.a: expected ':' (byte 5)"),
+        (
+            r#"{"a" 1}"#,
+            "Expected ':' after property name in JSON at position 5 (line 1 column 6)",
+        ),
         (
             "[1 2]",
-            "invalid JSON at $[1]: expected ',' or ']' (byte 3)",
+            "Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)",
         ),
         (
             "{\"a\":1,}",
-            "invalid JSON at $: expected string key (byte 7)",
-        ),
-        ("[\"\\x\"]", "invalid JSON at $[0]: invalid escape (byte 3)"),
-        ("[01]", "invalid JSON at $[1]: expected ',' or ']' (byte 2)"),
-        ("[1.]", "invalid JSON at $[0]: invalid number (byte 3)"),
-        (
-            "[.5]",
-            "invalid JSON at $[0]: unexpected character '.' (byte 1)",
+            "Expected double-quoted property name in JSON at position 7 (line 1 column 8)",
         ),
         (
-            "[+1]",
-            "invalid JSON at $[0]: unexpected character '+' (byte 1)",
+            "[\"\\x\"]",
+            "Bad escaped character in JSON at position 3 (line 1 column 4)",
         ),
         (
-            "[nul]",
-            "invalid JSON at $[0]: unexpected character ']' (byte 4)",
+            "[01]",
+            "Unexpected number in JSON at position 2 (line 1 column 3)",
         ),
         (
-            "[NaN]",
-            "invalid JSON at $[0]: unexpected character 'N' (byte 1)",
+            "[1.]",
+            "Unterminated fractional number in JSON at position 3 (line 1 column 4)",
         ),
+        ("[.5]", "Unexpected token '.', \"[.5]\" is not valid JSON"),
+        ("[+1]", "Unexpected token '+', \"[+1]\" is not valid JSON"),
+        ("[nul]", "Unexpected token ']', \"[nul]\" is not valid JSON"),
+        ("[NaN]", "Unexpected token 'N', \"[NaN]\" is not valid JSON"),
         (
             "\"abc",
-            "invalid JSON at $: unexpected end of input (byte 4)",
+            "Unterminated string in JSON at position 4 (line 1 column 5)",
         ),
         (
             "[\"\t\"]",
-            "invalid JSON at $[0]: control character in string (byte 2)",
+            "Bad control character in string literal in JSON at position 2 (line 1 column 3)",
         ),
     ];
     for (doc, want) in cases {
@@ -275,7 +272,7 @@ fn depth_limit() {
     assert!(parse_with(&("[".repeat(500) + &"]".repeat(500)), 0).is_ok());
     assert_eq!(
         parse_with("[1,]", 5).unwrap_err(),
-        "invalid JSON at $[1]: unexpected character ']' (byte 3)"
+        "Unexpected token ']', \"[1,]\" is not valid JSON"
     );
 }
 
@@ -323,7 +320,7 @@ fn reader_reads_values_as_trees() {
         velt_rt_json_error(r, &borrow("value"), &borrow("$.c"), msg.as_mut_ptr());
         assert_eq!(
             owned_text(msg.assume_init()),
-            "invalid JSON at $.c: unexpected character '}' (byte 40)"
+            "Unexpected token '}', ...\"s\",\"c\":[1,}\" is not valid JSON"
         );
         velt_rt_json_reader_free(r);
     }

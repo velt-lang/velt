@@ -1,0 +1,11 @@
+// `<` between an object held in an `any` and a number: JavaScript converts the object with
+// `ToPrimitive` (`valueOf` / `toString`), which is not supported through `any` yet (#924), so
+// the program stops with a `TypeError` rather than answering `false`.
+function less(a: any, b: any): boolean {
+  return a < b;
+}
+
+function main(): void {
+  console.log(less(1, 2));
+  console.log(less({ v: 1 }, 2));
+}

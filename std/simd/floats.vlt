@@ -15,8 +15,11 @@ export type f64x2 = f64x2;
 
 declare function velt_simd_f32x4_fits(xs: f32[], at: u64): bool;
 declare function velt_simd_f32x4_splat(x: f32): f32x4;
+declare function velt_simd_f32x4_index(): f32x4;
 declare function velt_simd_f32x4_load(from: f32[], at: u64): f32x4;
 declare function velt_simd_f32x4_store(v: f32x4, to: f32[], at: u64);
+declare function velt_simd_f32x4_load_partial(from: f32[], at: u64, count: u64): f32x4;
+declare function velt_simd_f32x4_store_partial(v: f32x4, to: f32[], at: u64, count: u64);
 declare function velt_simd_f32x4_lane(v: f32x4, index: u64): f32;
 declare function velt_simd_f32x4_with_lane(v: f32x4, index: u64, x: f32): f32x4;
 declare function velt_simd_f32x4_select(m: mask32x4, a: f32x4, b: f32x4): f32x4;
@@ -69,6 +72,26 @@ extend f32x4 {
     return velt_simd_f32x4_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): f32x4 {
+    return velt_simd_f32x4_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 4, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 4 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
+   */
+  static loadPartial(from: f32[], at: usize = 0): f32x4 {
+    if (f32x4.fits(from, at)) {
+      return velt_simd_f32x4_load(from, at as u64);
+    }
+    if (at > from.length) {
+      panic("RangeError: f32x4.loadPartial: position is out of range");
+    }
+    return velt_simd_f32x4_load_partial(from, at as u64, (from.length - at) as u64);
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask32x4, a: f32x4, b: f32x4): f32x4 {
     return velt_simd_f32x4_select(m, a, b);
@@ -83,6 +106,22 @@ extend f32x4 {
       panic("RangeError: f32x4.store: range is out of bounds");
     }
     velt_simd_f32x4_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 4 (the
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
+   */
+  storePartial(to: f32[], at: usize = 0) {
+    if (f32x4.fits(to, at)) {
+      velt_simd_f32x4_store(this, to, at as u64);
+      return;
+    }
+    if (at > to.length) {
+      panic("RangeError: f32x4.storePartial: position is out of range");
+    }
+    velt_simd_f32x4_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 3; panics with a RangeError otherwise). */
@@ -222,8 +261,11 @@ extend f32x4 {
 
 declare function velt_simd_f64x2_fits(xs: f64[], at: u64): bool;
 declare function velt_simd_f64x2_splat(x: f64): f64x2;
+declare function velt_simd_f64x2_index(): f64x2;
 declare function velt_simd_f64x2_load(from: f64[], at: u64): f64x2;
 declare function velt_simd_f64x2_store(v: f64x2, to: f64[], at: u64);
+declare function velt_simd_f64x2_load_partial(from: f64[], at: u64, count: u64): f64x2;
+declare function velt_simd_f64x2_store_partial(v: f64x2, to: f64[], at: u64, count: u64);
 declare function velt_simd_f64x2_lane(v: f64x2, index: u64): f64;
 declare function velt_simd_f64x2_with_lane(v: f64x2, index: u64, x: f64): f64x2;
 declare function velt_simd_f64x2_select(m: mask64x2, a: f64x2, b: f64x2): f64x2;
@@ -274,6 +316,26 @@ extend f64x2 {
     return velt_simd_f64x2_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): f64x2 {
+    return velt_simd_f64x2_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 2, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 2 at a time.
+   * `at` may be the length (no element left); past it, panics with a RangeError.
+   */
+  static loadPartial(from: f64[], at: usize = 0): f64x2 {
+    if (f64x2.fits(from, at)) {
+      return velt_simd_f64x2_load(from, at as u64);
+    }
+    if (at > from.length) {
+      panic("RangeError: f64x2.loadPartial: position is out of range");
+    }
+    return velt_simd_f64x2_load_partial(from, at as u64, (from.length - at) as u64);
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask64x2, a: f64x2, b: f64x2): f64x2 {
     return velt_simd_f64x2_select(m, a, b);
@@ -288,6 +350,22 @@ extend f64x2 {
       panic("RangeError: f64x2.store: range is out of bounds");
     }
     velt_simd_f64x2_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 2 (the
+   * array does not grow): what `loadPartial` read, back. `at` may be the length (nothing is
+   * written); past it, panics with a RangeError.
+   */
+  storePartial(to: f64[], at: usize = 0) {
+    if (f64x2.fits(to, at)) {
+      velt_simd_f64x2_store(this, to, at as u64);
+      return;
+    }
+    if (at > to.length) {
+      panic("RangeError: f64x2.storePartial: position is out of range");
+    }
+    velt_simd_f64x2_store_partial(this, to, at as u64, (to.length - at) as u64);
   }
 
   /** Lane `index` (0 to 1; panics with a RangeError otherwise). */

@@ -1,21 +1,13 @@
 //! Literal scanning: numbers (bases, `_` separators, exponents, type suffixes), strings with
 //! escapes, and template-literal pieces.
 
+use super::escapes::hex_val;
 use super::{is_ident_continue, is_ident_start, Lexer, Mode, Payload, Tok, TplPart};
 
 const INT_SUFFIXES: &[&str] = &[
     "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const FLOAT_SUFFIXES: &[&str] = &["f32", "f64"];
-
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
 
 impl<'a> Lexer<'a> {
     pub(super) fn number(&mut self) -> Tok {
@@ -194,94 +186,13 @@ impl<'a> Lexer<'a> {
             }
             if c == b'\\' {
                 out.push_str(&self.text[run..self.pos]);
-                self.escape(&mut out, false);
+                self.escape(&mut out);
                 run = self.pos;
                 continue;
             }
             self.pos += 1;
         }
         Tok::Str(self.push_payload(Payload::Text(out)))
-    }
-
-    /// `self.pos` is at a backslash; appends the unescaped value. Unknown escapes keep the
-    /// backslash (the golden `strings.vlt` prints `\ ` verbatim) and the next character is then
-    /// processed normally.
-    fn escape(&mut self, out: &mut String, template: bool) {
-        let start = self.pos;
-        self.pos += 1;
-        let c = self.at(0);
-        let simple = match c {
-            b'n' => Some('\n'),
-            b'r' => Some('\r'),
-            b't' => Some('\t'),
-            b'\\' => Some('\\'),
-            b'"' => Some('"'),
-            b'\'' => Some('\''),
-            b'0' => Some('\0'),
-            b'`' | b'$' if template => Some(c as char),
-            _ => None,
-        };
-        if let Some(ch) = simple {
-            out.push(ch);
-            self.pos += 1;
-            return;
-        }
-        match c {
-            b'x' => self.hex_escape(out, start),
-            b'u' => self.unicode_escape(out, start),
-            _ => out.push('\\'),
-        }
-    }
-
-    /// `\xHH` (after the backslash).
-    fn hex_escape(&mut self, out: &mut String, start: usize) {
-        match (hex_val(self.at(1)), hex_val(self.at(2))) {
-            (Some(h), Some(l)) => {
-                out.push(char::from(h * 16 + l));
-                self.pos += 3;
-            }
-            _ => {
-                self.pos += 1;
-                self.error(
-                    "invalid escape: `\\x` must be followed by two hex digits",
-                    start,
-                    self.pos,
-                );
-            }
-        }
-    }
-
-    /// `\u{H..}` or `\uHHHH` (after the backslash).
-    fn unicode_escape(&mut self, out: &mut String, start: usize) {
-        self.pos += 1;
-        let mut value: u32 = 0;
-        let mut ok = true;
-        if self.at(0) == b'{' {
-            self.pos += 1;
-            let mut n = 0;
-            while let Some(d) = hex_val(self.at(0)) {
-                value = value.saturating_mul(16).saturating_add(d as u32);
-                self.pos += 1;
-                n += 1;
-            }
-            ok = self.at(0) == b'}' && (1..=6).contains(&n);
-            if self.at(0) == b'}' {
-                self.pos += 1;
-            }
-        } else {
-            for _ in 0..4 {
-                let Some(d) = hex_val(self.at(0)) else {
-                    ok = false;
-                    break;
-                };
-                value = value * 16 + d as u32;
-                self.pos += 1;
-            }
-        }
-        match char::from_u32(value) {
-            Some(ch) if ok => out.push(ch),
-            _ => self.error("invalid unicode escape", start, self.pos),
-        }
     }
 
     /// Scans template text after `` ` `` (`first`) or after the `}` closing a substitution.
@@ -313,7 +224,7 @@ impl<'a> Lexer<'a> {
                 }
                 b'\\' => {
                     out.push_str(&self.text[run..self.pos]);
-                    self.escape(&mut out, true);
+                    self.escape(&mut out);
                     run = self.pos;
                 }
                 b'\r' => {

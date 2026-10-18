@@ -31,6 +31,7 @@ mod dynamic_concat;
 mod dynamic_member;
 mod dynamic_narrow;
 mod dynamic_optional;
+mod dynamic_relational;
 mod dynamic_write;
 mod error_slots;
 mod error_view;

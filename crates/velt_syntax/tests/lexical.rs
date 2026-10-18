@@ -48,8 +48,62 @@ fn string_escapes() {
     let e = expr("\"héllo €\"");
     assert_eq!(sx(&e), format!("{:?}", "héllo €"));
     assert!(errors("const s = \"abc;")[0].contains("unterminated string"));
-    assert!(errors(r#"const s = "\xZZ";"#)[0].contains("invalid escape"));
-    assert!(errors(r#"const s = "\u{110000}";"#)[0].contains("invalid unicode escape"));
+    assert!(errors(r#"const s = "\xZZ";"#)[0].contains("Hexadecimal digit expected."));
+    assert!(errors(r#"const s = "\u{110000}";"#)[0].contains("between 0x0 and 0x10FFFF"));
+}
+
+/// Escapes cook as in ECMAScript strict code (#1265): a character that is not an escape stands
+/// for itself, `\b \v \f` are control characters, a backslash before a line break continues
+/// the line, and a surrogate pair written as two `\u` escapes is one character.
+#[test]
+fn string_escapes_ecmascript() {
+    let e = expr(r#""a\d\q\ \é""#);
+    assert_eq!(sx(&e), format!("{:?}", "adq é"));
+    let e = expr(r#""\b\v\f\0|\$\`""#);
+    assert_eq!(sx(&e), format!("{:?}", "\u{8}\u{b}\u{c}\0|$`"));
+    let e = expr("\"a\\\nb\\\r\nc\\\rd\\\u{2028}e\"");
+    assert_eq!(sx(&e), format!("{:?}", "abcde"));
+    let e = expr(r#""\uD83D\uDE00\u0041""#);
+    assert_eq!(sx(&e), format!("{:?}", "\u{1F600}A"));
+    for pair in [
+        r#""\u{D83D}\u{DE00}""#,
+        r#""\uD83D\u{DE00}""#,
+        r#""\u{D83D}\uDE00""#,
+    ] {
+        assert_eq!(sx(&expr(pair)), format!("{:?}", "\u{1F600}"), "{pair}");
+    }
+    assert!(errors(r#"const s = "\u{D83D}x";"#)[0].contains("lone surrogate"));
+    let e = expr(
+        r#"`\d${x}\q\
+z`"#,
+    );
+    let ExprKind::Template { quasis, .. } = &e.kind else {
+        panic!()
+    };
+    assert_eq!(quasis, &vec!["d".to_string(), "qz".to_string()]);
+}
+
+/// Escapes strict code rejects, with tsc's messages.
+#[test]
+fn string_escape_errors() {
+    let octal = |src: &str| errors(src)[0].clone();
+    assert_eq!(
+        octal(r#"const s = "\1";"#),
+        "Octal escape sequences are not allowed. Use the syntax '\\x01'."
+    );
+    assert!(octal(r#"const s = "\101";"#).contains("'\\x41'"));
+    assert!(octal(r#"const s = "\08";"#).contains("'\\x00'"));
+    assert!(octal(r#"const s = `a\377`;"#).contains("'\\xff'"));
+    assert_eq!(errors(r#"const s = "\377\400";"#).len(), 2);
+    assert_eq!(
+        octal(r#"const s = "\8";"#),
+        "Escape sequence '\\8' is not allowed."
+    );
+    assert!(octal(r#"const s = "\u12";"#).contains("Hexadecimal digit expected."));
+    assert!(octal(r#"const s = `\u{}`;"#).contains("Hexadecimal digit expected."));
+    assert!(octal(r#"const s = "\u{12";"#).contains("Unterminated Unicode escape sequence."));
+    assert!(octal(r#"const s = "\uD800";"#).contains("lone surrogate"));
+    assert!(errors(r#"const s = "\0";"#).is_empty());
 }
 
 #[test]

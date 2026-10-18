@@ -277,6 +277,9 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
+            return self.for_of_any(it, p, out);
+        }
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }

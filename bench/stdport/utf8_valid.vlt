@@ -1,0 +1,53 @@
+// UTF-8 validation (`utf8Valid`): 1 MiB of ASCII 300 times, of text with one accented letter
+// in eight 100 times, and of three-byte characters 100 times, then a 40-byte ASCII value 10M
+// times. The Rust port is `std::str::from_utf8`, as the runtime used.
+import { utf8Valid } from "velt:encoding";
+
+function fill(kind: usize): u8[] {
+  const d = Buffer.alloc(1048576 + 2);
+  let i: usize = 0;
+  let k: usize = 0;
+  while (i < 1048576) {
+    k++;
+    if (kind == 2) {
+      d[i] = 0xe4;
+      d[i + 1] = (0xb8 + k % 4) as u8;
+      d[i + 2] = (0x80 + k % 64) as u8;
+      i += 3;
+    } else if (kind == 1 && k % 8 == 0) {
+      d[i] = 0xc3;
+      d[i + 1] = (0xa0 + k % 30) as u8;
+      i += 2;
+    } else {
+      d[i] = (97 + k % 26) as u8;
+      i++;
+    }
+  }
+  return d.slice(0, i as i64);
+}
+
+function main() {
+  let ok: i64 = 0;
+  const ascii = fill(0);
+  // Every round changes a byte first, so no call repeats the one before.
+  for (let round: usize = 0; round < 300; round++) {
+    ascii[round * 3001] = (65 + round % 26) as u8;
+    ok += utf8Valid(ascii) ? 1 : 0;
+  }
+  const accents = fill(1);
+  const cjk = fill(2);
+  for (let round: usize = 0; round < 100; round++) {
+    accents[(accents.length as usize) - 1 - round] = (65 + round % 26) as u8;
+    ok += utf8Valid(accents) ? 1 : 0;
+    cjk[round * 3 + 2] = (0x80 + round % 64) as u8;
+    ok += utf8Valid(cjk) ? 1 : 0;
+  }
+  cjk[cjk.length - 1] = 0x20;
+  ok += utf8Valid(cjk) ? 100 : 0;
+  const small = Buffer.alloc(40);
+  for (let round: usize = 0; round < 10000000; round++) {
+    small[round % 40] = (32 + round % 90) as u8;
+    ok += utf8Valid(small) ? 1 : 0;
+  }
+  console.log(ok, ascii.length, accents.length, cjk.length);
+}

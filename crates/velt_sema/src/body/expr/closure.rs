@@ -345,6 +345,9 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        // Reads outside the body's statements (an expression body) check at its start.
+        let late = self.late_check_stmts(frame.late.checks.clone(), span);
+        block.stmts.splice(0..0, late);
         let peers = self.group_peer_lets(&frame, span);
         block.stmts.splice(0..0, peers);
         if is_async {
@@ -513,6 +516,11 @@ impl FnCx<'_, '_> {
         for c in &frame.captures {
             let ty = frame.locals[c.inner.0 as usize].ty;
             let copy = self.cx.is_copy(ty);
+            // A `const` captured while its initializer runs, and its flag: the cell itself,
+            // which closures created inside this one share too (`late_consts`).
+            let late = frame.late.caps.contains_key(&c.inner)
+                || frame.late.caps.values().any(|r| *r == c.inner);
+            let escaping = escaping || late && !c.mutated;
             let mode = match (escaping, c.mutated, copy) {
                 (false, true, _) => PassMode::BorrowMut,
                 (false, false, true) => PassMode::Copy,

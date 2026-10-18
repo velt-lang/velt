@@ -1,0 +1,16 @@
+// What a `const` used by closures in its own initializer still rejects (#750, #1292): an
+// object literal whose type depends on the constant itself needs its type written, as
+// TypeScript requires (TS7022, TS7023), and a closure that may leave its task cannot share the
+// constant (one error, which never names the compiler's hidden flag).
+interface A {
+  n: number;
+  started: Promise<number>;
+}
+
+async function run(): Promise<void> {
+  const o = { n: 1, get() { return o.n; } };
+  const p = { n: 1, inc: () => p.n + 1 };
+  const a: A = { n: 3, started: (async () => { await Promise.resolve(); return a.n; })() };
+  console.log(o.get(), p.inc(), await a.started);
+}
+spawn(run());

@@ -1,0 +1,25 @@
+// check: no leaks
+// An arrow constant that names itself is a function (#750): at module level, in a body, using
+// the enclosing function's variables, and typed by a function type annotation. Nothing refers
+// to itself, so nothing leaks.
+const fact = (n: number): number => (n <= 1 ? 1 : n * fact(n - 1));
+
+export const countDown = (n: number): string => (n <= 0 ? "go" : `${n} ` + countDown(n - 1));
+
+function run(): void {
+  const fib = (n: number): number => (n < 2 ? n : fib(n - 1) + fib(n - 2));
+  const step = 3;
+  const seen: number[] = [];
+  const down = (n: number): string => {
+    seen.push(n);
+    return n <= 0 ? "done" : `${n}-` + down(n - step);
+  };
+  const pow: (b: number, e: number) => number = (b, e) => (e === 0 ? 1 : b * pow(b, e - 1));
+  const walk = (xs: string[], i: number): string => (i >= xs.length ? "" : xs[i] + walk(xs, i + 1));
+  console.log(fact(5), fib(10), pow(2, 10));
+  console.log(down(10), seen.length);
+  console.log(countDown(3), walk(["a", "b", "c"], 0));
+  const fs = [fact, fib];
+  console.log(fs.map((f) => f(6)));
+}
+run();

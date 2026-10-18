@@ -1,0 +1,29 @@
+// check: no leaks
+// A closure in a `const`'s initializer uses the constant without the constant's value holding
+// the closure (#750): nothing refers to itself, so everything is freed.
+class Handle {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class Registry {
+  callbacks: (() => string)[] = [];
+  next = 1;
+  add(cb: () => string): Handle {
+    this.callbacks.push(cb);
+    return new Handle(this.next++);
+  }
+  run(): string[] {
+    return this.callbacks.map((cb) => cb());
+  }
+}
+
+function run(): void {
+  const reg = new Registry();
+  const first: Handle = reg.add(() => `first is ${first.id}`);
+  const second: Handle = reg.add(() => `second is ${second.id}, after ${first.id}`);
+  console.log(reg.run());
+}
+run();
