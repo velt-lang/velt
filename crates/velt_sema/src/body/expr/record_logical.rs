@@ -89,6 +89,11 @@ impl FnCx<'_, '_> {
         let cond = self.decides(op, old_ref, span);
         let unit = self.cx.ty.unit;
         let new_val = self.expr_coerce(value, v, Want::Move);
+        if new_val.ty != v && !self.cx.ty.is_bottom(new_val.ty) {
+            // Reported by the conversion: storing it would report it again.
+            self.pop_scope();
+            return self.error_expr(span);
+        }
         if !as_value {
             let set = self.record_set_checked(recv, key, new_val, span);
             let then = self.mk(
