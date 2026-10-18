@@ -14,12 +14,8 @@ function main() {
   counts[k] **= 2;
   const names: Record<string, string> = {};
   names["x"] += "!";
-  const flags: Record<string, bool> = {};
-  flags["on"] &&= true;
   for (const key of counts) {
     console.log(key);
   }
   console.log(Object.values({}));
-  counts["a"] ||= 1;
-  names["x"] &&= "y";
 }

@@ -1,0 +1,13 @@
+background-color background-color
+{ a: 5, b: 2, c: 7 } 2
+{ a: 8, b: 2, c: 7 } 3 false
+{ on: false, off: true }
+x y y { a: 'x', b: 'y' }
+w { a: 'w', b: 'y' }
+again 3 set again
+obj,key,val,obj,key 4
+1 false n
+{ a: 5, b: 7 } 5
+{ n: 1 }
+deep { k: 'deep' } { k: 'deep' }
+{ a: [ 'x', 'y' ] }
