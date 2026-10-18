@@ -40,6 +40,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.object_builtin_call(callee, type_args, args, exp, span) {
+            return h;
+        }
         if let Some(h) = self.call_apply(callee, type_args, args, exp, span) {
             return h;
         }
@@ -382,7 +385,7 @@ impl FnCx<'_, '_> {
     }
 
     #[allow(clippy::too_many_arguments)] // mirrors `obj.prop<T>(args)` plus the checking context
-    fn member_call(
+    pub(super) fn member_call(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,

@@ -147,6 +147,16 @@ export class Record<K, V> {
     return this.entries.size;
   }
 
+  /** `Object.create(null)`: this record has no prototype (marked in its map). */
+  __markNullProto() {
+    this.entries.__markNullProto();
+  }
+
+  /** Was this record made by `Object.create(null)`? */
+  __isNullProto(): bool {
+    return this.entries.__isNullProto();
+  }
+
   /**
    * `Object.keys(r)`: TypeScript lists an object's keys as strings, so a string enum key is
    * listed as its value.
@@ -228,6 +238,84 @@ export class Object {
   static entries<K, V>(r: Record<K, V>): [K, V][] {
     return r.__entries();
   }
+
+  /**
+   * Returns an object made from `[key, value]` pairs, as a `Record<string, V>`: later pairs
+   * replace earlier ones with the same key. Sema passes any other iterable (a `Map`, a
+   * generator) through `Array.from` first.
+   * @param entries - The `[key, value]` pairs.
+   */
+  static fromEntries<V>(entries: [string, V][]): Record<string, V> {
+    const r: Record<string, V> = {};
+    for (const [k, v] of entries) {
+      r.__set(k, v);
+    }
+    return r;
+  }
+}
+
+/**
+ * A prototype object, as `Object.getPrototypeOf(v)` returns it and `Object.prototype` or
+ * `C.prototype` names it. Velt objects have fixed layouts, so a prototype is compared (`===`
+ * compares the prototypes they name: sema calls `__prototypeSame`), printed and converted to a
+ * string or JSON as Node does, and nothing else. Sema writes each one's texts.
+ */
+export class ObjectPrototype {
+  // Which prototype this is (`"Object"`, `"Map"`, `"class#12"`).
+  private tag: string;
+  // What `console.log` shows.
+  private shown: string;
+  // What `String(p)` gives.
+  private text: string;
+  // Whether `JSON.stringify` writes `[]` (`Array.prototype`) rather than `{}`.
+  private array: bool;
+
+  /**
+   * A prototype (sema calls this for `Object.prototype`, `C.prototype` and
+   * `Object.getPrototypeOf`).
+   * @param tag - Which prototype it is.
+   * @param shown - What `console.log` shows.
+   * @param text - What `String(p)` gives.
+   * @param array - Whether `JSON.stringify` writes `[]` rather than `{}`.
+   */
+  constructor(tag: string, shown: string, text: string, array: bool) {
+    this.tag = tag;
+    this.shown = shown;
+    this.text = text;
+    this.array = array;
+  }
+
+  __sameAs(other: ObjectPrototype): bool {
+    return this.tag == other.tag;
+  }
+
+  __inspect(): string {
+    return this.shown;
+  }
+
+  /** Returns what `String(p)` gives for this prototype in JavaScript (`"[object Object]"`). */
+  toString(): string {
+    return this.text;
+  }
+
+  /** Returns what `JSON.stringify` writes for this prototype: `[]` or `{}`. */
+  toJSON(): string[] | Record<string, string> {
+    if (this.array) {
+      return [];
+    }
+    return {};
+  }
+}
+
+/** `a === b` on prototypes (or `null`, a prototype-less object's). */
+export function __prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
+  if (a == null) {
+    return b == null;
+  }
+  if (b == null) {
+    return false;
+  }
+  return a.__sameAs(b);
 }
 
 /**
@@ -260,6 +348,14 @@ export function __objectPrototypeKey(key: string): bool {
  */
 export function __recordIn<V>(key: string, r: Record<string, V>): bool {
   return r.__has(key) || __objectPrototypeKey(key);
+}
+
+/**
+ * `k in r` in a program that calls `Object.create(null)` (sema calls this instead of
+ * `__recordIn` there): a record made by it inherits nothing from `Object.prototype`.
+ */
+export function __recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || (!r.__isNullProto() && __objectPrototypeKey(key));
 }
 
 /**
