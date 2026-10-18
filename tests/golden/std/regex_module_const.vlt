@@ -13,7 +13,7 @@ function escapeHtml(s: string): string {
   let html = "";
   let lastIndex = 0;
   let escaped: string;
-  for (let i = 0; i < s.length; i++) {
+  for (let i = match.index; i < s.length; i++) {
     switch (s.charCodeAt(i)) {
       case 38: escaped = "&amp;"; break;
       case 60: escaped = "&lt;"; break;
