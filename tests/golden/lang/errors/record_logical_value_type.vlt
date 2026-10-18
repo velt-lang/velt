@@ -1,0 +1,6 @@
+// A value of the wrong type in a logical assignment to a Record key is reported once.
+const u: Record<string, string> = {};
+u.k ??= 5;
+const x = (u.m ||= 5);
+u["j"] &&= true;
+console.log(x);

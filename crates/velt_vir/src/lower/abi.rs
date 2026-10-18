@@ -74,6 +74,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             super_call: false,
             same_mode: false,
             key_mode: false,
+            init_locals: false,
             ctor_self: None,
             init_stack: vec![],
             frame_closures: HashSet::new(),

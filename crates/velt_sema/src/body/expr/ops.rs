@@ -292,6 +292,7 @@ impl FnCx<'_, '_> {
         if self.cx.maybe_dynamic(l.ty) || self.cx.maybe_dynamic(r.ty) {
             return match op {
                 B::Eq | B::NotEq => self.dynamic_eq(l, r, strict, op == B::NotEq, span),
+                B::Add => self.dynamic_concat(l, r, span),
                 _ => self.dynamic_operator(op_str(op), &l, &r, span),
             };
         }
