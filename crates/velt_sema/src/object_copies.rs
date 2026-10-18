@@ -26,6 +26,7 @@ use std::collections::HashSet;
 
 use velt_common::{Diagnostic, Span};
 
+use crate::copy_flow::{CopyFlow, Store};
 use crate::ctx::Ctx;
 use crate::hir::{TyId, TyKind};
 
@@ -67,8 +68,9 @@ pub(crate) enum Seen {
     Spread,
     /// `"k" in x` for a key `x`'s type lacks: `Copies::in_keys[i]`.
     In(u32),
-    /// A value converted to a dynamic type (`ToDyn` of `Program::any_impl`).
-    Dynamic,
+    /// A value converted to a dynamic type (`ToDyn` of `Program::any_impl`), from where
+    /// `Copies::dyn_sources[i]` says.
+    Dynamic(u32),
     /// A key compared by identity: of a weak operation (`weak`), or of a `Map` (only a
     /// dynamic key's objects compare by identity there).
     Key { weak: bool },
@@ -92,6 +94,8 @@ pub(crate) struct Copies {
     /// but whose source type no object literal builds is `Conversion::ProxyOnly` instead (a
     /// proxy keeps its identity through it, a plain value throws a `TypeError`).
     pub proxies: bool,
+    /// Where the value of each `Seen::Dynamic` conversion may come from.
+    pub dyn_sources: Vec<Vec<Store>>,
 }
 
 impl Copies {
@@ -140,23 +144,35 @@ pub(crate) fn check(cx: &mut Ctx) {
         seen,
         in_keys,
         proxies,
+        dyn_sources,
         ..
     } = std::mem::take(&mut cx.object_copies);
+    let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
+    let flow = match seen.iter().any(|s| matches!(s.2, Seen::Dynamic(_))) {
+        true => CopyFlow::new(cx, &spans),
+        false => CopyFlow::none(),
+    };
+    let looks = Dynamic {
+        seen: &seen,
+        sources: &dyn_sources,
+        flow: &flow,
+    };
     let built = match proxies {
         true => built_types(cx),
         false => vec![],
     };
     // Conversions allowed only for proxies: a plain source throws instead of being copied.
     let mut strict = vec![];
-    for c in &copies {
+    for (ci, c) in copies.iter().enumerate() {
         let proxy_only = proxies && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, c, &writes) {
             match proxy_only {
                 true => strict.push((c.span, c.to)),
                 false => report_write(cx, c, w),
             }
-        } else if let Some(&(t, span, how)) =
-            seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys, &seen))
+        } else if let Some(&(t, span, how)) = seen
+            .iter()
+            .find(|s| sees(cx, (c, ci), s.0, s.2, &in_keys, &looks))
         {
             match proxy_only {
                 true => strict.push((c.span, c.to)),
@@ -211,11 +227,11 @@ fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write
 /// Does looking at a `t` (`how`) show that `c` made a copy?
 fn sees(
     cx: &mut Ctx,
-    c: &Copy,
+    (c, ci): (&Copy, usize),
     t: TyId,
     how: Seen,
     in_keys: &[String],
-    seen: &[(TyId, Span, Seen)],
+    looks: &Dynamic,
 ) -> bool {
     match how {
         Seen::In(i) => {
@@ -230,15 +246,15 @@ fn sees(
                 return false;
             }
             let members = compared(cx, t, &mut HashSet::new());
-            if members.iter().any(|&m| cx.dynamic(m).is_some()) && dynamic_holds(cx, c, seen) {
+            if members.iter().any(|&m| cx.dynamic(m).is_some()) && dynamic_holds(cx, c, ci, looks) {
                 return true;
             }
             // A `Map` compares other keys by value.
             how != (Seen::Key { weak: false }) && members.into_iter().any(|m| related(cx, m, c.to))
         }
-        Seen::Dynamic => false,
+        Seen::Dynamic(_) => false,
         Seen::Spread => {
-            related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, seen))
+            related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
         _ => {
             holds(cx, t, c.to, &mut HashSet::new())
@@ -247,15 +263,28 @@ fn sees(
                     t,
                     &mut |cx, x| cx.dynamic(x).is_some(),
                     &mut HashSet::new(),
-                ) && dynamic_holds(cx, c, seen))
+                ) && dynamic_holds(cx, c, ci, looks))
         }
     }
 }
 
-/// Does the program convert a value that can hold a copy `c` made to a dynamic type?
-fn dynamic_holds(cx: &mut Ctx, c: &Copy, seen: &[(TyId, Span, Seen)]) -> bool {
-    seen.iter()
-        .any(|&(t, _, how)| how == Seen::Dynamic && holds(cx, t, c.to, &mut HashSet::new()))
+/// The dynamic conversions of a program and where their values come from.
+struct Dynamic<'a> {
+    seen: &'a [(TyId, Span, Seen)],
+    sources: &'a [Vec<Store>],
+    flow: &'a CopyFlow,
+}
+
+/// Does the program convert a value that may be (or hold) the copy `c` (number `ci`) made to a
+/// dynamic type?
+fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
+    looks.seen.iter().any(|&(t, _, how)| match how {
+        Seen::Dynamic(i) => {
+            looks.flow.carries(ci, &looks.sources[i as usize])
+                && holds(cx, t, c.to, &mut HashSet::new())
+        }
+        _ => false,
+    })
 }
 
 /// Are `a` and `b` one object type, as conversions see it?
@@ -352,10 +381,10 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         Seen::Printed => format!("prints {a} `{shown}`"),
         Seen::Serialized => format!("serializes {a} `{shown}`"),
         Seen::Keys => format!("lists the keys of {a} `{shown}`"),
-        Seen::Identity => format!("compares `{shown}` values with `===`"),
+        Seen::Identity => format!("compares `{shown}` values with `===` or `!==`"),
         Seen::Key { .. } => format!("uses `{shown}` values as keys compared by identity"),
         // Never reported itself (`sees`).
-        Seen::Dynamic => format!("converts {a} `{shown}` to a dynamic type"),
+        Seen::Dynamic(_) => format!("converts {a} `{shown}` to a dynamic type"),
         Seen::Spread => format!("spreads {a} `{shown}`"),
         Seen::In(i) => format!(
             "tests {a} `{shown}` for \"{}\" with `in`",

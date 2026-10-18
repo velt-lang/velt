@@ -31,6 +31,7 @@ use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
 
+mod identity;
 mod union;
 
 use union::union_decode_problem;
@@ -163,13 +164,26 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
     // Looks at values matter only for object copies; most programs make none.
     let looks = !cx.object_copies.copies.is_empty();
-    let any_impl = cx.any.and_then(|a| a.imp);
-    let proxy = cx.prelude_adt("Proxy");
-    let tys = &cx.ty;
+    let copies: Vec<(Span, TyId)> = cx
+        .object_copies
+        .copies
+        .iter()
+        .map(|c| (c.span, c.to))
+        .collect();
+    let mut ids = identity::Looks {
+        any_impl: cx.any.and_then(|a| a.imp),
+        proxy: cx.prelude_adt("Proxy"),
+        tys: &cx.ty,
+        copies: &copies,
+        f: DefId(0),
+        first: cx.object_copies.dyn_sources.len(),
+        sources: vec![],
+    };
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut seen: HashSet<TyId> = HashSet::new();
+        ids.f = DefId(i as u32);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             if seen.insert(e.ty) {
                 u.types.push((e.ty, e.span));
@@ -190,16 +204,13 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
             }
             uses_of(&mut u, e, looks);
             if looks {
-                identity_uses(
-                    &mut u,
-                    e,
-                    any_impl,
-                    |t| matches!(tys.kind(t), TyKind::Adt(d, _) if Some(*d) == proxy),
-                );
+                ids.uses(&mut u.direct, e);
             }
         });
         out.push((DefId(i as u32), u));
     }
+    let sources = std::mem::take(&mut ids.sources);
+    cx.object_copies.dyn_sources.extend(sources);
     out
 }
 
@@ -240,44 +251,6 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
         // its calls would need at those type arguments.
         E::FnRef(d, targs) if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
         E::Closure(c) => u.closures.push(*c),
-        _ => {}
-    }
-}
-
-/// How an expression shows an object's identity apart from `===` ([`crate::object_copies`]):
-/// a value converted to a dynamic type (`any_impl`: `Program::any_impl`), compared through
-/// one, a `Map` key (which compares a dynamic key's objects by identity) and the key of a
-/// weak operation. A `Proxy` object (`is_proxy`) made an `any` shows its target, which is an
-/// `any` already, and never its handler.
-fn identity_uses(u: &mut Uses, e: &Expr, any_impl: Option<u32>, is_proxy: impl Fn(TyId) -> bool) {
-    match &e.kind {
-        E::ToDyn { expr, impl_index } if Some(*impl_index) == any_impl && !is_proxy(expr.ty) => {
-            u.direct.push((expr.ty, e.span, Need::Seen(Seen::Dynamic)));
-        }
-        E::Call {
-            callee: Callee::Intrinsic(i),
-            args,
-        } => {
-            let how = match i {
-                Intrinsic::AnyStrictEq | Intrinsic::AnyLooseEq => Seen::Identity,
-                Intrinsic::WeakMapSet
-                | Intrinsic::WeakMapGet
-                | Intrinsic::WeakMapHas
-                | Intrinsic::WeakMapDelete => Seen::Key { weak: true },
-                Intrinsic::WeakRefNew => Seen::Key { weak: true },
-                // Hashing a key of std's `Map` (and so `Set`).
-                Intrinsic::Hash => Seen::Key { weak: false },
-                _ => return,
-            };
-            let keys = match how {
-                // The map's id comes first.
-                Seen::Key { weak: true } if !matches!(i, Intrinsic::WeakRefNew) => args.get(1..),
-                _ => Some(&args[..]),
-            };
-            for a in keys.into_iter().flatten() {
-                u.direct.push((a.ty, a.span, Need::Seen(how)));
-            }
-        }
         _ => {}
     }
 }

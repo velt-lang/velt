@@ -1,0 +1,8 @@
+object_copies_dynamic_flow.vlt:15:10: error: a value of type `CD` converts to `C` by copying its fields, and this program compares `any` values with `===` or `!==`: two copies of one object are not `===`
+object_copies_dynamic_flow.vlt:7:11: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `C` made from a `CD` value is a new object with the same field values
+= note: build the new object explicitly, `{ c: x.c }` (a new object in TypeScript too), or declare the parameter or variable as `CD`
+object_copies_dynamic_flow.vlt:10:18: error: a value of type `AB` converts to `A` by copying its fields, and this program compares `any` values with `===` or `!==`: two copies of one object are not `===`
+object_copies_dynamic_flow.vlt:7:11: here, or in the function this calls
+= note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+= note: build the new object explicitly, `{ a: s.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`

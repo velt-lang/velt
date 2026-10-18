@@ -939,9 +939,11 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   or copy the original's fields, in its order), or tests a value of the expected type with `in`
   for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`).
   Keys compared by identity count as `===`: a `WeakMap`, `WeakSet` or `WeakRef` of the
-  expected type. So does a value holding the expected type converted to `any`, `unknown` or
-  `object` when the program compares such values (`(a as any) === (ab as any)`, a `Set<any>`
-  or `Map<object, V>` key, a weak collection), or prints, spreads or lists the keys of one. An array
+  expected type. So does converting a value that may be the copy (followed through variables,
+  parameters and results; anywhere once the copy is stored in a field or an array) to `any`,
+  `unknown` or `object` when the program compares two such values that may be objects
+  (`(a as any) === (ab as any)`, not `x !== undefined`), keys a `Set<any>`, `Map<object, V>`
+  or weak collection by them, or prints, spreads or lists the keys of one. An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -1784,7 +1786,7 @@ literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
 converted (a class instance through its base class, an interface value, a function converted
-twice). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
+twice), and one object converted twice is one value (`u1 === u2`, one `Set<unknown>` entry). As in TypeScript, a union with `any` is `any` (`any | null`, `any | undefined`) and one
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;

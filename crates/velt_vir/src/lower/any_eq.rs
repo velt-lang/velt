@@ -5,7 +5,10 @@
 //! function) compares the same way (`same_values` / `eq_values`), and `Set` / `Map` keys
 //! compare by SameValueZero (`NaN` is itself, `-0` is `0`) and hash with descriptor slot
 //! `AnyHash`, which agrees: numbers hash their value as a float, strings their text, objects
-//! their identity.
+//! their identity. Comparing two `any`s that may both hold objects (not a literal or a
+//! primitive made dynamic), and every key comparison, records a fact that counts the object
+//! types converted to dynamic types (`Cx::note_dyn_identity`): an object is then itself in
+//! every `any` it is converted to (#1256), not a copy per conversion.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -32,6 +35,9 @@ impl FnLower<'_, '_> {
     /// `a === b` (`loose`: `a == b`) of two `any`s.
     pub(super) fn any_eq(&mut self, a: &hir::Expr, b: &hir::Expr, loose: bool) -> Operand {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
+        if !self.primitive_operand(a) && !self.primitive_operand(b) {
+            self.cx.note_any_identity();
+        }
         let va = self.expr(a);
         let vb = self.expr(b);
         let (da, xa) = self.any_parts(va, ta);
@@ -40,8 +46,32 @@ impl FnLower<'_, '_> {
         self.any_compare(&da, &xa, &db, &xb, cmp)
     }
 
+    /// Is the `any` operand `e` a literal or a primitive made dynamic (`x === undefined`,
+    /// `k === "a"`), which never compares two objects?
+    fn primitive_operand(&mut self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            hir::ExprKind::Lit(_) => true,
+            hir::ExprKind::ToDyn { expr, .. } => {
+                let t = self.sub(expr.ty);
+                self.primitive_operand(expr) || self.primitive_ty(t)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does a value of `t` hold no object (booleans, numbers, strings, `void`, or-null)?
+    fn primitive_ty(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Unit => true,
+            TyKind::Never | TyKind::Literal(_) => true,
+            TyKind::Option(x, _) => self.primitive_ty(x),
+            _ => false,
+        }
+    }
+
     /// `===` (`key`: SameValueZero) of the `any`s at two places: generic code over `any`.
     pub(super) fn any_same_places(&mut self, a: &Place, b: &Place, key: bool) -> Operand {
+        self.cx.note_any_identity();
         let da = Operand::Copy(proj(a, Proj::Field(0)));
         let xa = Operand::Copy(proj(a, Proj::Field(1)));
         let db = Operand::Copy(proj(b, Proj::Field(0)));
@@ -52,6 +82,7 @@ impl FnLower<'_, '_> {
 
     /// Hash of the `any` at `place`, agreeing with SameValueZero (U64 operand).
     pub(super) fn any_hash(&mut self, place: &Place) -> Operand {
+        self.cx.note_any_identity();
         let data = Operand::Copy(proj(place, Proj::Field(0)));
         let desc = Operand::Copy(proj(place, Proj::Field(1)));
         self.any_slot_call(desc, SLOT_HASH, vec![data], Ty::U64)

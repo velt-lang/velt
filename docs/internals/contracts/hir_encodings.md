@@ -878,7 +878,9 @@ entry is an `ICE:`.
   `Fact::Class(l, Function)`. Once
   any value converts to `object` / `Function`, lowering converts objects to every dynamic type by
   identity (one counted object, as with a write through `any`), so `Set<object>` keys compare by
-  identity whichever dynamic type a value went through.
+  identity whichever dynamic type a value went through. So does a program that compares two `any`s neither of
+  which is a literal or a primitive made dynamic (`AnyStrictEq` / `AnyLooseEq`), compares `any`s
+  in generic code, or keys a `Set` / `Map` by them (#1256).
 - Not yet (each a compile error, phase 1b and 2 of #924): compound assignments and updates of
   members of an `any`, other operators, template literals and `String(x)`, `JSON.stringify` of
   an `any` and `JSON.parse` into one, iteration.

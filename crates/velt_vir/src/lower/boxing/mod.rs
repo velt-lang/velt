@@ -34,6 +34,9 @@ pub(super) struct Boxing {
     /// Interface types whose values are compared by identity: an object type converted to one
     /// is counted, so the interface value points at the object itself (`make_dyn`).
     identity_dyns: HashSet<TyId>,
+    /// The program compares `any` values that may both be objects, or keys collections by
+    /// them (any_eq.rs): every dynamic type holds objects by identity (#1256).
+    any_identity: bool,
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
@@ -142,6 +145,8 @@ pub(super) struct Facts {
     projections: HashSet<(TyId, TyId)>,
     /// Object types compared by identity (`==`, same.rs).
     identity: HashSet<TyId>,
+    /// `any` values compared by identity (`Boxing::any_identity`).
+    any_identity: bool,
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
     identity_borrows: HashSet<TyId>,
@@ -204,6 +209,11 @@ impl Cx<'_> {
         self.facts.dyn_to_any.insert(iface);
     }
 
+    /// Record that `any` values are compared by identity (see [`Boxing::any_identity`]).
+    pub(super) fn note_any_identity(&mut self) {
+        self.facts.any_identity = true;
+    }
+
     /// Record that function values are compared by identity.
     pub(super) fn note_fn_identity(&mut self) {
         self.facts.fn_compared = true;
@@ -232,11 +242,12 @@ impl Cx<'_> {
         // through `any` or `unknown` (`u as object`).
         let identity = self.boxing.identity_dyns.contains(&dyn_ty)
             || (self.is_dynamic(dyn_ty)
-                && self
-                    .boxing
-                    .identity_dyns
-                    .iter()
-                    .any(|d| self.is_narrow_dynamic(*d)));
+                && (self.boxing.any_identity
+                    || self
+                        .boxing
+                        .identity_dyns
+                        .iter()
+                        .any(|d| self.is_narrow_dynamic(*d))));
         if identity && self.copied_object(t) {
             self.facts.identity.insert(t);
             self.facts.shares.insert(t);
@@ -284,6 +295,7 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         next.fn_identity |= self.facts.fn_compared;
+        next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
         next.dyn_to_any
