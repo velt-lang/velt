@@ -1,0 +1,45 @@
+// A value whose type is a type parameter converts to `any` and `unknown` (#1241): assigned to
+// an `any` field or variable, or cast with `as unknown as X`. An instantiation that holds
+// `null`, a union or a literal type is boxed as the value it holds.
+// check: no leaks
+interface Box {
+  dom: any;
+}
+
+function mount<H = any>(make: () => H): void {
+  const b: Box = { dom: null };
+  const n = make();
+  b.dom = n;
+  console.log((n as unknown as { x: number }).x, b.dom.x);
+}
+mount(() => ({ x: 1 }));
+
+function show<T>(v: T): string {
+  const a: any = v;
+  const u: unknown = v;
+  return String(a) + " " + typeof a + " " + typeof u;
+}
+console.log(show(1), show("s"), show(true), show<number | null>(null));
+console.log(show<string | number>(5), show<string | undefined>(undefined), show<"a" | "b">("b"));
+function kind<T>(v: T): string {
+  const a: any = v;
+  return typeof a + " " + (a === null);
+}
+console.log(kind([1, 2]), kind({ k: 1 }), kind<number[] | null>([3]), kind<number[] | null>(null));
+
+class Holder<T> {
+  items: any[] = [];
+  add(v: T): void {
+    this.items.push(v);
+  }
+}
+const h = new Holder<string | null>();
+h.add("x");
+h.add(null);
+console.log(h.items.length, h.items[0], h.items[1]);
+
+function boxed<T>(v: T): any {
+  const a: any = v;
+  return a;
+}
+console.log(boxed<undefined>(undefined), boxed<null>(null), boxed(undefined) === undefined);

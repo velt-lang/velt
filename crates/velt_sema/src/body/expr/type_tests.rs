@@ -30,6 +30,7 @@ impl FnCx<'_, '_> {
     /// `typeof e` as a string value.
     pub(crate) fn typeof_value(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
         let s = self.expr(operand, None, Want::Borrow);
+        let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
         let sty = s.ty;
         if self.cx.ty.is_bottom(sty) {
@@ -84,6 +85,21 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_, span)
     }
 
+    /// A value whose type is a type parameter as an `any` (a share of a variable), so `typeof`
+    /// tells the instantiation's value at run time (#1036); also a `T | undefined` / `T | null`
+    /// (its nothing, or the payload's tag); other values as they are.
+    pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let Some(any) = self
+            .any_ty()
+            .filter(|_| matches!(self.cx.ty.kind(core), TyKind::Param(_)))
+        else {
+            return s;
+        };
+        let s = self.share_if_place(s);
+        self.coerce(s, any)
+    }
+
     /// `typeof e === tag` (`negate`: `!==`).
     pub(crate) fn typeof_test(
         &mut self,
@@ -93,6 +109,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(operand, None, Want::Borrow);
+        let s = self.param_as_any(s);
         if self.cx.dynamic(s.ty).is_some() {
             let str_ = self.cx.ty.str_;
             let t = self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
@@ -129,6 +146,12 @@ impl FnCx<'_, '_> {
         if tag == "undefined" {
             let undef = |n: Nothing| n == Nothing::Undefined;
             let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &undef, span);
+            return self.negated(test.expr, negate, span);
+        }
+        if tag == "bigint" {
+            // No value is a `bigint` yet (#1088): always false, as for the types TypeScript
+            // allows here.
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &|_| false, span);
             return self.negated(test.expr, negate, span);
         }
         if !TYPEOF_TAGS.contains(&tag) {
