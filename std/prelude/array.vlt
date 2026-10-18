@@ -317,6 +317,13 @@ extend<T> Array<T> {
    * @param x - The element to search for.
    */
   includes(x: T): bool {
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `==` itself (`NaN`, or a tuple holding one) compares otherwise.
+    if (x == x) {
+      return false;
+    }
     for (let i: usize = 0; i < this.length; i++) {
       if (__intrinsic_key_eq(this[i], x)) {
         return true;
