@@ -144,9 +144,12 @@ const PRELUDE_ERROR: &str = "std/prelude/error::Error";
 
 impl super::Cx<'_> {
     /// The prelude's `Error` class, if the program has it.
-    pub(super) fn prelude_error(&self) -> Option<hir::DefId> {
-        (0..self.hir.defs.len() as u32)
-            .map(hir::DefId)
-            .find(|&d| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_ERROR))
+    pub(super) fn prelude_error(&mut self) -> Option<hir::DefId> {
+        let hir = self.hir;
+        *self.prelude_error.get_or_insert_with(|| {
+            (0..hir.defs.len() as u32)
+                .map(hir::DefId)
+                .find(|&d| matches!(hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_ERROR))
+        })
     }
 }

@@ -303,6 +303,8 @@ struct Cx<'h> {
     module_desc: Option<StaticId>,
     /// The module state slots some code assigns as a whole, once asked (module_state.rs).
     reassigned_slots: Option<HashSet<hir::DefId>>,
+    /// The prelude's `Error` class, once looked up (js_string.rs).
+    prelude_error: Option<Option<hir::DefId>>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
