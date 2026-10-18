@@ -424,10 +424,11 @@ one that stops early, or a sum of floats, whose order it must keep.
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it
   captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
-  made by one loop differ). `indexOf`, `includes` and `Map` keys agree with `==`. Comparing
-  costs only the programs that do it: there, an arrow without captures gets an empty
-  environment of its own when it is created, and a struct converted to an interface value
-  that is compared is counted, so the interface value refers to it rather than to a copy.
+  made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with
+  `==` (`includes` and keys also find `NaN`, as in JS). Comparing costs only the programs
+  that do it: there, an arrow without captures gets an empty environment of its own when it
+  is created, and a struct converted to an interface value that is compared is counted, so
+  the interface value refers to it rather than to a copy.
 
   ```ts
   function main() {
@@ -1536,12 +1537,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `get(k): V | undefined` (the stored value itself, as in JS; `undefined` for a missing key), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
-  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances, interface and
-  function values (by identity, as `==` compares them),
-  and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
-  two equal object literals are two different keys). Float keys compare like JS's
-  (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
-  after insertion makes its entry unreachable
+  `getOrInsert(k, () => v)`. Keys compare as in JS: numbers, `bool` and `string` by value,
+  objects (class instances, object types, arrays, maps, records, interface and function
+  values) by identity, as `===` compares them, so two equal object literals are two keys and a
+  key changed after insertion keeps its entry; tuples compare part by part. Float keys compare
+  like JS's (SameValueZero: `0` and `-0` are one key, `NaN` finds itself)
   ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
   include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
   `null` is present like any other (`has` is true, it is counted, iterated and printed), and

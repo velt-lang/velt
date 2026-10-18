@@ -1,0 +1,21 @@
+// check: no leaks
+// The `Set` methods that build a new set hold the elements themselves, not copies, so objects
+// stay findable by identity in the result, as in Node (#1257).
+type A = { a: number };
+const o1: A = { a: 5 };
+const o2: A = { a: 6 };
+const s1 = new Set<A>([o1]);
+const s2 = new Set<A>([o2, o1]);
+const u = s1.union(s2);
+console.log(u.size, u.has(o1), u.has(o2), u.has({ a: 5 }));
+const i = s1.intersection(s2);
+console.log(i.size, i.has(o1));
+const d = s2.difference(s1);
+console.log(d.size, d.has(o2), d.has(o1));
+const x = s2.symmetricDifference(new Set<A>([o1, { a: 7 }]));
+console.log(x.size, x.has(o2), x.has(o1));
+console.log(s1.isSubsetOf(s2), s2.isSupersetOf(s1), s1.isDisjointFrom(new Set<A>([{ a: 5 }])));
+o1.a = 50;
+for (const e of u) {
+  console.log(e.a, e === o1 || e === o2);
+}

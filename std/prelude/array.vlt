@@ -315,12 +315,24 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
-   * `includes`, `NaN` is never found.
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
    * @param x - The element to search for.
    */
   includes(x: T): bool {
-    return this.indexOf(x) >= 0;
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `==` itself can compare otherwise: the number `NaN`.
+    if (x == x) {
+      return false;
+    }
+    for (let i: usize = 0; i < this.length; i++) {
+      if (__intrinsic_includes_eq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

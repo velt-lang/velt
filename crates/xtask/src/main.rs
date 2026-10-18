@@ -4,6 +4,8 @@
 //! cargo xtask check                  the checks the changes since origin/main need
 //! cargo xtask check --full           the whole gate (what the merge queue runs)
 //! cargo xtask affected               print what `check` would run, and why
+//! cargo xtask precheck               fmt, file sizes and clippy on the changed files (fast)
+//! cargo xtask install-hooks          a pre-push hook that runs `precheck`
 //! cargo xtask pr-lint                check a pull request's text and commits
 //! ```
 //!
@@ -13,10 +15,13 @@ mod changes;
 mod check;
 mod comments;
 mod doctests;
+mod file_size;
 mod graph;
+mod hooks;
 mod os;
 mod plan;
 mod pr_lint;
+mod precheck;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -32,6 +37,12 @@ Commands:
   check       Run the quality gate: by default only the checks the changed files need
               (changed since the merge base with --base, plus uncommitted and untracked files)
   affected    Print the plan `check` would run, and why
+  precheck    The fast checks most failed pull requests miss, on the changed files only:
+              cargo fmt, velt fmt (std/, examples/), the file-size rule, and clippy of the
+              changed crates and their dependents
+  install-hooks
+              Install a git pre-push hook that runs `precheck` (shared by every worktree;
+              `git push --no-verify` skips it)
   pr-lint     Check a pull request's title, description and commits for tool footers and
               trailers, session links, machine paths, review wording and the commit author
               (`cargo xtask pr-lint --help` for its options)
@@ -47,6 +58,8 @@ Options:
   --no-smoke           Skip the smoke test (it runs only with --full, on Linux and macOS)
   --dry-run            Print the commands without running them
   --github             (affected) Write the plan to $GITHUB_OUTPUT and $GITHUB_STEP_SUMMARY
+  --force              (install-hooks) Replace a pre-push hook xtask didn't install (kept as
+                       pre-push.orig)
 ";
 
 #[derive(Default)]
@@ -61,6 +74,7 @@ struct Args {
     no_smoke: bool,
     dry_run: bool,
     github: bool,
+    force: bool,
 }
 
 fn parse(argv: Vec<String>) -> Result<Args, String> {
@@ -78,6 +92,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--no-smoke" => args.no_smoke = true,
             "--dry-run" => args.dry_run = true,
             "--github" => args.github = true,
+            "--force" => args.force = true,
             "--paths" => {
                 let mut paths = vec![];
                 while let Some(p) = it.next_if(|p| !p.starts_with("--")) {
@@ -136,6 +151,16 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "precheck" => {
+            let (paths, reason) = precheck_paths(&root, &args)?;
+            let graph = Graph::load(&root)?;
+            let sel = precheck::select(&graph, &paths, |p| root.join(p).exists());
+            precheck::run(&root, &sel, &reason)
+        }
+        "install-hooks" => {
+            println!("{}", hooks::describe(&hooks::install(&root, args.force)?));
+            Ok(())
+        }
         "help" | "--help" | "-h" => {
             print!("{HELP}");
             Ok(())
@@ -153,19 +178,46 @@ fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
         return Ok(Plan::for_paths(&graph, paths));
     }
     let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
-        return Ok(Plan::everything(
+        return Ok(Plan::unknown_changes(
             "no base revision (origin/main or main) to compare with",
         ));
     };
     match changes::changes(root, &base) {
         Ok(c) => Ok(Plan::for_changes(&graph, &c.paths, &c.comment_only)),
-        Err(e) => Ok(Plan::everything(e)),
+        Err(e) => Ok(Plan::unknown_changes(e)),
     }
 }
 
+/// The files `precheck` looks at, and why: `--paths`, else the changes since the merge base
+/// with the base revision, else (no base to compare with) every file in git.
+fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), String> {
+    if let Some(paths) = &args.paths {
+        return Ok((paths.clone(), format!("{} given path(s)", paths.len())));
+    }
+    let base = args.base.clone().or_else(|| changes::default_base(root));
+    let why = match &base {
+        Some(base) => match changes::changes(root, base) {
+            Ok(c) => {
+                let n = c.paths.len();
+                return Ok((c.paths, format!("{n} file(s) changed since {base}")));
+            }
+            Err(e) => e,
+        },
+        None => "no base revision (origin/main or main) to compare with".into(),
+    };
+    let all = changes::git(root, &["ls-files"])?
+        .lines()
+        .map(|l| l.trim().replace('\\', "/"))
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok((all, format!("every file ({why})")))
+}
+
 /// The `$GITHUB_OUTPUT` lines for `plan`: which parts have anything to do, the OSes the queue
-/// checks (`os`), and the OSes besides Linux a pull request lints on (`other_os`, empty unless
-/// the change touches OS-specific code: PR CI otherwise runs on Linux only).
+/// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, empty unless
+/// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
+/// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
+/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`).
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     let (os, other_os) = if plan.other_os.is_some() {
@@ -176,13 +228,22 @@ fn github_output_text(plan: &Plan) -> String {
     } else {
         (r#"["ubuntu-latest"]"#, "[]")
     };
-    format!(
+    let mut text = format!(
         "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build() || plan.difftest || plan.vscode),
         flag(plan.goldens != plan::Goldens::None),
-    )
+    );
+    let sweep = plan.sweep_env();
+    for (output, var) in [
+        ("robustness", "VELT_ROBUSTNESS"),
+        ("robustness_files", "VELT_ROBUSTNESS_FILES"),
+    ] {
+        let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
+        text.push_str(&format!("{output}={value}\n"));
+    }
+    text
 }
 
 /// For CI: which parts have anything to do, and the plan as the job summary.
@@ -297,6 +358,34 @@ name = \"a\"
         let text = github_output_text(&linux_only);
         assert!(
             text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_queue_learns_how_to_cut_the_goldens() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(
+            text.ends_with("\nrobustness=\nrobustness_files=\n"),
+            "{text}"
+        );
+        plan.sweep = plan::Sweep::Sampled(
+            ["tests/golden/a/x.vlt", "tests/golden/b.vlt"]
+                .map(String::from)
+                .into(),
+        );
+        let text = github_output_text(&plan);
+        assert!(
+            text.ends_with(
+                "\nrobustness=\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n"
+            ),
+            "{text}"
+        );
+        plan.sweep = plan::Sweep::Full;
+        let text = github_output_text(&plan);
+        assert!(
+            text.ends_with("\nrobustness=full\nrobustness_files=\n"),
             "{text}"
         );
     }
