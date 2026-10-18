@@ -473,11 +473,15 @@ impl FnCx<'_, '_> {
                 return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        let Some((l, nullable, u)) = self.local_with_members(operand) else {
-            return (vec![], vec![]);
+        let (l, nullable, u, nothing) = match self.local_with_members(operand) {
+            Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
+            // A field path of a local (`typeof node.text === "string"`).
+            None => match self.field_with_members(operand) {
+                Some(found) => found,
+                None => return (vec![], vec![]),
+            },
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let nothing = self.cx.ty.nothing_of(self.local_ty(l));
         // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
         // its `undefined`; the false branch rules that nothing out.
         if nothing == Some(Nothing::Both) {
