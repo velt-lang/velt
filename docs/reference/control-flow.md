@@ -344,7 +344,10 @@ block scope.
   As in TypeScript, that is a `const` (local or module-level) initialized with a literal and
   without a type annotation (`const A = "a"`), or a local whose type is a literal type
   (`const y: "y" = "y"`). A literal that is not a possible value (`case "square":` when `s.kind`
-  is `"circle" | "rect"`) is an error, as in TypeScript. A value may appear in several cases:
+  is `"circle" | "rect"`) is an error, as in TypeScript. A `typeof` case that no member of a union
+  has is an error (TypeScript accepts it); on any other type, also a union local that flow
+  narrowing reduced to one member (`let u: number | string = 5`), it is accepted, as in
+  TypeScript, and never matches. A value may appear in several cases:
   the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`

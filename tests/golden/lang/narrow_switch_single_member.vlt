@@ -1,0 +1,56 @@
+// check: no leaks
+// A `switch` on a local that flow narrowing reduced to one member of its union (by its
+// initializer or an assignment), as in TypeScript: `switch (typeof u)` keeps `u` that member in
+// a `default` every value reaches, and a `typeof` case on another type is accepted and never
+// matches (only a union none of whose members passes is an error, as for `typeof u === "..."`).
+type Sh = { kind: "pt"; x: number } | { kind: "nil" };
+
+function shapes(): void {
+  const c: Sh = { kind: "pt", x: 3 };
+  switch (c.kind) {
+    case "pt":
+      console.log(`pt ${c.x}`);
+      break;
+  }
+}
+
+function nested(): void {
+  let u: number | string = "abc";
+  switch (typeof u) {
+    default:
+      switch (typeof u) {
+        case "string":
+          console.log(`string of ${u.length}`);
+          break;
+        case "number":
+          console.log("number");
+          break;
+      }
+  }
+}
+
+function otherType(): void {
+  let w: number | string = 5;
+  switch (typeof w) {
+    case "string":
+      console.log("string");
+      break;
+    default:
+      console.log(`default ${w + 1}`);
+  }
+  w = "x";
+  switch (typeof w) {
+    case "number":
+      console.log("number");
+      break;
+    case "string":
+      console.log(`string ${w}`);
+      break;
+  }
+}
+
+function main(): void {
+  shapes();
+  nested();
+  otherType();
+}

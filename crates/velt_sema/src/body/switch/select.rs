@@ -212,6 +212,14 @@ impl FnCx<'_, '_> {
             None => tag == none,
         });
         found.unwrap_or_else(|| {
+            // As for `typeof x === "..."` (`type_test`), only a union whose members all fail the
+            // test is an error. On any other type, here also one that flow narrowing reduced to a
+            // single member (`let u: number | string = 5`), TypeScript accepts the case, which
+            // never matches.
+            let inner = self.cx.ty.core(s.expr.ty).unwrap_or(s.expr.ty);
+            if self.cx.union_def(inner).is_none() {
+                return self.never_sel(s, span);
+            }
             let tn = self.cx.display(s.expr.ty);
             self.never_matches(
                 s,
