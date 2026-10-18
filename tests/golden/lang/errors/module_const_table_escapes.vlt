@@ -21,7 +21,7 @@ function each(fs: ((xs: number[]) => void)[]) {
 }
 
 // Routes that hand the function value something other than the table's name: each moves the
-// table (an error), or is rejected before that (`??` on a value that is never null).
+// table or passes it on (an error; `K ?? L` is `K`, which is never null).
 function pick(c: boolean): number[] {
   return c ? K : L;
 }

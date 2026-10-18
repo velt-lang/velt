@@ -24,7 +24,18 @@ impl FnCx<'_, '_> {
         }
         // A narrowed `T | null | undefined` reads as its `T` (both nothings ruled out).
         let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
+        // A variable that a closure assigns is checked again where it is used, and read as it
+        // is where a test checks it (`closure_assigned`).
+        let reassigned = self.closure_assignment(l).is_some();
+        if payload.is_some() && reassigned {
+            if self.raw_read == Some(span) {
+                let mode = self.use_mode(ty, want);
+                return self.mk(H::Local(l, mode), ty, span);
+            }
+            return self.checked_narrowed_read(l, ty, want, span);
+        }
         if payload.is_none()
+            && !reassigned
             && self.is_three_state(ty)
             && self.excludes(l, crate::hir::Nothing::Undefined)
         {

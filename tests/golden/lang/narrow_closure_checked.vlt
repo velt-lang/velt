@@ -1,0 +1,66 @@
+// check: no leaks
+// A null check of a variable that a closure assigns narrows it until the next assignment in the
+// same function, as in TypeScript (#1199): `if (cleanupFn) cleanupFn()`. A call in between may
+// run the closure, so each such read checks the value again (see
+// `narrow_closure_checked_panics.vlt`). The closures that capture the variable do not see the
+// narrowing.
+function watch(): string[] {
+  const log: string[] = [];
+  let cleanupFn = null as (() => void) | null;
+  const onCleanup = (n: number): void => {
+    cleanupFn = () => {
+      log.push("cleanup " + n);
+    };
+  };
+  const run = (n: number): void => {
+    if (cleanupFn) cleanupFn();
+    onCleanup(n);
+    log.push("run " + n);
+  };
+  run(1);
+  run(2);
+  if (cleanupFn !== null) {
+    cleanupFn();
+  }
+  return log;
+}
+
+function lazyMap(keys: string[]): number {
+  let cache: Map<string, number> | null = null;
+  const reset = (): void => {
+    cache = null;
+  };
+  let total = 0;
+  for (const k of keys) {
+    if (k === "reset") {
+      reset();
+      continue;
+    }
+    if (cache === null) {
+      cache = new Map();
+    }
+    cache.set(k, (cache.get(k) ?? 0) + 1);
+    total += cache.size;
+  }
+  return total;
+}
+
+function timer(): string {
+  let pending = undefined as string | undefined;
+  const schedule = (s: string): void => {
+    pending = s;
+  };
+  schedule("tick");
+  let out = "";
+  if (pending !== undefined) {
+    out = pending.toUpperCase();
+  }
+  if (pending) out += pending.length;
+  return out;
+}
+
+function main() {
+  console.log(watch().join(", "));
+  console.log(lazyMap(["a", "b", "a", "reset", "c"]));
+  console.log(timer());
+}
