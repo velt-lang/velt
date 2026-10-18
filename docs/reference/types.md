@@ -1935,8 +1935,23 @@ function main(): void {
 }
 ```
 
-**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
-operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
+`<`, `>`, `<=` and `>=` with an `any` operand compare as JavaScript does: two strings by their
+UTF-16 code units, any other pair as numbers, each converted with `ToNumber` (`true` is 1,
+`null` is 0, `undefined` and a string that is not a number are `NaN`, and every comparison with
+`NaN` is `false`). Comparing a symbol stops with Node's `TypeError: Cannot convert a Symbol value
+to a number`; comparing an object or a function (which JavaScript converts with `valueOf` /
+`toString`) stops with a `TypeError` naming #924 for now.
+
+```ts
+function main(): void {
+  const n: any = 5;
+  const s: any = "10";
+  const u: any = undefined;
+  console.log(n < 7, s > 9, s < "9", n < u, n >= u); // true true true false false
+}
+```
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
 warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,

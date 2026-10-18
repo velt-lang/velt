@@ -1,0 +1,9 @@
+// A symbol compared with `<` through `any` stops with Node's `TypeError` (#924).
+function less(a: any, b: any): boolean {
+  return a < b;
+}
+
+function main(): void {
+  console.log(less("a", "b"));
+  console.log(less(Symbol("s"), 1));
+}

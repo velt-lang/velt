@@ -293,6 +293,10 @@ impl FnCx<'_, '_> {
             return match op {
                 B::Eq | B::NotEq => self.dynamic_eq(l, r, strict, op == B::NotEq, span),
                 B::Add => self.dynamic_concat(l, r, span),
+                B::Lt | B::LtEq | B::Gt | B::GtEq if self.no_unknown_operand(&l, &r) => {
+                    let bop = hir_binop(op).expect("ICE: a comparison is a binary op");
+                    self.dynamic_relational(bop, l, r, span)
+                }
                 _ => self.dynamic_operator(op_str(op), &l, &r, span),
             };
         }
