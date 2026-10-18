@@ -1951,8 +1951,14 @@ function main(): void {
 }
 ```
 
-**Planned** (#924): compound assignments and `++` on members, arithmetic operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
-warning on a written `any`; until then each is a compile error.
+`for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
+the length before each step as JavaScript's array iterator does. Another value (a string, a
+`Map`, an iterable object) stops with a `TypeError` naming #924 for now.
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic operators,
+`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration of values other
+than arrays, `any` converted to interface types and the warning on a written `any`; until then
+each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
