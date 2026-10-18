@@ -79,7 +79,14 @@ impl FnCx<'_, '_> {
         let site = self.f.kind == FnKind::Ctor && self.f.super_sites.contains(&s.span);
         self.f.super_ok = site && !self.f.super_called && is_super_call(s);
         self.f.stmt_depth += 1;
+        let (at, checks) = (out.len(), self.f.late.checks.len());
         self.stmt_inner(s, out);
+        if self.f.late.checks.len() > checks {
+            // Reads of a `const` whose initializer may still run (`late_consts`).
+            let late = self.f.late.checks.split_off(checks);
+            let late = self.late_check_stmts(late, s.span);
+            out.splice(at..at, late);
+        }
         self.f.stmt_depth -= 1;
         self.f.super_ok = false;
     }
@@ -379,6 +386,9 @@ impl FnCx<'_, '_> {
         let ann = ann.or(decided);
         if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
             self.reject_untyped_init(e);
+        }
+        if self.late_const_decl(v, name, ann, span, out) {
+            return;
         }
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,

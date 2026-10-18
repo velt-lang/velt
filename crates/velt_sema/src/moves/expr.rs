@@ -258,7 +258,9 @@ impl Moves<'_> {
             if c.mode == PassMode::BorrowMut {
                 self.assigned(c.outer, span, st);
             }
+            self.capturing = true;
             self.use_path(c.outer, &[], UseMode::Borrow, span, st, false);
+            self.capturing = false;
         }
     }
 
@@ -305,7 +307,9 @@ impl Moves<'_> {
             if c.mode == PassMode::BorrowMut {
                 self.assigned(c.outer, span, st);
             }
+            self.capturing = true;
             self.use_path(c.outer, &[], mode, span, st, by_closure);
+            self.capturing = false;
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) {
                 let w = writes(&c);
                 if let Some(s) = st {

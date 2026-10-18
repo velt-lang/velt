@@ -345,6 +345,9 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        // Reads outside the body's statements (an expression body) check at its start.
+        let late = self.late_check_stmts(frame.late.checks.clone(), span);
+        block.stmts.splice(0..0, late);
         let peers = self.group_peer_lets(&frame, span);
         block.stmts.splice(0..0, peers);
         if is_async {

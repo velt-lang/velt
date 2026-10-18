@@ -49,6 +49,7 @@ mod for_await;
 mod for_iter;
 mod for_map;
 mod generators;
+mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
@@ -312,6 +313,8 @@ pub(crate) struct Frame {
     /// Recursive closure groups declared in this frame, or the one whose member it checks
     /// (`closure_group`).
     pub groups: closure_group::GroupFrame,
+    /// `const`s used by closures in their own initializer (`late_consts`).
+    pub late: late_consts::LateFrame,
 }
 
 impl Frame {
@@ -367,6 +370,7 @@ impl Frame {
             untyped_lets: HashMap::new(),
             destructured_discriminants: HashMap::new(),
             groups: Default::default(),
+            late: Default::default(),
         }
     }
 }

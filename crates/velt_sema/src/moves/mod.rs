@@ -78,6 +78,11 @@ struct Moves<'a> {
     own_captures: HashSet<LocalId>,
     /// The open `try` bodies and handlers (innermost last), see [`tries`].
     tries: Vec<tries::TryFrame>,
+    /// Per local: a `const` that closures in its initializer capture before it is assigned
+    /// (`body::late_consts`; they check that it is assigned when they read it).
+    late: Vec<bool>,
+    /// The use being checked is a closure's capture.
+    capturing: bool,
 }
 
 /// What the move dataflow found besides errors.
@@ -200,6 +205,10 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 false => f.captures.iter().map(|c| c.inner).collect(),
             },
             tries: vec![],
+            late: (f.body.locals.iter())
+                .map(|l| cx.late_consts.contains(&l.span))
+                .collect(),
+            capturing: false,
             report: false,
             errors: vec![],
             loops: vec![],
@@ -456,6 +465,10 @@ impl Moves<'_> {
                 }
             }
             s.clear(i);
+        } else if s.uninit[i] && self.capturing && self.late[i] {
+            // Captured before it is assigned (`body::late_consts`): the closure and this
+            // function share the variable, which this function assigns afterwards.
+            self.late_capture(l, span);
         } else if s.uninit[i] {
             if self.report {
                 let name = &self.locals[i].name;
@@ -513,6 +526,38 @@ impl Moves<'_> {
             .with_note(format!(
                 "the closure keeps its own copy of `{name}` and would not see the new value; assign `{name}` before creating the closure, use a separate variable, or share it with `shared(...)`"
             )),
+        );
+    }
+
+    /// A closure captures `l`, a `const` it is part of the initializer of
+    /// (`body::late_consts`): the variable lives in a cell, or, when it cannot, that is an
+    /// error.
+    fn late_capture(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        if !self.report {
+            return;
+        }
+        let name = &self.locals[i].name;
+        let why = if self.threaded[i] {
+            format!("a closure that may run on another thread (a timer callback, a spawned closure) keeps its own copy of `{name}`, made before `{name}` is assigned")
+        } else if self.promise[i] {
+            format!("`{name}` holds a promise, which cannot be shared")
+        } else {
+            format!("a value of the type of `{name}` cannot be shared with the closure")
+        };
+        self.errors.push(
+            Diagnostic::error(
+                format!(
+                    "`{name}` is used by a closure in its own initializer, which cannot share it"
+                ),
+                span,
+            )
+            .with_note(why)
+            .with_note("this is not supported yet (#750)"),
         );
     }
 
