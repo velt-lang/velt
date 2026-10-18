@@ -1960,6 +1960,25 @@ methods and accessors and what every object has from `Object.prototype` (`toStri
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
 
+A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
+`const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member
+the symbol keys, as on a typed object. A key of type `string | symbol` (a proxy trap's `prop`)
+reads, writes and tests the member a string names; a symbol known only at run time stops with
+a `TypeError` naming #924 for now.
+
+```ts
+const BRAND = Symbol("brand");
+
+function isBranded(v: any): boolean {
+  return v !== null && typeof v === "object" && v[BRAND] === true;
+}
+
+function main(): void {
+  const b = { [BRAND]: true, name: "b" };
+  console.log(isBranded(b), isBranded({ name: "c" }), BRAND in (b as any)); // true false true
+}
+```
+
 ### Generic interfaces with `unknown` arguments
 
 A value of a generic interface type with concrete type arguments converts to the same interface

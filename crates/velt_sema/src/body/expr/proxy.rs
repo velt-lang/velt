@@ -94,7 +94,11 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let t = self.trial_expr(rhs).ty;
         let dynamic = self.cx.dynamic(t)?;
-        let k = self.expr(lhs, None, crate::body::Want::Borrow);
+        // A symbol constant (`KEY in o`) names the member it keys.
+        let k = match self.symbol_key_of(lhs) {
+            Some(name) => self.str_lit(&name, lhs.span),
+            None => self.expr(lhs, None, crate::body::Want::Borrow),
+        };
         let mut obj = self.expr(rhs, None, crate::body::Want::Borrow);
         if dynamic == crate::any::Dynamic::Unknown {
             self.unknown_use_error(rhs.span);
@@ -109,7 +113,10 @@ impl FnCx<'_, '_> {
         let kt = self.cx.widened(k.ty);
         let k = if kt == str_ {
             self.coerce(k, str_)
-        } else if self.cx.dynamic(k.ty).is_some() || self.cx.ty.is_numeric(kt) {
+        } else if self.cx.dynamic(k.ty).is_some()
+            || self.cx.ty.is_numeric(kt)
+            || self.string_or_symbol(k.ty)
+        {
             self.coerce(k, obj.ty)
         } else {
             let tn = self.cx.display(k.ty);

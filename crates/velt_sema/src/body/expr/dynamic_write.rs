@@ -173,6 +173,13 @@ impl FnCx<'_, '_> {
     /// The key of `x[index] = v` on an `any`: a string or `any` key names a member, a number
     /// key an element (`None` after reporting an error).
     fn dynamic_write_key(&mut self, index: &ast::Expr) -> Option<WriteKey> {
+        // A symbol constant (`o[KEY] = v`) names the member it keys.
+        if let Some(name) = self.symbol_key_of(index) {
+            self.note_dynamic_write(&name, index.span);
+            let str_ = self.cx.ty.str_;
+            let k = self.mk(H::Lit(Lit::Str(name)), str_, index.span);
+            return Some(WriteKey::Str(k));
+        }
         let k = self.expr(index, None, Want::Borrow);
         if self.cx.ty.is_bottom(k.ty) {
             return None;
@@ -193,6 +200,10 @@ impl FnCx<'_, '_> {
         }
         if self.cx.ty.is_numeric(kt) {
             return Some(WriteKey::Num(self.coerce_number(k, f64_)));
+        }
+        if self.string_or_symbol(k.ty) {
+            let any = self.any_ty()?;
+            return Some(WriteKey::Str(self.coerce(k, any)));
         }
         let tn = self.cx.display(k.ty);
         self.cx.error(
