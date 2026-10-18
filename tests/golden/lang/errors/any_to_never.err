@@ -1,0 +1,2 @@
+any_to_never.vlt:4:18: error: an `any` value cannot be a `never`
+  = note: no value has type `never`

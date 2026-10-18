@@ -9,6 +9,7 @@
 | `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
 | `u8x16`, `i32x4`, `f32x4`, `f64x2`, …; `mask8x16`, … | 128-bit SIMD vectors and the masks comparing them gives ([SIMD vectors](#simd-vectors)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
+| `bigint` | no values yet: `never` until Velt has `BigInt` values, so `string \| bigint` is `string` and `T extends bigint ? A : B` is `B` ([bigint](#bigint)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
 | `Map<K, V>` | insertion-ordered hash map |
@@ -742,7 +743,13 @@ the nullable type; `void` cannot be a member.
 - **Narrowing**: using a member's fields or methods needs that member.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
-    `"object"`; closures are `"function"`. An impossible tag is an error.
+    `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
+    not a union, a test it always passes leaves it `never` where the test fails, when its type
+    fixes the answer (numbers, strings, booleans, symbols, functions, classes, structs, arrays,
+    maps); not for `object`, which may hold a function, nor for interfaces with methods or
+    enums. On a value whose type is a type parameter (also `T | undefined`), `typeof` tells the
+    instantiation's value at run time, and `x === undefined` / `x == null` too (`T` may be
+    `undefined` or `null`); for a variable, neither boxes the value.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
@@ -1791,6 +1798,40 @@ console.log(c.count); // 5
 - `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
   interface values).
 
+## bigint
+
+TypeScript's `bigint` is a type name in Velt, but there are no `BigInt` values yet (no `10n`
+literals, no `BigInt()`; arbitrary-precision integers are [`velt:bigint`](../std/bigint.md)).
+Until there are, `bigint` is `never`: the type no value has. So types written for TypeScript
+that mention it work for every value a Velt program holds: a union naming it is its other
+members, a conditional type testing it never takes that branch, and a type bound naming it
+still chooses overloads by its other members, as TypeScript does for those values.
+
+```ts
+type Primitive = string | number | boolean | bigint | null;
+type Widen<T> = T extends number ? number : T extends bigint ? bigint : T;
+
+function wrap<T extends Primitive>(target: T): { value: T };
+function wrap<T extends object>(target: T): T;
+function wrap<T>(target: T): { value: T } | T {
+  return String(target) === "[object Object]" ? target : { value: target };
+}
+
+function main(): void {
+  const state = wrap({ st: "idle" }); // the object signature
+  state.st = "ready";
+  const n: Widen<5> = 7;
+  console.log(state.st, n); // ready 7
+}
+```
+
+`typeof x === "bigint"` and `case "bigint":` in a `switch (typeof x)` are always false, and a
+test the remaining type always passes leaves nothing behind (`if (typeof x === "string") return;`
+on a `string | bigint`, then `x` is `never`). A value given where a `bigint` is expected is an
+error, as in TypeScript; the message names the type `never`. So is an `any` or `unknown` given
+there (`const b: bigint = a`, `a as bigint`), which TypeScript accepts: no value in a Velt program
+is a `bigint`.
+
 ## any and unknown
 
 `any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
@@ -1837,7 +1878,11 @@ twice), and one object converted twice is one value (`u1 === u2`, one `Set<unkno
 with `unknown` is `unknown`: the `null` or `undefined` is held by the value itself, so
 `m.get(k)` of a `Map<string, any>`, `r[k]` of a `Record<string, any>` and `find` on an `any[]`
 give an `any` that is `undefined` when nothing is there, and `null` when a `null` was stored;
-a left-out optional field `q?: any` holds `undefined`. An enum value is its number or string
+a left-out optional field `q?: any` holds `undefined`. A value whose type is a type parameter
+converts to `any` and `unknown` too (`const a: any = t` with `t: T`, `t as unknown as X`): the
+value of the instantiation goes in as above, so a `T` that is `number | null` holding `null`
+gives the dynamic `null`, a union the member it holds and a literal type its value (an
+instantiation with an enum stops with a `TypeError` for now, #1241). An enum value is its number or string
 in an `any` (`typeof` is `"number"` or `"string"`), and converts back to the member with that
 value. Generic code compares an `any` as `===` does (`indexOf`, `includes`, a generic
 `a === b`), and `Set<any>` and `Map<any, V>` keys compare by value as in JavaScript (`NaN` is
