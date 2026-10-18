@@ -135,6 +135,8 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::PrintErr
             | Intrinsic::Same
             | Intrinsic::Eq
+            | Intrinsic::KeyEq
+            | Intrinsic::IncludesEq
             | Intrinsic::Hash
             | Intrinsic::Clone
             | Intrinsic::JsonStringify

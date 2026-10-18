@@ -174,7 +174,7 @@ round still carried the bug workarounds, among them a JSON round trip of every c
 | `src/wire.vlt` | The sigx wire endpoint on `velt:http` |
 | `src/bench.vlt` | `actors bench` (throughput and latency) and `actors calls` (fixed work) |
 | `src/main.vlt` | `actors serve` / `bench` / `calls` |
-| `demo.vlt` / `demo.out` | The scripted walk above (golden: `cargo test -p veltc --test golden`) |
+| `demo.vlt` / `demo.out` | The scripted walk above (golden: `cargo test --workspace --test golden`) |
 | `cli.vlt` / `cli.out` | A golden that compiles `src/main.vlt` and `src/bench.vlt`, which `demo.vlt` does not import |
 | `node/server.mjs` | The same actors and endpoint on @sigx/actors (`SIGX_ACTORS=…/packages/actors`) |
 | `node/calls.mjs` | `actors calls` on @sigx/actors' `host.dispatch` |

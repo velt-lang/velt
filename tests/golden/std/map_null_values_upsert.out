@@ -17,6 +17,6 @@ true [
   7,  null, 10,   11,   13,
   14, null, 17,   null, 19
 ]
-t
+t false
 false
-1 [ [ [ 1, 9 ], null ] ] false
+1 [ [ [ 1, 9 ], null ] ] true false

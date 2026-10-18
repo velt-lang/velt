@@ -1,0 +1,1 @@
+object_copies_keys.vlt:7:14: error: a value of type `AB` converts to `A` by copying its fields, and this program uses `A` values as keys compared by identity: two copies of one object are different keys

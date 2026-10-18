@@ -1,6 +1,6 @@
 //! How expressions show an object's identity apart from `===` ([`crate::object_copies`]): a
-//! value converted to a dynamic type, compared through one, a `Map` key (which compares a
-//! dynamic key's objects by identity) and the key of a weak operation.
+//! value converted to a dynamic type, compared through one, a `Map` or `Set` key (objects
+//! compare by identity there) and the key of a weak operation.
 
 use velt_common::Span;
 
@@ -60,12 +60,10 @@ impl Looks<'_> {
                     Intrinsic::WeakMapSet
                     | Intrinsic::WeakMapGet
                     | Intrinsic::WeakMapHas
-                    | Intrinsic::WeakMapDelete => {
-                        (Seen::Key { weak: true }, args.get(1..2).unwrap_or(&[]))
-                    }
-                    Intrinsic::WeakRefNew => (Seen::Key { weak: true }, &args[..]),
+                    | Intrinsic::WeakMapDelete => (Seen::Key, args.get(1..2).unwrap_or(&[])),
+                    Intrinsic::WeakRefNew => (Seen::Key, &args[..]),
                     // Hashing a key of std's `Map` (and so `Set`).
-                    Intrinsic::Hash => (Seen::Key { weak: false }, &args[..]),
+                    Intrinsic::Hash => (Seen::Key, &args[..]),
                     _ => return,
                 };
                 for a in keys {

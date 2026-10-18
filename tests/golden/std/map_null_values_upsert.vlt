@@ -38,8 +38,8 @@ function main() {
     deepEqual(other, new Map<string, number | null>([["x", null]])),
   );
 
-  // Tombstones: the bulk readers find the live entries holding null; equal maps stay equal and
-  // hash alike (a map as a map key).
+  // Tombstones: the bulk readers find the live entries holding null; equal maps stay equal (a
+  // map as a map key is itself, as in JS).
   const t = new Map<string, number | null>();
   for (let i = 0; i < 20; i++) {
     t.set(`k${i}`, i % 3 == 0 ? null : i);
@@ -51,21 +51,24 @@ function main() {
   console.log(deepEqual(t, fresh), t.keys(), t.values());
   const outer = new Map<Map<string, number | null>, string>();
   outer.set(t, "t");
-  console.log(outer.get(fresh));
+  console.log(outer.get(t), outer.has(fresh));
   fresh.set("k1", null);
   console.log(deepEqual(t, fresh));
 
-  // A content key changed after insertion, then enough deletes to compact: the entry keeps its
-  // place (a compaction reads the index, it does not hash the key again).
+  // A key changed after insertion, then enough deletes to compact: the entry keeps its place
+  // (an array key is itself, and a compaction reads the index, it does not hash a key again).
   const byList = new Map<number[], number | null>();
   const k1 = [1];
   byList.set(k1, null);
   k1.push(9);
+  const added: number[][] = [];
   for (let i = 0; i < 30; i++) {
-    byList.set([100 + i], i % 2 == 0 ? null : i);
+    const k = [100 + i];
+    added.push(k);
+    byList.set(k, i % 2 == 0 ? null : i);
   }
-  for (let i = 0; i < 30; i++) {
-    byList.delete([100 + i]);
+  for (const k of added) {
+    byList.delete(k);
   }
-  console.log(byList.size, byList.entries(), byList.has([1, 9]));
+  console.log(byList.size, byList.entries(), byList.has(k1), byList.has([1, 9]));
 }
