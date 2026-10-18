@@ -8,7 +8,7 @@
 //! parameter (`x?: T`), lowered per instantiation: a `T = X | null` makes `x` a
 //! `X | null | undefined`, whose `null` is the inner nothing.
 
-use velt_sema::hir::{self, LitValue, Nothing, TyId, TyKind};
+use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Rvalue, Terminator, Ty};
@@ -36,18 +36,28 @@ impl FnLower<'_, '_> {
 
     /// Assign whether the value at `p` (of the concrete type `t`) is `null` (`loose`: `null`
     /// or `undefined`) to `out`. A `X | null | undefined` is an option of a `X | null` here
-    /// (`Cx::kind`), whose own nothing is `undefined`.
+    /// (`Cx::kind`), whose own nothing is `undefined`. A union holds a nothing through the
+    /// member it holds: `T | string | undefined` at `T = number | null` is `null` when its `T`
+    /// member is (#1268).
     fn null_into(&mut self, out: &Place, p: &Place, t: TyId, loose: bool) {
-        let TyKind::Option(e, n) = self.cx.kind(t) else {
-            self.assign(out.clone(), Rvalue::Use(bool_const(false)));
-            return;
-        };
-        let counts = loose || n == Nothing::Null;
-        let nested = matches!(self.cx.kind(e), TyKind::Option(..));
-        if !counts && !nested {
+        if !self.may_be_null(t, loose) {
             self.assign(out.clone(), Rvalue::Use(bool_const(false)));
             return;
         }
+        let TyKind::Option(e, n) = self.cx.kind(t) else {
+            // A union with a member that may be a nothing.
+            self.assign(out.clone(), Rvalue::Use(bool_const(false)));
+            self.for_each_variant(p, t, |lw, _, parts| {
+                if let [(pp, pt)] = parts.as_slice() {
+                    if lw.may_be_null(*pt, loose) {
+                        lw.null_into(out, pp, *pt, loose);
+                    }
+                }
+            });
+            return;
+        };
+        let counts = loose || n.has_null();
+        let nested = self.may_be_null(e, loose);
         let (some_bb, none_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         let some = self.option_is_some(p, t);
         self.branch(some, some_bb, none_bb);
@@ -64,6 +74,22 @@ impl FnLower<'_, '_> {
         }
         self.goto(done);
         self.switch_to(done);
+    }
+
+    /// Can a value of the concrete type `t` be `null` (`loose`: or `undefined`), itself or
+    /// through a nested option or the member of a union it holds?
+    fn may_be_null(&mut self, t: TyId, loose: bool) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(e, n) => loose || n.has_null() || self.may_be_null(e, loose),
+            TyKind::Adt(d, _) if self.cx.is_union(t) => {
+                let n = self.cx.enum_def(d).variants.len() as u32;
+                (0..n).any(|v| {
+                    let tys = self.cx.variant_tys(t, v);
+                    tys.into_iter().any(|m| self.may_be_null(m, loose))
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Assign whether the value at `p` (of the concrete type `t`) is truthy to `out`.

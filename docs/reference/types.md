@@ -467,8 +467,14 @@ const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`
 
 A `T | null | undefined` keeps the two apart: `x === null` and `x === undefined` each test
 one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one it holds.
-`x !== undefined` narrows it to `T | null`, and both tests (or `x != null`, or truthiness)
-narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
+`x !== undefined` narrows it to `T | null`, `x !== null` to `T | undefined`, and both tests (or
+`x != null`, or truthiness) narrow it to `T`. Compared with a `T | null` or a `T | undefined`,
+`===` tells the nothings apart and `==` does not, as in Node. A conditional with both a `null`
+and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
+A generic union whose type argument brings a nothing (`T | string | undefined` at
+`T = number | null`) holds it like the union written out (`number | string | null | undefined`):
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
@@ -765,7 +771,9 @@ the nullable type; `void` cannot be a member.
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
 - A union alias may name itself behind an indirection: as an array's element, an index
-  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
+  may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
+  Child[]`). Elsewhere
   (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
   give such a type a nominal member, such as an interface or a class.
 

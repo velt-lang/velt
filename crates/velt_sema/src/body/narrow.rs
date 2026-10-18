@@ -683,6 +683,16 @@ pub(crate) fn is_null(e: &ast::Expr) -> bool {
     nothing_word(e).is_some()
 }
 
+/// `null`, `undefined`, or a conditional whose arms are only those
+/// (`i > 2 ? null : undefined`): an expression whose type comes from the other values.
+pub(crate) fn only_nothings(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => only_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => only_nothings(then) && only_nothings(els),
+        _ => is_null(e),
+    }
+}
+
 /// `"null"` / `"undefined"` for those literals (possibly parenthesized).
 pub(crate) fn nothing_word(e: &ast::Expr) -> Option<&'static str> {
     match &e.kind {

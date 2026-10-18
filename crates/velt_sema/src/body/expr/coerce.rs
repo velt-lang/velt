@@ -88,6 +88,9 @@ impl FnCx<'_, '_> {
             };
             return Ok(self.mk(call, exp, span));
         }
+        if self.converts_by_state(h.ty, exp) {
+            return self.coerce_hidden_nothings(h, exp);
+        }
         // `T | undefined` to `T | null` (or the reverse): TS2322, as in TypeScript; converting
         // would turn one nothing into the other (issue #930).
         if let (Some(found), Some(want)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp))

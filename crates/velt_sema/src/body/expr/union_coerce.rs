@@ -159,7 +159,12 @@ impl FnCx<'_, '_> {
     }
 
     /// The payload pattern and value of a union member of type `m` in a re-tagging arm.
-    fn member_binding(&mut self, m: TyId, consume: bool, span: Span) -> (hir::Pat, hir::Expr) {
+    pub(super) fn member_binding(
+        &mut self,
+        m: TyId,
+        consume: bool,
+        span: Span,
+    ) -> (hir::Pat, hir::Expr) {
         if self.cx.lit_value(m).is_some() {
             let wild = hir::Pat {
                 kind: P::Wildcard,
