@@ -1,0 +1,48 @@
+// `bigint` as a type before `BigInt` values exist (#1088): a union naming it is its other
+// members, a conditional type testing it never takes that branch, and a type bound naming it
+// still chooses overloads by the bound (`signal({...})` takes the object signature).
+// check: no leaks
+type Primitive = string | number | boolean | symbol | bigint | null | undefined;
+type Widen<T> = T extends boolean
+  ? boolean
+  : T extends number
+    ? number
+    : T extends string
+      ? string
+      : T extends bigint
+        ? bigint
+        : T;
+type PrimitiveSignal<T> = { value: T };
+
+function wrapPrimitive<T>(target: T): { value: T } {
+  return { value: target };
+}
+
+function isObject<T>(v: T): boolean {
+  return String(v) === "[object Object]";
+}
+
+function signal<T extends Primitive>(target: T): PrimitiveSignal<T>;
+function signal<T extends object>(target: T): T;
+function signal<T>(target: T): { value: T } | T {
+  return isObject(target) ? target : wrapPrimitive(target);
+}
+
+const state = signal({ st: "idle", has: false });
+state.st = "ready";
+state.has = true;
+console.log(state.st, state.has);
+
+function label<T extends string | bigint>(x: T): string {
+  return "label " + String(x);
+}
+console.log(label("a"));
+
+function size(x: number | bigint): number {
+  return typeof x === "number" ? x * 2 : 0;
+}
+console.log(size(21));
+
+const n: Widen<5> = 7;
+const s: Widen<"x"> = "seven";
+console.log(n, s);

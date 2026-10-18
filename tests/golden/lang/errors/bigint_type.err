@@ -1,0 +1,5 @@
+bigint_type.vlt:6:19: error: mismatched types
+  = note: expected never, found f64
+
+bigint_type.vlt:7:15: error: mismatched types
+  = note: expected never, found f64

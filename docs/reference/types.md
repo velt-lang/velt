@@ -9,6 +9,7 @@
 | `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
 | `u8x16`, `i32x4`, `f32x4`, `f64x2`, …; `mask8x16`, … | 128-bit SIMD vectors and the masks comparing them gives ([SIMD vectors](#simd-vectors)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
+| `bigint` | no values yet: `never` until Velt has `BigInt` values, so `string \| bigint` is `string` and `T extends bigint ? A : B` is `B` ([bigint](#bigint)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
 | `Map<K, V>` | insertion-ordered hash map |
@@ -1737,6 +1738,36 @@ console.log(c.count); // 5
   doesn't allow throwing unless it says `throws`.
 - `console.log` and `JSON.stringify` of such a value are not supported yet (as for other
   interface values).
+
+## bigint
+
+TypeScript's `bigint` is a type name in Velt, but there are no `BigInt` values yet (no `10n`
+literals, no `BigInt()`; arbitrary-precision integers are [`velt:bigint`](../std/bigint.md)).
+Until there are, `bigint` is `never`: the type no value has. So types written for TypeScript
+that mention it work for every value a Velt program holds: a union naming it is its other
+members, a conditional type testing it never takes that branch, and a type bound naming it
+still chooses overloads by its other members, as TypeScript does for those values.
+
+```ts
+type Primitive = string | number | boolean | bigint | null;
+type Widen<T> = T extends number ? number : T extends bigint ? bigint : T;
+
+function wrap<T extends Primitive>(target: T): { value: T };
+function wrap<T extends object>(target: T): T;
+function wrap<T>(target: T): { value: T } | T {
+  return String(target) === "[object Object]" ? target : { value: target };
+}
+
+function main(): void {
+  const state = wrap({ st: "idle" }); // the object signature
+  state.st = "ready";
+  const n: Widen<5> = 7;
+  console.log(state.st, n); // ready 7
+}
+```
+
+A value given where a `bigint` is expected is an error, as in TypeScript; the message names the
+type `never`.
 
 ## any and unknown
 
