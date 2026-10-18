@@ -60,6 +60,7 @@ mod method_call;
 mod method_value;
 mod names;
 mod namespaces;
+mod narrowing_casts;
 mod never_null;
 mod numbers;
 mod object;
@@ -225,8 +226,8 @@ impl FnCx<'_, '_> {
             A::Await(inner) => self.await_expr(inner, exp, span),
             A::Yield { arg, delegate } => self.yield_expr(arg.as_deref(), *delegate, span),
             // `xs as const`: TS narrows the type to literals and `readonly`; the value is the
-            // same, and Velt's arrays and literal types need no annotation for it.
-            A::Cast { expr, ty } if member::is_as_const(ty) => self.expr(expr, exp, want),
+            // same (`readonly_arrays::as_const`).
+            A::Cast { expr, ty } if member::is_as_const(ty) => self.as_const(expr, exp, want),
             A::Cast { expr, ty } => self.cast(expr, ty, want, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),

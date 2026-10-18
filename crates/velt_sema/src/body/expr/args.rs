@@ -173,6 +173,8 @@ impl FnCx<'_, '_> {
             let arg_ty = h.ty;
             let mut h = if weak_key && hargs.is_empty() {
                 self.weak_key_coerce(h, target)
+            } else if self.cx.sigq.readonly_params.contains(&p.span) {
+                self.readonly_array_arg(h, target)
             } else if p.mode != PassMode::Owned {
                 self.object_arg_coerce(h, target)
             } else {

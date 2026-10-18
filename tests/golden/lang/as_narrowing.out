@@ -1,0 +1,6 @@
+root opts
+boom cached 4
+1 { name: 'p', depth: 1 }
+{ name: 'u', depth: 5 } { name: 'u', depth: 5 }
+{ name: 'h', depth: 3 } l 3
+{ label: 'first' } { name: 'second', depth: 9 }

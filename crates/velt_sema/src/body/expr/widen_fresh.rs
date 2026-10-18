@@ -139,6 +139,29 @@ impl FnCx<'_, '_> {
         Ok(self.widen_owned(h, exp))
     }
 
+    /// An argument for a parameter declared with a read-only array type (`xs: readonly string[]`)
+    /// converted to `exp`. An array of a union of `Copy` members that convert to `exp`'s element
+    /// (an `as const` array of strings for a `readonly string[]`) may be passed as a converted
+    /// copy: the callee cannot write through the parameter, so it cannot tell the copy from the
+    /// original.
+    pub(crate) fn readonly_array_arg(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        let (Some(from), Some(to)) = (self.cx.ty.array_elem(h.ty), self.cx.ty.array_elem(exp))
+        else {
+            return self.coerce(h, exp);
+        };
+        if from == to
+            || is_fresh(&h)
+            || self.cx.union_members(from).is_none()
+            || !self.cx.is_copy(from)
+            || !self.converts_to(from, to)
+        {
+            return self.coerce(h, exp);
+        }
+        let (ty, span) = (h.ty, h.span);
+        let shared = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
+        self.widen_array(shared, exp, to)
+    }
+
     /// A fresh value widened where no body holds the conversion's temporaries (a field
     /// initializer or a default value): reported with the conversion to write instead.
     fn detached_widening_error(&mut self, h: &hir::Expr, exp: TyId) -> hir::Expr {
