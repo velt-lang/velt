@@ -2079,6 +2079,10 @@ function main(): void {
 }
 ```
 
+A template literal or a string `+` / `+=` writes an `any` as `String(x)` does, except that a
+symbol stops with Node's `TypeError: Cannot convert a Symbol value to a string` (only
+`String(s)` writes it, as `Symbol(desc)`).
+
 `Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
 except that `NaN` is itself and `0` is not `-0`.
 
@@ -2087,9 +2091,8 @@ the length before each step as JavaScript's array iterator does. Another value (
 `Map`, an iterable object) stops with a `TypeError` naming #924 for now.
 
 **Planned** (#924): compound assignments and `++` on members, arithmetic operators,
-`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration of values other
-than arrays, `any` converted to interface types and the warning on a written `any`; until then
-each is a compile error.
+`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
+interface types and the warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
