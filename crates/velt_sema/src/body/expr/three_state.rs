@@ -315,4 +315,86 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, exp, span)
     }
+
+    /// `null` / `undefined` (`which`) as a value of type `t` that allows it only through a
+    /// member of its union: `T | string | undefined` at `T = number | null` holds `null` as its
+    /// `T` member (#1268). The instance keeps the generic union's layout (velt_vir
+    /// `canon_union`), so the value is that member's variant holding its nothing.
+    pub(crate) fn nothing_in_member(
+        &mut self,
+        which: Nothing,
+        t: TyId,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let allows = |n: Nothing| match which {
+            Nothing::Undefined => n.has_undefined(),
+            _ => n.has_null(),
+        };
+        let (core, outer) = match self.cx.ty.nothing_of(t) {
+            // The option's own nothing holds it (or the payload is a `T | null`).
+            Some(n) if allows(n) || n == Nothing::Both => return None,
+            Some(_) => (self.cx.ty.opt_payload(t)?, true),
+            None => (t, false),
+        };
+        let (def, type_args) = self.cx.union_def(core)?;
+        let members = self.cx.union_members(core)?;
+        let v = members
+            .iter()
+            .position(|m| self.cx.ty.nothing_of(*m).is_some_and(allows))?;
+        let inner = self.nothing_value(which, members[v], span);
+        let kind = H::Variant {
+            def,
+            type_args,
+            variant: v as u32,
+            args: vec![inner],
+        };
+        let value = self.mk(kind, core, span);
+        Some(match outer {
+            true => self.mk(H::WrapSome(Box::new(value)), t, span),
+            false => value,
+        })
+    }
+
+    /// A `T | null | undefined` value `h` known not to be `null` (`x === null` ruled out by a
+    /// test, #1218) as the `T | undefined` it reads as: a match whose `null` arm is unreachable.
+    /// `consume`: the value moves out of a place.
+    pub(crate) fn three_state_without_null(
+        &mut self,
+        mut h: hir::Expr,
+        consume: bool,
+    ) -> hir::Expr {
+        let span = h.span;
+        let hty = h.ty;
+        let core = self
+            .cx
+            .ty
+            .core(hty)
+            .expect("ICE: `T | null | undefined` without a payload");
+        let exp = self.cx.ty.option_of(core, Nothing::Undefined);
+        let (l, mode) = self.option_binding(&h, core, "<defined>", consume);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut h);
+        }
+        let v = self.mk(H::Local(l, mode), core, span);
+        let present = self.mk(H::WrapSome(Box::new(v)), exp, span);
+        let bind = self.pat(P::Binding(l, mode), core, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.present_pat(bind, hty, span),
+                guard: None,
+                body: present,
+            },
+            hir::Arm {
+                pat: self.one_nothing_pat(Nothing::Undefined, hty, span),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Null), exp, span),
+            },
+            self.unreachable_arm(hty, span),
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        self.mk(kind, exp, span)
+    }
 }

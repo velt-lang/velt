@@ -1,0 +1,49 @@
+// check: no leaks
+// A recursive union alias with both `null` and `undefined` among its members (#1250).
+class VNode {
+  readonly type: string;
+  constructor(type: string) {
+    this.type = type;
+  }
+}
+type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+
+function count(c: JSXChild): number {
+  if (c == null || typeof c === "boolean") {
+    return 0;
+  }
+  if (typeof c === "string") {
+    return c.length > 0 ? 1 : 0;
+  }
+  if (typeof c === "number") {
+    return 1;
+  }
+  if (c instanceof VNode) {
+    return c.type.length;
+  }
+  let n = 0;
+  for (const x of c) {
+    n += count(x);
+  }
+  return n;
+}
+
+function kind(c: JSXChild): string {
+  if (c === undefined) {
+    return "undefined";
+  }
+  if (c === null) {
+    return "null";
+  }
+  return typeof c;
+}
+
+const u: JSXChild = undefined;
+const z: JSXChild = null;
+const tree: JSXChild = ["a", 1, null, undefined, [true, new VNode("p"), ["", [2]]]];
+console.log(count(tree), count(u), count(z));
+console.log(kind(u), kind(z), kind(tree), kind(3), kind(new VNode("x")));
+console.log(u, z, tree);
+const kids: JSXChild[] = [undefined, null, "s"];
+console.log(kids.length, kids, JSON.stringify(kids));
+console.log(JSON.stringify(tree), JSON.stringify({ a: u, b: z, c: tree }));
