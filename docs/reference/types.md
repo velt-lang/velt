@@ -478,7 +478,8 @@ A generic union whose type argument brings a nothing (`T | string | undefined` a
 undefined`) gives `null` for a `null` and `undefined` for an `undefined`. `undefined`
 alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
-`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
+a `null | undefined` (`const d = c ? null : undefined`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
 field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
 number }`).
@@ -520,7 +521,7 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-`null | undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a written type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with

@@ -662,6 +662,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let (when_true, when_false) = self.narrowing(cond);
         let c = self.cond(cond);
+        let exp = exp.or_else(|| self.nothings_conditional_ty(then, els));
         let branch = |s: &mut Self,
                       e: &ast::Expr,
                       narrow: &[crate::body::narrow::Fact],
