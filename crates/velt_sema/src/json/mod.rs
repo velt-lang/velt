@@ -236,13 +236,14 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
                     i @ (Intrinsic::Print
                     | Intrinsic::PrintErr
                     | Intrinsic::Same
-                    | Intrinsic::KeyEq),
+                    | Intrinsic::KeyEq
+                    | Intrinsic::IncludesEq),
                 ),
             args,
         } if looks => {
             let how = match i {
-                // `KeyEq`: `includes` (and `Map` keys, which `Hash` shows too).
-                Intrinsic::Same | Intrinsic::KeyEq => Seen::Identity,
+                // `IncludesEq`: `includes`; `KeyEq`: `Map` keys, which `Hash` shows too.
+                Intrinsic::Same | Intrinsic::KeyEq | Intrinsic::IncludesEq => Seen::Identity,
                 _ => Seen::Printed,
             };
             for a in args {

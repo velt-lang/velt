@@ -534,6 +534,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Hash
         | I::Eq
         | I::KeyEq
+        | I::IncludesEq
         | I::Same
         | I::Share
         | I::FieldAbsent

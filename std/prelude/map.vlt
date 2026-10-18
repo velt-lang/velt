@@ -498,7 +498,9 @@ export class Map<K, V> {
       let found = false;
       for (let o: usize = 0; o < other.entryKeys.length && !found; o++) {
         if (
-          !used[o] && other.__liveAt(o) && __intrinsic_eq(this.entryKeys[e], other.entryKeys[o]) &&
+          !used[o] &&
+          other.__liveAt(o) &&
+          __intrinsic_eq(this.entryKeys[e], other.entryKeys[o]) &&
           __intrinsic_eq(this.entryValues[e], other.entryValues[o])
         ) {
           used[o] = true;

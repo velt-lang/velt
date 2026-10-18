@@ -528,7 +528,8 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Map` and `Set` keys compare with
   `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
-  identity). Structs are never Copy
+  identity). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
+  number `NaN` equal to `NaN`). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
 
 ## ES private names

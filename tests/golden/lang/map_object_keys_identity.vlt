@@ -28,6 +28,7 @@ class C {
     this.n = n;
   }
 }
+
 const c1 = new C(1);
 const sc = new Set<C>([c1, new C(1)]);
 console.log(sc.size, sc.has(c1), sc.has(new C(1)));
@@ -42,9 +43,11 @@ console.log(sa.size, sa.has(arr), sa.has([1, 2]), sa.has([1, 2, 3]));
 
 // Passing a key on is the same object; a spread or a literal with the same fields is not.
 type P = { x: number; y: number };
+
 function has(set: Set<P>, p: P): boolean {
   return set.has(p);
 }
+
 const p: P = { x: 1, y: 2 };
 const sp = new Set<P>();
 sp.add(p);
@@ -110,3 +113,8 @@ console.log(wm.get(p), wm.has({ x: 1, y: 2 }));
 const cs = [c1, new C(1)];
 console.log(cs.includes(c1), cs.includes(new C(1)), cs.indexOf(c1), [NaN].includes(NaN));
 console.log([NaN].indexOf(NaN), [0].includes(-0), ps.includes(p), ps.includes({ ...p }));
+// Only a number `NaN` finds `NaN`: a tuple holding one compares part by part, as `===` does.
+const tup: [number, string][] = [[NaN, "a"]];
+const nn: [number, string] = [NaN, "a"];
+const on: (number | null)[] = [null, NaN];
+console.log(tup.includes(nn), on.includes(NaN), on.includes(null));

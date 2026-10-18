@@ -170,6 +170,11 @@ impl FnLower<'_, '_> {
                 let (pa, pb) = self.two_places(a, b);
                 self.same_values(&pa, &pb, t)
             }
+            (I::IncludesEq, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.includes_values(&pa, &pb, t)
+            }
             (I::KeyEq, [a, b]) => {
                 let t = self.sub(a.ty);
                 let (pa, pb) = self.two_places(a, b);

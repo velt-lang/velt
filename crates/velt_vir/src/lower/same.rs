@@ -43,6 +43,21 @@ impl FnLower<'_, '_> {
         r
     }
 
+    /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
+    /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
+    /// types compare their parts as `===` does (Bool operand).
+    pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let keyed = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
+            _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
+        };
+        if keyed {
+            self.key_same_values(a, b, ty)
+        } else {
+            self.same_values(a, b, ty)
+        }
+    }
+
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
         let g = if self.key_mode {

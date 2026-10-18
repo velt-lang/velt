@@ -423,11 +423,11 @@ one that stops early, or a sum of floats, whose order it must keep.
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it
   captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
-  made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with `==` (`includes` and keys
-  also find `NaN`, as in JS). Comparing
-  costs only the programs that do it: there, an arrow without captures gets an empty
-  environment of its own when it is created, and a struct converted to an interface value
-  that is compared is counted, so the interface value refers to it rather than to a copy.
+  made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with
+  `==` (`includes` and keys also find `NaN`, as in JS). Comparing costs only the programs
+  that do it: there, an arrow without captures gets an empty environment of its own when it
+  is created, and a struct converted to an interface value that is compared is counted, so
+  the interface value refers to it rather than to a copy.
 
   ```ts
   function main() {

@@ -312,20 +312,20 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares as `Map` keys do (JS's SameValueZero): like `indexOf` (objects by
-   * identity), except that `NaN` finds `NaN`.
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
    * @param x - The element to search for.
    */
   includes(x: T): bool {
     if (this.indexOf(x) >= 0) {
       return true;
     }
-    // Only a value that is not `==` itself (`NaN`, or a tuple holding one) compares otherwise.
+    // Only a value that is not `==` itself can compare otherwise: the number `NaN`.
     if (x == x) {
       return false;
     }
     for (let i: usize = 0; i < this.length; i++) {
-      if (__intrinsic_key_eq(this[i], x)) {
+      if (__intrinsic_includes_eq(this[i], x)) {
         return true;
       }
     }

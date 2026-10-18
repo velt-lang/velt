@@ -57,6 +57,10 @@ pub enum Intrinsic {
     /// (`__intrinsic_key_eq`): `Same` with floats compared so that `NaN` equals itself and `0`
     /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
     KeyEq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
+    /// (`__intrinsic_includes_eq`): `Same`, except that a number `NaN` equals `NaN` (a number
+    /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
+    IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
     /// class instances, arrays, object types, interface and function values — by identity;
     /// `T | null`, unions and tuples part by part; strings and numbers by value
