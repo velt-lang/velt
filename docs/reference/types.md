@@ -1643,6 +1643,77 @@ const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
 ```
 
+### `Object` built-ins
+
+JavaScript's `Object` functions that work on Velt's objects behave as in Node. Each one is
+compiled against the static types of its arguments; what a fixed object layout cannot do as Node
+does is an error saying it is not supported yet, never a quiet difference.
+
+- `Object.is(a, b)` is JavaScript's SameValue: `===`, except that `NaN` is itself and `0` is not
+  `-0`, in generic code too (`Object.is(oldValue, newValue)` with `T` a number compares numbers
+  that way). Values of unrelated types are never the same.
+- `Array.isArray(x)` tests for the array members of `x`'s type and narrows `x` like `typeof`
+  (`Array.isArray(x) ? x.length : x` on a `number | number[]`); a tuple is an array. An `any`
+  or `unknown` value is tested at run time; a type parameter's value is not supported yet. On a `JsonValue` it is
+  `x.isArray()`.
+- `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
+  (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
+  and one holding `undefined` where the target can't hold it is a `TypeError`)
+  and returns `target` itself. A `Record` target takes any keys; an object or class target only
+  fields its type declares (adding one is not supported yet). Assigning onto a function (#921) or
+  from a value that may hold another class is not supported yet.
+- `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
+  writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
+  object's field is written through any reference, so a frozen object converts only to types
+  whose fields are all readonly (`Readonly<T>`); passing it where a field could be written is not
+  supported yet, and so is freezing anything but a new literal.
+- `Object.fromEntries(pairs)` builds a `Record<string, V>` from `[key, value]` pairs: an array,
+  a `Map` or any iterable.
+- `Object.hasOwn(o, k)` and `Object.prototype.hasOwnProperty.call(o, k)` test `o`'s own keys: a
+  record's entries, or the keys `Object.keys(o)` lists (methods and accessors are on the
+  prototype, so they are not own keys).
+- `Object.prototype.toString.call(v)` gives `"[object Array]"`, `"[object Map]"`,
+  `"[object Null]"` and so on, for each type `v` may have.
+- `Object.getPrototypeOf(v)` returns an `ObjectPrototype`, which `===` compares with
+  `Object.prototype`, `C.prototype` for a class `C`, `Array.prototype`, `Map.prototype`,
+  `Set.prototype`, `WeakMap.prototype`, `WeakSet.prototype`, `Promise.prototype` and `null`. A
+  value of a class with subclasses gives the prototype of the class it holds. Prototypes print,
+  convert to strings and to JSON as in Node; reading their members (`Object.prototype.toString`
+  as a value) is not supported yet, and neither are the prototypes of other built-in values
+  (`Date.prototype`, `String.prototype`) or of classes extending them.
+- `Object.create(null)` makes an empty `Record<string, V>` without a prototype, where one is
+  expected (`const d: Record<string, number> = Object.create(null)`): `"toString" in d` is
+  `false`, `Object.getPrototypeOf(d)` is `null`, and it prints as `[Object: null prototype] {}`.
+  `{ ...d }` copies it into an ordinary object. `Object.create` with another prototype, and
+  `structuredClone` of a record in a program that calls `Object.create(null)`, are not
+  supported yet.
+
+The other `Object` functions (`defineProperty`, `seal`, `isFrozen`, `setPrototypeOf`, ...) are not
+supported yet.
+
+```ts
+class Point {
+  x = 0;
+  y = 0;
+}
+
+function describe(v: number | number[]): string {
+  return Array.isArray(v) ? `${v.length} numbers` : `${v}`;
+}
+
+const p = Object.assign(new Point(), { x: 3 });
+const inert = Object.freeze({ state: "idle" });
+const counts: Record<string, number> = Object.create(null);
+counts.a = 1;
+console.log(Object.is(NaN, NaN), Object.is(0, -0)); // true false
+console.log(describe([1, 2]), describe(5)); // 2 numbers 5
+console.log(p, inert.state); // Point { x: 3, y: 0 } idle
+console.log(Object.getPrototypeOf(p) === Point.prototype); // true
+console.log(Object.fromEntries([["a", 1], ["b", 2]])); // { a: 1, b: 2 }
+console.log(counts, "toString" in counts); // [Object: null prototype] { a: 1 } false
+console.log(Object.prototype.toString.call([1])); // [object Array]
+```
+
 ### The `in` operator
 
 `"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects

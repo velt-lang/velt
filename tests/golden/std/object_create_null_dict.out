@@ -1,0 +1,6 @@
+background-color:red;font-size:12;--x:1;
+constructor to-string margin-top
+true true margin-top
+a 1
+b 2
+[Object: null prototype] { a: 1, b: 2 } [ 'a', 'b' ] true false

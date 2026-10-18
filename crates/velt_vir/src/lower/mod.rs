@@ -510,6 +510,9 @@ struct FnLower<'c, 'h> {
     super_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
+    /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare
+    /// with JS's SameValue, `NaN` equal to itself and `0` unequal to `-0` (same.rs).
+    value_mode: bool,
     /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
     /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,

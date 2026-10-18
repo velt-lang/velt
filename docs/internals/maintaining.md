@@ -56,8 +56,10 @@ Prompt template for an agent batch:
 Clone https://github.com/velt-lang/velt (or work in your worktree), create a branch named after
 the batch, read CLAUDE.md and CONTRIBUTING.md, then work through issues <list> in order (design
 issues: post a short design as a comment first). Keep changes focused on your issues and merge
-origin/main often. Run scripts/check.sh (the checks your changes need) while iterating and before
-each pull request; the merge queue runs the whole gate. One
+origin/main often. Run `cargo xtask install-hooks` once (a pre-push hook that runs
+`cargo xtask precheck`: fmt, velt fmt, file sizes and clippy on the changed files), and run
+scripts/check.sh (the checks your changes need) while iterating and before each pull request;
+the merge queue runs the whole gate. Never push with --no-verify to get past a failing precheck. One
 pull request per issue or a few related ones ("Closes #N") with tests and docs; a pull request
 that builds on another of yours joins it in a stack (gh stack). Follow-ups outside scope become
 focused issues. Never stop processes you didn't start.
@@ -101,10 +103,12 @@ review.
   describes the head: that stays part of the review.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
-- A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
-  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
-  and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
-  against the `typescript` pinned in `tests/tscompat-oracle`), and the benchmark guard
+- A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
+  test cutting every golden at every character, `VELT_ROBUSTNESS=full`), the Cranelift memory
+  stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
+  Windows, and the `tsc` oracle for `velt check --ts-compat`
+  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
+  `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly

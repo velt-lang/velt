@@ -97,7 +97,10 @@ impl FnCx<'_, '_> {
                 ..
             } => match self.dynamic_is_array_facts(callee, args) {
                 Some(facts) => facts,
-                None => self.predicate_facts(callee, args, cond.span),
+                None => match self.is_array_test(callee, args) {
+                    Some(arg) => self.is_array_facts(arg),
+                    None => self.predicate_facts(callee, args, cond.span),
+                },
             },
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
@@ -558,6 +561,15 @@ impl FnCx<'_, '_> {
             t.push(Fact::NonNull(l));
         }
         (t, f)
+    }
+
+    /// Facts for `Array.isArray(e)`: its array members.
+    fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        let Some((l, nullable, u)) = self.local_with_members(e) else {
+            return (vec![], vec![]);
+        };
+        let pred = crate::body::expr::object_builtins::is_array_ty;
+        self.split_facts(l, nullable, u, &pred, false)
     }
 
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff

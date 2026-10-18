@@ -66,9 +66,13 @@ mod narrowing_casts;
 mod never_null;
 mod numbers;
 mod object;
+mod object_assign;
+pub(crate) mod object_builtins;
 mod object_copy;
 mod object_keys;
 mod object_method;
+mod object_own;
+mod object_prototypes;
 mod ops;
 mod optional_fn_call;
 mod ordering;
@@ -202,6 +206,16 @@ impl FnCx<'_, '_> {
             {
                 self.undefined_or(&args[0], &args[1], exp, span)
             }
+            // `Object.assign` onto a variable or field path gives that place itself, used as
+            // the consumer wants it (`const r = Object.assign(t, s)` names `t`'s object).
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional: false,
+            } if self.object_assign_callee(callee) => {
+                self.object_assign_call(type_args, args, want, span)
+            }
             A::Call {
                 callee,
                 type_args,
@@ -216,7 +230,10 @@ impl FnCx<'_, '_> {
                 object,
                 prop,
                 optional,
-            } => self.member(object, prop, *optional, exp, want, span),
+            } => match self.prototype_read(object, prop, *optional, span) {
+                Some(h) => h,
+                None => self.member(object, prop, *optional, exp, want, span),
+            },
             A::Index {
                 object,
                 index,

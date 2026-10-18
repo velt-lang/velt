@@ -381,6 +381,14 @@ impl FnCx<'_, '_> {
         if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
             self.reject_untyped_init(e);
         }
+        // `const r = Object.assign(place, ...)`: the call, then `const r = place`.
+        if let Some(place) = (v.init.as_ref()).and_then(|e| self.assign_decl_split(e, out)) {
+            let v = ast::VarDecl {
+                init: Some(place),
+                ..v.clone()
+            };
+            return self.simple_decl(&v, name, ann, span, out);
+        }
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,
             Err(Some(h)) => Some(h),

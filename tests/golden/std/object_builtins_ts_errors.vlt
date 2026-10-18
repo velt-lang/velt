@@ -1,0 +1,7 @@
+// Errors TypeScript reports too (tsc --strict).
+const frozen = Object.freeze({ name: "inert", n: 0 });
+frozen.name = "live";
+console.log(Object.is(1));
+console.log(Array.isArray());
+const d: Record<string, number> = {};
+console.log(Object.hasOwn(d));

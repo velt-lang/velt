@@ -11,7 +11,8 @@ follow it. The essentials for agents:
 ## Commands
 - Build everything: `cargo build --workspace`
 - Unit tests for one crate: `cargo test -p <crate>`
-- End-to-end tests: `cargo test -p veltc --test golden` (filter: `VELT_GOLDEN=m1/strings`)
+- End-to-end tests: `cargo test --workspace --test golden` (filter: `VELT_GOLDEN=m1/strings`;
+  `--workspace` resolves features like the gate's build, where `-p veltc` rebuilds crates)
 - Documentation tests: `cargo test -p veltc --test docs`
 - Lint: `cargo clippy -p <crate> --all-targets -- -D warnings`
 - Quality gate: `scripts/check.sh` on macOS and Linux, `pwsh scripts/check.ps1` on Windows. It
@@ -21,6 +22,10 @@ follow it. The essentials for agents:
   three OSes, so you don't need to (changes to the build, toolchain, CI or scripts make `check.sh`
   select everything anyway). Install cargo-nextest so only the selected tests run, in parallel.
   Filter goldens with `VELT_GOLDEN=<substring>` while working on one area.
+- Before pushing: `cargo xtask precheck` (about a minute or less warm): `cargo fmt`, `velt fmt`,
+  the file-size rule and clippy on the changed files only, the mechanical failures behind about
+  half of all red pull request runs. `cargo xtask install-hooks` once per clone makes every
+  `git push` run it (from any worktree; `git push --no-verify` skips it).
 - Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt`
 
 ## Rules for agents
