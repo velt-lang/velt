@@ -506,6 +506,10 @@ struct FnLower<'c, 'h> {
     /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
     /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Lowering the module state's initializer (module_state.rs): the locals of each global's
+    /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and
+    /// are declared at their `let` (`declare_init_local`).
+    init_locals: bool,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
