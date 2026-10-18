@@ -1,0 +1,26 @@
+// check: no leaks
+// Defining a brand again, as Node allows and refuses it (#922).
+const K: unique symbol = Symbol("k");
+const C: unique symbol = Symbol("c");
+interface Box {
+  n: number;
+  [K]?: string;
+  [C]?: number;
+}
+const b: Box = { n: 1 };
+Object.defineProperty(b, K, { value: "a" });
+Object.defineProperty(b, K, { value: "a" });
+console.log("same value again:", b[K]);
+try {
+  Object.defineProperty(b, K, { value: "b" });
+  console.log("redefined");
+} catch (e) {
+  console.log(e instanceof TypeError, (e as Error).message);
+}
+console.log(b[K]);
+const box2: Box = { n: 2 };
+Object.defineProperty(box2, C, { value: 1, configurable: true });
+Object.defineProperty(box2, C, { value: 2, configurable: true });
+console.log(C in box2, box2[C], box2);
+Object.defineProperty(box2, K, { value: "b" });
+console.log(box2[K]);

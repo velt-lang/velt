@@ -17,3 +17,10 @@ Object.defineProperty(counter, "n", { value: 2, enumerable: false });
 const loose = { a: 1 };
 Object.defineProperty(loose, MARK, { value: true });
 Object.defineProperties(counter, { n: { value: 3 } });
+const MIX: unique symbol = Symbol("mix");
+interface Flag {
+  on: boolean;
+}
+const flag: Flag = { on: true };
+Object.defineProperty(flag, MIX, { value: true });
+Object.defineProperty(flag, MIX, { value: true, configurable: true });

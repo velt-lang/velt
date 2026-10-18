@@ -3,3 +3,5 @@ an accessor defined with `Object.defineProperty` is not supported yet
 `Object.defineProperty` changing the attributes of `n` is not supported yet
 `Object.defineProperty` of `[MARK]` on a `{ a: f64 }`, which doesn't declare it, is not supported yet
 `Object.defineProperties` is not supported yet
+`Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet
+`Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet

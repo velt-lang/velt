@@ -1,0 +1,5 @@
+same value again: a
+true Cannot redefine property: Symbol(k)
+a
+true 2 { n: 2 }
+b

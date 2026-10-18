@@ -1695,8 +1695,12 @@ does is an error saying it is not supported yet, never a quiet difference.
   have it. Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and
   spreads, as a non-enumerable property is; a property with that symbol written directly
   anywhere (`{ [KEY]: v }`, `o[KEY] = v`) is an error, since it would be enumerable, or written
-  where Node throws. With a string key naming a declared field and only a `value`, it assigns
-  the field. Accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare
+  where Node throws. Defining a brand again with another value throws Node's
+  `TypeError: Cannot redefine property: Symbol(k)` unless the descriptors say `writable: true`
+  or `configurable: true`; Velt keeps these attributes per symbol, so every call with one key
+  gives the same ones. With a string key naming a declared field and only a `value`, it assigns
+  the field. The object is written in place and is the result (`Object.defineProperty(o, ...)
+  === o`). Accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare
   are not supported yet, and neither is `Object.defineProperties`.
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.

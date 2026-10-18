@@ -32,6 +32,10 @@ pub(crate) struct Brand {
     pub key: ast::Ident,
     /// The descriptor's `enumerable: true`.
     pub enumerable: bool,
+    /// The descriptor's `writable: true`.
+    pub writable: bool,
+    /// The descriptor's `configurable: true`.
+    pub configurable: bool,
 }
 
 /// The brands of a program, and the keys it also writes directly.
@@ -79,7 +83,54 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
             add_members(item, &adds);
         }
     }
+    for (i, m) in out.iter_mut().enumerate() {
+        let keys: Vec<&str> = (brands.sites.iter())
+            .filter(|b| b.module == i)
+            .map(|b| b.key.name.as_str())
+            .filter(|k| adds.iter().any(|a| a.1.name == format!("[{k}]")))
+            .collect();
+        hoist_keys(&mut m.ast, &keys);
+    }
     (brands, Some(out))
+}
+
+/// Move the `const KEY = Symbol(...)` of each of `keys` that the parser moved into a script's
+/// generated `main` (only top-level statements used it) back to module level: a field the
+/// rewrite added now names it, and a computed key names a module constant (the parser keeps
+/// such a constant there too). Making a symbol has no effects, so it may run first.
+fn hoist_keys(module: &mut ast::Module, keys: &[&str]) {
+    if keys.is_empty() {
+        return;
+    }
+    let Some(main) = module.items.iter_mut().find_map(|i| match &mut i.kind {
+        ast::ItemKind::Function(f)
+            if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
+        {
+            Some(f)
+        }
+        _ => None,
+    }) else {
+        return;
+    };
+    let mut hoisted = vec![];
+    main.body.stmts.retain(|s| {
+        let ast::StmtKind::Var(v) = &s.kind else {
+            return true;
+        };
+        let makes_symbol = matches!(&v.init, Some(ast::Expr { kind: E::Call { callee, .. }, .. })
+            if matches!(&callee.kind, E::Ident(c) if c.name == "Symbol"));
+        let named = matches!(&v.pattern.kind, ast::PatternKind::Ident(n) if keys.contains(&n.name.as_str()));
+        if v.kind == ast::VarKind::Const && makes_symbol && named {
+            hoisted.push(ast::Item {
+                kind: ast::ItemKind::Var(v.clone()),
+                exported: false,
+                span: s.span,
+            });
+            return false;
+        }
+        true
+    });
+    module.items.extend(hoisted);
 }
 
 /// Add the brand members `adds` names to `item`, if it declares one of their types, or to the
@@ -212,6 +263,8 @@ impl Scan<'_> {
             module: self.module,
             key: k.clone(),
             enumerable: flag("enumerable"),
+            writable: flag("writable"),
+            configurable: flag("configurable"),
         });
         // The value's type, for the field the type gets.
         let value = props.iter().find_map(|p| match p {
@@ -300,6 +353,34 @@ impl Ctx<'_> {
         }
         self.objects.hidden = Some(set.clone());
         set
+    }
+
+    /// The attributes (`enumerable`, `writable`, `configurable`) every `defineProperty` call
+    /// with key name `key` gives (`own`, the attributes of a call the scan didn't record), or
+    /// `None` if two of them differ: Velt keeps them per symbol.
+    pub(crate) fn brand_attrs(
+        &mut self,
+        key: &str,
+        own: (bool, bool, bool),
+    ) -> Option<(bool, bool, bool)> {
+        let sites = self.objects.brands.sites.clone();
+        let mut found = None;
+        for b in &sites {
+            if self
+                .resolve_key(b.module, &computed_key(&b.key))
+                .ok()
+                .as_deref()
+                != Some(key)
+            {
+                continue;
+            }
+            let attrs = (b.enumerable, b.writable, b.configurable);
+            match found {
+                Some(f) if f != attrs => return None,
+                _ => found = Some(attrs),
+            }
+        }
+        Some(found.unwrap_or(own))
     }
 
     /// Where a property with key name `key` is written directly (`{ [KEY]: v }`,

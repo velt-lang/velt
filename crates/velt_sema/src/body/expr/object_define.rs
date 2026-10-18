@@ -16,11 +16,18 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::object_assign::{is_place, reads_place};
 use super::object_builtins::strip_parens;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::hir;
 use crate::symbols::Presence;
+
+/// The member `defineProperty` writes: `o[KEY]` (a symbol) or `o.name`.
+enum Key {
+    Index(Box<ast::Expr>),
+    Member(ast::Ident),
+}
 
 /// A property descriptor written as an object literal.
 #[derive(Default)]
@@ -55,7 +62,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let tn = self.cx.display(ot);
-        let (target, name) = match self.symbol_key_of(key) {
+        let mut redefine = None;
+        let (key_place, name) = match self.symbol_key_of(key) {
             Some(k) => {
                 if let Some(at) = self.cx.direct_write(&k) {
                     let shown = self.cx.shown_name(&k);
@@ -70,12 +78,29 @@ impl FnCx<'_, '_> {
                     self.check_args_loose(args);
                     return self.error_expr(span);
                 }
-                let place = ast::ExprKind::Index {
-                    object: Box::new(synth(ast::ExprKind::Ident(temp_ident(span)), span)),
-                    index: Box::new(key.clone()),
-                    optional: false,
+                let own = (
+                    d.enumerable == Some(true),
+                    d.writable == Some(true),
+                    d.configurable == Some(true),
+                );
+                let Some((_, writable, configurable)) = self.cx.brand_attrs(&k, own) else {
+                    let shown = self.cx.shown_name(&k);
+                    self.not_yet(
+                        &format!("`Object.defineProperty` of `{shown}` with different attributes at different calls is not supported yet"),
+                        desc.span,
+                        "Velt keeps a symbol brand's `enumerable`, `writable` and `configurable` per symbol: give every call with this key the same ones",
+                    );
+                    self.check_args_loose(args);
+                    return self.error_expr(span);
                 };
-                (place, k)
+                // Defined again with another value, a property neither writable nor
+                // configurable throws Node's `TypeError`.
+                redefine = (!writable && !configurable).then(|| {
+                    let shown = crate::property_order::symbol_key(&k).unwrap_or_default();
+                    let shown = shown.trim_start_matches('[').trim_end_matches(']');
+                    format!("Cannot redefine property: {shown}")
+                });
+                (Key::Index(Box::new(key.clone())), k)
             }
             None => {
                 if let ast::ExprKind::Ident(k) = &strip_parens(key).kind {
@@ -105,15 +130,11 @@ impl FnCx<'_, '_> {
                     self.check_args_loose(args);
                     return self.error_expr(span);
                 }
-                let place = ast::ExprKind::Member {
-                    object: Box::new(synth(ast::ExprKind::Ident(temp_ident(span)), span)),
-                    prop: ast::Ident {
-                        name: n.clone(),
-                        span: key.span,
-                    },
-                    optional: false,
+                let prop = ast::Ident {
+                    name: n.clone(),
+                    span: key.span,
                 };
-                (place, n.clone())
+                (Key::Member(prop), n.clone())
             }
         };
         match self.cx.declared_presence(ot, &name) {
@@ -129,16 +150,57 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
+        // `o[key] = value; o` for a variable or a path of fields and elements of one (each
+        // index evaluated once), written in place: a temporary would be a copy of an object
+        // stored inline, and the write would miss it. Otherwise
         // `(<define> = o, <define>[key] = value, <define>)`.
         self.push_scope();
         let mut lets = vec![];
+        let mut value = value.clone();
         let obj = self.expr(o, None, Want::Borrow);
-        let read = self.named_temp(&temp_ident(span).name, obj, &mut lets);
+        let in_place =
+            (is_place(o) && reads_place(&obj)).then(|| self.place_once(o, span, &mut lets));
+        let (base, read) = match &in_place {
+            Some(p) => (p.clone(), None),
+            None => {
+                let read = self.named_temp(&temp_ident(span).name, obj, &mut lets);
+                (
+                    synth(ast::ExprKind::Ident(temp_ident(span)), span),
+                    Some(read),
+                )
+            }
+        };
+        let target = |base: ast::Expr| {
+            let kind = match &key_place {
+                Key::Index(k) => ast::ExprKind::Index {
+                    object: Box::new(base),
+                    index: k.clone(),
+                    optional: false,
+                },
+                Key::Member(p) => ast::ExprKind::Member {
+                    object: Box::new(base),
+                    prop: p.clone(),
+                    optional: false,
+                },
+            };
+            synth(kind, key.span)
+        };
+        if let (Some(msg), Key::Index(k)) = (&redefine, &key_place) {
+            self.redefine_check(
+                msg,
+                k,
+                &base,
+                target(base.clone()),
+                &mut value,
+                span,
+                &mut lets,
+            );
+        }
         let assign = synth(
             ast::ExprKind::Assign {
                 op: None,
-                target: Box::new(synth(target, key.span)),
-                value: Box::new(value.clone()),
+                target: Box::new(target(base.clone())),
+                value: Box::new(value),
             },
             span,
         );
@@ -147,8 +209,84 @@ impl FnCx<'_, '_> {
             span,
             kind: hir::StmtKind::Expr(h),
         });
+        // The object itself, read after the write.
+        let read = match read {
+            Some(r) => r,
+            None => self.expr(&base, None, Want::Borrow),
+        };
         self.pop_scope();
         self.with_lets(lets, read)
+    }
+
+    /// `if (key in o && o[key] !== value) throw new TypeError(msg)` (appended to `lets`): a
+    /// property neither writable nor configurable defined again with another value. `value` is
+    /// read twice: a value other than a literal is first held in a temporary.
+    #[allow(clippy::too_many_arguments)]
+    fn redefine_check(
+        &mut self,
+        msg: &str,
+        key: &ast::Expr,
+        base: &ast::Expr,
+        current: ast::Expr,
+        value: &mut ast::Expr,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) {
+        if !matches!(strip_parens(value).kind, ast::ExprKind::Lit(_)) {
+            let v = self.expr(value, None, Want::Move);
+            let name = format!("<define@{}:value>", span.lo);
+            self.named_temp(&name, v, lets);
+            *value = synth(ast::ExprKind::Ident(ast::Ident { name, span }), value.span);
+        }
+        let bin = |op, lhs, rhs| {
+            synth(
+                ast::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+                span,
+            )
+        };
+        let cond = bin(
+            ast::BinaryOp::And,
+            bin(ast::BinaryOp::In, key.clone(), base.clone()),
+            bin(ast::BinaryOp::StrictNotEq, current, value.clone()),
+        );
+        let error = synth(
+            ast::ExprKind::New {
+                class: ast::TypeExpr {
+                    kind: ast::TypeExprKind::Named {
+                        path: vec![ast::Ident {
+                            name: "TypeError".to_string(),
+                            span,
+                        }],
+                        args: vec![],
+                    },
+                    span,
+                },
+                args: vec![synth(
+                    ast::ExprKind::Lit(ast::Lit::Str(msg.to_string())),
+                    span,
+                )],
+            },
+            span,
+        );
+        let stmt = ast::Stmt {
+            kind: ast::StmtKind::If {
+                cond,
+                then: ast::Block {
+                    stmts: vec![ast::Stmt {
+                        kind: ast::StmtKind::Throw(error),
+                        span,
+                    }],
+                    span,
+                },
+                els: None,
+            },
+            span,
+        };
+        self.stmt(&stmt, lets);
     }
 
     /// The attributes a descriptor literal gives (`None`, reported: not one Velt reads).

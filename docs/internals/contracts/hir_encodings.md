@@ -650,6 +650,10 @@ entry is an `ICE:`.
 - `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
   (`T | null | null` is `T | null`), whatever the outer option's `Nothing` (see "Undefined"). `WrapSome` and `UnwrapSome` of a value whose type is already
   that option, and a `PatKind::Some` on it, are the identity in lowering.
+- `FieldDef::hidden` (additive): a field that is not enumerable, a symbol brand
+  `Object.defineProperty` adds without `enumerable: true` (`velt_sema::defined_props`, #922).
+  It is an ordinary field otherwise; `console.log` (`format_object`) and spreads leave it out, as
+  Node leaves out a non-enumerable property. Readers that ignore it show the brand.
 - `FieldDef::presence` (additive): every optional field whose type is an option (`a?: T`, read
   as `T | undefined`, and `a?: T | null`, read as `T | null | undefined`), in an object type,
   field-only interface or struct (not a class, whose optional field is an own property holding
