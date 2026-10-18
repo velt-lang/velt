@@ -1939,8 +1939,8 @@ instance of a generic class against that very instantiation (`Box<number>`, so a
 `Record<string, number>` converts only from a record of that type: an object of a fixed shape
 stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
-`typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
-literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`typeof` test for `number`, `string`, `boolean` and `symbol` (`k as string | symbol`),
+`instanceof` for a class, `===` for a literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
 `===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
@@ -2063,15 +2063,61 @@ function main(): void {
 }
 ```
 
-**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
-operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
-warning on a written `any`; until then each is a compile error.
+`<`, `>`, `<=` and `>=` with an `any` operand compare as JavaScript does: two strings by their
+UTF-16 code units, any other pair as numbers, each converted with `ToNumber` (`true` is 1,
+`null` is 0, `undefined` and a string that is not a number are `NaN`, and every comparison with
+`NaN` is `false`). Comparing a symbol stops with Node's `TypeError: Cannot convert a Symbol value
+to a number`; comparing an object or a function (which JavaScript converts with `valueOf` /
+`toString`) stops with a `TypeError` naming #924 for now.
+
+```ts
+function main(): void {
+  const n: any = 5;
+  const s: any = "10";
+  const u: any = undefined;
+  console.log(n < 7, s > 9, s < "9", n < u, n >= u); // true true true false false
+}
+```
+
+A template literal or a string `+` / `+=` writes an `any` as `String(x)` does, except that a
+symbol stops with Node's `TypeError: Cannot convert a Symbol value to a string` (only
+`String(s)` writes it, as `Symbol(desc)`).
+
+`Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
+except that `NaN` is itself and `0` is not `-0`.
+
+`for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
+the length before each step as JavaScript's array iterator does. Another value (a string, a
+`Map`, an iterable object) stops with a `TypeError` naming #924 for now.
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic operators,
+`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
+interface types and the warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
 `Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+
+A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
+`const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member
+the symbol keys, as on a typed object. A key of type `string | symbol` (a proxy trap's `prop`)
+reads, writes and tests the member a string names; a symbol known only at run time stops with
+a `TypeError` naming #924 for now.
+
+```ts
+const BRAND = Symbol("brand");
+
+function isBranded(v: any): boolean {
+  return v !== null && typeof v === "object" && v[BRAND] === true;
+}
+
+function main(): void {
+  const b = { [BRAND]: true, name: "b" };
+  console.log(isBranded(b), isBranded({ name: "c" }), BRAND in (b as any)); // true false true
+}
+```
 
 ### Generic interfaces with `unknown` arguments
 

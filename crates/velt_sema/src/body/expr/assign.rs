@@ -477,7 +477,7 @@ impl FnCx<'_, '_> {
             // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
             // conversion to `string`).
             let v = match self.any_to_source(v) {
-                Ok(a) => self.js_text(a, "a string concatenation"),
+                Ok(a) => self.implicit_any_text(a, "a string concatenation"),
                 Err(v) => self.concat_operand(v),
             };
             let v = self.coerce(v, lty);
