@@ -196,8 +196,16 @@ impl FnCx<'_, '_> {
             facts.push(Fact::NonNull(l));
         }
         if self.cx.union_def(inner).is_some() {
-            let vs = reach.iter().filter_map(|&k| s.slots[k].variant).collect();
-            facts.push(Fact::Members(l, vs));
+            let scrut = self.cx.ty.core(s.expr.ty).unwrap_or(s.expr.ty);
+            if self.cx.union_def(scrut).is_some() {
+                let vs = reach.iter().filter_map(|&k| s.slots[k].variant).collect();
+                facts.push(Fact::Members(l, vs));
+            } else if reach.is_empty() {
+                facts.push(Fact::Members(l, vec![]));
+            }
+            // Otherwise flow narrowing already reduced the local to the one member its read has
+            // (`const c: Sh = { kind: "pt", .. }`): the slots have no variants, and each value
+            // reaching the body is that member.
         }
         facts
     }

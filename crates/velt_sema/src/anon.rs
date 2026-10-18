@@ -226,7 +226,7 @@ impl Ctx<'_> {
     /// (`interface List<T> { tail?: List<T> }`, #376)? Such an instance stays as it is:
     /// canonicalizing it would canonicalize its own fields without end, and no written object
     /// type spells its shape without naming it.
-    fn reaches_itself(&self, d: DefId) -> bool {
+    pub(crate) fn reaches_itself(&self, d: DefId) -> bool {
         let object = |x: DefId| {
             self.adt(x)
                 .is_some_and(|a| a.kind == AdtKind::Anon || self.field_only_of.contains_key(&x))

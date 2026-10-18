@@ -100,6 +100,37 @@ impl FnCx<'_, '_> {
         }
         self.cx.satisfies_constraint(t, bound)
     }
+
+    /// Are `a` and `b` one type under this function's type-parameter bounds: deferred
+    /// intersections that differ only in repeated parts or in `object` parts a `T extends
+    /// object` part makes redundant (`T & object` is `T` there)?
+    pub(crate) fn same_under_bounds(&mut self, a: TyId, b: TyId) -> bool {
+        if !self.cx.mentions_op(a) && !self.cx.mentions_op(b) {
+            return false;
+        }
+        let objects = self.object_params();
+        let fa = self.cx.bounded_form(a, &objects, 0);
+        let fb = self.cx.bounded_form(b, &objects, 0);
+        fa == fb || self.cx.canon(fa) == self.cx.canon(fb)
+    }
+
+    /// The type parameters of this function whose values are objects (`T extends object`).
+    pub(crate) fn object_params(&mut self) -> Vec<u32> {
+        let Some(defs) = self.cx.any else {
+            return vec![];
+        };
+        let b = crate::defs::Bound {
+            iface: defs.object,
+            args: vec![],
+        };
+        let bounds = self.bounds.clone();
+        (0..bounds.len() as u32)
+            .filter(|&n| {
+                let p = self.cx.ty.param(n);
+                self.cx.satisfies(p, &b, &bounds)
+            })
+            .collect()
+    }
 }
 
 /// Does `e` hold a literal (`"a"`, `["a"]`, `{ k: "a" }`)?

@@ -467,8 +467,14 @@ const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`
 
 A `T | null | undefined` keeps the two apart: `x === null` and `x === undefined` each test
 one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one it holds.
-`x !== undefined` narrows it to `T | null`, and both tests (or `x != null`, or truthiness)
-narrow it to `T`. `undefined` alone is a type too (its only value is `undefined`), and an
+`x !== undefined` narrows it to `T | null`, `x !== null` to `T | undefined`, and both tests (or
+`x != null`, or truthiness) narrow it to `T`. Compared with a `T | null` or a `T | undefined`,
+`===` tells the nothings apart and `==` does not, as in Node. A conditional with both a `null`
+and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
+A generic union whose type argument brings a nothing (`T | string | undefined` at
+`T = number | null`) holds it like the union written out (`number | string | null | undefined`):
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
@@ -751,6 +757,11 @@ the nullable type; `void` cannot be a member.
   - `x == literal` / `x != literal` selects the literal's member.
   - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
+  - `typeof` tests narrow a field path of a local too (`typeof node.text === "string"`,
+    `this.label`, `h.node.text`), as in TypeScript, until the path or a part of it is
+    assigned. A call between the test and a read may change the field, so each read checks
+    the member again and stops the program if the field now holds another member (Node would
+    go on with the new value).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `a || b` narrows to the members either side allows
     (`typeof c === "string" || typeof c === "number"` leaves `c` a `string | number`);
@@ -767,7 +778,9 @@ the nullable type; `void` cannot be a member.
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
 - A union alias may name itself behind an indirection: as an array's element, an index
-  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
+  may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
+  Child[]`). Elsewhere
   (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
   give such a type a nominal member, such as an interface or a class.
 
@@ -1021,6 +1034,13 @@ for a value declared `A & { id: string }`), else from the whole argument
 TypeScript. `any`, `unknown` and
 `object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
 `object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
+`object & X` keeps only the members of `X` that are objects, and has no value (`never`) when
+none is: `T & object` at `number` is `never`, so sigx's `PrimitiveSignal<T> | Signal<T & object>`
+at a `number` is `PrimitiveSignal<number>`; `never & X` is `never`. In a generic body,
+`T & object` is `T` under a `T extends object` bound (an overload returning `Signal<T>` fits an
+implementation returning `Signal<T & object>`), and a value of `T & object` (or of an
+intersection with such a part) is an `object`, so it can be a `WeakMap` key. `Omit<T, never>`
+and `Pick<T, never>` name no fields.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };

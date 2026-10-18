@@ -1,0 +1,17 @@
+true true false
+true false false
+false true true
+dflt dflt 2
+nothing false v
+3
+undefined 3
+true true
+true false
+true true false
+false true false
+d 5 d
+2 fallback [ null, undefined, 'x' ] true true
+true true false false true false true false false false false true
+2 u 0
+true true false
+defined undefined defined

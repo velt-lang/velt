@@ -129,6 +129,9 @@ impl FnCx<'_, '_> {
 
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        if let Some(h) = exp.and_then(|t| self.nothing_in_member(Nothing::Null, t, span)) {
+            return h;
+        }
         match exp {
             Some(t) if self.cx.dynamic(t).is_some() => self.dynamic_nothing(Nothing::Null, t, span),
             Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
@@ -177,7 +180,10 @@ impl FnCx<'_, '_> {
             Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) => self.nothing_mismatch("undefined", t, span),
+            Some(t) => match self.nothing_in_member(Nothing::Undefined, t, span) {
+                Some(h) => h,
+                None => self.nothing_mismatch("undefined", t, span),
+            },
             // With no type to take, its type is `undefined` alone.
             None => {
                 let t = self.cx.ty.undefined();

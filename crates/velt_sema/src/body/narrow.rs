@@ -473,11 +473,15 @@ impl FnCx<'_, '_> {
                 return (vec![Fact::Class(l, t)], vec![]);
             }
         }
-        let Some((l, nullable, u)) = self.local_with_members(operand) else {
-            return (vec![], vec![]);
+        let (l, nullable, u, nothing) = match self.local_with_members(operand) {
+            Some((l, nullable, u)) => (l, nullable, u, self.cx.ty.nothing_of(self.local_ty(l))),
+            // A field path of a local (`typeof node.text === "string"`).
+            None => match self.field_with_members(operand) {
+                Some(found) => found,
+                None => return (vec![], vec![]),
+            },
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let nothing = self.cx.ty.nothing_of(self.local_ty(l));
         // A `T | null | undefined`: `"object"` also holds for its `null`, `"undefined"` only for
         // its `undefined`; the false branch rules that nothing out.
         if nothing == Some(Nothing::Both) {
@@ -677,6 +681,16 @@ impl FnCx<'_, '_> {
 /// with one nothing (`T | null`, `T | undefined`) tests for that nothing (issue #930).
 pub(crate) fn is_null(e: &ast::Expr) -> bool {
     nothing_word(e).is_some()
+}
+
+/// `null`, `undefined`, or a conditional whose arms are only those
+/// (`i > 2 ? null : undefined`): an expression whose type comes from the other values.
+pub(crate) fn only_nothings(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => only_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => only_nothings(then) && only_nothings(els),
+        _ => is_null(e),
+    }
 }
 
 /// `"null"` / `"undefined"` for those literals (possibly parenthesized).

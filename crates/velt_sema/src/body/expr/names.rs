@@ -49,6 +49,17 @@ impl FnCx<'_, '_> {
             let mode = self.use_mode(mid, want);
             return self.mk(H::UnwrapSome(Box::new(base), mode), mid, span);
         }
+        if payload.is_none()
+            && !reassigned
+            && want != Want::BorrowMut
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Null)
+        {
+            // `x !== null` on a `T | null | undefined`: its `T | undefined` (#1218).
+            let mode = self.use_mode(ty, want);
+            let base = self.mk(H::Local(l, mode), ty, span);
+            return self.three_state_without_null(base, want == Want::Move);
+        }
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {

@@ -67,6 +67,12 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // `T & object` and `T` at a `T extends object` (crate::intersections).
+        if self.same_under_bounds(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         // `Generator<T, E, N>` to `Generator<T, E>` or back: `N` only types `next(value)`,
         // and one side takes no value (the other never reads one).
         if self.cx.generator_next_differs(h.ty, exp) {
@@ -81,6 +87,9 @@ impl FnCx<'_, '_> {
                 args: vec![h],
             };
             return Ok(self.mk(call, exp, span));
+        }
+        if self.converts_by_state(h.ty, exp) {
+            return self.coerce_hidden_nothings(h, exp);
         }
         // `T | undefined` to `T | null` (or the reverse): TS2322, as in TypeScript; converting
         // would turn one nothing into the other (issue #930).
