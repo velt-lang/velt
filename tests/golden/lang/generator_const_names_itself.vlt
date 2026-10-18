@@ -1,0 +1,18 @@
+// An unnamed generator function expression whose constant it initializes is used in its body
+// (#750), also under its own name: the generator reads the constant when it runs.
+function run(): void {
+  const walk = function* (n: number): Generator<number> {
+    if (n > 0) {
+      yield* walk(n - 1);
+    }
+    yield n;
+  };
+  const named = function* named(n: number): Generator<number> {
+    yield n;
+    if (n > 0) {
+      yield* named(n - 1);
+    }
+  };
+  console.log([...walk(3)], [...named(2)]);
+}
+run();

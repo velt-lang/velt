@@ -516,6 +516,11 @@ impl FnCx<'_, '_> {
         for c in &frame.captures {
             let ty = frame.locals[c.inner.0 as usize].ty;
             let copy = self.cx.is_copy(ty);
+            // A `const` captured while its initializer runs, and its flag: the cell itself,
+            // which closures created inside this one share too (`late_consts`).
+            let late = frame.late.caps.contains_key(&c.inner)
+                || frame.late.caps.values().any(|r| *r == c.inner);
+            let escaping = escaping || late && !c.mutated;
             let mode = match (escaping, c.mutated, copy) {
                 (false, true, _) => PassMode::BorrowMut,
                 (false, false, true) => PassMode::Copy,

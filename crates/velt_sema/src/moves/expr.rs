@@ -1,6 +1,6 @@
 //! Expressions in the moves dataflow: place paths, branches, matches, closure captures.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 use super::state::{join, Flow, Path, UNWRAP, VARIANT};
 use super::Moves;
@@ -307,6 +307,11 @@ impl Moves<'_> {
             if c.mode == PassMode::BorrowMut {
                 self.assigned(c.outer, span, st);
             }
+            if self.late[i] && by_value {
+                // A `const` (or its flag) captured while its initializer runs, by a closure
+                // created in a closure that captured it: the cell is shared on down.
+                self.late_capture(c.outer, span);
+            }
             self.capturing = true;
             self.use_path(c.outer, &[], mode, span, st, by_closure);
             self.capturing = false;
@@ -318,5 +323,38 @@ impl Moves<'_> {
                 }
             }
         }
+    }
+
+    /// A closure captures `l`, a `const` it is part of the initializer of
+    /// (`body::late_consts`): the variable lives in a cell, or, when it cannot, that is an
+    /// error.
+    pub(super) fn late_capture(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        let name = &self.locals[i].name;
+        // Once per constant: not for its hidden flag (`<ready x>`), nor again at the assignment.
+        if !self.report || name.starts_with('<') || !self.late_reported.insert(l) {
+            return;
+        }
+        let why = if self.threaded[i] {
+            format!("a closure that may run on another thread (a timer callback, a spawned closure) keeps its own copy of `{name}`, made before `{name}` is assigned")
+        } else if self.promise[i] {
+            format!("`{name}` holds a promise, which cannot be shared")
+        } else {
+            format!("a value of the type of `{name}` cannot be shared with the closure")
+        };
+        self.errors.push(
+            Diagnostic::error(
+                format!(
+                    "`{name}` is used by a closure in its own initializer, which cannot share it"
+                ),
+                span,
+            )
+            .with_note(why)
+            .with_note("this is not supported yet (#1292)"),
+        );
     }
 }

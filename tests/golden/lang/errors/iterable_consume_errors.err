@@ -7,7 +7,7 @@ iterable_consume_errors.vlt:29:30: error: a generator function expression cannot
 TypeScript allows this; Velt doesn't because a function value has one type; write a generic `function*` declaration and call it
 iterable_consume_errors.vlt:32:27: error: a generator function expression cannot have a rest parameter
 TypeScript allows this; Velt doesn't because calls through a function value pass each argument as written; take an array parameter (`xs: T[]`), or declare a `function*`
-iterable_consume_errors.vlt:43:14: error: `walk` cannot be used inside the generator function expression it names
+iterable_consume_errors.vlt:43:14: error: `walker` cannot be used inside the generator function expression it names
 TypeScript allows this (the name of a function expression is in scope in its body); Velt doesn't because a function value cannot refer to itself; declare the generator with `function* name(...)` and refer to that
 iterable_consume_errors.vlt:47:19: error: a generator must declare its return type
 TypeScript allows this (it infers `Generator<T, void, unknown>`); Velt doesn't because the type of the values a generator yields is part of its signature, which is not inferred from its body; write `Generator<T>`, where `T` is the type of the values it yields

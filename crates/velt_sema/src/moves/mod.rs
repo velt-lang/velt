@@ -83,6 +83,8 @@ struct Moves<'a> {
     late: Vec<bool>,
     /// The use being checked is a closure's capture.
     capturing: bool,
+    /// Late `const`s reported as not shareable.
+    late_reported: HashSet<LocalId>,
 }
 
 /// What the move dataflow found besides errors.
@@ -209,6 +211,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 .map(|l| cx.late_consts.contains(&l.span))
                 .collect(),
             capturing: false,
+            late_reported: HashSet::new(),
             report: false,
             errors: vec![],
             loops: vec![],
@@ -513,8 +516,8 @@ impl Moves<'_> {
             s.captured[i] = Some((at, holder, writes));
             return;
         }
-        if !self.report {
-            return;
+        if !self.report || self.late[i] {
+            return; // a late `const`: reported where it is captured (`late_capture`)
         }
         let name = &self.locals[i].name;
         self.errors.push(
@@ -526,38 +529,6 @@ impl Moves<'_> {
             .with_note(format!(
                 "the closure keeps its own copy of `{name}` and would not see the new value; assign `{name}` before creating the closure, use a separate variable, or share it with `shared(...)`"
             )),
-        );
-    }
-
-    /// A closure captures `l`, a `const` it is part of the initializer of
-    /// (`body::late_consts`): the variable lives in a cell, or, when it cannot, that is an
-    /// error.
-    fn late_capture(&mut self, l: LocalId, span: Span) {
-        let i = l.0 as usize;
-        if self.boxable[i] {
-            self.boxed.insert(l);
-            return;
-        }
-        if !self.report {
-            return;
-        }
-        let name = &self.locals[i].name;
-        let why = if self.threaded[i] {
-            format!("a closure that may run on another thread (a timer callback, a spawned closure) keeps its own copy of `{name}`, made before `{name}` is assigned")
-        } else if self.promise[i] {
-            format!("`{name}` holds a promise, which cannot be shared")
-        } else {
-            format!("a value of the type of `{name}` cannot be shared with the closure")
-        };
-        self.errors.push(
-            Diagnostic::error(
-                format!(
-                    "`{name}` is used by a closure in its own initializer, which cannot share it"
-                ),
-                span,
-            )
-            .with_note(why)
-            .with_note("this is not supported yet (#1292)"),
         );
     }
 

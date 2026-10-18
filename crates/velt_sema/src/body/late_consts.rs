@@ -152,9 +152,11 @@ impl FnCx<'_, '_> {
         self.push_scope();
         self.declare_local(name, err, LocalKind::Const);
         let h = self.expr(e, None, Want::Move);
+        // Before the rollback: the methods of an object literal are the trial's definitions.
+        let incomplete = self.incomplete_ty(h.ty, 0);
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
-        if self.cx.ty.has_error(h.ty) {
+        if incomplete {
             self.cx.error(
                 Diagnostic::error(
                     format!(
@@ -167,6 +169,36 @@ impl FnCx<'_, '_> {
             );
         }
         h.ty
+    }
+
+    /// Does `t` mention the error type, also in the fields and methods of the object types
+    /// it names (an object literal method returning the constant without a result type)?
+    fn incomplete_ty(&self, t: TyId, depth: u32) -> bool {
+        if self.cx.ty.has_error(t) {
+            return true;
+        }
+        if depth > 3 {
+            return false;
+        }
+        let mut adts = vec![];
+        self.cx.ty.visit(t, &mut |k| {
+            if let hir::TyKind::Adt(d, _) = k {
+                adts.push(*d);
+            }
+        });
+        adts.into_iter().any(|d| {
+            let Some(a) = self.cx.adt(d) else {
+                return false;
+            };
+            let field = a.fields.iter().any(|f| self.incomplete_ty(f.ty, depth + 1));
+            field
+                || a.methods.values().any(|m| {
+                    self.cx.try_fn(m.def).is_some_and(|f| {
+                        self.incomplete_ty(f.ret, depth + 1)
+                            || f.params.iter().any(|p| self.incomplete_ty(p.ty, depth + 1))
+                    })
+                })
+        })
     }
 
     /// Local `inner` of this frame, captured from frame `j`'s `outer` (or the current frame's
@@ -194,15 +226,41 @@ impl FnCx<'_, '_> {
         let Some(flag) = self.lookup_local(&fname, span) else {
             return;
         };
-        // Every closure frame in between captured both: their reads check too.
+        // Every closure frame in between captured both: their reads check too, and the
+        // closures created in them share the cells (`crate::moves`, by span).
+        let mut spans = vec![];
         for f in &mut self.outer[j + 1..] {
             let lookup = |n: &str| f.scopes.iter().rev().find_map(|s| s.names.get(n).copied());
             if let (Some(x), Some(r)) = (lookup(name), lookup(&fname)) {
                 f.late.caps.insert(x, r);
+                spans.push(f.locals[x.0 as usize].span);
+                spans.push(f.locals[r.0 as usize].span);
             }
         }
+        spans.push(self.f.locals[inner.0 as usize].span);
+        spans.push(self.f.locals[flag.0 as usize].span);
+        self.cx.late_consts.extend(spans);
         self.f.late.caps.insert(inner, flag);
         self.late_check(flag, name);
+    }
+
+    /// `e`, a read of a local whose lookup added checks from `from` on (`late_lookup`): a
+    /// value read checks right before it, so a read on a path that does not run checks
+    /// nothing (`ready ? x : 1`); other reads leave the checks to their statement.
+    pub(crate) fn late_checked_read(&mut self, e: hir::Expr, from: usize) -> hir::Expr {
+        let value = matches!(e.kind, H::Local(_, UseMode::Copy | UseMode::Move));
+        if !value || self.f.late.checks.len() <= from {
+            return e;
+        }
+        let checks = self.f.late.checks.split_off(from);
+        let stmts = self.late_check_stmts(checks, e.span);
+        let (ty, span) = (e.ty, e.span);
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(e)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
     }
 
     fn late_check(&mut self, flag: LocalId, name: &str) {
