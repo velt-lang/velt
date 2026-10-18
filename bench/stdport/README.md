@@ -83,11 +83,11 @@ code, from `bench/simd_bytes/cases.sh`:
 | utf8_decode | Velt byte loop | 7,768.4 M | 7,768.5 M |
 | utf8_valid | `str::from_utf8` | 3,850.8 M | 3,850.8 M |
 
-`indexOf` and `includes` (`bytes_search`) on arrays of up to 208 bytes are Velt code on
-`u8x16`: the first vector is tested on its own (most searches end within a few bytes), then
-four vectors per step, and the last bytes are covered by one vector that ends at the array's
-end instead of a byte loop. Longer arrays still go to the runtime's `memchr`, which takes 32
-bytes per vector with AVX2 and is faster there (the Velt vectors executed 2.4 to 2.65 times as
+`indexOf` and `includes` (`bytes_search`) are Velt code on `u8x16` when at most 208 bytes are
+left from the start position: the first vector is tested on its own (most searches end within a
+few bytes), then four vectors per step, and the last bytes are covered by one vector that ends
+at the array's end instead of a byte loop. Longer searches still go to the runtime's `memchr`,
+which takes 32 bytes per vector with AVX2 and is faster there (the Velt vectors executed 2.4 to 2.65 times as
 many instructions on 4 KiB and 1 MiB). `bench/simd_bytes/cases.sh` measures both sides of that
 length.
 

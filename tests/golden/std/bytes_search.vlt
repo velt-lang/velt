@@ -1,7 +1,7 @@
 // `indexOf`, `includes` and `xorMask` on `u8[]` against byte-at-a-time loops, for every length
 // around the 16- and 64-byte steps they take and around the length where the search moves to
-// the runtime (arrays of more than 208 bytes), every position of the byte and start positions
-// before, inside and past the array.
+// the runtime (more than 208 bytes from the start position), every position of the byte and
+// start positions before, inside and past the array.
 function naiveIndexOf(d: u8[], b: u8, from: number): number {
   const n = d.length;
   let i = from < 0 ? (n + from < 0 ? 0 : n + from) : from;
