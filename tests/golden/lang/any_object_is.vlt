@@ -1,0 +1,20 @@
+// check: no leaks
+// `Object.is` with an `any` operand (#924): SameValue, which is `===` except that `NaN` is
+// itself and `0` is not `-0`.
+class Point {
+  x: number = 1;
+}
+
+function same(a: any, b: any): boolean {
+  return Object.is(a, b);
+}
+
+function main(): void {
+  const p = new Point();
+  const q = new Point();
+  console.log(same(1, 1), same(NaN, NaN), same(0, -0), same(-0, -0), same(1, "1"));
+  console.log(same("a", "a"), same(true, true), same(null, null), same(null, undefined));
+  console.log(same(p, p), same(p, q), Object.is(p as any, p), Object.is(2, 2 as any));
+  const r: Record<string, any> = { k: NaN };
+  console.log(Object.is(r["k"], NaN), Object.is(r["k"], 0));
+}

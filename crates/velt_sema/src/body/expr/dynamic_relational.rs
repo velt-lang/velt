@@ -289,4 +289,72 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, ty, span)
     }
+
+    /// `Object.is(a, b)` where an operand is an `any` (`None`: neither is): SameValue, which is
+    /// `===` except that `NaN` is itself and `0` is not `-0`. Both operands are evaluated once,
+    /// in order.
+    pub(crate) fn object_is_dynamic(
+        &mut self,
+        args: &[velt_syntax::ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let [a, b] = args else {
+            return None;
+        };
+        let dynamic = [a, b].iter().any(|e| {
+            self.trial_type(e)
+                .is_some_and(|t| self.cx.dynamic(t) == Some(Dynamic::Any))
+        });
+        if !dynamic {
+            return None;
+        }
+        let any = self.any_ty()?;
+        let mut stmts = Vec::new();
+        let mut temps = Vec::new();
+        for e in [a, b] {
+            let h = self.expr(e, None, crate::body::Want::Borrow);
+            if self.cx.ty.is_bottom(h.ty) {
+                return Some(self.error_expr(span));
+            }
+            let h = self.unbrand(h);
+            let h = if self.cx.dynamic(h.ty).is_some() {
+                self.share_if_place(h)
+            } else {
+                self.coerce(h, any)
+            };
+            let ty = h.ty;
+            let tmp = self.new_local("<any>", ty, false, e.span, LocalKind::Temp);
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(h),
+                },
+                span: e.span,
+            });
+            temps.push((tmp, ty));
+        }
+        let [(x, xt), (y, yt)] = temps[..] else {
+            return None;
+        };
+        let (f64_, bool_) = (self.cx.ty.f64, self.cx.ty.bool_);
+        let xn = self.rel_typeof_is(x, xt, "number", span);
+        let yn = self.rel_typeof_is(y, yt, "number", span);
+        let f = self.mk(H::Lit(hir::Lit::Bool(false)), bool_, span);
+        let both = self.rel_choose(xn, yn, f, bool_, span);
+        let (vx, vy) = (
+            self.rel_any_as(x, xt, f64_, span),
+            self.rel_any_as(y, yt, f64_, span),
+        );
+        let numbers = self.intrinsic(Intrinsic::SameValue, vec![vx, vy], bool_, span);
+        let rx = self.mk(H::Local(x, UseMode::Borrow), xt, span);
+        let ry = self.mk(H::Local(y, UseMode::Borrow), yt, span);
+        let other = self.intrinsic(Intrinsic::AnyStrictEq, vec![rx, ry], bool_, span);
+        let result = self.rel_choose(both, numbers, other, bool_, span);
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(result)),
+            span,
+        };
+        Some(self.mk(H::Block(block), bool_, span))
+    }
 }
