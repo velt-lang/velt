@@ -561,8 +561,32 @@ impl FnCx<'_, '_> {
                         };
                         self.mk(kind, ty, span)
                     }
-                    // `nick?: T | null` into a `nick: T | null`: its `undefined` keeps the
-                    // earlier value, its `null` overrides.
+                    // A field the target can't leave `undefined` (`name: string` from a
+                    // `Partial<U>`'s `name?: string`): absent, it keeps the earlier value; a
+                    // present `undefined` is a `TypeError` (Node would copy it, which the type
+                    // can't hold); a present value (a `null` of a `T | null`) overrides.
+                    Some(p) if src.presence => {
+                        let b = self.cx.ty.bool_;
+                        let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
+                        let shown = expected.map_or_else(String::new, |t| self.cx.display(t));
+                        let msg = self.str_lit(
+                            &format!("TypeError: a spread copies `undefined` into a field of type `{shown}`"),
+                            span,
+                        );
+                        let never = self.cx.ty.never;
+                        let fail = self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
+                        let then = self.undefined_keeps(h, fail, span);
+                        let ty = then.ty;
+                        let prev = self.coerce(prev, ty);
+                        let kind = H::If {
+                            cond: Box::new(cond),
+                            then: Box::new(then),
+                            els: Box::new(prev),
+                        };
+                        self.mk(kind, ty, span)
+                    }
+                    // `nick?: T | null` into a `nick: T | null` without a flag: its `undefined`
+                    // keeps the earlier value, its `null` overrides.
                     _ if !keeps_undefined && self.is_three_state(h.ty) => {
                         self.undefined_keeps(h, prev, span)
                     }
@@ -572,13 +596,14 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h` (a `T | null | undefined`) as its `T | null`, or `prev` where it is `undefined`.
+    /// `h` (a `T | undefined`, or a `T | null | undefined`) as its payload (`T`, or the
+    /// `T | null`), or `prev` where it is `undefined`.
     fn undefined_keeps(&mut self, mut h: hir::Expr, prev: hir::Expr, span: Span) -> hir::Expr {
         let mid = self
             .cx
             .ty
             .opt_payload(h.ty)
-            .expect("ICE: three-state option without a payload");
+            .expect("ICE: an option without a payload");
         let (l, mode) = self.option_binding(&h, mid, "<spread>", true);
         if mode == UseMode::Move {
             self.force_move(&mut h);

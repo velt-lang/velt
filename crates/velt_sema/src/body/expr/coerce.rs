@@ -328,7 +328,8 @@ impl FnCx<'_, '_> {
             return;
         }
         let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
-        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span) {
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
+        {
             return;
         }
         let e = self.cx.display(expected);

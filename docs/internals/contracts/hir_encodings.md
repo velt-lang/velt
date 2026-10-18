@@ -663,9 +663,10 @@ entry is an `ICE:`.
   field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
   and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
   key is there with a value the field's type holds (a JSON `null` for an `a?: T` field without
-  `null` leaves it absent). A spread copies a present field over an earlier value, also one
-  holding `undefined`, unless the target field is required and cannot hold `undefined` (then an
-  `undefined` keeps the earlier value). Copy, clone and equality glue include the flag.
+  `null` leaves it absent, unless the reader has flag 2, `JSON.parse(text) as T`: then it fails).
+  A spread copies a present field over an earlier value, also one holding `undefined`, unless
+  the target field is required and cannot hold `undefined`: then an absent field keeps the
+  earlier value and a present `undefined` panics with a `TypeError` message. Copy, clone and equality glue include the flag.
 
 ## Undefined (issue #930, phase 1)
 - `TyKind::Option(T, Nothing)`: `Nothing::Null` is `T | null` (every option before #930),

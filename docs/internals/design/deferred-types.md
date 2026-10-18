@@ -354,7 +354,7 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 | `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` (same object) | in storage positions an error suggesting `{ ...x }`; parameters: #672 | different layouts; a conversion makes a new object |
 | `{ a: F \| undefined }` assignable to `{ a?: F }`, and `{ a: F \| null }` to `{ a?: F \| null }` | error suggesting `{ ...x }` (decision 7) | the second has a presence flag |
 | `x[k] = v` with a union `K` stores any member | panics when the member doesn't match | it would store a value of the wrong type |
-| a spread of `Partial<T>` back into a `T` copies a present `undefined` into a required field at run time (Node) | keeps the earlier value | the field cannot hold `undefined`; TypeScript types the result that way too |
+| a spread of `Partial<T>` back into a `T` copies a present `undefined` into a required field at run time (Node) | stops with a `TypeError` (an absent field keeps the earlier value) | the field cannot hold `undefined` |
 
 ## Cost
 

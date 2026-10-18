@@ -6,7 +6,7 @@
 //! the path *below* this value. Numbers, bools, strings and options are decoded inline; other
 //! types call their glue.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::{Seg, STR, TOKEN_NULL};
 use crate::lower::operand::proj;
@@ -406,6 +406,28 @@ impl FnLower<'_, '_> {
         let (null_bb, some_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is_null, null_bb, some_bb);
         self.switch_to(null_bb);
+        // `a?: T` (a `T | undefined` without `null`): a JSON `null` leaves the field absent
+        // for `JSON.parse<T>`; for `JSON.parse(text) as T` the reader says no, and the value is
+        // read as a `T`, which fails (`expected string at $.a`).
+        if matches!(self.cx.kind(ty), TyKind::Option(_, Nothing::Undefined)) {
+            let absent = self.temp(Ty::U8);
+            self.call_rt(
+                Rt::JsonNullAbsent,
+                vec![ro.clone()],
+                Some(Place::local(absent)),
+            );
+            let yes = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Ne,
+                    Operand::Copy(Place::local(absent)),
+                    cint(0, Ty::U8),
+                ),
+            );
+            let read_null = self.new_block();
+            self.branch(yes, read_null, some_bb);
+            self.switch_to(read_null);
+        }
         self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail);
         self.goto(done);
         self.switch_to(some_bb);

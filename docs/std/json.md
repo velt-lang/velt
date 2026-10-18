@@ -198,7 +198,9 @@ console.log(text, m.cents); // {"cents":250} 250
   (`undefined`), and a field declared `a: T | null` be missing, and then it is `null`; every
   other field is required. An explicit JSON `null` for an `a?: T` field, whose type has no
   `null`, leaves it absent too (a Velt rule: the type cannot hold the `null`); for an
-  `a?: T | null` field it is a present `null`.
+  `a?: T | null` field it is a present `null`. `JSON.parse(text) as T` and
+  `const t: T = JSON.parse(text)` (the type from the context, as TypeScript writes it) fail on
+  that `null` instead (`expected string at $.a`), as on a value of another type.
 - `JSON.stringify` leaves out an optional field (`a?: T`) of a class, object type or interface
   while it is absent or holds `undefined`, as JavaScript leaves out a missing property and one
   holding `undefined`, and writes a `null` (a present `null` of an `a?: T | null` field, a

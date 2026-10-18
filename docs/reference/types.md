@@ -579,8 +579,9 @@ nothings alike:
   an earlier value, also one holding `undefined` or `null`, and keeps the earlier value where `b`
   lacks the field (`update(u, { deletedAt: undefined })` below clears `deletedAt`, as in Node).
   Where the target field is required and cannot hold `undefined` (a `Partial<U>` spread back into
-  a `U`), an `undefined` from the source keeps the earlier value, which is what TypeScript's type
-  for the result says (Node copies the `undefined`).
+  a `U`), a source that lacks the field keeps the earlier value, and one that holds `undefined`
+  stops the program with a `TypeError` (``a spread copies `undefined` into a field of type
+  `string` ``): Node would copy the `undefined`, which the field's type can't hold.
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.
@@ -609,7 +610,10 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
 
 - `JSON.parse<T>`: an absent key leaves an optional field absent (`undefined`). An explicit
   `null` for an `a?: T` field, whose type has no `null`, leaves it absent too (a Velt rule: the
-  type cannot hold the `null`); for an `a?: T | null` field it is a present `null`. A field
+  type cannot hold the `null`); for an `a?: T | null` field it is a present `null`. The
+  TypeScript forms that take the type from the context, `JSON.parse(text) as T` and
+  `const t: T = JSON.parse(text)`, reject that `null` instead (`expected string at $.a`), as
+  they reject a value of another type. A field
   declared `a: T | null` (not optional) may be missing, and is then `null`, as for an explicit
   `null`. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (`undefined` when `x` is `null`

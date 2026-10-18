@@ -66,6 +66,24 @@ impl FnCx<'_, '_> {
                 .with_note(format!("only `T | {word}` values can be {word}")),
             );
         }
+        // An option of a type parameter that allows `undefined` (`x?: T`): which nothings the
+        // value can hold depends on the instantiation (`T = string | null` holds `null` too), so
+        // the test is made there. (A `T | null` keeps its one test: its `null` is `T`'s too.)
+        if self.param_payload(s.ty) {
+            match (strict, word, self.cx.ty.nothing_of(s.ty)) {
+                (true, "null", Some(Nothing::Undefined)) => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                (false, _, Some(n)) if n.has_undefined() => {
+                    let b = self.cx.ty.bool_;
+                    let e = self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span);
+                    return self.negated(e, !is_eq, span);
+                }
+                _ => {}
+            }
+        }
         match (strict, word, self.cx.ty.nothing_of(s.ty)) {
             // A `T | undefined` is never `null`: still evaluated, then constant. TypeScript
             // accepts it; a warning says so, since an optional parameter or field left out is
@@ -134,6 +152,21 @@ impl FnCx<'_, '_> {
             }
             _ => self.null_test(s, is_eq, span),
         }
+    }
+
+    /// Is `t` an option whose value type is a type parameter, or a union with one among its
+    /// members (`T | undefined`, `T | string | undefined`)?
+    fn param_payload(&self, t: TyId) -> bool {
+        let Some(core) = self.cx.ty.core(t) else {
+            return false;
+        };
+        let members = match self.cx.union_def(core) {
+            Some((_, members)) => members,
+            None => vec![core],
+        };
+        members
+            .iter()
+            .any(|m| matches!(self.cx.ty.kind(*m), hir::TyKind::Param(_)))
     }
 
     /// `s`, evaluated, then `value`.

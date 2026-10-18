@@ -586,7 +586,18 @@ impl FnCx<'_, '_> {
         }
         self.note_reflect_call(d, &prop.name, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
-        let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
+        // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
+        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (std's
+        // `JSON.__parseFromContext`).
+        let from_context = type_args.is_empty()
+            && prop.name == "parse"
+            && cname == "JSON"
+            && self.cx.declared_in_std(d);
+        let lookup = match from_context {
+            true => "__parseFromContext",
+            false => prop.name.as_str(),
+        };
+        let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
             Ok(found) => found,
             Err(instance) => {
                 let what = match instance {

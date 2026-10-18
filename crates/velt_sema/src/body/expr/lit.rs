@@ -229,12 +229,16 @@ impl FnCx<'_, '_> {
     /// An `undefined` (a literal, or a value that may be one) at `span`, given for a parameter
     /// with a default whose type does not allow `undefined`: JavaScript applies the default,
     /// which calls do not do yet (`true`: reported, issue #930). An optional parameter or field
-    /// is a `T | undefined` and takes it as is.
-    pub(crate) fn optional_slot_error(&mut self, span: Span) -> bool {
+    /// is a `T | undefined` and takes it as is. `maybe`: the value only may be `undefined`.
+    pub(crate) fn optional_slot_error(&mut self, span: Span, maybe: bool) -> bool {
         let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
             return false;
         };
         let (what, note) = match slot {
+            crate::body::OptionalSlot::Param if maybe => (
+                "a value that may be `undefined` passed for a parameter with a default",
+                "JavaScript applies the default where it is `undefined`; test it first, or pass `value ?? default`",
+            ),
             crate::body::OptionalSlot::Param => (
                 "`undefined` passed for a parameter with a default",
                 "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
@@ -252,7 +256,7 @@ impl FnCx<'_, '_> {
 
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
-        if what == "undefined" && self.optional_slot_error(span) {
+        if what == "undefined" && self.optional_slot_error(span, false) {
             return self.error_expr(span);
         }
         if what == "undefined" && t == self.cx.ty.unit {
