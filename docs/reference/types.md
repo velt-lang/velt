@@ -760,7 +760,9 @@ the nullable type; `void` cannot be a member.
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
 - A union alias may name itself behind an indirection: as an array's element, an index
-  signature's or a `Map`'s value, or in a function type, as JSON-like types do. Elsewhere
+  signature's or a `Map`'s value, or in a function type, as JSON-like types do; its members
+  may include `null`, `undefined` or both (`type Child = Node | string | null | undefined |
+  Child[]`). Elsewhere
   (`type L = number | { next: L }`, a tuple) a value would contain itself, which is an error:
   give such a type a nominal member, such as an interface or a class.
 
