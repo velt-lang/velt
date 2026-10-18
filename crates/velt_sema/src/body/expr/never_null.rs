@@ -49,6 +49,48 @@ impl FnCx<'_, '_> {
         s
     }
 
+    /// `s ?? rhs` where `s` is a type parameter's value (or a union with one, `param_shaped`):
+    /// tested for the instantiated type (`T = number | null` may hold `null`). A default that
+    /// does not convert to `s`'s type keeps `s` (as before).
+    pub(super) fn param_nullish(
+        &mut self,
+        mut s: hir::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (ty, b) = (s.ty, self.cx.ty.bool_);
+        let d = self.expr(rhs, Some(ty), Want::Move);
+        let Ok(d) = self.try_coerce(d, ty) else {
+            if is_place(&s) {
+                let mode = self.use_mode(ty, Want::Move);
+                set_place_mode(&mut s, mode);
+            }
+            return s;
+        };
+        let (l, mode) = self.option_binding(&s, ty, "<nullish>", true);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let bound = self.mk(hir::ExprKind::Local(l, hir::UseMode::Borrow), ty, span);
+        let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
+        let v = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let kind = hir::ExprKind::If {
+            cond: Box::new(test),
+            then: Box::new(d),
+            els: Box::new(v),
+        };
+        let arms = vec![hir::Arm {
+            pat: self.pat(hir::PatKind::Binding(l, mode), ty, span),
+            guard: None,
+            body: self.mk(kind, ty, span),
+        }];
+        let kind = hir::ExprKind::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, ty, span)
+    }
+
     /// `s == null` (`is_eq`) / `s != null` where `s` (checked from `other`) is never null or
     /// undefined: `s` evaluated, then constant, except an array element read past the end.
     pub(super) fn never_null_compare(

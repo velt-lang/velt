@@ -8,7 +8,7 @@ use velt_syntax::ast;
 use super::type_tests::LitEq;
 use crate::body::narrow::{is_null, nothing_word, typeof_compare};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 
 /// Literal-ish expression whose type is decided by context (`1`, `-2.5`, `(1 + 2)`).
 pub(crate) fn untyped(e: &ast::Expr) -> bool {
@@ -401,8 +401,29 @@ impl FnCx<'_, '_> {
         r: hir::Expr,
     ) -> (hir::Expr, hir::Expr) {
         let t = &self.cx.ty;
+        if t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+            return (l, r);
+        }
+        // `T | null | undefined` against a `T | null` or `T | undefined` (or those two against
+        // each other): both as the option holding every nothing either does (#1218).
+        if let (Some(a), Some(b)) = (t.nothing_of(l.ty), t.nothing_of(r.ty)) {
+            if a == b {
+                return (l, r);
+            }
+            let to = if a == Nothing::Both {
+                l.ty
+            } else if b == Nothing::Both {
+                r.ty
+            } else {
+                let core = t.core(l.ty).unwrap_or(l.ty);
+                self.cx.ty.option_of(core, Nothing::Both)
+            };
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            let r = self.try_coerce(r, to).unwrap_or_else(|r| r);
+            return (l, r);
+        }
         let nullable = |x: TyId| t.opt_payload(x).is_some();
-        if nullable(l.ty) == nullable(r.ty) || t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+        if nullable(l.ty) == nullable(r.ty) {
             return (l, r);
         }
         if nullable(l.ty) {
