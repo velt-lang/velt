@@ -1,0 +1,8 @@
+1 "a\"b" true null
+{"x":1,"y":2} [1,"two",null]
+{"a":1,"nested":{"b":[true,false]}}
+"t5"
+["t1",{"x":1,"y":2}]
+[1,null,"x",null,null]
+{"keep":1,"list":[null]}
+{"w":"w"}

@@ -5,6 +5,8 @@
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
+- `JSON.stringify` of an `any`, `unknown` or `object` writes the value held, as Node does
+  ([Reference](../reference/types.md#any-and-unknown)).
 - `JSON.stringify(x, replacer, space)` writes as JavaScript does. `space` indents: a number of
   spaces (its integer part, at most 10; a number in (0, 1) keeps the line breaks without
   indentation, as in Node, and 0 or less writes no whitespace) or a string (its first 10

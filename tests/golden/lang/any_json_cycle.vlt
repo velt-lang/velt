@@ -1,0 +1,7 @@
+// A record that holds itself through an `any` is Node's `TypeError` when written as JSON (#924).
+function main(): void {
+  const r: Record<string, any> = {};
+  r["self"] = r;
+  console.log("before");
+  console.log(JSON.stringify(r));
+}

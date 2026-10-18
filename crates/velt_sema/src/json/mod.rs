@@ -591,6 +591,9 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
+        // A dynamic value is written as what it holds, checked at run time (velt_vir
+        // `json/any.rs`).
+        TyKind::Dyn(..) if !parse && cx.dynamic(t).is_some() => return None,
         TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
