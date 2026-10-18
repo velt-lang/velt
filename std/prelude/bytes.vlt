@@ -1,6 +1,7 @@
-// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searching sixteen
-// bytes at a time with SIMD vectors, here in Velt so that it is compiled into its caller;
-// copying, filling and XOR masking by memmove, memset and word loops in the runtime.
+// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searching a short array
+// sixteen bytes at a time with SIMD vectors, here in Velt so that it is compiled into its
+// caller; searching a long one by memchr, copying, filling and XOR masking by memmove, memset
+// and word loops in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
@@ -10,6 +11,7 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
+declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
@@ -41,10 +43,15 @@ function hit(at: usize, m: mask8x16): i64 {
   return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
 }
 
-// First position at or after `start` holding `byte`, or -1. One vector first (most searches
-// end within a few bytes), then four per step with one test for all of them; the last bytes
-// are covered by a vector ending at the array's end, which may overlap bytes already seen
-// (none of them matched, so its first match is past them).
+// Arrays up to this many bytes are searched by the vectors below, which are faster there than
+// the runtime's memchr (32 bytes per vector with AVX2 on x86-64) and its call; longer ones by
+// memchr, which is faster past it.
+const SHORT_SEARCH: usize = 208;
+
+// First position at or after `start` holding `byte` in an array of at most `SHORT_SEARCH`
+// bytes, or -1: one vector first (most searches end within a few bytes), then four per step
+// with one test for all of them, and the last bytes in a vector ending at the array's end,
+// which may overlap bytes already seen (none of them matched, so its first match is past them).
 function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
   const n = d.length;
   const needle = velt_simd_u8x16_splat(byte);
@@ -150,6 +157,9 @@ export class Buffer {
 extend Array<u8> {
   /** Position of the first `byte` at or after `from`, or -1. */
   indexOf(byte: u8, from: i64 = 0): i64 {
+    if (this.length > SHORT_SEARCH) {
+      return velt_rt_bytes_index_of(this, byte, from);
+    }
     return indexOfByte(this, byte, relative(from, this.length));
   }
 
@@ -161,9 +171,13 @@ extend Array<u8> {
   /**
    * Determines whether an array includes a certain byte, returning true or false as appropriate.
    * @param byte - The byte to search for.
+   * @param from - The position to start the search at (negative: from the end).
    */
-  includes(byte: u8): bool {
-    return indexOfByte(this, byte, 0) >= 0;
+  includes(byte: u8, from: i64 = 0): bool {
+    if (this.length > SHORT_SEARCH) {
+      return velt_rt_bytes_index_of(this, byte, from) >= 0;
+    }
+    return indexOfByte(this, byte, relative(from, this.length)) >= 0;
   }
 
   /**

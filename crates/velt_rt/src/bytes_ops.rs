@@ -1,9 +1,8 @@
-//! Bulk operations on `u8[]` (std/prelude/bytes.vlt: `Buffer.alloc`, and `lastIndexOf`, `set`,
-//! `copyWithin`, `fill`, `xorMask` on byte arrays): memrchr / memmove / memset instead of byte
-//! loops. `indexOf` and `includes` are Velt code there, on SIMD vectors.
+//! Bulk operations on `u8[]` (std/prelude/bytes.vlt: `Buffer.alloc`, and `indexOf`, `set`,
+//! `copyWithin`, `fill` on byte arrays): memchr / memmove / memset instead of byte loops.
 //!
 //! Positions follow JS: `copyWithin` and `fill` take relative indices (negative counts from the
-//! end) clamped to the array, `lastIndexOf` returns -1 when the byte is absent. The array's buffer is
+//! end) clamped to the array, `indexOf` returns -1 when the byte is absent. The array's buffer is
 //! written in place and never reallocated, so its length and capacity stay as they are.
 
 use crate::bytes::VeltBytes;
@@ -33,6 +32,14 @@ fn relative(i: i64, len: usize) -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
     out.write(VeltBytes::from_vec(vec![0; n as usize]));
+}
+
+/// First position at or after `from` (relative) holding `byte`, or -1.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_index_of(b: *const VeltBytes, byte: u8, from: i64) -> i64 {
+    let s = (*b).as_bytes();
+    let from = relative(from, s.len());
+    memchr::memchr(byte, &s[from..]).map_or(-1, |i| (from + i) as i64)
 }
 
 /// Last position at or before `from` (relative; clamped to the last byte) holding `byte`, or -1.
@@ -171,10 +178,15 @@ mod tests {
     }
 
     #[test]
-    fn last_index_of_like_js() {
+    fn index_of_like_js() {
         let b = arr(b"a\nbc\n");
         // SAFETY: a valid owned buffer.
         unsafe {
+            assert_eq!(velt_rt_bytes_index_of(&b, b'\n', 0), 1);
+            assert_eq!(velt_rt_bytes_index_of(&b, b'\n', 2), 4);
+            assert_eq!(velt_rt_bytes_index_of(&b, b'\n', -1), 4);
+            assert_eq!(velt_rt_bytes_index_of(&b, b'x', 0), -1);
+            assert_eq!(velt_rt_bytes_index_of(&b, b'a', 99), -1);
             assert_eq!(velt_rt_bytes_last_index_of(&b, b'\n', 3), 1);
             assert_eq!(velt_rt_bytes_last_index_of(&b, b'\n', 99), 4);
             assert_eq!(velt_rt_bytes_last_index_of(&b, b'a', -9), -1);

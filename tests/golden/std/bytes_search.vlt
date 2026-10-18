@@ -1,5 +1,6 @@
 // `indexOf`, `includes` and `xorMask` on `u8[]` against byte-at-a-time loops, for every length
-// around the 16- and 64-byte steps they take, every position of the byte and start positions
+// around the 16- and 64-byte steps they take and around the length where the search moves to
+// the runtime (arrays of more than 208 bytes), every position of the byte and start positions
 // before, inside and past the array.
 function naiveIndexOf(d: u8[], b: u8, from: number): number {
   const n = d.length;
@@ -15,7 +16,14 @@ function naiveIndexOf(d: u8[], b: u8, from: number): number {
 
 function searches(): number {
   let checks = 0;
+  const lengths: number[] = [];
   for (let n = 0; n <= 150; n++) {
+    lengths.push(n);
+  }
+  for (const n of [207, 208, 209, 210, 224, 225, 256, 300, 1000]) {
+    lengths.push(n);
+  }
+  for (const n of lengths) {
     const d: u8[] = Buffer.alloc(n);
     for (let at = -1; at < n; at++) {
       if (at >= 0) {
@@ -34,6 +42,9 @@ function searches(): number {
         n - 1,
         n,
         n + 5,
+        n - 208,
+        n - 209,
+        n - 210,
         -1,
         -16,
         -17,
@@ -44,6 +55,9 @@ function searches(): number {
         const want = naiveIndexOf(d, 7, from);
         if (got != want) {
           console.log("FAIL indexOf", n, at, from, got, want);
+        }
+        if (d.includes(7, from) != (want >= 0)) {
+          console.log("FAIL includes", n, at, from);
         }
         checks++;
       }

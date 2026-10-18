@@ -12,12 +12,9 @@ declare function velt_rt_bytes_from_str(s: string): u8[];
 // `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid.
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
 declare function velt_rt_bytes_utf8_valid(b: u8[]): bool;
-// The SIMD operations hex and `firstInvalid` use (`velt:simd`, std/simd/*.vlt, is the API;
-// declared again here so that this module does not load it). `load` and `store` do not check
-// their range.
-declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
-declare function velt_simd_mask8x16_any(m: mask8x16): bool;
-declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+
+// The SIMD operations hex uses (`velt:simd`, std/simd/*.vlt, is the API; declared again here
+// so that this module does not load it). `load` and `store` do not check their range.
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
@@ -422,10 +419,9 @@ export function utf8Valid(data: u8[]): bool {
 export function firstInvalid(data: u8[]): i64 {
   let i: usize = 0;
   const n = data.length;
-  const high = velt_simd_u8x16_splat(0x80);
   while (i < n) {
     if (data[i] < 0x80) {
-      i = asciiEnd(data, i + 1, high);
+      i++;
       continue;
     }
     const len = sequenceAt(data, i);
@@ -435,39 +431,6 @@ export function firstInvalid(data: u8[]): i64 {
     i += len as usize;
   }
   return -1;
-}
-
-// The position of the first byte at or after `from` that is not ASCII (`high`: sixteen 0x80),
-// or the length. Most text is ASCII: 64 bytes per step with one test, then 16, then single
-// bytes.
-function asciiEnd(data: u8[], from: usize, high: u8x16): usize {
-  const n = data.length;
-  let i = from;
-  while (i + 64 <= n) {
-    const a = velt_simd_u8x16_or(
-      velt_simd_u8x16_load(data, i as u64),
-      velt_simd_u8x16_load(data, (i + 16) as u64),
-    );
-    const b = velt_simd_u8x16_or(
-      velt_simd_u8x16_load(data, (i + 32) as u64),
-      velt_simd_u8x16_load(data, (i + 48) as u64),
-    );
-    if (velt_simd_mask8x16_any(velt_simd_u8x16_ge(velt_simd_u8x16_or(a, b), high))) {
-      break;
-    }
-    i += 64;
-  }
-  while (i + 16 <= n) {
-    const m = velt_simd_u8x16_ge(velt_simd_u8x16_load(data, i as u64), high);
-    if (velt_simd_mask8x16_any(m)) {
-      return i + (velt_simd_mask8x16_first(m) as usize);
-    }
-    i += 16;
-  }
-  while (i < n && data[i] < 0x80) {
-    i++;
-  }
-  return i;
 }
 
 // Length of the valid sequence starting at `i`, or minus the length of its maximal invalid

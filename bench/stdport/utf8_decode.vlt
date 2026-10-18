@@ -1,0 +1,44 @@
+// UTF-8 decoding with replacement (`TextDecoder.decode`) of text that is not Latin: 1 MiB of
+// Cyrillic words (five two-byte letters and a space) 100 times, the same with ", " between
+// the words 100 times, and a 40-byte Cyrillic value 2M times. The Rust port is
+// `String::from_utf8_lossy`.
+function fill(n: usize, comma: bool): u8[] {
+  const d: u8[] = [];
+  let k: usize = 0;
+  while ((d.length as usize) + 4 <= n) {
+    k++;
+    if (k % 6 == 0) {
+      if (comma) {
+        d.push(44);
+      }
+      d.push(32);
+    } else {
+      d.push(0xd0);
+      d.push((0xb0 + k % 16) as u8);
+    }
+  }
+  while ((d.length as usize) < n) {
+    d.push(32);
+  }
+  return d;
+}
+
+function main() {
+  const decoder = new TextDecoder();
+  let total = 0;
+  const words = fill(1048576, false);
+  const commas = fill(1048576, true);
+  // Every round changes a byte first, so no call repeats the one before.
+  for (let round: usize = 0; round < 100; round++) {
+    words[(words.length as usize) - 1 - round % 2] = (32 + round % 2) as u8;
+    total += decoder.decode(words).length;
+    commas[(commas.length as usize) - 1 - round % 2] = (32 + round % 2) as u8;
+    total += decoder.decode(commas).length;
+  }
+  const small = fill(40, false);
+  for (let round: usize = 0; round < 2000000; round++) {
+    small[39 - round % 2] = (32 + round % 2) as u8;
+    total += decoder.decode(small).length;
+  }
+  console.log(total);
+}
