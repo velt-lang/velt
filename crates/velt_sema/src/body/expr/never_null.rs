@@ -3,16 +3,17 @@
 //! is still evaluated; the test is then constant (`== null` is `false`) and `d` is never
 //! evaluated, as in JavaScript for a value that is not nullish.
 //!
-//! An array element read (`xs[i]`) is the exception: JavaScript reads `undefined` past the end
-//! (`normalize(c)[0] ?? empty()`), where Velt's `xs[i]` panics. Its test checks the index
-//! instead (`i >= 0 && i < xs.length`), so the result is the one Node gives.
+//! An element read of an array, a string or a typed array (`xs[i]`) is the exception:
+//! JavaScript reads `undefined` past the end (`normalize(c)[0] ?? empty()`), where Velt's
+//! `xs[i]` panics (a string's gives `""`). Its test checks the index instead (`i >= 0 && i <
+//! xs.length`), so the result is the one Node gives.
 
 use velt_common::Span;
 use velt_syntax::ast::{self, BinaryOp as B, ExprKind as E};
 
 use crate::body::places::{is_path, is_place, set_place_mode};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// `s ?? rhs` where `s` (checked from `lhs`) is never null: `s`, or for an array element
@@ -25,7 +26,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let ty = s.ty;
-        if let Some((stmts, cond, read)) = self.element_test(lhs, &s) {
+        if let Some((stmts, cond, read)) = self.element_test(lhs) {
             let ast = mk(
                 E::Cond {
                     cond: Box::new(cond),
@@ -57,7 +58,7 @@ impl FnCx<'_, '_> {
         is_eq: bool,
         span: Span,
     ) -> hir::Expr {
-        if let Some((stmts, cond, _)) = self.element_test(other, &s) {
+        if let Some((stmts, cond, _)) = self.element_test(other) {
             let ast = if is_eq {
                 mk(
                     E::Unary {
@@ -75,14 +76,11 @@ impl FnCx<'_, '_> {
         self.constant_test(s, !is_eq, span)
     }
 
-    /// For `e` an array element read `a[k]` (checked as `s`): the statements binding `a` and `k`
+    /// For `e` an element read `a[k]` of an array, a string or a typed array (checked as `s`,
+    /// [`reads_past_end`](Self::reads_past_end)): the statements binding `a` and `k`
     /// to temporaries where reading them again could differ, the test `k >= 0 && k < a.length`
     /// and the read `a[k]`, all in terms of those.
-    fn element_test(
-        &mut self,
-        e: &ast::Expr,
-        s: &hir::Expr,
-    ) -> Option<(Vec<hir::Stmt>, ast::Expr, ast::Expr)> {
+    fn element_test(&mut self, e: &ast::Expr) -> Option<(Vec<hir::Stmt>, ast::Expr, ast::Expr)> {
         let mut e = e;
         while let E::Paren(inner) = &e.kind {
             e = inner;
@@ -95,14 +93,17 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let H::Index { base, .. } = &s.kind else {
-            return None;
-        };
-        if !matches!(self.cx.ty.kind(base.ty), TyKind::Array(_)) {
+        // What is indexed, and by what (checked again below: errors are reported there).
+        let mark = self.cx.diags.len();
+        let base = self.expr(object, None, Want::Borrow);
+        let key = self.expr(index, None, Want::Borrow).ty;
+        self.cx.diags.truncate(mark);
+        let key = self.cx.widened(key);
+        if !self.cx.ty.is_numeric(key) || !self.reads_past_end(base.ty) {
             return None;
         }
         let mut stmts = vec![];
-        let arr = if is_path(base) {
+        let arr = if is_path(&base) {
             (**object).clone()
         } else {
             let h = self.expr(object, None, Want::Move);
@@ -159,6 +160,17 @@ impl FnCx<'_, '_> {
             sp,
         );
         Some((stmts, cond, read))
+    }
+
+    /// Does an index read `x[k]` on a value of type `t` give `undefined` past the end in
+    /// JavaScript: an array, a string, or an object with a `length` getter read by index (a
+    /// typed array)?
+    fn reads_past_end(&mut self, t: TyId) -> bool {
+        if matches!(self.cx.ty.kind(t), TyKind::Array(_)) || t == self.cx.ty.str_ {
+            return true;
+        }
+        self.resolve_method(t, "length")
+            .is_some_and(|r| self.is_getter(&r))
     }
 
     /// `h` bound to a fresh temporary (a statement pushed to `stmts`), named in an identifier

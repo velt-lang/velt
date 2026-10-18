@@ -619,8 +619,8 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   closure may run after such an assignment.
 - `x == null`, `x != null`, `x === undefined` and `x ?? d` are allowed on a value whose type has
   neither `null` nor `undefined`, as in TypeScript (a defensive check): the test is `false`
-  (`!=`: `true`) and `d` is not evaluated. On an array element read (`xs[i] ?? d`,
-  `xs[i] == null`) the index is checked instead, so past the end the result is `d` (`true`),
+  (`!=`: `true`) and `d` is not evaluated. On an element read of an array, a string or
+  a typed array (`xs[i] ?? d`, `xs[i] == null`) the index is checked instead, so past the end the result is `d` (`true`),
   as in JavaScript, where reading past the end gives `undefined`.
 - A null check (`!= null`, `!== undefined`, truthiness) of a variable that a closure assigns
   narrows it in the function that makes the check until the next assignment there, as in

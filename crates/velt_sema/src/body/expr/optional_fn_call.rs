@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, TyKind};
+use crate::hir::{self, ExprKind as H, TyKind};
 
 impl FnCx<'_, '_> {
     /// `object.prop(args)` where `prop` is not a method of `recv` (the checked `object`) but an
@@ -49,6 +49,27 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         Ok(self.call_value(f, args, span))
+    }
+
+    /// `recv.name(...)` where `recv` reads a `T | null` variable narrowed to its `T` and `name`
+    /// is a helper of `T | null` that `T` lacks (`isNull`, `unwrap`, `unwrapOr`, `map`;
+    /// `let x: string | null = "a"; x.unwrapOr("b")`): the variable itself, so the helper of
+    /// its declared type is called (on a present value it gives the value, as the narrowing
+    /// says). Other receivers are returned as they are.
+    pub(super) fn nullable_helper_receiver(&mut self, recv: hir::Expr, name: &str) -> hir::Expr {
+        if !matches!(name, "isNull" | "unwrap" | "unwrapOr" | "map") {
+            return recv;
+        }
+        let H::UnwrapSome(base, _) = &recv.kind else {
+            return recv;
+        };
+        if !matches!(base.kind, H::Local(..)) || self.resolve_method(recv.ty, name).is_some() {
+            return recv;
+        }
+        let H::UnwrapSome(base, _) = recv.kind else {
+            unreachable!("ICE: matched above")
+        };
+        *base
     }
 
     /// Is field `name` of type `t` (and not a method of it) an optional function value?

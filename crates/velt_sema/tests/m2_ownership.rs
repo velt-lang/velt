@@ -169,7 +169,7 @@ fn prelude_unwrap_or_consumes_non_copy_receivers() {
     );
     assert_eq!(uses_of(func(&p, "main"), "r"), vec![UseMode::Move]);
     ok_src(
-        "function main() { const x = 5 as i64 | null; console.log(x.unwrapOr(1), x.unwrapOr(2)); }",
+        "function main() { const x: i64 | null = 5; console.log(x.unwrapOr(1), x.unwrapOr(2)); }",
     );
 }
 

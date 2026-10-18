@@ -426,6 +426,7 @@ impl FnCx<'_, '_> {
             Ok(call) => return call,
             Err(recv) => recv,
         };
+        let recv = self.nullable_helper_receiver(recv, &prop.name);
         let r = self.in_place_receiver(object, recv);
         let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
         self.after_receiver(r.before, call)

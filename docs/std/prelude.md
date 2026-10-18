@@ -299,7 +299,9 @@ console.log(seen); // { a: 2, b: 1 }
 
 On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
 `map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
-copied).
+copied). A variable narrowed to its `T` (`let x: string | null = "a"; x.unwrapOr("b")`) keeps
+the helpers `T` does not have; a method of `T` with the same name wins (`xs.map(f)` on a
+narrowed `number[] | null` maps the elements).
 
 ## Iteration
 

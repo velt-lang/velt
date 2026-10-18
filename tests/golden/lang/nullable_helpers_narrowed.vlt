@@ -1,0 +1,13 @@
+// check: no leaks
+// A `T | null` variable narrowed to its `T` by its declaration or an assignment still has the
+// helpers of `T | null` that `T` lacks (`isNull`, `unwrap`, `unwrapOr`, `map`): they are called
+// on the variable itself, holding a present value. A method `T` has wins (`xs.map` on an array).
+function main() {
+  let x: string | null = "a";
+  console.log(x.unwrapOr("b"), x.isNull(), x.unwrap(), x.map((s: string) => s + "!"));
+  const n: i64 | null = 5;
+  console.log(n.unwrapOr(1), n.unwrapOr(2));
+  let xs: i64[] | null = null;
+  xs = [1, 2];
+  console.log(xs.map((v: i64) => v * 10), xs.isNull());
+}

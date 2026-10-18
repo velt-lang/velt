@@ -1,8 +1,9 @@
 // check: no leaks
 // `== null`, `!= null`, `=== undefined` and `??` on a value whose type has neither (a
 // defensive check, which TypeScript accepts) are not errors (#1203). The value is still
-// evaluated, the test is constant and the default never runs, except for an array element
-// read: past the end JavaScript reads `undefined`, so the test checks the index.
+// evaluated, the test is constant and the default never runs, except for an element read of an
+// array, a string or a typed array: past the end JavaScript reads `undefined`, so the test
+// checks the index.
 interface VNode {
   type: string;
 }
@@ -52,4 +53,9 @@ function main() {
   console.log(make(0)[0] ?? "empty", make(2)[1] ?? "x", make(3)[calls] ?? "y", calls);
   console.log(hole(["a"], 0), hole(["a"], 1), make(1)[0] != null, calls);
   console.log(label("n"), make(1) == null, calls);
+  const str = "ab";
+  console.log(str[5] ?? "S", str[1] ?? "S", str[5] == null, str[5] === undefined, str[1] != null);
+  const u = new Uint8Array(2);
+  u[1] = 9;
+  console.log(u[5] ?? 7, u[1] ?? 7, u[5] == null, u[0] != null);
 }
