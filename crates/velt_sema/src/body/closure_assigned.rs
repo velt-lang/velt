@@ -250,3 +250,55 @@ fn copy_name(hint: &str, name: &str) -> String {
         _ => format!("{name}Copy"),
     }
 }
+
+impl FnCx<'_, '_> {
+    /// Is `let name: T;` (`ann`, without an initializer) a variable a closure assigns, whose
+    /// type does not hold `undefined`? JavaScript reads `undefined` from it until it is
+    /// assigned, and TypeScript does not check reads in closures (nor `x!`) for that; Velt holds
+    /// it as a `T | undefined` that starts `undefined` and checks each read
+    /// ([`Self::late_let_read`]).
+    pub(crate) fn late_let(
+        &self,
+        v: &ast::VarDecl,
+        name: &ast::Ident,
+        ann: Option<crate::hir::TyId>,
+        uninit: bool,
+    ) -> bool {
+        let Some(t) = ann else { return false };
+        uninit
+            && v.kind == ast::VarKind::Let
+            && !self.cx.ty.is_bottom(t)
+            && t != self.cx.ty.unit
+            && !self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+            && self.f.closure_assigned.contains_key(&name.name)
+    }
+
+    /// Is local `l` (of this frame, or the variable it captures) a late `let`
+    /// ([`Self::late_let`])?
+    pub(crate) fn is_late_let(&self, l: LocalId) -> bool {
+        let mut l = l;
+        for f in std::iter::once(&self.f).chain(self.outer.iter().rev()) {
+            match f.captures.iter().find(|c| c.inner == l) {
+                Some(c) => l = c.outer,
+                None => return f.late_lets.contains(&l),
+            }
+        }
+        false
+    }
+
+    /// A read of late `let` `l` (its type `ty` is the `T | undefined` it is held as): its `T`,
+    /// or a panic when nothing has assigned it yet (where JavaScript would read `undefined`).
+    pub(crate) fn late_let_read(
+        &mut self,
+        l: LocalId,
+        ty: crate::hir::TyId,
+        want: super::Want,
+        span: Span,
+    ) -> crate::hir::Expr {
+        let name = self.f.locals[l.0 as usize].name.clone();
+        let msg = format!("TypeError: `{name}` was read before it was assigned");
+        let mode = self.use_mode(ty, super::Want::Borrow);
+        let h = self.mk(crate::hir::ExprKind::Local(l, mode), ty, span);
+        self.checked_present(h, &msg, None, want != super::Want::Move, span)
+    }
+}

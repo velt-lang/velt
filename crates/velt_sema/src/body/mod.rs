@@ -310,6 +310,10 @@ pub(crate) struct Frame {
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
+    /// `let x: T;` without an initializer that a closure assigns (`closure_assigned`): held as
+    /// a `T | undefined` that starts `undefined`, and read through a check
+    /// ([`FnCx::late_let_read`]).
+    pub late_lets: std::collections::HashSet<LocalId>,
     /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
     /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
     /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
@@ -378,6 +382,7 @@ impl Frame {
             const_lits: HashMap::new(),
             regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
+            late_lets: Default::default(),
             destructured_discriminants: HashMap::new(),
             groups: Default::default(),
             late: Default::default(),

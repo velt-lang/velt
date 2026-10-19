@@ -425,6 +425,12 @@ impl FnCx<'_, '_> {
                 None => self.expr(e, None, Want::Move),
             }),
         };
+        // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).
+        let late = self.late_let(v, name, ann, init.is_none());
+        let ann = match (late, ann) {
+            (true, Some(t)) => Some(self.cx.ty.option_of(t, hir::Nothing::Undefined)),
+            _ => ann,
+        };
         // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
         let init = match (init, ann) {
             (None, Some(t))
@@ -472,6 +478,9 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if late {
+            self.f.late_lets.insert(local);
+        }
         self.note_readonly_array(local, v.ty.as_ref());
         self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
