@@ -215,7 +215,10 @@ returns a new promise, which starts at once like any stored promise:
   `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
   `p.then(f)`, as in JS.
 - `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
-  promise's value type (**Planned**: a `catch` that changes the value type, `T | U`).
+  promise's value type, or nothing: `p.catch(() => {})` (or an `async` handler) is a
+  `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
+  `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
+  type otherwise, `T | U`).
 - `p.finally(h)`: `h()` either way, then the value or the reason passes through.
 
 A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a
