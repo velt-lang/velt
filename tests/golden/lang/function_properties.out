@@ -16,3 +16,4 @@ HI up 1 function
 flags 1, deps 0
 effect ran
 1
+{"a":1,"b":[null,null]} [null]

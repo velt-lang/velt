@@ -27,7 +27,6 @@ use crate::hir::{self, DefId, TyId, TyKind};
 pub(crate) struct PendingWrites {
     /// The span of the declaration's initializer (the cast).
     pub cast: Span,
-    /// The written property and value of each statement after the declaration, in order.
     /// The written property and value of each write after the declaration, in order, with the
     /// statement's position among the statements after it.
     pub writes: Vec<(usize, ast::Ident, ast::Expr)>,
@@ -124,12 +123,63 @@ impl FnCx<'_, '_> {
             return None;
         }
         let target = strip_parens(target);
+        self.note_assign_target(target, span);
         let Some(exp) = exp else {
             return self.inferred_callable(target, members, span);
         };
         let mut props = vec![call_prop(target)];
         props.extend(members.iter().cloned());
         Some(self.object_lit(&props, Some(exp), span))
+    }
+
+    /// `Object.assign(f, { … })` (at `span`) onto a variable `f`: remembered, so that a later
+    /// use of `f` is reported (`reused_assign_targets`).
+    fn note_assign_target(&mut self, target: &ast::Expr, span: Span) {
+        if !matches!(target.kind, ast::ExprKind::Ident(_)) {
+            return;
+        }
+        let probe = self.expr(target, None, Want::Borrow);
+        if let hir::ExprKind::Local(l, _) = probe.kind {
+            if matches!(self.cx.ty.kind(probe.ty), TyKind::FnPtr { .. }) {
+                self.f.assign_targets.push((l, span));
+            }
+        }
+    }
+
+    /// The uses in `block` (the body just checked, closures aside) of a variable made a
+    /// function with properties by `Object.assign` after that call: reported. JavaScript adds
+    /// the properties to the function itself, so the variable and the result are one object;
+    /// Velt's result is a new object, which the variable doesn't see.
+    pub(crate) fn reused_assign_targets(&mut self, block: &mut hir::Block) {
+        let targets = std::mem::take(&mut self.f.assign_targets);
+        if targets.is_empty() {
+            return;
+        }
+        let mut uses: Vec<(hir::LocalId, Span)> = vec![];
+        crate::visit::exprs_mut(block, &mut |e: &mut hir::Expr| {
+            if let hir::ExprKind::Local(l, _) = e.kind {
+                uses.push((l, e.span));
+            }
+        });
+        let mut reported = vec![];
+        for (l, at) in targets {
+            let later = uses
+                .iter()
+                .filter(|(u, s)| *u == l && s.file == at.file && s.lo >= at.hi)
+                .map(|(_, s)| *s)
+                .min_by_key(|s| s.lo);
+            let Some(used) = later.filter(|_| !reported.contains(&l)) else {
+                continue;
+            };
+            reported.push(l);
+            self.cx.error(
+                Diagnostic::error(
+                    "a function given properties by `Object.assign` is used again after the call: not supported yet (#921)",
+                    used,
+                )
+                .with_note("Velt's `Object.assign(fn, { … })` makes a new function with properties, while JavaScript adds them to `fn` itself; use the result of the call instead of `fn`"),
+            );
+        }
     }
 
     /// `Object.assign(f, { … })` with no callable object type expected: the object of

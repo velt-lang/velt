@@ -979,6 +979,12 @@ const job = Object.assign((n: number) => n * 2, { id: 7 });
 console.log(job(21), job.id, Object.keys(job)); // 42 7 [ 'id' ]
 ```
 
+As in JavaScript, `JSON.stringify` leaves a function with properties out of an object and
+writes `null` for it in an array; `JSON.stringify(f)` itself (Node's `undefined`) is not
+supported yet. `Object.assign(fn, { … })` onto a variable makes a new object, where JavaScript
+adds the properties to `fn` itself: using `fn` again after the call (other than in a closure) is
+an error; use the call's result.
+
 The value is an object with a fixed set of fields, the function among them: properties the type
 does not declare can't be added, and a function whose type has no members has no properties of
 its own (`const f = () => 1; f.label = "one"` is an error). Several call signatures next to

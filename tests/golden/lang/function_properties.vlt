@@ -130,3 +130,6 @@ function makeEffect(fn: () => void): Subscriber {
 const eff = makeEffect(() => console.log("effect ran"));
 eff();
 console.log(eff.flags);
+
+// JSON: a function with properties is a function, left out of objects and `null` in arrays.
+console.log(JSON.stringify({ a: 1, job, b: [job, r] }), JSON.stringify([eff]));
