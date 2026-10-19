@@ -2200,6 +2200,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
+ "hmac",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -2218,6 +2219,7 @@ dependencies = [
  "rustls",
  "ryu",
  "sha1",
+ "sha2 0.11.0",
  "socket2",
  "tokio",
  "tokio-postgres",
@@ -2240,6 +2242,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
+ "hmac",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -2258,6 +2261,7 @@ dependencies = [
  "rustls",
  "ryu",
  "sha1",
+ "sha2 0.11.0",
  "socket2",
  "tokio",
  "tokio-postgres",
@@ -2280,6 +2284,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
+ "hmac",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -2298,6 +2303,7 @@ dependencies = [
  "rustls",
  "ryu",
  "sha1",
+ "sha2 0.11.0",
  "socket2",
  "tokio",
  "tokio-postgres",
@@ -2314,10 +2320,13 @@ name = "velt_rt_wasm"
 version = "0.2.2"
 dependencies = [
  "dashu-int",
+ "hmac",
  "itoa",
  "libm",
  "memchr",
  "ryu",
+ "sha1",
+ "sha2 0.11.0",
 ]
 
 [[package]]

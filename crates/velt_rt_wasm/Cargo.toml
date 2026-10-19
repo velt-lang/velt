@@ -14,6 +14,10 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 dashu-int = "0.6.1"
+# Same versions as crates/velt_rt (its digest.rs is compiled here).
+hmac = "0.13.0"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
 # Same versions as crates/velt_rt (its fmt.rs is compiled here).
 itoa = "1.0.18"
 libm = "0.2.16"

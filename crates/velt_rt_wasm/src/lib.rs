@@ -30,6 +30,8 @@ pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
 pub mod bytes_ops;
 pub mod cell_owner;
+#[path = "../../velt_rt/src/digest.rs"]
+pub mod digest;
 #[path = "../../velt_rt/src/drop_depth.rs"]
 pub mod drop_depth;
 pub mod entry;
