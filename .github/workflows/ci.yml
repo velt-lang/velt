@@ -5,7 +5,8 @@
 # `cfg(unix)` code compiles differently: clippy's findings there otherwise surface only in the
 # merge queue. The label `ci:full` makes them check everything, the parser's robustness test
 # cutting every golden at every character too (add it before pushing, or close and reopen the
-# pull request).
+# pull request). The WebAssembly goldens run only when the change touches WebAssembly code, in
+# pull requests and in the queue; the nightly gate and the checks after merging run them.
 #
 # The merge queue checks everything against the pull request merged with the latest main, as two
 # jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
@@ -118,6 +119,8 @@ jobs:
       # How the parser's robustness test cuts the goldens (`--full` below knows no changes).
       robustness: ${{ steps.plan.outputs.robustness }}
       robustness_files: ${{ steps.plan.outputs.robustness_files }}
+      # `skip` unless the change touches WebAssembly code.
+      wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
     steps:
       # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
       # the queue test the entries behind it again, under new branches, and deletes the old
@@ -171,6 +174,7 @@ jobs:
     env:
       VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
       VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
+      VELT_WASM_GOLDENS: ${{ needs.queue-plan.outputs.wasm_goldens }}
     # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
     # entry within the hour instead of holding the queue for two.
     timeout-minutes: 45
