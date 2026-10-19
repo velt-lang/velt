@@ -455,6 +455,9 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultD
 /// leaf, a join handle, a combinator, a promise created outside a task) reads as pending.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    if crate::task::shared::is_shared(f) {
+        return crate::task::shared::peek(f) as u8;
+    }
     node::peek(f) as u8
 }
 

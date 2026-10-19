@@ -555,7 +555,7 @@ impl<'m> Ctx<'m> {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
+        let b = !self.is_copy(t);
         self.shared_memo.insert(t, b);
         b
     }

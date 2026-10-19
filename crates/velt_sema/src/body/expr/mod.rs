@@ -84,7 +84,6 @@ mod ordering;
 mod overload_call;
 mod process;
 mod promise_new;
-mod promise_reads;
 mod promise_then;
 mod proxy;
 mod push_items;

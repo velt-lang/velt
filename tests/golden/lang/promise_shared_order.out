@@ -1,0 +1,12 @@
+w1 waits
+w2 waits
+p settles
+micro
+w1 got 7
+w2 got 7
+then 7
+main got 7
+caught 1 boom
+caught 2 boom
+3 3
+7,7

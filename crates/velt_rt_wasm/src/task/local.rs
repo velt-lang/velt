@@ -206,6 +206,9 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 /// pending (also for futures that only run when awaited), as in velt_rt.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    if super::shared::is_shared(f) {
+        return super::shared::peek(f) as u8;
+    }
     if boxed::is_lazy(f) {
         return ((*trailer(f)).live == 0) as u8;
     }

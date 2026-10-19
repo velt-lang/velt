@@ -458,8 +458,8 @@ impl Ctx<'_> {
             return None;
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Shared(_) | TyKind::FnPtr { .. } => return None,
-            TyKind::Promise(..) => return Some(t),
+            // A promise is copied by sharing it (#212).
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Promise(..) => return None,
             TyKind::Adt(d, _) if self.own_clone(d).is_some() => return None,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
