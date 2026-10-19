@@ -178,9 +178,10 @@ impl Ctx<'_> {
     }
 
     /// `body`, the type of a read `x[k]` (form `form`, `T[K]`, at known arguments), when `K` is
-    /// one key; else `Error`, reported at `span`.
+    /// one key, or keys whose fields have one type (a switch on the key reads them); else
+    /// `Error`, reported at `span`.
     fn one_key(&mut self, form: &ast::TypeExpr, env: &TyEnv, body: TyId, span: Span) -> TyId {
-        let ast::TypeExprKind::Indexed { key, .. } = &form.kind else {
+        let ast::TypeExprKind::Indexed { object, key } = &form.kind else {
             return body;
         };
         let k = self.resolve_type(key, env);
@@ -189,13 +190,29 @@ impl Ctx<'_> {
         if members.len() == 1 {
             return body;
         }
+        let o = self.resolve_type(object, env);
+        let o = self.subst(o, &env.args);
+        let fields = self.public_fields(o);
+        let mut tys = vec![];
+        for m in &members {
+            let Some(crate::hir::LitValue::Str(name)) = self.lit_value(*m) else {
+                return body;
+            };
+            match fields.iter().find(|f| f.name == name) {
+                Some(f) if !f.optional => tys.push(self.canon(f.ty)),
+                _ => tys.push(self.ty.error),
+            }
+        }
+        if tys.iter().all(|&t| t == tys[0] && t != self.ty.error) {
+            return body;
+        }
         let shown = self.display(k);
         self.error(
             velt_common::Diagnostic::error(
-                format!("this generic function reads `x[k]` with the key type `{shown}` at this instantiation, which names several fields; that is not supported yet (#350)"),
+                format!("this generic function reads or writes `x[k]` with the key type `{shown}` at this instantiation, whose fields have different types; that is not supported yet (#350)"),
                 span,
             )
-            .with_note("pass one key (a string literal), or read the fields by name"),
+            .with_note("the keys' fields must have one type (or pass one key, a string literal)"),
         );
         self.ty.error
     }

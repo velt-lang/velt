@@ -1,7 +1,8 @@
 // check: no leaks
 // Reads and writes `x[k]` through a key of a type parameter in generic bodies (#350): `T[K]` and
 // `keyof T` in signatures are evaluated per instantiation, `K` is inferred as the literal key,
-// and the read or write is the field's own (`===` keeps identity; writes reach the object).
+// and the read or write is the field's own (`===` keeps identity; writes reach the object); a
+// key type of several fields of one type reads or writes the one the key holds.
 function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
   return source[key];
 }
@@ -25,3 +26,8 @@ other.tags.push("z");
 console.log(JSON.stringify(st), st.tags === other.tags);
 const users = [{ id: 1, name: "ann" }, { id: 2, name: "bob" }];
 console.log(JSON.stringify(pluck(users, "name")), JSON.stringify(pluck(users, "id")));
+// A key of several fields of one type: the field the key names at run time.
+const pt = { x: 1, y: 2 };
+const axis: "x" | "y" = pt.x > 0 ? "y" : "x";
+set(pt, axis, get(pt, axis) * 10);
+console.log(JSON.stringify(pt));

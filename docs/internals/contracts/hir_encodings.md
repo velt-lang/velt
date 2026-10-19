@@ -656,9 +656,12 @@ entry is an `ICE:`.
   their own. Sema reduces `TyOp::Spread` per instantiation to the object type of the merged
   fields (public, non-private fields of each part in order; a later part's field overrides an
   earlier one and keeps its position); a part that isn't an anonymous object type, struct or
-  class, and an optional field over an earlier value of it, are errors at that instantiation.
-  Lowering (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from
-  the last part that has it, its presence flag copied (set for a class field).
+  class is an error at that instantiation. An optional field over an earlier value of it keeps
+  the earlier field's type and optionality (an error there when the two types differ). Lowering
+  (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from the last
+  part that has it and is present (a part's optional field with a presence flag gives it only
+  while the flag is set, else an earlier part does), its presence flag copied (set for a class
+  field); a present `undefined` over a field that can't hold one panics with a `TypeError`.
 - A value of a generic body used as another type of that body, where TypeScript accepts it and
   the fields are known only per instantiation (`s: T & { tag }` as `T` or as `{ tag }`, `{ ...t }`
   as `T`, `{ ...t, tag }` as `T & { tag }`), is an `Upcast` of it: the same value. Sema records
@@ -668,6 +671,22 @@ entry is an `ICE:`.
   instantiation, since a value can't be seen as an object type with other fields without a copy,
   and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
   the value itself.
+- `TyOp::Inline(n)` (additive): a conditional, mapped, indexed access, `keyof` or utility type
+  (`Partial`, `Required`, `Readonly`, `Pick`, `Omit`) written in a generic definition, not in an
+  alias, whose evaluation needs a type parameter (`{ [K in keyof M]: Topic<M[K]> }` in a
+  signature, `T[K]`, `keyof T`, `Partial<T>`). Its arguments are the definition's type parameters
+  (`Param(i)`), with `void` for the ones the form doesn't name, so it is known as soon as the
+  ones it names are. Forms written alike in one definition are one `n`. Like `TyOp::Alias` it is
+  reduced per instantiation (`Program::type_ops`).
+- `x[k]` and `x[k] = v` with `x` of a type parameter `T` and `k` of a key type known only per
+  instantiation (a type parameter `K extends keyof T`, or `keyof T`) are `Call`s of
+  `Intrinsic::KeyRead(x, k)` (type `T[K]`, the `TyOp::Inline` form the signature writes) and
+  `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
+  (`x` mutably for a write). Sema records the requirement that `K` is one key, or keys whose
+  fields have one type (an `Inline` form that is never a value's type, reduced like
+  `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
+  field the key's string literal type names, as `x.name` does, switching on the key's tag for a
+  union of keys.
 
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes

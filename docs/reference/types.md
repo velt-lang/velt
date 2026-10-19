@@ -1094,14 +1094,43 @@ intersection with a part that is an object type and no part that is a type param
 (`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
 with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`).
 
+**Type-level forms and keys in generic code.** A mapped type, `T[K]`, `keyof T` or a utility
+type over a type parameter (`Partial<T>`, `Pick<T, K>`, …) may be written in a generic function's
+signature or body, not only in an alias: it is evaluated at every instantiation, as TypeScript
+evaluates it there. A key parameter `K extends keyof T` is inferred as the literal key the call
+passes, and `x[k]` reads or writes that field of `x: T`, the field itself (an array read through
+it is `===` to the original; a write reaches the object). A key type of several keys reads or
+writes the field the key holds when those fields have one type (`k: "x" | "y"` on
+`{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
+error at that instantiation. An alias declared in a generic function's body may name the function's
+type parameters.
+
+```ts
+function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
+  return source[key];
+}
+function set<T extends object, K extends keyof T>(target: T, key: K, v: T[K]): void {
+  target[key] = v;
+}
+function update<T extends object>(x: T, patch: Partial<T>): T {
+  return { ...x, ...patch };
+}
+
+const st = { count: 0, name: "a" };
+set(st, "count", get(st, "count") + 2);
+console.log(st.count, JSON.stringify(update(st, { name: "b" }))); // 2 {"count":2,"name":"b"}
+```
+
 **Spreads in generic code.** `{ ...t }` and `{ ...t, tag: "x" }` with `t: T` build a new object
 at each instantiation, as Node copies an object's own properties: the fields of `T`'s type
 argument, then the explicit ones (a later field overrides an earlier one and keeps its position),
 with nested objects and arrays shared rather than copied. The literal is a `T`, or a
 `T & { tag: string }`, as in TypeScript, so explicit properties are checked against the expected
 type (`$set: (v) => …` gets its parameter type from `Signal<T>`). An instantiation whose `T` is
-not an object type (`{ ...t }` at `T = number`) is an error there, and so is one where an
-optional field of a later part would override an earlier value of it.
+not an object type (`{ ...t }` at `T = number`) is an error there. An optional field of a later
+part overrides an earlier value of it only while present, as in Node: an absent `name` keeps the
+earlier one, a present `undefined` replaces it (both parts must give the field one type; a
+present `undefined` over a field that can't hold `undefined` is a `TypeError`).
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };

@@ -1,1 +1,1 @@
-generic_keyed_union.vlt:5:10: error: this generic function reads `x[k]` with the key type `"count" | "name"` at this instantiation, which names several fields; that is not supported yet (#350)
+generic_keyed_union.vlt:6:10: error: this generic function reads or writes `x[k]` with the key type `"count" | "name"` at this instantiation, whose fields have different types; that is not supported yet (#350)

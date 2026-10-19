@@ -1,6 +1,7 @@
-// `x[k]` in a generic body at an instantiation whose key type names several fields (#350):
-// tsc accepts it, and Node reads whichever field the key holds. Velt reads one field per
-// instantiation, so this is an error at that instantiation until such reads are supported.
+// `x[k]` in a generic body at an instantiation whose key type names several fields of different
+// types (#350): tsc accepts it, and Node reads whichever field the key holds. Velt's `T[K]` would
+// be a union of the field types there, which is not supported yet: an error at that
+// instantiation.
 function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
   return source[key];
 }

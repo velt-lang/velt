@@ -27,6 +27,7 @@
 pub mod hir;
 
 mod absent_fields;
+mod alias_expand;
 mod anon;
 mod any;
 mod assigned_fields;

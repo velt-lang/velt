@@ -9,7 +9,7 @@
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::{ice, unit, FnLower};
-use crate::vir::{Operand, Place, Rvalue, Ty};
+use crate::vir::{BlockId, Operand, Place, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     pub(super) fn spread_object(&mut self, parts: &[hir::Expr], ty: TyId) -> Operand {
@@ -140,33 +140,100 @@ impl FnLower<'_, '_> {
         )
     }
 
-    /// The field index of the key read or written by `object[key]` at this instantiation: the
-    /// key's type is one string literal naming a field of the object's type (sema checks it).
-    fn key_field(&mut self, object: &hir::Expr, key: &hir::Expr) -> (TyId, u32) {
+    /// The fields `object[key]` reads or writes at this instantiation: one per string literal
+    /// the key's type holds (a union of literals is switched on, sema checks that their fields
+    /// have one type), with the value of the key's tag that selects each.
+    fn key_fields(&mut self, object: &hir::Expr, key: &hir::Expr) -> (TyId, Vec<(i128, u32)>) {
         let oty = self.sub(object.ty);
         let kty = self.sub(key.ty);
-        let (TyKind::Adt(d, _), TyKind::Literal(LitValue::Str(name))) =
-            (self.cx.kind(oty), self.cx.kind(kty))
-        else {
-            ice(format_args!("a key access of {oty:?} by {kty:?}"))
+        let TyKind::Adt(d, _) = self.cx.kind(oty) else {
+            ice(format_args!("a key access of {oty:?}"))
         };
-        let Some(k) = (self.cx.adt_def(d).fields.iter()).position(|f| f.name == name) else {
-            ice(format_args!("a key access of the missing field `{name}`"))
+        let names: Vec<(i128, TyId)> = match self.cx.kind(kty) {
+            TyKind::Literal(_) => vec![(0, kty)],
+            TyKind::Adt(e, _) if matches!(self.cx.hir.def(e), hir::Def::Enum(_)) => {
+                let c_like = self.cx.is_c_like_enum(e);
+                let n = self.cx.enum_def(e).variants.len() as u32;
+                (0..n)
+                    .map(|v| {
+                        let at = match c_like {
+                            true => self.cx.enum_def(e).variants[v as usize].discriminant as i128,
+                            false => v as i128,
+                        };
+                        let lit = self.cx.variant_tys(kty, v).first().copied().unwrap_or(kty);
+                        (at, lit)
+                    })
+                    .collect()
+            }
+            _ => ice(format_args!("a key access by {kty:?}")),
         };
-        (oty, k as u32)
+        let fields = names
+            .into_iter()
+            .map(|(at, lit)| {
+                let TyKind::Literal(LitValue::Str(name)) = self.cx.kind(lit) else {
+                    ice(format_args!("a key access by {lit:?}"))
+                };
+                let Some(k) = (self.cx.adt_def(d).fields.iter()).position(|f| f.name == name)
+                else {
+                    ice(format_args!("a key access of the missing field `{name}`"))
+                };
+                (at, k as u32)
+            })
+            .collect();
+        (oty, fields)
+    }
+
+    /// Enter one block per field of `fields` (`key_fields`), switching on the tag of `key`
+    /// when there are several; `join` is where each continues. Returns the blocks.
+    fn key_switch(&mut self, key: &hir::Expr, fields: &[(i128, u32)]) -> Vec<BlockId> {
+        let blocks: Vec<BlockId> = fields.iter().map(|_| self.new_block()).collect();
+        if let [only] = blocks[..] {
+            self.goto(only);
+            return blocks;
+        }
+        let kty = self.sub(key.ty);
+        let kp = self.place_expr(key);
+        let TyKind::Adt(e, _) = self.cx.kind(kty) else {
+            ice("a key switch on a non-union")
+        };
+        let value = match self.cx.is_c_like_enum(e) {
+            true => Operand::Copy(kp),
+            false => Operand::Copy(super::operand::proj(&kp, crate::vir::Proj::Field(0))),
+        };
+        let default = self.new_block();
+        let cases = fields.iter().zip(&blocks).map(|(f, b)| (f.0, *b)).collect();
+        self.terminate(crate::vir::Terminator::Switch {
+            value,
+            cases,
+            default,
+        });
+        self.switch_to(default);
+        self.terminate(crate::vir::Terminator::Unreachable);
+        blocks
     }
 
     /// `Intrinsic::KeyRead`: `object[key]`, the field shared, as `object.<key>` reads it.
     pub(super) fn key_read(&mut self, object: &hir::Expr, key: &hir::Expr, ty: TyId) -> Operand {
-        let (oty, k) = self.key_field(object, key);
+        let (oty, fields) = self.key_fields(object, key);
         let fty = self.sub(ty);
         self.expr(key);
         let place = self.place_expr(object);
         if self.cx.is_unit(fty) {
             return unit();
         }
-        let fp = self.field_place(&place, oty, k);
-        self.share_value(Operand::Copy(fp), fty)
+        let vt = self.vty(fty);
+        let out = self.temp(vt);
+        let join = self.new_block();
+        let blocks = self.key_switch(key, &fields);
+        for ((_, k), b) in fields.iter().zip(blocks) {
+            self.switch_to(b);
+            let fp = self.field_place(&place, oty, *k);
+            let v = self.share_value(Operand::Copy(fp), fty);
+            self.assign(Place::local(out), Rvalue::Use(v));
+            self.goto(join);
+        }
+        self.switch_to(join);
+        Operand::Copy(Place::local(out))
     }
 
     /// `Intrinsic::KeyWrite`: `object[key] = value`, as `object.<key> = value` writes it.
@@ -176,17 +243,25 @@ impl FnLower<'_, '_> {
         key: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
-        let (_, k) = self.key_field(object, key);
+        let (_, fields) = self.key_fields(object, key);
         self.expr(key);
-        let field = hir::Expr {
-            kind: hir::ExprKind::Field {
-                base: Box::new(object.clone()),
-                index: k,
-                mode: hir::UseMode::BorrowMut,
-            },
-            ty: value.ty,
-            span: value.span,
-        };
-        self.assign_expr(&field, value)
+        let join = self.new_block();
+        let blocks = self.key_switch(key, &fields);
+        for ((_, k), b) in fields.iter().zip(blocks) {
+            self.switch_to(b);
+            let field = hir::Expr {
+                kind: hir::ExprKind::Field {
+                    base: Box::new(object.clone()),
+                    index: *k,
+                    mode: hir::UseMode::BorrowMut,
+                },
+                ty: value.ty,
+                span: value.span,
+            };
+            self.assign_expr(&field, value);
+            self.goto(join);
+        }
+        self.switch_to(join);
+        unit()
     }
 }
