@@ -83,7 +83,7 @@ impl Ctx<'_> {
             }
         }
         calls.dedup();
-        if calls.iter().any(|&c| c != calls[0]) {
+        if fns.len() == operands.len() || calls.iter().any(|&c| c != calls[0]) {
             self.error(
                 Diagnostic::error(
                     "intersections of function types (overloads) are not supported",
