@@ -443,9 +443,11 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string or array,
   `for (const x of s)`, a field (`s.name`), `T`'s methods (`s.includes(x)`,
   `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)` for
-  `count(xs: u8[])`). Such a read takes no copy when nothing in `T` is reference counted
+  `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as a
+  whole or in part, the value is borrowed too when nothing in it is reference counted
   (numbers, strings, and arrays and objects of those, unless the program shares such arrays or
-  objects between variables elsewhere); otherwise it reads a copy. What keeps the value or a
+  objects between variables elsewhere); otherwise what is passed on is a copy (of `s[i]` alone
+  for `f(s[i])`). What keeps the value or a
   part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
   stored one), and a variable bound to a part (`const ps = s.ports`, a `for…of` element that
   the loop changes), so changing that copy leaves the shared value as it was.

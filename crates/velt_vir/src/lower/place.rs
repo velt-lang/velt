@@ -79,9 +79,13 @@ impl FnLower<'_, '_> {
                 return self.take_part(fp, fty);
             }
         }
-        let v = self.expr(base);
+        let v = self.projection_base(base);
         let bp = self.place_of(v, bty);
         let p = self.field_place(&bp, bty, index);
+        if frozen_base(base) {
+            let fty = self.cx.member_ty(bty, index);
+            return self.frozen_part_read(p, fty);
+        }
         if mode == UseMode::Move && self.take_temp(&bp) {
             // Moving a field out of an owned temporary: the rest of it is dropped later.
             let fty = self.cx.member_ty(bty, index);
@@ -139,19 +143,36 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
+        self.index_at(base, index, false)
+    }
+
+    /// `base[index]`; `in_place`: the element of a value inside a `shared` box is read in
+    /// place even when it holds counted parts, because it is itself only the base of a
+    /// projection (`FnLower::projection_base`).
+    pub(super) fn index_at(
+        &mut self,
+        base: &hir::Expr,
+        index: &hir::Expr,
+        in_place: bool,
+    ) -> Operand {
         let bty = self.sub(base.ty);
         // A table's header is the inline value, also where arrays of its type are boxes.
         let arr = match self.table_read(base) {
             Some(table) => table,
             None => {
-                let v = self.expr(base);
+                let v = self.projection_base(base);
                 let arr = self.place_of(v, bty);
                 self.content(&arr, bty)
             }
         };
         let i = self.expr(index);
         let ity = self.vty(index.ty);
-        Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))
+        let p = self.elem_place_checked(&arr, bty, i, ity);
+        if frozen_base(base) && !in_place {
+            let elem = self.elem_ty(bty);
+            return self.frozen_part_read(p, elem);
+        }
+        Operand::Copy(p)
     }
 
     /// Place of the payload of an option value at `p` (the value itself for null-niche options,
@@ -708,4 +729,16 @@ pub(super) fn part_root(e: &hir::Expr) -> Option<LocalId> {
         | hir::ExprKind::Downcast(base) => part_root(base),
         _ => None,
     }
+}
+
+/// Is `base` a value read out of a `shared<T>`, or a part of one (its projections are read in
+/// the box, `FnLower::projection_base`)?
+pub(super) fn frozen_base(base: &hir::Expr) -> bool {
+    matches!(
+        base.kind,
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
+            ..
+        }
+    ) || super::expr::frozen_part(base)
 }

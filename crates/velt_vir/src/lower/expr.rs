@@ -43,6 +43,12 @@ impl FnLower<'_, '_> {
                 _ => {}
             }
             let v = self.expr(&read);
+            // A part holding counted objects was copied already (`frozen_part_read`).
+            if let Operand::Copy(p) = &v {
+                if self.take_temp(&p.clone()) {
+                    return v;
+                }
+            }
             let ty = self.sub(e.ty);
             return self.clone_value(v, ty);
         }
@@ -616,7 +622,7 @@ fn float_to_int(v: f64, to: Ty) -> i128 {
 
 /// Is `e` a field, element or payload of a value read out of a `shared<T>`
 /// (`Intrinsic::SharedRead`)?
-fn frozen_part(e: &hir::Expr) -> bool {
+pub(super) fn frozen_part(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Field { base, .. }

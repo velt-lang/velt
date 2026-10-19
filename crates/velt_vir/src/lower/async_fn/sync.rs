@@ -103,6 +103,11 @@ impl FnLower<'_, '_> {
     /// reload it from the box after each one.
     fn shared_read(&mut self, s: &hir::Expr) -> Operand {
         let (place, inner) = self.shared_value(s);
+        self.shared_read_at(place, inner)
+    }
+
+    /// [`shared_read`](Self::shared_read) of the value at `place` (of type `inner`).
+    fn shared_read_at(&mut self, place: Place, inner: TyId) -> Operand {
         if !self.cx.holds_counted(inner) {
             let vt = self.cx.ty(inner);
             if vt == Ty::Unit {
@@ -113,6 +118,52 @@ impl FnLower<'_, '_> {
         }
         let v = self.clone_value(Operand::Copy(place), inner);
         self.own_value(v, inner)
+    }
+
+    /// `e` evaluated as the base of a projection (an element, a field, a length): a
+    /// `SharedRead` gives the value in its box without a copy even when `T` holds counted
+    /// parts, since only the code lowering emits for the projection reads it (no count
+    /// changes); the projected part is copied where it holds counted parts itself
+    /// (`frozen_part_read`). Anything else is evaluated as usual.
+    pub(in crate::lower) fn projection_base(&mut self, e: &hir::Expr) -> Operand {
+        match &e.kind {
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
+                args,
+            } => {
+                let (place, inner) = self.shared_value(&args[0]);
+                match self.cx.holds_counted(inner) {
+                    true => Operand::Copy(place),
+                    false => self.shared_read_at(place, inner),
+                }
+            }
+            // A part of one, itself projected (`s.items[0].name`): in place too.
+            hir::ExprKind::Index { base, index, .. } if crate::lower::place::frozen_base(base) => {
+                self.index_at(base, index, true)
+            }
+            hir::ExprKind::Field { base, index, .. }
+                if crate::lower::place::frozen_base(base)
+                    && !self.is_unit_field(base.ty, *index) =>
+            {
+                let bty = self.sub(base.ty);
+                let v = self.projection_base(base);
+                let bp = self.place_of(v, bty);
+                Operand::Copy(self.field_place(&bp, bty, *index))
+            }
+            _ => self.expr(e),
+        }
+    }
+
+    /// The part at `p` (of type `ty`) of a value inside a `shared` box, read where it is
+    /// used: in place, or a copy (dropped with the statement) when it holds counted parts,
+    /// which whatever uses it could count.
+    pub(in crate::lower) fn frozen_part_read(&mut self, p: Place, ty: TyId) -> Operand {
+        let ty = self.sub(ty);
+        if !self.cx.holds_counted(ty) {
+            return Operand::Copy(p);
+        }
+        let v = self.clone_value(Operand::Copy(p), ty);
+        self.own_value(v, ty)
     }
 
     /// `Intrinsic::SharedRead` consumed (moved into a variable, an owned parameter, a field):

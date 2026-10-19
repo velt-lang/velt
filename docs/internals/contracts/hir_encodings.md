@@ -596,6 +596,11 @@ not touch a reference count in it either: where `T` holds no counted part (`Cx::
 the call is a borrow of the value in the box, read through a bitwise copy of its inline part
 that is never dropped; otherwise, and wherever the value is consumed (`FnLower::consume`), it is
 a deep copy (`clone_value`), dropped with the statement's temporaries or owned by the consumer.
+As the base of a projection (`Index`, `Field`, `ArrayLen`, `StrLen`, `StrCharCodeAt`, also of
+another projection of it) it is read in the box whatever `T` holds, since only lowering's own
+code reads it there (`FnLower::projection_base`); the projected part is then a copy where it
+holds counted parts and is used as a value. Stabilization (`stable_borrow`) never shares or
+retains through it.
 A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
 deep-copied too: a move would leave the all-zero value in the box.
 
