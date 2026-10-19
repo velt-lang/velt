@@ -1,0 +1,83 @@
+// check: no leaks
+// An object literal held as an interface value is one object: calling its methods through
+// another reference to it (a parameter, an array element) reaches the variables its methods
+// captured, as in JS, not a copy of them (#1310). The `createTopic` shape keeps the handlers
+// passed to `subscribe`.
+interface Topic {
+  subscribe(handler: (data: string) => void): () => void;
+  publish(data: string): void;
+}
+
+function createTopic(): Topic {
+  const subscribers: Array<(data: string) => void> = [];
+  return {
+    subscribe(handler: (data: string) => void): () => void {
+      subscribers.push(handler);
+      return () => {
+        const i = subscribers.indexOf(handler);
+        if (i > -1) subscribers.splice(i, 1);
+      };
+    },
+    publish(data: string): void {
+      for (const h of subscribers) h(data);
+      console.log("published to", subscribers.length);
+    },
+  };
+}
+
+function setup(topic: Topic): () => void {
+  const prefix = "p".repeat(3);
+  let count = 0;
+  const off = topic.subscribe((d) => {
+    count++;
+    console.log(prefix, "got", d, count);
+  });
+  count = 10;
+  return off;
+}
+
+interface Sink {
+  put(x: string): void;
+  all(): string;
+}
+
+function makeSink(): Sink {
+  const items: string[] = [];
+  return {
+    put(x: string): void {
+      items.push(x);
+    },
+    all(): string {
+      return items.join(",");
+    },
+  };
+}
+
+function fill(s: Sink, x: string): void {
+  s.put(x);
+}
+
+function deep(n: number): number {
+  const a = [n, n + 1];
+  return n <= 0 ? 0 : a[1] + deep(n - 1) - n;
+}
+
+function run(): void {
+  const t = createTopic();
+  const off = setup(t);
+  t.subscribe((d) => console.log("top", d));
+  console.log(deep(2000));
+  t.publish("one");
+  off();
+  t.publish("two");
+
+  const s = makeSink();
+  const holder: Sink[] = [s];
+  s.put("a");
+  holder[0].put("b");
+  fill(s, "c");
+  fill(holder[0], "d");
+  console.log(s.all(), holder[0].all());
+}
+
+run();

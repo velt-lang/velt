@@ -1,2 +1,1 @@
-closure_forward_kept_fixed.vlt:21:12: error: cannot keep a copy of `cb`, a borrowed function parameter
-closure_forward_kept_fixed.vlt:27:12: error: cannot keep a copy of `cb`, a borrowed function parameter
+closure_forward_kept_fixed.vlt:27:12: error: cannot move `cb` here: `k` is already borrowed by this call

@@ -19,6 +19,7 @@ mod exclusive;
 mod finish;
 mod fn_values;
 mod infer;
+mod kept_fns;
 mod local_async;
 mod local_closures;
 mod locked;
@@ -36,6 +37,7 @@ pub(crate) use cells::{
 };
 pub(crate) use exclusive::check_exclusive;
 pub(crate) use infer::infer_modes;
+pub(crate) use kept_fns::KeptFns;
 pub(crate) use local_async::infer_local_async;
 pub(crate) use local_closures::{demote_local_closures, held_closures};
 pub(crate) use locked::{check_locked, WeakCrossings};

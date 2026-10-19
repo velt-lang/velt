@@ -1,0 +1,16 @@
+2000
+param n=2 s=qqq
+generic afterafter 6 3
+method afterafter 6
+class afterafter 6
+iface n=20
+module k=200
+gsink n=2
+gforward n=2 abcabc1,2,3
+override n=2 oo
+attach n=2 oo
+2000
+param n=2 s=qqq
+generic afterafter 6 3
+method afterafter 6
+class afterafter 6

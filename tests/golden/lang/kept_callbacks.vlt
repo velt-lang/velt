@@ -1,0 +1,130 @@
+// check: no leaks
+// Closures and interface methods that keep a function they were passed (`onCleanup(fn)`,
+// `subscribe(handler)`), as JS callback registries do: the kept function stays valid after
+// the frames that created it return, and sees later changes of the variables it captured.
+
+function clobber(n: number): number {
+  // Reuses the stack the earlier frames used.
+  const words: string[] = [];
+  for (let i = 0; i < n; i++) words.push("w" + i);
+  return words.join("").length;
+}
+
+// A closure parameter kept in a captured variable (`watch`'s `onCleanup`).
+function watch(cb: (v: number, onCleanup: (fn: () => void) => void) => void): () => void {
+  let cleanupFn: (() => void) | null = null;
+  let n = 0;
+  return () => {
+    if (cleanupFn) cleanupFn();
+    n++;
+    cb(n, (fn) => (cleanupFn = fn));
+  };
+}
+
+function startWatch(label: string): () => void {
+  let seen = 0;
+  const run = watch((v, onCleanup) => {
+    const tag = label + "#" + v;
+    seen++;
+    onCleanup(() => console.log("cleanup", tag, seen));
+  });
+  run();
+  return run;
+}
+
+// An object literal's method and an interface method keeping a handler.
+interface Topic {
+  subscribe(handler: (data: string) => void): () => void;
+  publish(data: string): void;
+}
+
+class ListTopic implements Topic {
+  subscribers: Array<(data: string) => void> = [];
+  subscribe(handler: (data: string) => void): () => void {
+    this.subscribers.push(handler);
+    return () => {
+      const i = this.subscribers.indexOf(handler);
+      if (i > -1) this.subscribers.splice(i, 1);
+    };
+  }
+  publish(data: string): void {
+    for (const s of this.subscribers) s(data);
+  }
+}
+
+interface Bus {
+  on(h: (x: number) => void): void;
+  emit(x: number): void;
+}
+
+class SimpleBus implements Bus {
+  hs: Array<(x: number) => void> = [];
+  on(h: (x: number) => void): void {
+    this.hs.push(h);
+  }
+  emit(x: number): void {
+    for (const h of this.hs) h(x);
+  }
+}
+
+// A named function forwarding its parameter to a callee that keeps it, directly, from a
+// closure, and through a closure literal that calls it.
+function listen(topic: Topic, f: (data: string) => void): void {
+  topic.subscribe(f);
+}
+
+function untrack(fn: () => void): void {
+  fn();
+}
+
+function listenLater(topic: Topic, f: (data: string) => void): void {
+  untrack(() => {
+    topic.subscribe(f);
+  });
+}
+
+function listenWrapped(topic: Topic, f: (data: string) => void): void {
+  topic.subscribe((d) => f("wrapped " + d));
+}
+
+function setup(topic: Topic, bus: Bus): () => void {
+  let count = 0;
+  const prefix = "p".repeat(3);
+  const off = topic.subscribe((d) => {
+    count++;
+    console.log(prefix, "direct", d, count);
+  });
+  listen(topic, (d) => console.log(prefix, "listen", d, count));
+  listenLater(topic, (d) => console.log(prefix, "later", d));
+  listenWrapped(topic, (d) => console.log(prefix, d));
+  bus.on((x) => console.log(prefix, "bus", x + count));
+  // A closure forwarding its own parameter.
+  const relay = (g: (x: number) => void): void => bus.on(g);
+  relay((x) => console.log(prefix, "relay", x * 2));
+  // A function kept from a local the closure captures.
+  const onInvalidate = (x: number): void => console.log("invalidate", x, count);
+  untrack(() => bus.on(onInvalidate));
+  count = 10;
+  return off;
+}
+
+function run(): void {
+  const r1 = startWatch("a".repeat(2));
+  const r2 = startWatch("b");
+  console.log(clobber(50));
+  r1();
+  r2();
+  r1();
+
+  const topic = new ListTopic();
+  const bus = new SimpleBus();
+  const off = setup(topic, bus);
+  console.log(clobber(80));
+  topic.publish("one");
+  bus.emit(1);
+  off();
+  topic.publish("two");
+  bus.emit(2);
+}
+
+run();
