@@ -38,11 +38,23 @@ runs:
     - name: rust (pinned)
       shell: bash
       run: rustup toolchain install && rustc --version
+    # Keyed by OS, architecture and rust-cache-key.sh's hash of rust-toolchain.toml and Cargo.lock's
+    # external packages, nothing else. rust-cache's own hash takes in every toolchain rustup lists
+    # (runner images differ in their preinstalled stable, which split the cache into two live keys
+    # per OS on Oct 15) and the workspace manifests (any edit made a new entry). Now the `main` job
+    # saves a new entry exactly when the toolchain or a dependency changes; until it has, jobs
+    # start without a cache. The nightly `cache-prune` job deletes the superseded entries.
+    - name: rust-cache key
+      id: rust-cache-key
+      shell: bash
+      run: echo "key=$(bash "${GITHUB_ACTION_PATH//\\//}/rust-cache-key.sh")" >> "$GITHUB_OUTPUT"
     - uses: Swatinem/rust-cache@v2
       if: inputs.cache == 'true'
       with:
         workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }}
-        shared-key: gate
+        prefix-key: v1-rust
+        shared-key: ${{ steps.rust-cache-key.outputs.key }}
+        add-rust-environment-hash-key: "false"
         save-if: ${{ inputs.save-cache == 'true' }}
         cache-on-failure: true
     - uses: taiki-e/install-action@v2

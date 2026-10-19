@@ -4,8 +4,9 @@
 # against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
-# (bench/nightly.sh), and the WebAssembly goldens on Windows and macOS. A manual run can pick one
-# of them: `gh workflow run nightly -f only=stress`.
+# (bench/nightly.sh), and the WebAssembly goldens on Windows and macOS. Then the timing-sensitive
+# tests, many times on Windows and macOS (`flake`), and the deletion of superseded build caches
+# (`cache-prune`). A manual run can pick one of them: `gh workflow run nightly -f only=stress`.
 name: nightly
 
 on:
@@ -16,7 +17,7 @@ on:
       only:
         description: Run only one job (scheduled runs run all of them).
         type: choice
-        options: [all, gate, stress, oracle, bench, wasm]
+        options: [all, gate, stress, oracle, bench, wasm, flake, cache]
         default: all
       bench_baseline:
         description: >-
@@ -25,6 +26,10 @@ on:
         type: choice
         options: [compare, accept]
         default: compare
+      flake_rounds:
+        description: "flake: how many times each test runs."
+        type: number
+        default: 20
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -235,3 +240,188 @@ jobs:
             } else {
               await github.rest.issues.create({ ...context.repo, title, body });
             }
+
+  # The tests that have failed now and then in the merge queue, mostly on Windows and macOS: the
+  # async, promise and timer goldens and the `velt dev` reload goldens, each run 20 times. There
+  # are no automatic retries here or anywhere else (they would hide real races in the runtime):
+  # every failure is recorded, the job fails, and `flake-report` opens or updates one issue per
+  # test that failed, so a flaky test shows up here before it drops pull requests from the queue.
+  flake:
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'flake'
+    name: flake (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      ROUNDS: ${{ inputs.flake_rounds || 20 }}
+      VELT_GOLDEN: lang/async,lang/promise,std/timers,std/global_timers,async_dispatch/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: build the tests
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo test -p veltc --test golden --test reload --no-run
+      # failures.tsv: one line per test and round that failed (test, round, log). A failure that
+      # names no golden or reload case (a crash, a build error) is recorded as the whole test.
+      - name: the goldens and reload_goldens, ${{ env.ROUNDS }} times
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          out="$RUNNER_TEMP/flake"
+          mkdir -p "$out/logs"
+          : > "$out/failures.tsv"
+          cases=$(find tests/reload -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | paste -sd '|' -)
+          record() { # what failed, its log; then the failing tests, one per line (else the whole test)
+            local what=$1 log=$2 ids=$3 named=${3:-(none named)}
+            echo "round $round: $what failed: ${named//$'\n'/, }"
+            while read -r id; do
+              printf '%s\t%s\t%s\n' "${id:-$what}" "$round" "$log" >> "$out/failures.tsv"
+            done <<< "$ids"
+          }
+          for round in $(seq 1 "$ROUNDS"); do
+            log=golden-$round.log
+            if cargo test -q -p veltc --test golden -- --exact golden > "$out/logs/$log" 2>&1; then
+              rm "$out/logs/$log"
+            else
+              record golden "$log" "$(grep -oE '^tests[\\/]golden[\\/][^ :]+\.vlt' "$out/logs/$log" | sed 's|\\|/|g' | sort -u)"
+            fi
+            log=reload-$round.log
+            if cargo test -q -p veltc --test reload reload_goldens -- --exact > "$out/logs/$log" 2>&1; then
+              rm "$out/logs/$log"
+            else
+              record reload_goldens "$log" "$(grep -oE "^($cases) (Jit|Exe): " "$out/logs/$log" | cut -d' ' -f1 | sort -u | sed 's|^|tests/reload/|')"
+            fi
+          done
+          {
+            echo "### flake (${{ runner.os }}): $ROUNDS rounds"
+            if [ -s "$out/failures.tsv" ]; then
+              echo '| test | rounds failed |'
+              echo '|---|---|'
+              cut -f1 "$out/failures.tsv" | sort | uniq -c | while read -r n id; do echo "| \`$id\` | $n |"; done
+            else
+              echo 'No failures.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ ! -s "$out/failures.tsv" ]
+      - name: keep the failures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-${{ runner.os }}
+          path: ${{ runner.temp }}/flake
+          if-no-files-found: ignore
+
+  # One issue per failing test: an open issue carrying the test's marker, or else one whose title
+  # names the test and says it is flaky or timing-dependent (#909, #1064, ...), gets a comment;
+  # otherwise a new issue "Flaky: <test>" is opened.
+  flake-report:
+    needs: flake
+    if: ${{ !cancelled() && needs.flake.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flake-*
+          path: flake
+      - uses: actions/github-script@v7
+        env:
+          ROUNDS: ${{ inputs.flake_rounds || 20 }}
+        with:
+          script: |
+            const fs = require('fs');
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const shortName = id => id.split('/').pop().replace(/\.vlt$/, '');
+            // The test's part of a log: from the line naming it (else from the panic).
+            const excerpt = (file, id, where) => {
+              let lines;
+              try { lines = fs.readFileSync(file, 'utf8').split(/\r?\n/); } catch { return ''; }
+              const name = shortName(id);
+              let at = lines.findIndex(l => l.replace(/\\/g, '/').startsWith(id) || l.startsWith(`${name} `));
+              if (at < 0) at = Math.max(0, lines.findIndex(l => /panicked|FAILED/.test(l)));
+              // Up to the next failure (another golden or reload case), at most 40 lines.
+              const next = lines.findIndex((l, i) => i > at && /^(tests[\\/]golden[\\/]\S+\.vlt[ :]|\w+ (Jit|Exe): )/.test(l));
+              const text = lines.slice(at, Math.min(at + 40, next < 0 ? Infinity : next)).join('\n')
+                .replace(/```/g, '~~~').slice(0, 4000);
+              return `${where}:\n\`\`\`\n${text}\n\`\`\``;
+            };
+            const tests = new Map();
+            for (const dir of fs.existsSync('flake') ? fs.readdirSync('flake') : []) {
+              const os = dir.replace(/^flake-/, '');
+              const tsv = `flake/${dir}/failures.tsv`;
+              if (!fs.existsSync(tsv)) continue;
+              for (const line of fs.readFileSync(tsv, 'utf8').split('\n').filter(Boolean)) {
+                const [id, round, log] = line.split('\t');
+                const t = tests.get(id) ?? { rounds: {}, excerpt: '' };
+                (t.rounds[os] ??= new Set()).add(round);
+                if (!t.excerpt) t.excerpt = excerpt(`flake/${dir}/logs/${log}`, id, `${os}, round ${round}`);
+                tests.set(id, t);
+              }
+            }
+            if (tests.size === 0) return;
+            const open = (await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 }))
+              .filter(i => !i.pull_request);
+            for (const [id, t] of tests) {
+              const marker = `<!-- flake: ${id} -->`;
+              const named = new RegExp(`(^|[^A-Za-z0-9_])${shortName(id)}([^A-Za-z0-9_]|$)`);
+              const existing = open.find(i => (i.body ?? '').includes(marker))
+                ?? (id.includes('/') ? open.find(i => named.test(i.title) && /flak|timing|timer order|under load/i.test(i.title)) : undefined);
+              const counts = Object.entries(t.rounds).map(([os, r]) => `${r.size} of ${process.env.ROUNDS} rounds on ${os}`).join(', ');
+              const body = `\`${id}\` failed in ${counts} of the nightly \`flake\` job after ${context.sha.slice(0, 7)}: ${run}\n\n${t.excerpt}`;
+              if (existing) {
+                await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+                core.info(`${id}: commented on #${existing.number}`);
+              } else {
+                const created = await github.rest.issues.create({
+                  ...context.repo,
+                  title: `Flaky: ${id}`,
+                  labels: ['kind:bug'],
+                  body: `${marker}\n${body}\n\nFlaky tests are bugs (maintaining.md): make the test wait on what it observes instead of on timing, or fix the race it found.`,
+                });
+                core.info(`${id}: opened #${created.data.number}`);
+              }
+            }
+
+  # Deletes the rust-cache entries no job restores any more: those of another key than
+  # `.github/actions/setup/rust-cache-key.sh` gives for main's toolchain and dependencies (and
+  # those of the older key scheme), so the live entries are never evicted at the 10 GB limit. A
+  # run from another branch only lists what it would delete.
+  cache-prune:
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'cache'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: delete superseded rust-cache entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          current="v1-rust-$(bash .github/actions/setup/rust-cache-key.sh)-"
+          echo "live: ${current}<OS>-<arch>"
+          dry=
+          [ "$GITHUB_REF" = refs/heads/main ] || { dry=1; echo "not main: nothing is deleted"; }
+          gh cache list --limit 1000 --json id,key,sizeInBytes \
+            --jq '.[] | "\(.id)\t\(.key)\t\(.sizeInBytes)"' > "$RUNNER_TEMP/caches.tsv"
+          freed=0
+          while IFS=$'\t' read -r id key size; do
+            case "$key" in
+              "$current"*) echo "keep    $key" ;;
+              v[0-9]*-rust-*)
+                echo "delete  $key ($((size >> 20)) MiB)"
+                freed=$((freed + size))
+                [ -n "$dry" ] || gh cache delete "$id"
+                ;;
+            esac
+          done < "$RUNNER_TEMP/caches.tsv"
+          echo "### cache-prune: $((freed >> 20)) MiB of superseded rust-cache entries${dry:+ (dry run)}" >> "$GITHUB_STEP_SUMMARY"
