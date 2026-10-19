@@ -145,7 +145,7 @@ pub(crate) struct Ctx<'m> {
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
     /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
     pub fn_sites: crate::throws::FnSites,
-    /// How many definitions declarations made, before any body was checked.
+    /// The number of definitions collected from declarations, before any body was checked.
     pub collected_defs: usize,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
     /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).

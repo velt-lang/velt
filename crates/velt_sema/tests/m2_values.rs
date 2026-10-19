@@ -460,3 +460,27 @@ fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
         "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
     ));
 }
+
+#[test]
+fn typeof_of_a_function_generic_over_errors_only() {
+    // Its function type leaves the errors out, as TypeScript declares it (`typeof setTimeout`).
+    let p = ok_src(
+        "class A extends Error {}
+         function run<E>(f: () => void throws E): i64 { try { f(); } catch (e) {} return 1; }
+         function main() {
+           const n: ReturnType<typeof run> = run(() => { throw new A(\"x\"); });
+           let t: ReturnType<typeof setTimeout> | null = null;
+           t = setTimeout(() => { throw new A(\"y\"); }, 1);
+           console.log(n);
+         }",
+    );
+    assert!(
+        func(&p, "main").throws.is_none(),
+        "timer errors are uncaught"
+    );
+    let r = err_src("function id<T>(x: T): T { return x; } function main() { let f: typeof id; }");
+    assert!(
+        r.contains("of a generic function is not supported yet"),
+        "{r}"
+    );
+}

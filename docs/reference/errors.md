@@ -108,9 +108,10 @@ what a function stored there may throw.
   stored there that throws another value (`throw "x"`, `throw null`) is reported, since the
   inferred errors reach every function type of the same shape. The errors also come through other such types (a closure calling through one) and through
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
-  such a type too. Function types of the standard library are not inferred this way:
-  `queueMicrotask` takes a callback that may throw (what it throws is uncaught, as in Node),
-  and a timer callback, a proxy trap or a promise executor that throws is reported.
+  such a type too. Function types of the standard library are not inferred this way: the
+  timers (`setTimeout`, `setInterval`, `setImmediate`) and `queueMicrotask` take a callback
+  that may throw (what it throws is uncaught, as in Node), and a proxy trap or a promise
+  executor that throws is reported.
 
   ```ts
   interface Reviver<T> {

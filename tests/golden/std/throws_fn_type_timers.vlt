@@ -1,0 +1,27 @@
+// check: no leaks
+// A callback whose function type has inferred errors (#1154) can be passed to `setTimeout`:
+// an error it throws there is uncaught, as in Node.
+class Failed extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "Failed";
+  }
+}
+function attempt(f: () => void) {
+  try {
+    f();
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+function later(cb: () => void, ms: number) {
+  setTimeout(cb, ms);
+}
+attempt(() => {
+  throw new Failed("now");
+});
+later(() => console.log("tick"), 0);
+later(() => {
+  throw new Failed("late");
+}, 5);
+console.log("end");
