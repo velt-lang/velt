@@ -35,7 +35,7 @@ pub(crate) enum Portable {
 /// What each site throws, by the span of its written function type.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FnTypeSeeds {
-    sites: HashMap<Span, Vec<Portable>>,
+    pub(super) sites: HashMap<Span, Vec<Portable>>,
     /// The error types the previous check inferred for the functions declared before any body
     /// is checked, by `DefId` and declaration span: what a recursive call counts while the
     /// callee is still being checked ([`Ctx::recursion_hint`]).
@@ -48,14 +48,28 @@ pub(crate) struct FnSites {
     /// The sets this check resolves its sites with.
     pub seeds: FnTypeSeeds,
     /// Every site resolved, with its type (in its own generic context).
-    sites: Vec<(Span, TyId)>,
+    pub(super) sites: Vec<(Span, TyId)>,
     seen: HashSet<(Span, TyId)>,
+    /// `sites` by file, as indices into it.
+    pub(super) by_file: HashMap<velt_common::FileId, Vec<usize>>,
     /// `seeds` with what this check found added.
-    found: FnTypeSeeds,
-    grew: bool,
+    pub(super) found: FnTypeSeeds,
+    pub(super) grew: bool,
     /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
     /// for the current `found`.
-    indirect: HashMap<TyId, Option<TyId>>,
+    pub(super) indirect: HashMap<TyId, Option<TyId>>,
+    /// The same for a call through a value read from a known site.
+    pub(super) indirect_sites: HashMap<Span, Option<TyId>>,
+    /// The written type of each parameter and field, by the span of its name.
+    pub(super) written: HashMap<Span, Span>,
+    /// The site the value being checked is stored into (an argument's parameter, a variable's
+    /// or a field's type): what a closure created there throws goes into that site only.
+    pub target: Option<Span>,
+    /// The site each closure (by its span) was created for.
+    pub(super) closure_sites: HashMap<Span, Span>,
+    /// Where the values of each site are stored (an argument read from a parameter), so what
+    /// is stored into a site is stored into those too.
+    pub(super) flows: HashMap<Span, Vec<Span>>,
     /// How many errors were added to `found`.
     pub added: usize,
     /// The site types resolved with an inferred error type: shown as written, without it.
@@ -199,7 +213,9 @@ impl Ctx<'_> {
             return;
         }
         if self.fn_sites.seen.insert((span, t)) {
+            let i = self.fn_sites.sites.len();
             self.fn_sites.sites.push((span, t));
+            self.fn_sites.by_file.entry(span.file).or_default().push(i);
         }
     }
 
@@ -208,7 +224,7 @@ impl Ctx<'_> {
     /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
     /// reach every function type of the same shape, and a value that is no `Error` (`null`)
     /// would reach `catch` blocks and standard library callbacks that never see it.
-    pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId) -> bool {
+    pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId, site: Option<Span>) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
             if !self.is_error_class(m) {
@@ -219,20 +235,17 @@ impl Ctx<'_> {
                 None => return false,
             }
         }
+        // Stored into a known site: that one, and the sites its values flow to.
+        if let Some(s) = site {
+            self.add_to_site(s, &members);
+            return true;
+        }
         let matching: Vec<Span> = (self.fn_sites.sites.iter())
             .filter(|(_, g)| self.site_matches(*g, used_as, 0))
             .map(|(s, _)| *s)
             .collect();
         for &s in &matching {
-            let set = self.fn_sites.found.sites.entry(s).or_default();
-            for p in &members {
-                if !set.contains(p) {
-                    set.push(p.clone());
-                    self.fn_sites.grew = true;
-                    self.fn_sites.added += 1;
-                    self.fn_sites.indirect.clear();
-                }
-            }
+            self.add_to_site(s, &members);
         }
         !matching.is_empty()
     }
@@ -243,9 +256,12 @@ impl Ctx<'_> {
     /// do the sets of the sites those functions are stored into: the sets are propagated in
     /// the inference of one check (`throws::infer_all`), and the program is checked again
     /// once, with them.
-    pub(crate) fn indirect_error(&mut self, t: TyId) -> Option<TyId> {
+    pub(crate) fn indirect_error(&mut self, t: TyId, site: Option<Span>) -> Option<TyId> {
         if self.fn_sites.found.sites.is_empty() {
             return None;
+        }
+        if let Some(s) = site {
+            return self.site_set(s);
         }
         if let Some(e) = self.fn_sites.indirect.get(&t) {
             return *e;
@@ -307,7 +323,7 @@ impl Ctx<'_> {
     /// Can a value of `used` have been typed by site type `g`: equal, with `g`'s type
     /// parameters (and deferred types) matching anything, and error types ignored. A part of
     /// `used` that is a reported type error matches nothing: it would match every site.
-    fn site_matches(&self, g: TyId, used: TyId, depth: u32) -> bool {
+    pub(super) fn site_matches(&self, g: TyId, used: TyId, depth: u32) -> bool {
         if g == used {
             return true;
         }
@@ -370,7 +386,7 @@ impl Ctx<'_> {
     }
 
     /// A [`Portable`] type in this check (`None`: its class is not the same here).
-    fn unport(&mut self, p: &Portable) -> Option<TyId> {
+    pub(super) fn unport(&mut self, p: &Portable) -> Option<TyId> {
         let k = match p {
             Portable::Leaf(k) => k.clone(),
             Portable::Def(d, span, args) => {
@@ -440,7 +456,8 @@ impl Ctx<'_> {
             return Some(true);
         }
         if let Some(have) = have {
-            self.seed_fn_sites(to, have);
+            let site = self.target_site(to);
+            self.seed_fn_sites(to, have, site);
         }
         Some(false)
     }

@@ -431,19 +431,20 @@ impl FnCx<'_, '_> {
         let Some(op) = op else {
             let v = match first {
                 Some(v) => v,
-                None => {
-                    let v = self.expr(value, Some(lty), Want::Move);
+                // Stored into the place's site (`throws::fn_flows`).
+                None => self.stored_into(self.site_of_value(&place), |s| {
+                    let v = s.expr(value, Some(lty), Want::Move);
                     // A local declared from a literal takes the type of what it is assigned
                     // (`literal_locals`); other places are a typed position.
-                    if self.literal_assign(&place, &v) {
-                        self.try_coerce(v, lty).unwrap_or_else(|v| {
-                            self.report_mismatch(lty, &v);
+                    if s.literal_assign(&place, &v) {
+                        s.try_coerce(v, lty).unwrap_or_else(|v| {
+                            s.report_mismatch(lty, &v);
                             v
                         })
                     } else {
-                        self.coerce(v, lty)
+                        s.coerce(v, lty)
                     }
-                }
+                }),
             };
             self.unnarrow_fields(target);
             if let H::Local(l, _) = place.kind {

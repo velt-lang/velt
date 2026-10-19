@@ -96,7 +96,8 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         let used_as = closure_type(cx, d, allowed);
         // A function type written without `throws` throws what is stored into it: the program
         // is checked again with this one's errors (`fn_types`), which drops this report.
-        let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own));
+        let site = cx.closure_site(d);
+        let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site));
         let inferred = cx.fn_sites.inferred.contains(&used_as);
         let what = match allowed {
             Some(t) if !inferred => format!("allows only `{}`", cx.display(t)),
@@ -151,7 +152,8 @@ pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
         let own = own_final(cx, d);
         if let (Some(own), Some(_)) = (own, cx.error_outside(decl.ty, own)) {
             let used_as = closure_type(cx, d, decl.ty);
-            cx.seed_fn_sites(used_as, own);
+            let site = cx.closure_site(d);
+            cx.seed_fn_sites(used_as, own, site);
         }
     }
     cx.fn_sites.added > before

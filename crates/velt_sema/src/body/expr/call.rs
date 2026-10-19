@@ -385,7 +385,8 @@ impl FnCx<'_, '_> {
         // Through a function type written without `throws` in a user module, it may throw what
         // is stored into the type (`throws::fn_types`).
         if !self.cx.scopes[self.module].is_std {
-            self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, span));
+            let site = self.site_of_value(&f);
+            self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
         }
         let mut f = f;
         set_place_mode(&mut f, UseMode::Borrow);

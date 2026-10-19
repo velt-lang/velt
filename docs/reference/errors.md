@@ -101,8 +101,13 @@ what a function stored there may throw.
   or `Map` value), and calls through the type throw its errors, so a `try` around them catches
   them as in JavaScript. The error type belongs to the written type: every value of
   `revive: (s: string) => T` in `interface Reviver<T>` throws what any closure stored into one
-  throws, whatever `T` is, and so does another function type of the same shape, which a
-  closure's type can't tell apart. When nothing stored into the type throws, it throws nothing
+  throws, whatever `T` is. Each written type is inferred on its own: a closure passed for a
+  parameter, stored into a field or a typed variable, or returned from a function with a
+  written function result throws into that type only, and a value read from one such type
+  and stored into another (a parameter passed on, stored into a field) takes its errors
+  along. Where the compiler can't tell which written type a value comes from (a callback
+  passed through a function value, an element of a `Map`), every function type of the same
+  shape gets the errors. When nothing stored into the type throws, it throws nothing
   and calls through it need no error check. For a type whose result is a `Promise`, the
   inferred errors are the promise's rejection type. Only `Error` classes are inferred: a closure
   stored there that throws another value (`throw "x"`, `throw null`) is reported, since the

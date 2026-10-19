@@ -341,6 +341,17 @@ fn closures_and_function_values_carry_error_types() {
         "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
     );
     assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
+    // Per site: a function type of the same shape written elsewhere throws nothing more, and
+    // the errors follow the values stored from one site into another.
+    let p = ok_src(
+        "class A extends Error {}
+         class Box { cb: () => void; constructor(cb: () => void) { this.cb = cb; } }
+         function run(f: () => void) { const b = new Box(f); b.cb(); }
+         function other(g: () => void) { g(); }
+         function main() { run(() => { throw new A(\"x\"); }); other(() => {}); }",
+    );
+    assert!(func(&p, "run").throws.is_some(), "through the field");
+    assert!(func(&p, "other").throws.is_none(), "another site");
     // Only `Error` classes are inferred: a thrown string is still reported.
     let r = err_src(
         "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",

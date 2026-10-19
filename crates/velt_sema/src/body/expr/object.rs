@@ -754,7 +754,11 @@ impl FnCx<'_, '_> {
             }
             let kind = self.cx.adt(d).map_or(AdtKind::Struct, |a| a.kind);
             let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
-            let h = self.field_value(pname, *value, Some(expected), watched);
+            // Stored into the field's site (`throws::fn_flows`).
+            let site = self.cx.decl_site(fields[i].span, fields[i].declared);
+            let h = self.stored_into(site, |s| {
+                s.field_value(pname, *value, Some(expected), watched)
+            });
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);
         }
