@@ -87,8 +87,8 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
-  OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
-  only when you want that certainty before queueing. The queue skips the WebAssembly goldens
+  OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
+  only, so you need it locally only when you want that certainty before queueing. The queue skips the WebAssembly goldens
   when the change doesn't touch WebAssembly code (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests
   the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
   script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
@@ -252,8 +252,9 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
   linking, `veltc`, `vpm`, the standard library, goldens; comment-only edits don't count;
   `cargo xtask affected` says which).
-  Every push to `main` then runs the whole gate on Windows and macOS and opens an issue when it
-  fails. A nightly run adds PostgreSQL and Redis so the database tests run too.
+  When the queue checked Linux only, the push to `main` then runs the whole gate on Windows and
+  macOS and opens an issue when it fails. A nightly run adds PostgreSQL and Redis so the
+  database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session

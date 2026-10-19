@@ -224,7 +224,9 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
 /// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
-/// whether the WebAssembly goldens run (`wasm_goldens`: `VELT_WASM_GOLDENS`).
+/// whether the WebAssembly goldens run (`wasm_goldens`: `VELT_WASM_GOLDENS`). After a push to
+/// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
+/// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     let (os, other_os) = if plan.other_os.is_some() {
@@ -235,8 +237,13 @@ fn github_output_text(plan: &Plan) -> String {
     } else {
         (r#"["ubuntu-latest"]"#, "[]")
     };
+    let main_os = if plan.after_merge.is_some() {
+        r#"["ubuntu-latest","windows-latest","macos-latest"]"#
+    } else {
+        r#"["ubuntu-latest"]"#
+    };
     let mut text = format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\n",
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build() || plan.difftest || plan.vscode),
@@ -367,6 +374,20 @@ name = \"a\"
         let text = github_output_text(&linux_only);
         assert!(
             text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn main_checks_windows_and_macos_only_after_a_linux_only_queue_run() {
+        let mut plan = Plan::everything("test");
+        plan.after_merge = None;
+        let text = github_output_text(&plan);
+        assert!(text.contains("\nmain_os=[\"ubuntu-latest\"]\n"), "{text}");
+        plan.after_merge = Some("the merge queue checked Linux only".into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nmain_os=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"),
             "{text}"
         );
     }
