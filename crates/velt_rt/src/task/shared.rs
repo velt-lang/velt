@@ -85,8 +85,19 @@ fn handle_layout(size: usize) -> Layout {
 /// The hub of holder `f` (the original future or a handle).
 unsafe fn hub(f: *mut VeltFut) -> Arc<Hub> {
     if is_handle(f) {
-        return (*((f as *mut u8).sub(FRONT) as *const Arc<Hub>)).clone();
+        handle_hub(f)
+    } else {
+        orig_hub(f)
     }
+}
+
+/// The hub of handle `f`, kept in front of its header.
+unsafe fn handle_hub(f: *mut VeltFut) -> Arc<Hub> {
+    (*((f as *mut u8).sub(FRONT) as *const Arc<Hub>)).clone()
+}
+
+/// The hub of the original future `f`, by its address.
+unsafe fn orig_hub(f: *mut VeltFut) -> Arc<Hub> {
     match HUBS.lock().as_ref().and_then(|m| m.get(&(f as usize))) {
         Some(h) => h.clone(),
         None => crate::panic::fatal("internal error: a shared promise lost its record"),
@@ -165,12 +176,16 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(FUT_RESULT_OFFSET)
 }
 
+// `orig_poll` and `handle_poll` tell the original future from a handle by address
+// ([`is_handle`]), so their code must differ: the linker folds identical functions into one
+// (`/OPT:ICF`), and with the same body both would have one address, every original would read as
+// a handle, and its hub would be read from the bytes in front of it.
 unsafe extern "C" fn orig_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&hub(f), f, cx)
+    poll_holder(&orig_hub(f), f, cx)
 }
 
 unsafe extern "C" fn handle_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&hub(f), f, cx)
+    poll_holder(&handle_hub(f), f, cx)
 }
 
 unsafe extern "C" fn orig_drop(f: *mut VeltFut) {
@@ -300,4 +315,23 @@ pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
         std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
     }
     st.done
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The original future and a handle are told apart by their `poll` (`is_handle`): the two
+    /// functions must keep their own addresses after the linker folded identical code.
+    #[test]
+    fn original_and_handle_polls_differ() {
+        assert!(!std::ptr::fn_addr_eq(
+            orig_poll as FutPoll,
+            handle_poll as FutPoll
+        ));
+        assert!(!std::ptr::fn_addr_eq(
+            orig_drop as FutDrop,
+            handle_drop as FutDrop
+        ));
+    }
 }

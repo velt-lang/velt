@@ -51,8 +51,19 @@ unsafe fn is_handle(f: *mut VeltFut) -> bool {
 
 unsafe fn hub(f: *mut VeltFut) -> HubRef {
     if is_handle(f) {
-        return (*((f as *mut u8).sub(FRONT) as *const HubRef)).clone();
+        handle_hub(f)
+    } else {
+        orig_hub(f)
     }
+}
+
+/// The hub of handle `f`, kept in front of its header.
+unsafe fn handle_hub(f: *mut VeltFut) -> HubRef {
+    (*((f as *mut u8).sub(FRONT) as *const HubRef)).clone()
+}
+
+/// The hub of the original future `f`, by its address.
+unsafe fn orig_hub(f: *mut VeltFut) -> HubRef {
     HUBS.with(|m| m.borrow().get(&(f as usize)).cloned())
         .unwrap_or_else(|| crate::panic::fatal("internal error: a shared promise lost its record"))
 }
@@ -119,12 +130,16 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(FUT_RESULT_OFFSET)
 }
 
+// `orig_poll` and `handle_poll` tell the original future from a handle by address
+// ([`is_handle`]), so their code must differ: the linker folds identical functions into one
+// (`/OPT:ICF`), and with the same body both would have one address, every original would read as
+// a handle, and its hub would be read from the bytes in front of it.
 unsafe extern "C" fn orig_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&hub(f), f, cx)
+    poll_holder(&orig_hub(f), f, cx)
 }
 
 unsafe extern "C" fn handle_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&hub(f), f, cx)
+    poll_holder(&handle_hub(f), f, cx)
 }
 
 unsafe extern "C" fn orig_drop(f: *mut VeltFut) {
