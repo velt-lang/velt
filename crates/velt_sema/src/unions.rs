@@ -165,6 +165,9 @@ impl Ctx<'_> {
         if let Some(base) = self.brand_base(t) {
             return self.typeof_tag(base);
         }
+        if self.is_callable_object(t) {
+            return "function";
+        }
         match self.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) => "number",
             TyKind::Str => "string",

@@ -909,6 +909,56 @@ f`, `{ m: f }`, `xs.map(f)`), a function expression whose body uses one, one wit
 generator with one, and `this` in a function type (`(this: T, a: A) => R` is `(a: A) => R` for
 now).
 
+### Functions with properties
+
+A function can carry properties, as in JavaScript: an interface or object type with one call
+signature and members (`interface Runner { (): number; stop(): void }`, or
+`(() => number) & { stop(): void }`) types such a value. It is called like a function, its
+members are read and written like an object's fields, `typeof` is `"function"`, and it is
+accepted where its plain function type is expected. An interface extending a function type
+(`interface Subscriber extends EffectFn { deps: string[] }`) is one too. It is built in one of
+two ways:
+
+- `Object.assign(fn, { … })`: typed by the expected type, or without one as TypeScript types
+  it (`F & { … }`).
+- A function cast to the type, followed by the writes of its members:
+  `const r = (() => …) as Runner; r.stop = …;`. The writes right after the declaration give the
+  members their values; a required member with no write there is an error (Node would read
+  `undefined` before the write).
+
+```ts
+interface Runner {
+  (): number;
+  stop(): void;
+}
+
+function makeRunner(): Runner {
+  let count = 0;
+  let stopped = false;
+  const runner = (() => {
+    if (!stopped) count += 1;
+    return count;
+  }) as Runner;
+  runner.stop = () => {
+    stopped = true;
+  };
+  return runner;
+}
+
+const r = makeRunner();
+r();
+r.stop();
+console.log(r(), typeof r); // 1 function
+
+const job = Object.assign((n: number) => n * 2, { id: 7 });
+console.log(job(21), job.id, Object.keys(job)); // 42 7 [ 'id' ]
+```
+
+The value is an object with a fixed set of fields, the function among them: properties the type
+does not declare can't be added, and a function whose type has no members has no properties of
+its own (`const f = () => 1; f.label = "one"` is an error). Several call signatures next to
+members (overloads) and `Object.defineProperty` onto a function are not supported yet.
+
 ### `call` and `apply`
 
 `f.call(thisArg, a, b)` and `f.apply(thisArg, [a, b])` call a function value as JavaScript's

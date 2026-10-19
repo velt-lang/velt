@@ -924,3 +924,13 @@ entry is an `ICE:`.
   test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
   has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
   other programs are unchanged.
+
+## Functions with properties (issue #921)
+
+No new HIR form. A callable object type (an interface or object type with one call signature
+and members, `interface Runner { (): T; stop(): void }`) is an `AdtKind::Anon` object type
+whose first field is named `#call` and holds the function value (`TyKind::FnPtr`), followed
+by the members (`velt_sema` `callables.rs`). Values are built as ordinary `AdtLit`s; a call
+`f()` is `Callee::Indirect` through a `Field` read of `#call`, and a conversion to the plain
+function type is that field read (shared). As for an ES private name, the `#` keeps the field
+out of `Object.keys`, `JSON.stringify` and printing; lowering needs nothing else.

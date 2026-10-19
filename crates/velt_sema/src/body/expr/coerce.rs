@@ -60,6 +60,12 @@ impl FnCx<'_, '_> {
         if self.cx.unfreezes(h.ty, exp) {
             return Err(h);
         }
+        // A function with properties as its plain function type: its function (#921).
+        if self.cx.is_callable_object(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
+        {
+            let f = self.callable_as_fn(h);
+            return self.try_coerce(f, exp);
+        }
         if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
             return self.coerce_dynamic(h, exp, self.adapting);
         }

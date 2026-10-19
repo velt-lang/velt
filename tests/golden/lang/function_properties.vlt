@@ -1,0 +1,117 @@
+// check: no leaks
+// Functions with properties: call signatures next to members, built with `Object.assign`
+// onto a function or with property writes right after a cast.
+interface Runner {
+  (): number;
+  stop(): void;
+}
+
+interface WatchHandle {
+  (): void;
+  stop: () => void;
+  pause: () => void;
+  resume: () => void;
+}
+
+type EffectFn = () => void;
+interface Subscriber extends EffectFn {
+  deps: string[];
+  flags: number;
+  label?: string;
+}
+
+type Job = ((n: number) => number) & { id: number; queued?: boolean };
+
+function makeRunner(start: number): Runner {
+  let count = start;
+  let stopped = false;
+  const runner = (() => {
+    if (!stopped) count += 1;
+    return count;
+  }) as Runner;
+  runner.stop = () => {
+    stopped = true;
+  };
+  return runner;
+}
+
+function watch(log: string[]): WatchHandle {
+  let paused = false;
+  const stop = () => {
+    log.push("stopped");
+  };
+  const pause = () => {
+    paused = true;
+    log.push("paused");
+  };
+  const resume = () => {
+    if (paused) log.push("resumed");
+    paused = false;
+  };
+  return Object.assign(stop, { stop, pause, resume });
+}
+
+const r = makeRunner(10);
+console.log(r(), r(), typeof r);
+r.stop();
+console.log(r());
+
+const log: string[] = [];
+const h = watch(log);
+h.pause();
+h.resume();
+h();
+console.log(log.join(","), typeof h, Object.keys(h).join(","));
+
+const sub = function () {
+  console.log("run");
+} as Subscriber;
+sub.deps = ["a"];
+sub.flags = 2;
+sub();
+sub.flags |= 4;
+sub.deps.push("b");
+console.log(sub.flags, sub.deps.join("+"), sub.label === undefined);
+sub.label = "s";
+console.log(sub.label, Object.keys(sub).join(","));
+
+const job: Job = Object.assign((n: number) => n * 2, { id: 7 });
+console.log(job(21), job.id, job.queued);
+job.queued = true;
+console.log(job.queued);
+
+// A function with properties is a function of its call signature.
+function callTwice(f: () => number): number {
+  return f() + f();
+}
+const r2 = makeRunner(0);
+console.log(callTwice(r2));
+const jobs: Job[] = [job, Object.assign((n: number) => n + 1, { id: 8 })];
+console.log(jobs.map((j) => j(j.id)).join(" "));
+
+// Generic: an injectable function carrying its factory.
+interface Injectable<T> {
+  (): T;
+  _factory: () => T;
+  _token: string;
+}
+function defineInjectable<T>(name: string, factory: () => T): Injectable<T> {
+  const useFn = (() => factory()) as Injectable<T>;
+  useFn._factory = factory;
+  useFn._token = name;
+  return useFn;
+}
+const useCount = defineInjectable("count", () => 41);
+console.log(useCount() + 1, useCount._factory(), useCount._token);
+
+// Without an expected type, `Object.assign(fn, { … })` has the type `F & { … }`.
+const tagged = Object.assign((s: string) => s.toUpperCase(), { tag: "up", uses: 0 });
+tagged.uses += 1;
+console.log(tagged("hi"), tagged.tag, tagged.uses, typeof tagged);
+
+// Stored in an object and called through a field.
+const holder = { run: makeRunner(100) };
+console.log(holder.run(), holder.run());
+holder.run.stop();
+console.log(holder.run());
+console.log(JSON.stringify({ n: job.id }), JSON.stringify(Object.keys(job)));

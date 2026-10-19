@@ -56,12 +56,25 @@ impl FnCx<'_, '_> {
     }
 
     fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
+        let mut skip = 0;
         for (i, s) in stmts.iter().enumerate() {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {
                     // The rest of the block runs in a `try` whose `finally` awaits the cleanup.
                     self.await_using(v, s.span, &stmts[i + 1..], out);
                     return;
+                }
+                // `const f = fn as T; f.a = …;`: the cast may take the writes (#921).
+                if let Some(pending) = callable_writes(v, &stmts[i + 1..]) {
+                    let outer = self.f.callable_writes.replace(pending);
+                    self.stmt(s, out);
+                    let done = std::mem::replace(&mut self.f.callable_writes, outer);
+                    skip = done.map_or(0, |p| p.used);
+                    continue;
                 }
             }
             self.stmt(s, out);
@@ -635,4 +648,26 @@ pub(crate) fn closure_def(h: &hir::Expr) -> Option<crate::hir::DefId> {
         hir::ExprKind::Block(b) => b.value.as_deref().and_then(closure_def),
         _ => None,
     }
+}
+
+/// The property writes after declaration `v` (`const f = <cast>;`) that a cast of a function
+/// to a callable object type may take (`expr::callables`), or `None`.
+fn callable_writes(v: &ast::VarDecl, rest: &[ast::Stmt]) -> Option<super::expr::PendingWrites> {
+    let ast::PatternKind::Ident(name) = &v.pattern.kind else {
+        return None;
+    };
+    let init = v.init.as_ref()?;
+    let mut e = init;
+    while let ast::ExprKind::Paren(x) = &e.kind {
+        e = x;
+    }
+    if !matches!(e.kind, ast::ExprKind::Cast { .. }) {
+        return None;
+    }
+    let writes = super::expr::property_writes(&name.name, rest);
+    (!writes.is_empty()).then(|| super::expr::PendingWrites {
+        cast: e.span,
+        writes,
+        used: 0,
+    })
 }

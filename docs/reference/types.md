@@ -1330,10 +1330,10 @@ console.log(b.v); // hi
   type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
   A call signature alone (`interface F { (x: T): R }`, `type F = { (x: T): R }`) declares the
   function type `(x: T) => R`: a value of it is called as `f(x)`, any function or arrow of that
-  type is one, and `typeof f` is `"function"`. With members or other call signatures, an object
-  type or interface with call signatures is a function with properties or an overloaded
-  function (TypeScript's `((x: T) => R) & { stop(): void }`), which is not supported yet
-  (#921); a generic call signature (`<T>(x: T): T`) is a generic function type and a
+  type is one, and `typeof f` is `"function"`. With members, an object type or interface with
+  one call signature is a [function with properties](functions.md#functions-with-properties)
+  (TypeScript's `((x: T) => R) & { stop(): void }`); several call signatures (an overloaded
+  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic function type and a
   construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
   a method, while in a class it is) a construct type, both planned
   ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
@@ -1660,8 +1660,9 @@ does is an error saying it is not supported yet, never a quiet difference.
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
   and one holding `undefined` where the target can't hold it is a `TypeError`)
   and returns `target` itself. A `Record` target takes any keys; an object or class target only
-  fields its type declares (adding one is not supported yet). Assigning onto a function (#921) or
-  from a value that may hold another class is not supported yet.
+  fields its type declares (adding one is not supported yet). `Object.assign(fn, { … })` onto a
+  function makes a [function with properties](functions.md#functions-with-properties).
+  Assigning from a value that may hold another class is not supported yet.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
   writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
   object's field is written through any reference, so a frozen object converts only to types

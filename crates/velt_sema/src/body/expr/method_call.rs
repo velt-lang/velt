@@ -313,6 +313,7 @@ impl FnCx<'_, '_> {
             // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
             // call of the value it holds.
             if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || self.cx.is_callable_object(fty)
                 || matches!(
                     self.cx.dynamic(fty),
                     Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
