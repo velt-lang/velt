@@ -581,11 +581,16 @@ of a value that may itself be `undefined` and `JSON.parse` into a type holding `
 the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
 other than `undefined` on a parameter whose type allows both nothings (`T | null | undefined`);
 and a type argument whose nothing differs from one the generic keeps
-of it, directly or through what it calls (a `T | undefined` for `Map.set`
-or a generic function holding a `T | null`), which includes a generic
+of it, directly or through what it calls (a `T | undefined` for a generic function holding a
+`T | null`), which includes a generic
 alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
-`T | null | undefined`. Also not supported yet, although TypeScript accepts them:
+`T | null | undefined`. A `Map` or `Record` value type may allow either nothing or both
+(`Map<string, number | null | undefined>`, `Record<string, V | undefined>`): an entry holding
+`null` or `undefined` is present (`has`, `size`, `Object.keys`, iteration and `console.log`
+list it) and reads back as what it holds, a missing key reads `undefined`, and
+`JSON.stringify` leaves out an entry holding `undefined` and writes `null`, as Node does.
+Also not supported yet, although TypeScript accepts them:
 
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
@@ -703,7 +708,8 @@ console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
   null) return; else x = null;` does not; a `case` passes on what holds at its `break`; after a
   `while` loop without `break` its condition is false: `while (y === null) { y = next(); }`). A
   narrowed field is re-checked when read, so a call that set it to `null` in between panics
-  instead of reading `null`. An optional member of function type can be called once a check
+  instead of reading `null` (`a narrowed field was set to null before this read`, `undefined`
+  for an optional field). An optional member of function type can be called once a check
   narrowed it (`if (o.onError) o.onError(e)`, `if (def?.transform) def.transform(v)`). Inside
   a closure, a variable narrowed where the closure is created stays narrowed when the function
   assigns it nowhere after that (nor in a loop around the closure), as in TypeScript: the
@@ -1562,10 +1568,14 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
   a field or element declared `T | null` keeps its `null`, and so does an optional field
-  declared `a?: T | null` that holds `null`. Defaults in `for...of` patterns and parameter
+  declared `a?: T | null` that holds `null`. `for...of` patterns take defaults (and an object
+  rest) the same way: `for (const { name, port = 80 } of servers)`. Defaults in parameter
   patterns are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
-  `index out of bounds: the len is L but the index is I`), `push` (any number of items:
+  `index out of bounds: the len is L but the index is I`; a read where a `T | undefined` is
+  expected, `return xs[0]` from a function returning `T | undefined` or
+  `const v: T | undefined = xs[i]`, and any read of an array whose element type allows
+  `undefined`, gives `undefined` outside the array instead, as in JS), `push` (any number of items:
   `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
   `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat

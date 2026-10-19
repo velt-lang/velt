@@ -352,6 +352,11 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
+        } else if self.is_record_read(&recv) {
+            d = d.with_note(format!(
+                "a `Record` read is `V | undefined`, since the key may be missing (TypeScript types it `V`): use `?.{0}(...)`, or keep the value you store: `(r[k] ??= []).{0}(...)`",
+                prop.name
+            ));
         } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
                 "the value may be {}: use `?.{}(...)` or check `!= null` first",
@@ -367,6 +372,12 @@ impl FnCx<'_, '_> {
         self.cx.error(d);
         self.check_args_loose(args);
         self.error_expr(span)
+    }
+
+    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record.__get`)?
+    fn is_record_read(&self, h: &hir::Expr) -> bool {
+        matches!(&h.kind, H::Call { callee: hir::Callee::Def(d, _), .. }
+            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with("Record.__get")))
     }
 
     /// Is `t` the `Stdout` of `velt:process` (the byte sink `stdout`)?
