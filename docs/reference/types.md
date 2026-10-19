@@ -294,6 +294,35 @@ shows a symbol-keyed member after the others as `[Symbol(description)]: v`, and
 `JSON.stringify` and `Object.keys` leave it out, as in Node; `JSON.parse` never fills one,
 whatever keys the text has (a required symbol-keyed field makes the decode fail).
 
+A literal asserted to a type may carry a symbol-keyed member the type doesn't declare
+(`{ type, props, [VNODE]: true } as VNode`): TypeScript allows it and the object keeps the
+member, so Velt adds the optional field `[VNODE]?: boolean` to `VNode` (an interface or an
+object type alias of the program; the field's type is the literal value's, `any` for another
+value or for literals of different types). Objects built without it don't have it, as in Node:
+`console.log` shows it only where it is set, spreads copy it, `VNODE in v` tests it, and it is
+read and written through `any` (`(v as any)[VNODE] === true`, `(v as any)[VNODE] = true` on an
+object of a type that has the field). The key is resolved in the module of the literal, so the
+type may be declared where `VNODE` is not imported. Reading such a key through `any` from a
+value without fields (a string, number, boolean, array or function) gives `undefined`, as in
+Node.
+
+```ts
+const BRAND: unique symbol = Symbol("brand");
+
+type Tagged = { tag: string };
+
+function branded(tag: string): Tagged {
+  return { tag, [BRAND]: true } as Tagged;
+}
+
+function main() {
+  const a = branded("div");
+  const b: Tagged = { tag: "p" };
+  console.log(a, b, BRAND in a, BRAND in b); // { tag: 'div', [Symbol(brand)]: true } { tag: 'p' } true false
+  console.log((b as any)[BRAND] === true, { ...a }); // false { tag: 'div', [Symbol(brand)]: true }
+}
+```
+
 `KEY in o` is `true` when `o`'s type declares the member, `false` when it doesn't, and for an
 optional member (`[KEY]?: T` in an object type or interface) whether it is present, tested at
 run time (a class's optional field is always present, as TypeScript-compiled classes define
@@ -1796,7 +1825,8 @@ tests it for a key the copy left out, since Node would find it on the original. 
 field of a dynamic type (`b?: any`, `b?: unknown`) holds its own `undefined` and keeps no
 presence flag, while Node also finds a key that holds `undefined`. So a program that tests such
 a field with `in` and somewhere stores a value that may be `undefined` in a field of that name
-(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`) is an error
+(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, also an `any`
+or `unknown` value, which may hold `undefined`, stored in a `b?: any` field) is an error
 (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the first such
 store and says how many others there are): store the value only when there is one
 (`if (v !== undefined) o.b = v`), or test the value (`o.b !== undefined`). A primitive
