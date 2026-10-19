@@ -41,6 +41,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => true,
+            TyKind::Dyn(..) => self.cx.is_dynamic(ty),
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
             }
@@ -84,6 +85,7 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.json_write_any(buf, place),
             TyKind::Option(e, _) => self.json_write_option(buf, place, ty, e, key),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
@@ -284,28 +286,34 @@ impl FnLower<'_, '_> {
                 }
                 f
             });
-            // A field that holds `undefined` is left out, as JavaScript does (issue #930).
+            // A field that holds `undefined` is left out, as JavaScript does (issue #930), and
+            // so is a dynamic one holding `undefined`, a function or a symbol.
+            let dynamic = self.cx.is_dynamic(fty);
             match (optional, self.cx.kind(fty)) {
+                _ if dynamic => {
+                    if !pending.is_empty() {
+                        self.push_text(buf, &pending);
+                        pending.clear();
+                    }
+                    let flag = self.json_sep_flag(sep);
+                    let present = self.any_json_present(&fp);
+                    let (yes, done) = (self.new_block(), self.new_block());
+                    self.branch(present, yes, done);
+                    self.switch_to(yes);
+                    self.json_member_sep(buf, sep);
+                    self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
+                    self.push_text(buf, &key);
+                    self.json_write_any(buf, &fp);
+                    self.goto(done);
+                    self.switch_to(done);
+                    sep = Sep::Maybe(flag);
+                }
                 (opt, TyKind::Option(e, n)) if opt || n == Nothing::Undefined => {
                     if !pending.is_empty() {
                         self.push_text(buf, &pending);
                         pending.clear();
                     }
-                    let flag = match sep {
-                        Sep::Maybe(f) => f,
-                        _ => {
-                            let f = self.temp(Ty::Bool);
-                            let written = matches!(sep, Sep::Rest);
-                            self.assign(
-                                Place::local(f),
-                                Rvalue::Use(vir::Operand::Const(
-                                    vir::Const::Bool(written),
-                                    Ty::Bool,
-                                )),
-                            );
-                            f
-                        }
-                    };
+                    let flag = self.json_sep_flag(sep);
                     let prev = sep;
                     match flag_place.filter(|_| n == Nothing::Null) {
                         Some(present) => {
@@ -351,6 +359,20 @@ impl FnLower<'_, '_> {
         self.push_text(buf, &pending);
         if recursive {
             self.call_rt(Rt::JsonLeave, vec![], None);
+        }
+    }
+
+    /// The flag telling whether a member was written, for members that may be left out.
+    fn json_sep_flag(&mut self, sep: Sep) -> Local {
+        match sep {
+            Sep::Maybe(f) => f,
+            _ => {
+                let f = self.temp(Ty::Bool);
+                let written = matches!(sep, Sep::Rest);
+                let c = vir::Operand::Const(vir::Const::Bool(written), Ty::Bool);
+                self.assign(Place::local(f), Rvalue::Use(c));
+                f
+            }
         }
     }
 

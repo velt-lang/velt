@@ -73,10 +73,11 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// `e as const`. An array literal of string literals (two or more different ones) with no
-    /// expected type keeps their literal types (TypeScript's `readonly ["a", "b"]`): it is an array of their union, so
-    /// iterating or indexing it gives `"a" | "b"`. Anything else is typed as `e` alone: Velt
-    /// arrays and literals need no annotation for it.
+    /// `e as const`. An array literal of string literals with no expected type keeps their
+    /// literal types (TypeScript's `readonly ["a", "b"]`): it is an array of their union (of
+    /// the one literal type, `"a"[]`, for `["a"] as const`), so iterating or indexing it gives
+    /// `"a" | "b"`. Anything else is typed as `e` alone: Velt arrays and literals need no
+    /// annotation for it.
     pub(super) fn as_const(
         &mut self,
         e: &ast::Expr,
@@ -99,12 +100,10 @@ impl FnCx<'_, '_> {
                 members.push(t);
             }
         }
-        // One string alone stays a `string[]`: an array of one literal type is zero-sized
-        // elements, which a read-only parameter's copy cannot convert yet.
-        if members.len() < 2 {
-            return None;
-        }
-        let u = self.cx.union_of(&members, false, e.span);
+        let u = match members[..] {
+            [one] => one,
+            _ => self.cx.union_of(&members, false, e.span),
+        };
         Some(self.cx.ty.array(u))
     }
 
@@ -114,12 +113,7 @@ impl FnCx<'_, '_> {
         let Some(ast::ExprKind::Cast { expr, ty }) = init.map(|e| &e.kind) else {
             return;
         };
-        let distinct = as_const_strings(expr).map(|mut v| {
-            v.sort();
-            v.dedup();
-            v.len()
-        });
-        if super::expr::member::is_as_const(ty) && distinct.is_some_and(|n| n > 1) {
+        if super::expr::member::is_as_const(ty) && as_const_strings(expr).is_some() {
             self.f.readonly_arrays.insert(l);
         }
     }

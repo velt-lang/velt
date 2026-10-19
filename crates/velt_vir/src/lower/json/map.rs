@@ -67,6 +67,13 @@ impl FnLower<'_, '_> {
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
+            // A dynamic value holding `undefined`, a function or a symbol is left out.
+            if lw.cx.is_dynamic(vt) {
+                let present = lw.any_json_present(&vp);
+                let written = lw.new_block();
+                lw.branch(present, written, skip);
+                lw.switch_to(written);
+            }
             let (sep_bb, entry_bb) = (lw.new_block(), lw.new_block());
             lw.branch(Operand::Copy(Place::local(first)), entry_bb, sep_bb);
             lw.switch_to(sep_bb);

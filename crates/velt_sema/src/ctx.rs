@@ -233,8 +233,6 @@ pub(crate) struct Ctx<'m> {
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
-    /// Where `Object.keys` of an `any` is called (`crate::any_keys`).
-    pub any_keys: Vec<velt_common::Span>,
     /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
     /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
@@ -371,7 +369,6 @@ impl<'m> Ctx<'m> {
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
-            any_keys: vec![],
             object_copies: Default::default(),
             super_calls: Default::default(),
             type_defaults: Default::default(),

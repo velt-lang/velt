@@ -1,0 +1,24 @@
+// check: no leaks
+// A loose comparison of a `T | null | undefined` inside a call's arguments reads its operands
+// (#1276): the same call may also pass the value. A conditional of only `null` and
+// `undefined` with no type from context is `null | undefined`, as in TypeScript.
+function f(i: number): void {
+  const a: string | null | undefined = i > 1 ? "x" + i : null;
+  const c: string | null = i > 2 ? "y" : null;
+  console.log(a, a == c);
+  console.log(a != c, a, c);
+  console.log(a == undefined, a, a == null);
+}
+
+function main(): void {
+  f(3);
+  f(1);
+  for (let i = 0; i < 2; i++) {
+    const d = i === 0 ? null : undefined;
+    console.log(d, typeof d, d === null, d === undefined, d == null);
+    const e = i === 0 ? undefined : null;
+    console.log(e, e ?? "none");
+    const g = i === 0 ? null : null;
+    console.log(g);
+  }
+}

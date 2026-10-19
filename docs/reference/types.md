@@ -475,10 +475,13 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
 A generic union whose type argument brings a nothing (`T | string | undefined` at
 `T = number | null`) holds it like the union written out (`number | string | null | undefined`):
-`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. An `any` or
+`unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
+undefined`) gives `null` for a `null` and `undefined` for an `undefined`. `undefined`
 alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
-`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
+a `null | undefined` (`const d = c ? null : undefined`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
 field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
 number }`).
@@ -520,7 +523,7 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-`null | undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a written type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
@@ -731,11 +734,12 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
-  more different ones) keeps their literal types and is read-only, like TypeScript's
-  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+- `e as const` is accepted and keeps the value as it is. An array literal of strings keeps
+  their literal types and is read-only, like TypeScript's `readonly ["a", "b"]`:
+  `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"` (and `["a"] as const` of `"a"`), so
   `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
-  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  `readonly string[]` parameter or variable, an `Iterable<string>` parameter and the array
+  `new Set<string>(…)` copies from take it, or any array of a literal type (as a copy of strings, which the callee cannot tell
   apart, since it cannot write through the parameter). Other values need no `readonly` or
   literal-type annotation for it.
 
@@ -746,9 +750,16 @@ the nullable type; `void` cannot be a member.
 
 - **Widening** is implicit: a member value (also a subclass of a class member, or a value
   implementing an interface member) converts to the union, and a union converts to a wider
-  union. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
+  union. An array literal with no type from context whose elements have different types
+  is an array of their union, as in TypeScript (`[1, "a"]` is a `(number | string)[]`, and
+  `[a, d]` of a `number | undefined` and a `string | null` holds all four). `null` and
+  `undefined` elements make it allow them (`[1, null]` is a `(number | null)[]`), a nested
+  array literal keeps its own type (`[[1], ["a"]]` is a `(number[] | string[])[]`), and
+  `[...xs, true]` adds `boolean` to the spread arrays' element type. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
   members match.
-- **Narrowing**: using a member's fields or methods needs that member.
+- **Narrowing**: using a member's fields or methods needs that member, except `x.toString()`,
+  which every member has: it gives what `String(x)` does (a class's own `toString()`, a
+  primitive's text), also as `x?.toString()` on a union that may be `null`.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
     `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
@@ -1700,8 +1711,30 @@ does is an error saying it is not supported yet, never a quiet difference.
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
 
-The other `Object` functions (`defineProperty`, `seal`, `isFrozen`, `setPrototypeOf`, ...) are not
-supported yet.
+- `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
+  compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
+  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
+  Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
+  non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
+  Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
+  `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
+  the same ones. With a string key naming a declared field and only a `value`, it assigns the
+  field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
+  A brand on a class instance (whose declared field is an own property from construction),
+  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
+  supported yet, and neither is `Object.defineProperties`.
+
+The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
+
+`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
+browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
+Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
+`typeof window === "undefined"` tells the server from the browser. Reading a browser global
+throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
+still compiles.
 
 ```ts
 class Point {
@@ -2102,13 +2135,51 @@ except that `NaN` is itself and `0` is not `-0`.
 the length before each step as JavaScript's array iterator does. Another value (a string, a
 `Map`, an iterable object) stops with a `TypeError` naming #924 for now.
 
+`Object.keys(x)` of an `any`, an `object` or a `Function` lists the own enumerable string keys
+of the value held, in JavaScript's order (integer-like keys first, ascending, then the others in
+order): the fields of a class instance (a subclass's too) or object (an optional field only while
+present), a `Record`'s keys, an array's or a string's indexes as strings, and none for a number,
+a boolean, a function, a `Map` or a `Set`. `null` and `undefined` stop with Node's `TypeError:
+Cannot convert undefined or null to object`; a proxy stops with a `TypeError` naming #924 for
+now. `Object.keys` of an `unknown` is an error until it is narrowed, as in TypeScript. A spread
+of an `any` or `object` into an object literal (`{ ...a, b: 1 }`) builds a `Record<string, any>`
+with those keys and their values (`null` and `undefined` spread nothing):
+
+```ts
+function main(): void {
+  const a: any = { x: 1, y: "two" };
+  console.log(Object.keys(a)); // [ 'x', 'y' ]
+  const merged = { ...a, z: true };
+  console.log(merged); // { x: 1, y: 'two', z: true }
+}
+```
+
+`Object.hasOwn(x, k)` and `Object.prototype.hasOwnProperty.call(x, k)` of an `any` or `object`
+test the keys `Object.keys(x)` lists (and an array's or string's `length`).
+`Object.getPrototypeOf(x)` gives the prototype of the class of the value held (`C.prototype`),
+`Object.prototype` for an object or a record (`null` for one made by `Object.create(null)`) and
+`Array.prototype` for an array, so `proto === Object.prototype || proto === null` tells a plain
+object apart; a value whose prototype Velt doesn't name (a number, a function, a `Date`) stops with
+a `TypeError` naming #924. `Object.prototype.toString.call(x)` gives the `[object Tag]` of the
+value held.
+
+`JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
+`unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
+`toJSON()`: `undefined`, functions and symbols are left out as object members and written as
+`null` in arrays, and an object that holds itself stops with `TypeError: Converting circular
+structure to JSON`. Node returns `undefined` for such a value at the top; a Velt `string` cannot
+hold it, so `JSON.stringify` of an `any` holding `undefined`, a function or a symbol stops with a
+`TypeError` naming #924. A value with no JSON form here (an object with a function field, a
+proxy) also stops with a `TypeError`.
+
 **Planned** (#924): compound assignments and `++` on members, arithmetic operators,
-`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
-interface types and the warning on a written `any`; until then each is a compile error.
+`String(x)`, `JSON.parse` into an `any`, `any` converted to interface types and the warning on a
+written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
-`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+`Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
+an array its `length`. A `null` or `undefined` value stops with
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
 
@@ -2374,5 +2445,5 @@ function main(): void {
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
 members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
-(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
-without the `object` bound converted with `as object`. Each is a compile error.
+(`call`, `apply`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+converted with `as object`. Each is a compile error.

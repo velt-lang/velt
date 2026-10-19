@@ -139,27 +139,35 @@ impl FnCx<'_, '_> {
         Ok(self.widen_owned(h, exp))
     }
 
-    /// An argument for a parameter declared with a read-only array type (`xs: readonly string[]`)
-    /// converted to `exp`. An array of a union of `Copy` members that convert to `exp`'s element
-    /// (an `as const` array of strings for a `readonly string[]`) may be passed as a converted
-    /// copy: the callee cannot write through the parameter, so it cannot tell the copy from the
-    /// original.
+    /// A value for a place that only reads it, converted to `exp`: a parameter or variable
+    /// declared with a read-only array type (`xs: readonly string[]`), an `Iterable<T>`
+    /// parameter, or the array `new Set(...)` / `new Map(...)` copy from. An array of a literal
+    /// type, or of a union of `Copy` members, that converts to `exp`'s element (an `as const`
+    /// array of strings for a `readonly string[]`) may be passed as a converted copy: the
+    /// reader cannot write through it, so it cannot tell the copy from the original.
     pub(crate) fn readonly_array_arg(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
-        let (Some(from), Some(to)) = (self.cx.ty.array_elem(h.ty), self.cx.ty.array_elem(exp))
-        else {
+        let Some(to) = self.readonly_copy_elem(&h, exp) else {
             return self.coerce(h, exp);
         };
-        if from == to
-            || is_fresh(&h)
-            || self.cx.union_members(from).is_none()
-            || !self.cx.is_copy(from)
-            || !self.converts_to(from, to)
-        {
-            return self.coerce(h, exp);
-        }
         let (ty, span) = (h.ty, h.span);
         let shared = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
-        self.widen_array(shared, exp, to)
+        let arr = self.cx.ty.array(to);
+        let copy = self.widen_array(shared, arr, to);
+        self.coerce(copy, exp)
+    }
+
+    /// The element type of the copy `readonly_array_arg` passes for `h` (`None`: `h` converts
+    /// as it is).
+    pub(crate) fn readonly_copy_elem(&mut self, h: &hir::Expr, exp: TyId) -> Option<TyId> {
+        let to = self.cx.ty.array_elem(exp);
+        let to = to.or_else(|| self.cx.iterable_elem(exp))?;
+        let from = self.cx.ty.array_elem(h.ty)?;
+        let copies = from != to
+            && !is_fresh(h)
+            && (self.cx.union_members(from).is_some() || self.cx.lit_value(from).is_some())
+            && self.cx.is_copy(from)
+            && self.converts_to(from, to);
+        copies.then_some(to)
     }
 
     /// A fresh value widened where no body holds the conversion's temporaries (a field

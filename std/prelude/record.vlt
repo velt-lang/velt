@@ -136,6 +136,14 @@ export class Record<K, V> {
     return this.entries.has(key);
   }
 
+  /**
+   * `key in r` through `any`: the entry `key`, or a member every object inherits from
+   * `Object.prototype` (none for a record made by `Object.create(null)`).
+   */
+  __inAny(key: K): bool {
+    return this.__has(key) || (!this.__isNullProto() && __objectPrototypeKey(String(key)));
+  }
+
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
   __extend(other: Record<K, V>) {
     for (const [k, v] of other.__entries()) {

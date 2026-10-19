@@ -46,6 +46,12 @@ pub(super) struct Boxing {
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
+    /// The program lists the keys of an `any` (`AnyKeys`): the `any` tables have the keys slot
+    /// (any_keys.rs).
+    pub(super) any_keys: bool,
+    /// The program writes a dynamic value as JSON: the `any` tables have the JSON slot
+    /// (json/any.rs).
+    pub(super) any_json: bool,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: HashSet<DefId>,
@@ -158,6 +164,10 @@ pub(super) struct Facts {
     any_set: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
+    /// `Object.keys` of an `any` is listed.
+    any_keys: bool,
+    /// A dynamic value is written as JSON.
+    any_json: bool,
     /// Capture types of the closure environments built (transfers.rs).
     captures: HashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
@@ -229,6 +239,16 @@ impl Cx<'_> {
         self.facts.any_has = true;
     }
 
+    /// Record that `Object.keys` of an `any` is listed.
+    pub(super) fn note_any_keys(&mut self) {
+        self.facts.any_keys = true;
+    }
+
+    /// Record that a dynamic value is written as JSON.
+    pub(super) fn note_any_json(&mut self) {
+        self.facts.any_json = true;
+    }
+
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
     pub(super) fn fn_identity(&self) -> bool {
         self.boxing.fn_identity
@@ -298,6 +318,8 @@ impl Cx<'_> {
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
+        next.any_keys |= self.facts.any_keys;
+        next.any_json |= self.facts.any_json;
         next.dyn_to_any
             .extend(self.facts.dyn_to_any.iter().copied());
         let dyns = self.facts.identity.iter().copied();

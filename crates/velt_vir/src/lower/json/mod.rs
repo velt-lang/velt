@@ -15,6 +15,7 @@
 //! stores what it expected (a static string), and every level prepends its path segment
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
+pub(in crate::lower) mod any;
 mod dynamic;
 mod key;
 mod literal;
@@ -144,6 +145,9 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let place = self.place_of(v, t);
+        if self.cx.is_dynamic(t) {
+            self.json_any_top_check(&place);
+        }
         let buf = self.temp(STR);
         let bp = self.addr(Place::local(buf));
         self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);

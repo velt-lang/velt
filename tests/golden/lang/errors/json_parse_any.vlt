@@ -11,5 +11,3 @@ function wrap(o: any): any {
 }
 const s = wrap(JSON.parse('{"a":1,"b":2}')) as Sig;
 console.log(s.a);
-const all: any[] = [s.b];
-console.log(JSON.stringify(all));

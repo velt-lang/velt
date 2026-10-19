@@ -11,6 +11,10 @@
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //! | 5..8 | member reads and calls (any_member.rs), when the program has them |
+//! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
+//! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
+//! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
+//! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -35,7 +39,7 @@ pub(super) const TAG_NULL: u64 = 1;
 pub(super) const TAG_BOOLEAN: u64 = 2;
 pub(super) const TAG_NUMBER: u64 = 3;
 pub(super) const TAG_STRING: u64 = 4;
-const TAG_SYMBOL: u64 = 5;
+pub(super) const TAG_SYMBOL: u64 = 5;
 pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 
@@ -151,6 +155,14 @@ impl Cx<'_> {
             ));
         }
         e.extend(self.any_member_entries(ty));
+        if self.boxing.any_keys {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyKeys, ty)));
+            e.push((super::any_keys::SLOT_KEYS, f));
+        }
+        if self.boxing.any_json {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyJson, ty)));
+            e.push((super::json::any::SLOT_JSON, f));
+        }
         e
     }
 }
@@ -592,13 +604,25 @@ impl FnLower<'_, '_> {
         let out = Place::local(self.temp(vt));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
-        if let TyKind::Option(inner, _) = self.cx.kind(ty) {
+        if let TyKind::Option(inner, n) = self.cx.kind(ty) {
             // `null` / `undefined` give the nothing (their box is dropped), anything else is
-            // checked as the payload.
+            // checked as the payload. On `T | null | undefined` (an option of a `T | null`),
+            // only the outer option's own nothing gives its nothing: the other one is the
+            // payload's (`null` is `Some(None)`).
             let done = self.new_block();
             let tag = self.any_tag_of(desc.clone());
-            let one = cint(TAG_NULL as i128, Ty::U64);
-            let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag, one));
+            let nil = if matches!(self.cx.kind(inner), TyKind::Option(..)) {
+                let own = if n.has_null() {
+                    TAG_NULL
+                } else {
+                    TAG_UNDEFINED
+                };
+                let own = cint(own as i128, Ty::U64);
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, own))
+            } else {
+                let one = cint(TAG_NULL as i128, Ty::U64);
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag, one))
+            };
             let (nil_bb, some_bb) = (self.new_block(), self.new_block());
             self.branch(nil, nil_bb, some_bb);
             self.switch_to(nil_bb);

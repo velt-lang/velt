@@ -29,6 +29,9 @@ pub(crate) enum LitEq {
 impl FnCx<'_, '_> {
     /// `typeof e` as a string value.
     pub(crate) fn typeof_value(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
+        if let Some(h) = self.global_typeof_value(operand, span) {
+            return h;
+        }
         let s = self.expr(operand, None, Want::Borrow);
         let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
@@ -108,6 +111,9 @@ impl FnCx<'_, '_> {
         negate: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.global_typeof_test(operand, tag, negate, span) {
+            return h;
+        }
         let s = self.expr(operand, None, Want::Borrow);
         let s = self.param_as_any(s);
         if self.cx.dynamic(s.ty).is_some() {

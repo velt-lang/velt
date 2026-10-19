@@ -119,6 +119,25 @@ impl FnCx<'_, '_> {
         self.mk(H::UnwrapSome(Box::new(base), mode), core, span)
     }
 
+    /// The type of `c ? then : els` with no type from context when both arms are `null` or
+    /// `undefined`: `null | undefined` (an option of `never` with both nothings) for one of
+    /// each, `null` for two `null`s, as in TypeScript.
+    pub(crate) fn nothings_conditional_ty(
+        &mut self,
+        then: &velt_syntax::ast::Expr,
+        els: &velt_syntax::ast::Expr,
+    ) -> Option<TyId> {
+        use crate::body::narrow::nothing_word;
+        match (nothing_word(then)?, nothing_word(els)?) {
+            (a, b) if a != b => {
+                let never = self.cx.ty.never;
+                Some(self.cx.ty.option_of(never, Nothing::Both))
+            }
+            ("null", _) => Some(self.cx.ty.null_alone()),
+            _ => None,
+        }
+    }
+
     /// `l == r` (`negate`: `!=`) where either side is a `T | null | undefined`: the other side
     /// converts to that type, then both nothings are equal (`null == undefined`), and present
     /// values compare as `===` does. `Err` gives the operands back when neither side is one.
@@ -152,7 +171,14 @@ impl FnCx<'_, '_> {
         }
         let ty = l.ty;
         let mut stmts = vec![];
-        let mut read = |s: &mut Self, mut h: hir::Expr, name: &str| {
+        // A variable or field operand keeps its value (it may be used again, also in the same
+        // call's arguments): the temporary holds a share of it.
+        let mut read = |s: &mut Self, h: hir::Expr, name: &str| {
+            let mut h = if s.cx.is_copy(ty) {
+                h
+            } else {
+                s.share_if_place(h)
+            };
             s.force_move(&mut h);
             let t = s.new_local(name, ty, false, h.span, crate::body::LocalKind::Temp);
             stmts.push(hir::Stmt {
