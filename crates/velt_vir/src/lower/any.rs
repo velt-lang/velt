@@ -395,6 +395,14 @@ impl FnLower<'_, '_> {
             let vt = self.cx.ty(ty);
             return self.zero_value(vt);
         }
+        // No value is a `never` (`x as T & object` at `T = null`, #1304).
+        if matches!(self.cx.kind(ty), TyKind::Never) {
+            let fvt = self.cx.ty(from);
+            let p = Place::local(self.copy_to_temp(v, fvt));
+            self.any_type_error(Operand::Copy(proj(&p, Proj::Field(1))), ty);
+            let vt = self.cx.ty(ty);
+            return self.zero_value(vt);
+        }
         if self.cx.is_dynamic(ty) {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
