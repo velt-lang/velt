@@ -95,7 +95,7 @@ Promises behave like JavaScript's, at Rust's cost:
   passed) also waits for its turn: the code after it never runs before the synchronous code
   that started it, nor before timers due earlier. `sleep`s of different tasks have no order
   between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
-  callbacks do, whichever task created them: they run in Node's order
+  callbacks do, whichever task created them: they run in Node's order, one list per delay
   ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node

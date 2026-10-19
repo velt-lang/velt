@@ -126,6 +126,8 @@ struct Executor {
     /// Entries of `ready` that [`wake_next`] queued: an awaiter resumed by a promise that
     /// finished, a step of the microtask checkpoint that is not over while one is queued.
     resumed: std::collections::HashSet<u64>,
+    /// Queued tasks of promises a combinator gave up ([`refresh_first`]).
+    refresh: Vec<usize>,
 }
 
 /// An entry of the microtask queue: whom to run when the queue reaches it.
@@ -597,13 +599,33 @@ pub(super) fn wake_last(w: Waker) {
     });
 }
 
+/// Queued task `id` drives a promise a combinator gave up (local.rs `velt_rt_fut_detach`): its
+/// leaves may hold a waker of the combinator's, which reaches nobody now. It runs before due
+/// timers fire, so it points them at itself and its timer wakes it in timer order (velt_rt's
+/// set.rs `drain` does the same), not at its place in the ready queue (a busy program can find
+/// the timers of two such promises due together).
+pub fn refresh_first(id: usize) {
+    with_exec(|e| e.refresh.push(id));
+}
+
 /// Fire the timers that are due now (between two task polls, so a busy program still sees its
 /// timers fire, in order).
-fn fire_due_now() {
+unsafe fn fire_due_now() {
     if with_exec(|e| e.timers.is_empty()) && super::order::first_expiry().is_none() {
+        with_exec(|e| e.refresh.clear());
         return;
     }
-    fire_due(platform::monotonic_ms());
+    let now = platform::monotonic_ms();
+    let due = with_exec(|e| e.timers.peek().is_some_and(|t| t.0.deadline <= now))
+        || super::order::first_expiry().is_some_and(|x| x <= now);
+    if due {
+        for id in with_exec(|e| std::mem::take(&mut e.refresh)) {
+            if with_exec(|e| e.queued.remove(&id).is_some()) {
+                run_task(id);
+            }
+        }
+    }
+    fire_due(now);
 }
 
 /// Sleep until the earliest timer and fire every timer that is due; false if there is none.

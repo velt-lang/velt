@@ -28,12 +28,19 @@ throws is uncaught (catch inside the callback).
   both work on either kind, as in Node. Dropping a `Timer` does not cancel it. `unref()`,
   `ref()` and `hasRef()` work like Node's `Timeout` (`unref()` and `ref()` return the timer).
 
-Timer callbacks run in Node's order, whichever task created the timers. A timer is due its
-delay after the clock read when it is created, in whole milliseconds, as in Node: timers created
-in the same millisecond count from the same moment (`setTimeout(a, 5); setTimeout(b, 4)` runs
-`b` first), and a shorter delay created after busy code can still run after a longer one created
-before it. Timers due together run in the order they were created (`setTimeout(a, 5);
-setTimeout(b, 5)` runs `a`, then `b`). No callback runs before the code that created the timer
+Timer callbacks run in Node's order. Node keeps one list of timers per delay, in the order they
+were created, and runs the lists by their expiry: the clock read when the list's first timer was
+created, in whole milliseconds, plus the delay (lists due at the same time in the order they were
+made). Each pass over the due timers reads the clock once and runs, list by list, every timer
+due by then, so a timer joins the list of its delay, even when busy code ran before it was
+created: `setTimeout(a, 10); setTimeout(b, 12); busy(5); setTimeout(c, 10)` runs `a`, `c`, `b`,
+and `setTimeout(a, 5); busy(20); setTimeout(b, 4)` runs `a`, then `b`. Timers created in the same
+millisecond count from the same moment (`setTimeout(a, 5); setTimeout(b, 4)` runs `b` first). A
+timer created by a callback with the delay of a list being run waits for the next pass, after the
+other lists due by then. An interval's next run is due its delay after the clock read just before
+its callback ran, and joins its list after the timers its callback created. `clearTimeout` takes
+the timer out of its list at once. Each task keeps lists of its own (so the timers of one task
+follow Node's rule exactly), and the lists of all tasks run in one order by expiry. No callback runs before the code that created the timer
 (a synchronous `main` too) and the callbacks it queued are done. Each callback runs up to its
 first `await` and the callbacks (microtasks) it queued run before the next timer's callback
 starts, as in Node, so a callback can still `clearTimeout` a timer due in the same tick. A timer

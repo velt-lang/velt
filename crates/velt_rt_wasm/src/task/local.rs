@@ -116,6 +116,7 @@ pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<
             // What woke it may be a timer: it is not part of this turn's microtasks.
             executor::queued_earlier(id);
         }
+        executor::refresh_first(id);
     }
     let one = [Wide(f)];
     velt_rt_futs_handled(one.as_ptr(), 1, quiet_drop);
