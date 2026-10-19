@@ -1,1 +1,0 @@
-any_object_keys_mixed.vlt:11:27: error: `Object.keys` of an `any` value is not supported yet (#924, #926)

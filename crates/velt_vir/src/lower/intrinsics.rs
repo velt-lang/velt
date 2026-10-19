@@ -155,6 +155,7 @@ impl FnLower<'_, '_> {
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyIsArray, [a]) => self.any_is_array(a),
+            (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),

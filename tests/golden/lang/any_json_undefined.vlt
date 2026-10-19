@@ -1,0 +1,7 @@
+// `JSON.stringify` of an `any` holding `undefined` returns `undefined` in Node, which a Velt
+// `string` cannot hold: it stops with a `TypeError` (#924).
+function main(): void {
+  const u: any = undefined;
+  console.log(JSON.stringify(1 as any));
+  console.log(JSON.stringify(u));
+}

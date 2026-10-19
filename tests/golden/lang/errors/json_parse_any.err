@@ -1,5 +1,3 @@
 json_parse_any.vlt:12:16: error: `JSON.parse` into `any` is not supported yet (#924)
 = note: TypeScript gives an `any` holding whatever the text has; Velt decodes into a type and checks the data against it
 = note: name the type the JSON must have: `JSON.parse(text) as User`, `JSON.parse<User>(text)` or `const u: User = JSON.parse(text)`, or use `JSON.parseValue(text)` (a `JsonValue`) for data of unknown shape
-json_parse_any.vlt:15:13: error: `JSON.stringify` of `any` (in `any[]`) is not supported yet (#924)
-= note: convert the value to its type first: `JSON.stringify(x as User)` (checked at run time)

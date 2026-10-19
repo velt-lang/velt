@@ -1,0 +1,7 @@
+// An array that holds itself through an `any` is Node's `TypeError` when written as JSON (#924).
+function main(): void {
+  const a: any[] = [];
+  a.push(a);
+  console.log("before");
+  console.log(JSON.stringify(a));
+}

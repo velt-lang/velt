@@ -42,6 +42,14 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        if m == "hasOwnProperty" {
+            if let Some(h) = self.any_has_own(args, span) {
+                return h;
+            }
+        }
+        if m == "toString" && self.first_arg_dynamic(args) {
+            return self.object_to_string_call(args, span);
+        }
         match m {
             _ if self
                 .reject_dynamic_args(&format!("Object.prototype.{m}.call"), args, span)
@@ -60,6 +68,34 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// Is the first of `args` an `any` or an `object` (not `unknown`)?
+    pub(super) fn first_arg_dynamic(&mut self, args: &[ast::Expr]) -> bool {
+        args.first()
+            .and_then(|a| self.trial_type(a))
+            .is_some_and(|t| self.spreads_dynamic(t))
+    }
+
+    /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` of an `any` or
+    /// `object` `o` with a `string` key: the prelude's `__anyHasOwn(o, k)`, which asks the value
+    /// held (`None`: `o` is not one of them).
+    pub(super) fn any_has_own(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+        let [o, k] = args else {
+            return None;
+        };
+        let ot = self.trial_type(o)?;
+        let ot = self.cx.ty.core(ot).unwrap_or(ot);
+        if !self.spreads_dynamic(ot) {
+            return None;
+        }
+        let kt = self.trial_type(k)?;
+        if self.cx.widened(kt) != self.cx.ty.str_ {
+            return None;
+        }
+        // The keys are listed through the value's descriptor (a record's by its methods).
+        self.note_dyn_members();
+        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).
@@ -159,6 +195,119 @@ impl FnCx<'_, '_> {
         self.expr(&call, None, Want::Move)
     }
 
+    /// A call of the prelude function `f` with the expressions `args`, checked.
+    pub(super) fn prelude_fn_call(
+        &mut self,
+        f: &str,
+        args: Vec<ast::Expr>,
+        span: Span,
+    ) -> hir::Expr {
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Ident(ast::Ident {
+                        name: f.to_string(),
+                        span,
+                    }),
+                    span,
+                )),
+                type_args: vec![],
+                args,
+                optional: false,
+            },
+            span,
+        );
+        self.expr(&call, None, Want::Move)
+    }
+
+    /// What the value of the `any` (or `object`) `s` is, by its class: `match (s) {
+    /// InstanceOf(C) => class(C, s), ..., _ => <fallback>(s) }` over every class of the program
+    /// (the standard library's too), deepest first, of type `ret`; `fallback` is a prelude
+    /// function taking the `any`, for values that are no class instances.
+    pub(super) fn dynamic_class_match(
+        &mut self,
+        s: hir::Expr,
+        ret: TyId,
+        fallback: &str,
+        mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let sty = s.ty;
+        let (l, mode) = self.option_binding(&s, sty, "<dyn>", false);
+        let name = format!("<dyn@{}>", span.lo);
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name.clone(), l);
+        }
+        let read = synth(ast::ExprKind::Ident(ast::Ident { name, span }), span);
+        let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
+            .map(DefId)
+            .filter(|&d| self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
+            .map(|d| (self.class_depth(d), d))
+            .collect();
+        classes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
+        let mut arms = vec![];
+        for (_, c) in classes {
+            let body = class(self, c, read.clone());
+            arms.push(hir::Arm {
+                pat: self.pat(hir::PatKind::InstanceOf(c), sty, span),
+                guard: None,
+                body,
+            });
+        }
+        // The value's members are read through its descriptor.
+        self.note_dyn_members();
+        let body = self.prelude_fn_call(fallback, vec![read], span);
+        arms.push(hir::Arm {
+            pat: self.pat(hir::PatKind::Wildcard, sty, span),
+            guard: None,
+            body,
+        });
+        let inner = self.mk(H::Local(l, hir::UseMode::Borrow), sty, span);
+        let m = self.mk(
+            H::Match {
+                scrutinee: Box::new(inner),
+                arms,
+            },
+            ret,
+            span,
+        );
+        let pat = self.pat(hir::PatKind::Binding(l, mode), sty, span);
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms: vec![hir::Arm {
+                pat,
+                guard: None,
+                body: m,
+            }],
+        };
+        self.mk(kind, ret, span)
+    }
+
+    /// `Object.prototype.toString.call(v)` of an `any` or `object` `v`: the tag of its class,
+    /// else the prelude's `__anyObjectTag(v)` (primitives, arrays, objects).
+    fn dynamic_to_string(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        self.dynamic_class_match(
+            s,
+            str_,
+            "__anyObjectTag",
+            |lw, c, _| {
+                let n = lw.cx.adt(c).map_or(0, |a| a.generics.len());
+                let params: Vec<TyId> = (0..n as u32).map(|i| lw.cx.ty.param(i)).collect();
+                let t = lw.cx.ty.intern(TyKind::Adt(c, params));
+                match lw.string_tag(t) {
+                    Some(tag) => lw.str_lit(&format!("[object {tag}]"), span),
+                    None => {
+                        let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
+                        let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
+                        lw.prelude_fn_call("__anyTagUnsupported", vec![lit], span)
+                    }
+                }
+            },
+            span,
+        )
+    }
+
     /// `Object.prototype.toString.call(v)`: `"[object Tag]"`.
     pub(super) fn object_to_string_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let [v] = args else {
@@ -169,6 +318,9 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let sty = s.ty;
+        if self.spreads_dynamic(sty) && self.cx.ty.opt_payload(sty).is_none() {
+            return self.dynamic_to_string(s, span);
+        }
         let mut arms = vec![];
         for (pat, t) in self.member_patterns(sty, span) {
             let tag = match t {

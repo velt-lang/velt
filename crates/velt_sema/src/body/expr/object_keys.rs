@@ -159,6 +159,11 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if d == prelude => {}
             _ => return None,
         }
+        if !keys {
+            if let Some(h) = self.any_values(&prop.name, arg, span) {
+                return Some(h);
+            }
+        }
         let obj = self.expr(arg, None, Want::Borrow);
         if self.cx.ty.is_bottom(obj.ty) {
             return Some(self.error_expr(span));
@@ -203,25 +208,14 @@ impl FnCx<'_, '_> {
             return self.record_call(obj, "__keyNames", &[], span);
         }
         match self.cx.dynamic(obj.ty) {
-            // The class of the value held tells its keys; whether every value the program
-            // converts is a class instance is known once every body is checked (`any_keys`).
-            Some(crate::any::Dynamic::Any) => self.cx.any_keys.push(obj.span),
-            // The keys of the value an `unknown`, `object` or `Function` holds come from its
-            // descriptor, which has no slot for them yet.
-            Some(d) => {
-                self.cx.error(
-                    velt_common::Diagnostic::error(
-                        format!(
-                            "`Object.keys` of {} `{}` value is not supported yet (#924, #926)",
-                            d.article(),
-                            d.name()
-                        ),
-                        obj.span,
-                    )
-                    .with_note("convert the value to its class or object type first (`x as T`, checked at run time)"),
-                );
+            // TypeScript takes `{}`, which an `unknown` is not (TS2345).
+            Some(crate::any::Dynamic::Unknown) => {
+                self.unknown_use_error(obj.span);
                 return self.error_expr(span);
             }
+            // The keys of the value an `any`, `object` or `Function` holds, listed at run time
+            // through its descriptor (`Intrinsic::AnyKeys`).
+            Some(_) => return self.any_keys(obj, span),
             None => {}
         }
         self.cx
@@ -262,6 +256,51 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, str_array, span)
+    }
+
+    /// `Object.keys(x)` of an `any`, `object` or `Function` `x`.
+    fn any_keys(&mut self, mut obj: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        // A record's keys are its `__keyNames()`, called through the member slots.
+        self.note_dyn_members();
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
+        self.intrinsic(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
+    }
+
+    /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
+    /// `x`: the prelude's `__anyValues(x)` / `__anyEntries(x)` (an `any[]` / `[string, any][]`,
+    /// as TypeScript types them). `None`: `x` is not dynamic.
+    fn any_values(&mut self, helper: &str, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+        let t = self.trial_type(arg)?;
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        let d = self.cx.dynamic(t)?;
+        if d == crate::any::Dynamic::Unknown {
+            self.expr(arg, None, Want::Borrow);
+            self.unknown_use_error(arg.span);
+            return Some(self.error_expr(span));
+        }
+        let f = match helper {
+            "values" => "__anyValues",
+            _ => "__anyEntries",
+        };
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Ident(ast::Ident {
+                        name: f.to_string(),
+                        span,
+                    }),
+                    span,
+                )),
+                type_args: vec![],
+                args: vec![arg.clone()],
+                optional: false,
+            },
+            span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, Want::Move))
     }
 
     /// `["a", "b"]`.
@@ -309,7 +348,7 @@ impl FnCx<'_, '_> {
                 }
                 continue;
             }
-            // An `any` holding something else is reported later (`crate::any_keys`).
+            // An `any` may hold anything (`Object.keys` of one is `Intrinsic::AnyKeys`).
             if self.cx.any.is_some_and(|a| a.any == iface) {
                 continue;
             }
@@ -351,7 +390,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The number of base classes of class `d`.
-    fn class_depth(&self, d: DefId) -> usize {
+    pub(super) fn class_depth(&self, d: DefId) -> usize {
         let mut cur = self.cx.adt(d).and_then(|a| a.base);
         let mut n = 0;
         while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
