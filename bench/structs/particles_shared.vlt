@@ -1,0 +1,51 @@
+// particles_mut.vlt plus one shared `Vec2` (`const start = [pos[0]]` keeps a second reference
+// to an element): a struct type whose fields are assigned and that is shared anywhere in the
+// program becomes a counted heap object everywhere (semantics-stage2 §3.1), so every element of
+// `pos` and `vel` is a pointer to its own block. The value-type design rules this case out.
+struct Vec2 {
+  x: number;
+  y: number;
+
+  add(o: Vec2): Vec2 {
+    return { x: this.x + o.x, y: this.y + o.y };
+  }
+
+  scale(k: number): Vec2 {
+    return { x: this.x * k, y: this.y * k };
+  }
+}
+
+function main() {
+  const n = 10000;
+  const pos: Vec2[] = [];
+  const vel: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    pos.push({ x: (i % 100) * 0.1, y: 1 + (i % 37) * 0.25 });
+    vel.push({ x: ((i % 7) - 3) * 0.5, y: (i % 11) * 0.2 });
+  }
+  const start: Vec2[] = [pos[0]];
+  const g: Vec2 = { x: 0, y: -9.81 };
+  const dt = 0.001;
+  for (let s = 0; s < 500; s++) {
+    for (let i = 0; i < n; i++) {
+      const v = vel[i];
+      v.x = v.x + g.x * dt;
+      v.y = v.y + g.y * dt;
+      const p = pos[i];
+      p.x = p.x + v.x * dt;
+      p.y = p.y + v.y * dt;
+      if (p.y < 0) {
+        p.y = -p.y;
+        v.y = -v.y * 0.9;
+      }
+    }
+  }
+  let sx: number = 0;
+  let sy: number = 0;
+  for (let i = 0; i < n; i++) {
+    sx += pos[i].x;
+    sy += pos[i].y + vel[i].y;
+  }
+  sx += start[0].x - start[0].x;
+  console.log(sx.toFixed(6), sy.toFixed(6));
+}
