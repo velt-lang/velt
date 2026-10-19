@@ -17,6 +17,7 @@ async function main() {
   setTimeout(async () => {
     console.log("t", (await q).n);
   }, 20);
-  console.log("m", (await p).n);
+  const mine = await p;
   await sleep(40);
+  console.log("m", mine.n);
 }

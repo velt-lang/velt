@@ -25,8 +25,9 @@ async function last(p: Promise<Obj>): Promise<void> {
   console.log("last", o.n);
 }
 async function main() {
-  console.log(await spawn(work()));
+  const n = await spawn(work());
   await delay(60);
+  console.log(n);
   const p = val(8);
   const q = p;
   const t = last(q);

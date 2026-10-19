@@ -277,7 +277,9 @@ fn on_its_task(h: &HubRef) {
         s.task = now;
     } else if s.task != now {
         crate::panic::fatal(
-            "a promise shared on one task was used on another (`spawn`, a channel): awaiting a              shared promise from another task is not supported yet (#212); await it on its own              task and pass the result",
+            "a promise shared on one task was used on another: a holder is awaited on another task \
+             only when it is passed to a spawned call or sent over a channel, with a result \
+             holding an object or a string (#212); await it on its own task and pass the result",
         );
     }
 }

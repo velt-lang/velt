@@ -29,6 +29,8 @@ const UNSUPPORTED: &[&str] = &[
     "console_std_handles",
     "await_order_resolve",
     "promise_shared_inflight",
+    "promise_shared_orphan",
+    "promise_shared_orphan_task",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
