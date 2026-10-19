@@ -1034,8 +1034,10 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   A program that does so passes such callees only closures that own their environment: every
   closure literal passed to a function value or an interface method escapes (also one that
   forwards a borrowed function, below), and a parameter of a named function that is kept, or
-  passed to a function value or an interface method, becomes owned (also one of a generic
-  type, `forward<T>(reg: (t: T) => void, t: T)`, which may hold a function), also when a closure
+  passed to a function value, an interface method, an overridden method or a parameter of a
+  generic type, becomes owned (a generic type may stand for a function type, so a closure
+  literal passed to a parameter of a generic type always escapes, and a method keeping a value
+  of a generic type, `put(t: T) { this.items.push(t); }`, counts as keeping a function), also when a closure
   inside the function does it (`untrack(() => topic.subscribe(f))`). A closure may likewise keep
   a function it captured from a local variable (`untrack(() => registry.add(onInvalidate))`).
   The executor of `new Promise((resolve, reject) => …)` is the exception: its `resolve` and

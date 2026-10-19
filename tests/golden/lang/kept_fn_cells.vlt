@@ -78,6 +78,59 @@ function viaModuleLet(): void {
   k = 200;
 }
 
+// A generic interface method keeping its value, reached directly and through a generic
+// function (`Sink<T>.put` keeps a `T` that is a closure here).
+interface GSink<T> {
+  put(t: T): void;
+}
+
+class GStore<T> implements GSink<T> {
+  items: T[] = [];
+  put(t: T): void {
+    this.items.push(t);
+  }
+}
+
+function forwardTo<T>(s: GSink<T>, t: T): void {
+  s.put(t);
+}
+
+function viaGenericSink(s: GSink<() => string>): void {
+  let n = 1;
+  const str = "abc".repeat(2);
+  const nums = [1, 2, 3];
+  s.put(() => "gsink n=" + n);
+  forwardTo(s, () => "gforward n=" + n + " " + str + nums.join(","));
+  n = 2;
+}
+
+// An override keeping the function, reached through the base class, directly and through a
+// named function.
+class Logger {
+  on(h: () => string): void {
+    console.log("base", h());
+  }
+}
+
+class KeepingLogger extends Logger {
+  hs: Array<() => string> = [];
+  override on(h: () => string): void {
+    this.hs.push(h);
+  }
+}
+
+function attach(l: Logger, f: () => string): void {
+  l.on(f);
+}
+
+function viaOverride(l: Logger): void {
+  let n = 1;
+  const str = "o".repeat(2);
+  l.on(() => "override n=" + n + " " + str);
+  attach(l, () => "attach n=" + n + " " + str);
+  n = 2;
+}
+
 function deep(n: number): number {
   const a = [n, n + 1];
   return n <= 0 ? 0 : a[1] + deep(n - 1) - n;
@@ -91,11 +144,17 @@ function run(): void {
   viaIface(store);
   viaGeneric(new Forwarder());
   viaModuleLet();
+  const gstore = new GStore<() => string>();
+  viaGenericSink(gstore);
+  const logger = new KeepingLogger();
+  viaOverride(logger);
   console.log(deep(2000));
   for (const k of kept) console.log(k());
   for (const f of store.fs) console.log(f());
   const l = last;
   if (l) console.log(l());
+  for (const g of gstore.items) console.log(g());
+  for (const h of logger.hs) console.log(h());
   console.log(deep(2000));
   for (const k of kept) console.log(k());
 }

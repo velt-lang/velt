@@ -14,8 +14,15 @@
 //! - a borrowed function variable that a body keeps, or passes to a callee with fixed modes, is
 //!   traced through the captures to the variable it comes from ([`root`]); when that is a
 //!   borrowed parameter of a function whose modes are inferred, the parameter becomes owned
-//!   ([`KeptFns::forced`]), and its callers hand over (or share) an escaping closure. Variables
-//!   of a generic type count as function variables here: `T` may be a function type.
+//!   ([`KeptFns::forced`]), and its callers hand over (or share) an escaping closure. A method
+//!   with fixed modes reached directly (an override through its base class) counts as such a
+//!   callee too.
+//!
+//! A type parameter may stand for a function type: a closure literal passed to a parameter of
+//! a generic type always escapes (`super::patch`), a function variable passed to one counts as
+//! passed to a callee that may keep it, and a function with fixed modes keeping a borrowed
+//! variable of a generic type (`put(t: T) { this.items.push(t); }`) turns the rules on. So a
+//! generic variable never holds a closure living in a frame.
 //!
 //! An escaping closure passed as a borrowed argument may still get a frame environment when it
 //! owns nothing; one holding shared cells (a captured variable assigned later) gets a heap
@@ -147,9 +154,14 @@ pub(super) fn exposed(
                 }
             }
         }
-        E::Call { callee, args } if to_fixed && super::patch::fixed_callee(cx, callee, args) => {
-            for a in args {
-                if let Some(l) = local_of(a).filter(|l| borrowed.contains(l)) {
+        E::Call { callee, args } if to_fixed => {
+            // Passed to a callee that may keep it, or to a parameter of a generic type (which
+            // may hand it to one).
+            let all = may_keep_args(cx, callee, args);
+            let generic = generic_param_args(cx, callee, args);
+            for (k, a) in args.iter().enumerate() {
+                let kept = all || generic.get(k).copied().unwrap_or(false);
+                if let Some(l) = local_of(a).filter(|l| kept && borrowed.contains(l)) {
                     out.insert(l);
                 }
             }
@@ -188,8 +200,11 @@ pub(super) fn any_kept(cx: &mut Ctx, fns: &[DefId]) -> bool {
         // params get their inferred modes only after inference).
         let fixed = cx.fn_info(d).fixed_modes;
         let kinds = &cx.fn_info(d).local_kinds;
+        // A variable of a generic type may hold a function too (`put(t: T) { this.items.push(t);
+        // }` in a class implementing `Sink<T>`).
         let borrowed: HashSet<LocalId> = super::fn_values::borrowed_fn_locals(cx, d, &f)
             .into_iter()
+            .chain(borrowed_generic_locals(cx, d, &f))
             .filter(|l| fixed || kinds.get(l.0 as usize) != Some(&LocalKind::Param))
             .collect();
         let kept = !borrowed.is_empty() && !exposed(cx, &mut f, &borrowed, false).is_empty();
@@ -207,8 +222,7 @@ pub(super) fn force_roots(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> Vec<DefId> {
     if !cx.kept_fns.on {
         return vec![];
     }
-    let mut borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
-    borrowed.extend(borrowed_generic_locals(cx, d, f));
+    let borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
     if borrowed.is_empty() {
         return vec![];
     }
@@ -244,5 +258,38 @@ fn borrowed_generic_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<LocalId> {
     params
         .chain(caps)
         .filter(|l| cx.has_type_params(f.body.locals[l.0 as usize].ty))
+        .collect()
+}
+
+/// May the callee of a call keep its arguments? A function value or interface method can
+/// (`super::patch::fixed_callee`), and with [`KeptFns::on`] so can any method with fixed modes
+/// (an override reached through `super` or a class type).
+pub(super) fn may_keep_args(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+    if super::patch::fixed_callee(cx, callee, args) {
+        return true;
+    }
+    cx.kept_fns.on
+        && matches!(
+            super::patch::call_target(cx, callee, args),
+            Some(super::patch::Target::Fn(m)) if cx.fn_info(m).fixed_modes
+        )
+}
+
+/// Per argument of a direct call: is the parameter it is passed to declared with a type that
+/// mentions a type parameter (other than a function type)? A value passed there may be kept
+/// as that type, whatever the callee's inferred modes say about its own use.
+pub(super) fn generic_param_args(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<bool> {
+    let Some(super::patch::Target::Fn(d)) = super::patch::call_target(cx, callee, args) else {
+        return vec![];
+    };
+    let info = cx.fn_info(d);
+    info.this
+        .iter()
+        .map(|_| false)
+        .chain(
+            info.params
+                .iter()
+                .map(|p| cx.has_type_params(p.ty) && !super::fn_values::is_fn(cx, p.ty)),
+        )
         .collect()
 }
