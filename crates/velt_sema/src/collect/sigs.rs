@@ -1,7 +1,7 @@
 //! Phase 3: signatures of functions, methods, constructors, interface methods (+ default
 //! bodies) and `extend` blocks.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -45,7 +45,7 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
             _ => {}
         }
     }
-    let mut used = HashSet::new();
+    let mut used = FxHashSet::default();
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
@@ -370,7 +370,7 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         generics: &generics,
         self_ty,
     };
-    let mut methods: HashMap<String, MethodRef> = HashMap::new();
+    let mut methods: FxHashMap<String, MethodRef> = FxHashMap::default();
     let instance: Vec<&str> = decl
         .methods
         .iter()
@@ -634,7 +634,7 @@ fn default_method<'m>(
     def
 }
 
-fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut HashSet<String>) {
+fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut FxHashSet<String>) {
     let mut generics = generic_names(&e.generics);
     let env = TyEnv::new(m, &generics.names);
     let b = resolve_bounds(cx, &e.generics, &env);
@@ -655,7 +655,7 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
     let saved = std::mem::replace(&mut cx.display_params, generics.names.clone());
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
     cx.display_params = saved;
-    let mut methods = HashMap::new();
+    let mut methods = FxHashMap::default();
     for meth in &e.methods {
         let name = &meth.decl.sig.name;
         let key = cx.method_key(m, name, meth.is_setter);

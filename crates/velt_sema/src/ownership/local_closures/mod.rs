@@ -28,7 +28,7 @@
 mod sites;
 pub(super) mod walk;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
@@ -65,8 +65,8 @@ pub(crate) fn demote_local_closures(cx: &mut Ctx) {
 
 /// The closures of body `b` that are held in a local and do not escape (demoted by this pass),
 /// by local. A call through such a local runs the closure on its borrowed captures.
-pub(crate) fn held_closures(cx: &Ctx, b: &Block) -> HashMap<LocalId, DefId> {
-    let mut out = HashMap::new();
+pub(crate) fn held_closures(cx: &Ctx, b: &Block) -> FxHashMap<LocalId, DefId> {
+    let mut out = FxHashMap::default();
     for (local, c) in closure_lets(b) {
         if cx.try_fn(c).is_some_and(|i| !i.escaping) {
             out.insert(local, c);
@@ -139,7 +139,7 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
     // which only a closure capturing by value can pass on. Only a Copy value needs a cell when
     // it is changed through a projection (`t[0] = 10`); an object's field (`this.x = …`) is
     // written in the shared object itself.
-    let reassigned: HashSet<LocalId> = cf
+    let reassigned: FxHashSet<LocalId> = cf
         .captures
         .iter()
         .zip(&copies)
@@ -150,7 +150,7 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
         return false;
     }
     let kinds = cx.fn_info(d).local_kinds.clone();
-    let mut borrowed = HashSet::new();
+    let mut borrowed = FxHashSet::default();
     for &(outer, ty) in &caps {
         if outer == local || kinds.get(outer.0 as usize) == Some(&LocalKind::Using) {
             return false;
@@ -165,7 +165,7 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
     if !only_called(cx, &f.body.block, local) {
         return false;
     }
-    let aliases: HashSet<LocalId> = (0..kinds.len())
+    let aliases: FxHashSet<LocalId> = (0..kinds.len())
         .filter(|&i| matches!(kinds[i], LocalKind::Bind | LocalKind::Elem))
         .map(|i| LocalId(i as u32))
         .collect();
@@ -194,7 +194,7 @@ fn only_called(cx: &Ctx, b: &Block, local: LocalId) -> bool {
 }
 
 /// Does a closure created in `b` capture one of `locals`?
-fn recaptures(cx: &Ctx, b: &Block, locals: &HashSet<LocalId>) -> bool {
+fn recaptures(cx: &Ctx, b: &Block, locals: &FxHashSet<LocalId>) -> bool {
     let mut hit = false;
     each_expr(b, &mut |e: &Expr| {
         if let E::Closure(k) = e.kind {

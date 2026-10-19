@@ -700,7 +700,7 @@ impl FnCx<'_, '_> {
 fn closure_assigned_in(
     params: &[ast::ArrowParam],
     body: &ast::ArrowBody,
-) -> std::collections::HashMap<String, Span> {
+) -> rustc_hash::FxHashMap<String, Span> {
     let defaults = params.iter().filter_map(|p| p.default.as_ref());
     let assigned = match body {
         ast::ArrowBody::Block(b) => crate::body::assigned::assigned_by_closures(&b.stmts, defaults),

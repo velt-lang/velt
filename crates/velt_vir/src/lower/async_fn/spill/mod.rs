@@ -16,7 +16,7 @@
 mod flow;
 mod overlap;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use flow::Bits;
 
@@ -37,7 +37,7 @@ pub(super) fn spill(
     result: Ty,
     name: &str,
     inputs: &[Local],
-) -> (AggId, HashMap<Local, u32>) {
+) -> (AggId, FxHashMap<Local, u32>) {
     let (extra, seeds) = suspension_edges(f, inputs);
     let needed = suspended_locals(f, &extra, &seeds);
     let pts = flow::points_to(f);
@@ -94,8 +94,8 @@ fn suspended_locals(f: &Function, extra: &[(usize, usize)], seeds: &[(usize, Bit
 }
 
 /// Block that suspends with tag `k` (its last statement stores `k` into the tag), per `k`.
-fn suspending_blocks(f: &Function) -> HashMap<i128, usize> {
-    let mut out = HashMap::new();
+fn suspending_blocks(f: &Function) -> FxHashMap<i128, usize> {
+    let mut out = FxHashMap::default();
     for (b, blk) in f.blocks.iter().enumerate() {
         if !matches!(blk.term, Terminator::Return(_)) {
             continue;
@@ -137,7 +137,7 @@ fn layout(
     interf: &[Bits],
     result: Ty,
     name: &str,
-) -> (AggId, HashMap<Local, u32>) {
+) -> (AggId, FxHashMap<Local, u32>) {
     let (rsize, ralign) = cx.size_align(result);
     let tag_off = rsize.next_multiple_of(4);
     let mut fields = vec![(Ty::U32, tag_off)];
@@ -151,7 +151,7 @@ fn layout(
         })
         .collect();
     locals.sort_by(|x, y| y.1.cmp(&x.1).then(y.0.cmp(&x.0)).then(x.2.cmp(&y.2)));
-    let mut map = HashMap::new();
+    let mut map = FxHashMap::default();
     // (local, offset, size) of the locals placed so far.
     let mut placed: Vec<(usize, u32, u32)> = vec![];
     let mut end = base;
@@ -179,7 +179,7 @@ fn layout(
 }
 
 /// Move spilled locals into the state, patch the placeholder type, renumber the rest.
-fn rewrite(f: &mut Function, agg: AggId, fields: &HashMap<Local, u32>) {
+fn rewrite(f: &mut Function, agg: AggId, fields: &FxHashMap<Local, u32>) {
     let mut remap = vec![Local(0); f.locals.len()];
     let mut locals = vec![];
     for (i, l) in f.locals.iter().enumerate() {

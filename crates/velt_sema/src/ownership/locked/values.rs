@@ -6,7 +6,7 @@
 //! an array element, a parameter of a closure or a method — is not resolved. The result mixes
 //! closures (`FnKind::Closure`) and named functions; tell them apart with `cx.fn_info`.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
@@ -19,13 +19,13 @@ use crate::visit;
 #[derive(Default)]
 pub(super) struct Resolver {
     /// The body making each closure (filled on first use).
-    parents: Option<HashMap<DefId, DefId>>,
+    parents: Option<FxHashMap<DefId, DefId>>,
     /// The closures each `(function, parameter)` may be given (`None`: not resolved).
-    params: HashMap<(DefId, usize), Option<Vec<DefId>>>,
+    params: FxHashMap<(DefId, usize), Option<Vec<DefId>>>,
     /// Parameters being resolved (a recursive function passing its parameter on).
-    pending: HashSet<(DefId, usize)>,
+    pending: FxHashSet<(DefId, usize)>,
     /// Functions whose results are being resolved.
-    returning: HashSet<DefId>,
+    returning: FxHashSet<DefId>,
 }
 
 impl Resolver {
@@ -152,11 +152,11 @@ fn unwrap(e: &Expr) -> &Expr {
 
 /// Locals every value of which is a closure literal or a named function (their `let`/`const`
 /// initializer and every assignment), with those functions.
-fn fn_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
+fn fn_locals(b: &mut Block) -> FxHashMap<LocalId, Vec<DefId>> {
     #[derive(Default)]
     struct Lets {
-        fns: HashMap<LocalId, Vec<DefId>>,
-        other: HashSet<LocalId>,
+        fns: FxHashMap<LocalId, Vec<DefId>>,
+        other: FxHashSet<LocalId>,
     }
     impl Lets {
         fn value(&mut self, l: LocalId, e: &Expr) {
@@ -199,8 +199,8 @@ fn fn_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
 }
 
 /// The body making each closure of the program.
-fn closure_parents(cx: &mut Ctx) -> HashMap<DefId, DefId> {
-    let mut out = HashMap::new();
+fn closure_parents(cx: &mut Ctx) -> FxHashMap<DefId, DefId> {
+    let mut out = FxHashMap::default();
     for d in done_fns(cx) {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;

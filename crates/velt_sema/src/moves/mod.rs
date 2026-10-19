@@ -15,7 +15,7 @@ mod loops;
 mod state;
 mod tries;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -32,12 +32,12 @@ struct Moves<'a> {
     locals: &'a [LocalDef],
     /// Per local: declared with `using` / `await using`.
     using: Vec<bool>,
-    captures: &'a HashMap<DefId, Vec<Capture>>,
+    captures: &'a FxHashMap<DefId, Vec<Capture>>,
     /// Closures that are stored or returned (they capture by value).
-    escaping: &'a HashSet<DefId>,
+    escaping: &'a FxHashSet<DefId>,
     /// Non-escaping closures held in a local, by local (`crate::ownership::held_closures`):
     /// each call through the local uses what the closure borrows.
-    held: HashMap<LocalId, DefId>,
+    held: FxHashMap<LocalId, DefId>,
     /// The local a `let` being checked binds (the holder of a closure literal initializer).
     holder: Option<LocalId>,
     /// The `let` locals of each block being checked (innermost last).
@@ -56,14 +56,14 @@ struct Moves<'a> {
     loops: Vec<LoopFlow>,
     /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again
     /// (with the local used again: a closure's soft move is one per captured variable).
-    soft: HashSet<Span>,
-    reused: HashSet<(Span, LocalId)>,
+    soft: FxHashSet<Span>,
+    reused: FxHashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
-    writers: &'a HashMap<DefId, HashSet<LocalId>>,
+    writers: &'a FxHashMap<DefId, FxHashSet<LocalId>>,
     /// Closures each call of which has a state of its own that shares the captured variables:
     /// generator closures (`function*` expressions) and local async closures
     /// (`FnDef::shares_captures`); true for generators.
-    generators: &'a HashMap<DefId, bool>,
+    generators: &'a FxHashMap<DefId, bool>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
     /// Per local: an async closure that may run on another thread captures it.
@@ -72,10 +72,10 @@ struct Moves<'a> {
     /// ([`Moves::nested_writes`]).
     nested: Vec<(String, Span)>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
-    boxed: HashSet<LocalId>,
+    boxed: FxHashSet<LocalId>,
     /// The capture locals of this function (when it is a closure that shares them with its
     /// creator: not an async closure that may run on another thread, which copies them).
-    own_captures: HashSet<LocalId>,
+    own_captures: FxHashSet<LocalId>,
     /// The open `try` bodies and handlers (innermost last), see [`tries`].
     tries: Vec<tries::TryFrame>,
     /// Per local: a `const` that closures in its initializer capture before it is assigned
@@ -84,7 +84,7 @@ struct Moves<'a> {
     /// The use being checked is a closure's capture.
     capturing: bool,
     /// Late `const`s reported as not shareable.
-    late_reported: HashSet<LocalId>,
+    late_reported: FxHashSet<LocalId>,
 }
 
 /// What the move dataflow found besides errors.
@@ -92,19 +92,19 @@ struct Moves<'a> {
 pub(crate) struct Outcome {
     /// Per function: the soft moves whose place is used again, with the local used again (they
     /// become shares, `crate::ownership::soft`; for a closure, only the captures of that local).
-    pub reused: HashMap<DefId, HashSet<(Span, LocalId)>>,
+    pub reused: FxHashMap<DefId, FxHashSet<(Span, LocalId)>>,
     /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
-    pub boxed: HashMap<DefId, HashSet<LocalId>>,
+    pub boxed: FxHashMap<DefId, FxHashSet<LocalId>>,
     /// The `for (let …)` variables the loop's update assigns: JS gives each iteration its own,
     /// which the update copies into the next one, so none of them may be one cell for all
     /// iterations (`crate::ownership::cells`).
-    pub per_iteration: HashSet<(DefId, LocalId)>,
+    pub per_iteration: FxHashSet<(DefId, LocalId)>,
 }
 
 /// Check every function body.
 pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
-    let mut captures = HashMap::new();
-    let mut escaping = HashSet::new();
+    let mut captures = FxHashMap::default();
+    let mut escaping = FxHashSet::default();
     for (i, d) in cx.defs.iter().enumerate() {
         if let Some(Def::Fn(f)) = d {
             let def = DefId(i as u32);
@@ -142,12 +142,12 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     let (writers, own_writers) = writers(cx, &escaping);
     // The variables only a closure created inside an escaping closure assigns: a cell the
     // enclosing function makes for them is checked below (`unshareable`).
-    let nested_only: HashSet<LocalId> = writers
+    let nested_only: FxHashSet<LocalId> = writers
         .iter()
         .flat_map(|(c, a)| a.difference(&own_writers[c]).copied())
         .collect();
     let async_captured = async_captured(cx);
-    let generators: HashMap<DefId, bool> = escaping
+    let generators: FxHashMap<DefId, bool> = escaping
         .iter()
         .filter_map(|&d| match &cx.defs[d.0 as usize] {
             Some(Def::Fn(f)) if f.is_generator || f.shares_captures => Some((d, f.is_generator)),
@@ -201,9 +201,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             promise: promise[i].clone(),
             writers: &writers,
             generators: &generators,
-            boxed: HashSet::new(),
+            boxed: FxHashSet::default(),
             own_captures: match f.is_async && !f.is_generator && !f.shares_captures {
-                true => HashSet::new(),
+                true => FxHashSet::default(),
                 false => f.captures.iter().map(|c| c.inner).collect(),
             },
             tries: vec![],
@@ -211,12 +211,12 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 .map(|l| cx.late_consts.contains(&l.span))
                 .collect(),
             capturing: false,
-            late_reported: HashSet::new(),
+            late_reported: FxHashSet::default(),
             report: false,
             errors: vec![],
             loops: vec![],
             soft,
-            reused: HashSet::new(),
+            reused: FxHashSet::default(),
         };
         // A silent pass first (only bodies creating an escaping closure can need a cell): a
         // variable found to need a shared cell late in the body is no move error earlier either.
@@ -280,7 +280,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         crate::ownership::unshareable_nested(cx, &unshared, &writers, &own_writers);
     }
     all.retain(|d| !follows_capture_error(cx, d));
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     for d in all {
         let key = (d.labels[0].span.lo, d.labels[0].span.hi, d.message.clone());
         if seen.insert(key) {
@@ -293,15 +293,15 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
 /// Per escaping closure: the enclosing variables it captures by value and assigns, itself or
 /// through a closure created in it (#904: `() => { const g = () => { last = v; }; g(); }`
 /// assigns `last` too). The second map holds those the closure assigns itself.
-type Writers = HashMap<DefId, HashSet<LocalId>>;
-fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> (Writers, Writers) {
-    let mut assigned = HashMap::new();
-    let mut direct = HashMap::new();
-    let (mut all, mut own) = (HashMap::new(), HashMap::new());
+type Writers = FxHashMap<DefId, FxHashSet<LocalId>>;
+fn writers(cx: &mut Ctx, escaping: &FxHashSet<DefId>) -> (Writers, Writers) {
+    let mut assigned = FxHashMap::default();
+    let mut direct = FxHashMap::default();
+    let (mut all, mut own) = (FxHashMap::default(), FxHashMap::default());
     for &c in escaping {
         let mine = assigned_locals(cx, c, &mut assigned, &mut direct);
         let itself = direct.get(&c).cloned().unwrap_or_default();
-        let (mut a, mut o) = (HashSet::new(), HashSet::new());
+        let (mut a, mut o) = (FxHashSet::default(), FxHashSet::default());
         if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
             for cap in f.captures.iter().filter(|cap| mine.contains(&cap.inner)) {
                 a.insert(cap.outer);
@@ -321,19 +321,19 @@ fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> (Writers, Writers) {
 fn assigned_locals(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, HashSet<LocalId>>,
-    direct: &mut HashMap<DefId, HashSet<LocalId>>,
-) -> HashSet<LocalId> {
+    memo: &mut FxHashMap<DefId, FxHashSet<LocalId>>,
+    direct: &mut FxHashMap<DefId, FxHashSet<LocalId>>,
+) -> FxHashSet<LocalId> {
     if let Some(s) = memo.get(&d) {
         return s.clone();
     }
     // A closure is created once, inside its enclosing function: no cycle (the empty entry
     // guards against a malformed one).
-    memo.insert(d, HashSet::new());
+    memo.insert(d, FxHashSet::default());
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
-        return HashSet::new();
+        return FxHashSet::default();
     };
-    let mut assigned = HashSet::new();
+    let mut assigned = FxHashSet::default();
     let mut closures = vec![];
     crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
         use crate::hir::ExprKind as E;
@@ -372,7 +372,7 @@ fn assigned_locals(
 /// `for` loop with a `let` head is a block of the `let`s and a `while` with the update as its
 /// step, both spanning the whole loop (`crate::body::loops`); a block written as such ends
 /// with its closing brace, so it never spans the same code as the `while` it holds.
-fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
     use crate::visit::VisitMut;
     struct ForHeads(Vec<LocalId>);
     impl VisitMut for ForHeads {
@@ -393,7 +393,7 @@ fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
             }
         }
     }
-    let mut out = HashSet::new();
+    let mut out = FxHashSet::default();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;
@@ -410,8 +410,8 @@ fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
 /// a variable keeps its own value per closure (cells are not atomic). A local async closure
 /// (`FnDef::shares_captures`, `crate::ownership::local_async`) and a generator closure's
 /// generators stay on the task that creates them, so their captures may live in cells.
-pub(crate) fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
-    let mut out = HashSet::new();
+pub(crate) fn async_captured(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
+    let mut out = FxHashSet::default();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;
@@ -739,7 +739,7 @@ impl Moves<'_> {
 }
 
 /// Does block `b` create an escaping closure?
-fn creates_escaping(b: &crate::hir::Block, escaping: &HashSet<DefId>) -> bool {
+fn creates_escaping(b: &crate::hir::Block, escaping: &FxHashSet<DefId>) -> bool {
     let mut b = b.clone();
     let mut found = false;
     crate::visit::exprs_mut(&mut b, &mut |e: &mut crate::hir::Expr| {

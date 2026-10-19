@@ -2324,6 +2324,7 @@ dependencies = [
 name = "velt_sema"
 version = "0.2.2"
 dependencies = [
+ "rustc-hash",
  "velt_common",
  "velt_syntax",
 ]
@@ -2332,6 +2333,7 @@ dependencies = [
 name = "velt_syntax"
 version = "0.2.2"
 dependencies = [
+ "rustc-hash",
  "velt_common",
 ]
 
@@ -2364,6 +2366,7 @@ dependencies = [
 name = "velt_vir"
 version = "0.2.2"
 dependencies = [
+ "rustc-hash",
  "velt_codegen_cl",
  "velt_common",
  "velt_link",

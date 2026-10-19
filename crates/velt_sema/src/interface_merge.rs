@@ -11,7 +11,7 @@
 //! (TS2428); `extends` lists are joined; a member declared in two declarations is an error (a
 //! field of the same type is allowed in TypeScript, and a method there becomes an overload).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -39,7 +39,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
     for m in out.iter_mut() {
         merge_repeated(&mut m.ast.items, &mut diags);
     }
-    let by_path: HashMap<String, usize> = out
+    let by_path: FxHashMap<String, usize> = out
         .iter()
         .enumerate()
         .map(|(i, m)| (m.path.clone(), i))
@@ -120,7 +120,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
 
 /// Does module `m` have an augmentation block or an interface declared twice?
 fn needs_rewrite(m: &SourceModule) -> bool {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = rustc_hash::FxHashSet::default();
     m.ast.items.iter().any(|i| match &i.kind {
         ast::ItemKind::Augment(_) => true,
         ast::ItemKind::Interface(d) => !seen.insert(d.name.name.as_str()),
@@ -130,7 +130,7 @@ fn needs_rewrite(m: &SourceModule) -> bool {
 
 /// Merges each interface declared again in `items` into its first declaration.
 fn merge_repeated(items: &mut Vec<ast::Item>, diags: &mut Vec<Diagnostic>) {
-    let mut first: HashMap<String, usize> = HashMap::new();
+    let mut first: FxHashMap<String, usize> = FxHashMap::default();
     let mut i = 0;
     while i < items.len() {
         let ast::ItemKind::Interface(d) = &items[i].kind else {
@@ -187,7 +187,7 @@ fn augment_global(
 /// The module and item index of the interface `name` that module `m` declares or re-exports.
 fn find_interface(
     modules: &[SourceModule],
-    by_path: &HashMap<String, usize>,
+    by_path: &FxHashMap<String, usize>,
     m: usize,
     name: &str,
 ) -> Option<(usize, usize)> {
@@ -197,7 +197,7 @@ fn find_interface(
 
 fn find_in(
     modules: &[SourceModule],
-    by_path: &HashMap<String, usize>,
+    by_path: &FxHashMap<String, usize>,
     m: usize,
     name: &str,
     seen: &mut Vec<usize>,

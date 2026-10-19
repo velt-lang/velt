@@ -9,7 +9,7 @@
 //! result of a call through a function value, a pattern binding) are *unknown*: when one
 //! crosses, its type is a root of the type-based part (`super::types`).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 
@@ -89,7 +89,7 @@ pub(super) type Site = Option<(Span, bool)>;
 
 #[derive(Default)]
 pub(super) struct Graph {
-    pub ids: HashMap<Node, usize>,
+    pub ids: FxHashMap<Node, usize>,
     pub nodes: Vec<Node>,
     pub tys: Vec<TyId>,
     /// Per node: the nodes whose values flow into it, each with the call passing them (an
@@ -104,16 +104,16 @@ pub(super) struct Graph {
     /// (span, in std). A closure whose parameter crosses makes the matching argument cross.
     pub indirect: Vec<(TyId, Vec<usize>, Span, bool)>,
     /// The function creating each closure literal.
-    pub parent: HashMap<DefId, DefId>,
+    pub parent: FxHashMap<DefId, DefId>,
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
-    pub insts: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
     /// Nodes whose values reach a flag's sink directly.
     pub seeds: Vec<(usize, u8, Option<Why>)>,
     /// Values of unknown origin that cross (or reach an unknown callee, for function values).
     pub roots: Vec<(TyId, Why)>,
     /// Per closure literal node: its capture locals' nodes.
-    pub captures: HashMap<usize, Vec<usize>>,
+    pub captures: FxHashMap<usize, Vec<usize>>,
 }
 
 impl Graph {

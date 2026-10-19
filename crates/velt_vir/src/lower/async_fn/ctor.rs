@@ -11,7 +11,7 @@
 //!   caller's object, #196);
 //! - `f$drop` ([`Work::AsyncDrop`]): set `DROP_BIT` in the tag and run the poll function.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{self, DefId, LocalId, PassMode, TyId};
 
@@ -72,7 +72,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             params.push(Ty::Ptr);
             lw.new_local(Ty::Ptr, Some("env".into()))
         });
-        let caps: HashMap<LocalId, usize> = f
+        let caps: FxHashMap<LocalId, usize> = f
             .captures
             .iter()
             .enumerate()

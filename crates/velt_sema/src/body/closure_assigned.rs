@@ -10,7 +10,7 @@
 //! Null checks of field paths (`k.left !== null`) still narrow: their reads are checked again
 //! (`field_narrow`). `instanceof` on a `readonly` field path of such a variable does not.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Label, Span};
 use velt_syntax::ast;
@@ -28,7 +28,7 @@ pub(crate) struct Refused {
 }
 
 /// The names `assigned_by_closures` found, owned (for `Frame::closure_assigned`).
-pub(crate) fn owned(names: super::assigned::Assigned) -> HashMap<String, Span> {
+pub(crate) fn owned(names: super::assigned::Assigned) -> FxHashMap<String, Span> {
     names.into_iter().map(|(n, s)| (n.to_string(), s)).collect()
 }
 

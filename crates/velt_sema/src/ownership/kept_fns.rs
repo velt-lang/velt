@@ -37,7 +37,7 @@
 //! it is a share (`super::validate`). A captured variable is kept the same way when it comes
 //! from a local of the creating function: a local owns its closure.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
@@ -52,14 +52,14 @@ pub(crate) struct KeptFns {
     /// Some function with fixed modes keeps a borrowed function value.
     pub on: bool,
     /// Borrowed parameters of functions with inferred modes that must own their closure.
-    pub forced: HashSet<(DefId, LocalId)>,
+    pub forced: FxHashSet<(DefId, LocalId)>,
     /// The function creating each closure.
-    pub parents: HashMap<DefId, DefId>,
+    pub parents: FxHashMap<DefId, DefId>,
 }
 
 /// Record the function creating each closure of `fns`.
 pub(super) fn find_parents(cx: &mut Ctx, fns: &[DefId]) {
-    let mut parents = HashMap::new();
+    let mut parents = FxHashMap::default();
     for &d in fns {
         let Some(Def::Fn(f)) = &mut cx.defs[d.0 as usize] else {
             continue;
@@ -132,10 +132,10 @@ pub(super) fn sharable(cx: &Ctx, d: DefId, f: &FnDef, l: LocalId) -> bool {
 pub(super) fn exposed(
     cx: &Ctx,
     f: &mut FnDef,
-    borrowed: &HashSet<LocalId>,
+    borrowed: &FxHashSet<LocalId>,
     to_fixed: bool,
-) -> HashSet<LocalId> {
-    let mut out = HashSet::new();
+) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
         E::Local(l, UseMode::Move) if borrowed.contains(l) => {
             out.insert(*l);
@@ -202,7 +202,7 @@ pub(super) fn any_kept(cx: &mut Ctx, fns: &[DefId]) -> bool {
         let kinds = &cx.fn_info(d).local_kinds;
         // A variable of a generic type may hold a function too (`put(t: T) { this.items.push(t);
         // }` in a class implementing `Sink<T>`).
-        let borrowed: HashSet<LocalId> = super::fn_values::borrowed_fn_locals(cx, d, &f)
+        let borrowed: FxHashSet<LocalId> = super::fn_values::borrowed_fn_locals(cx, d, &f)
             .into_iter()
             .chain(borrowed_generic_locals(cx, d, &f))
             .filter(|l| fixed || kinds.get(l.0 as usize) != Some(&LocalKind::Param))
@@ -242,7 +242,7 @@ pub(super) fn force_roots(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> Vec<DefId> {
 /// The borrowed parameters and captures of `f` (body of `d`) whose type mentions a type
 /// parameter: instantiated with a function type, they may hold a closure in a caller's frame
 /// (`forward<T>(reg: (t: T) => void, t: T) { reg(t); }`).
-fn borrowed_generic_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<LocalId> {
+fn borrowed_generic_locals(cx: &Ctx, d: DefId, f: &FnDef) -> FxHashSet<LocalId> {
     let kinds = &cx.fn_info(d).local_kinds;
     let borrowed = |m: PassMode| matches!(m, PassMode::Borrow | PassMode::BorrowMut);
     let params = f
