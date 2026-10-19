@@ -464,11 +464,29 @@ impl FnCx<'_, '_> {
             a
         } else {
             stmts.push(stmt(hir::StmtKind::Expr(a), span));
-            self.expr(&t, None, Want::Borrow)
+            let read = self.assigned_read(&t);
+            self.expr(&read, None, Want::Borrow)
         };
         self.pop_scope();
         let ty = if value.ty == unit { unit } else { value.ty };
         Some(self.mk(H::Block(block(stmts, Some(value), span)), ty, span))
+    }
+
+    /// `t` (a pure target just assigned) read again: a record key is present now, so `r[k]` is
+    /// `r[k]!` unless the record's values may be `undefined` themselves.
+    fn assigned_read(&mut self, t: &ast::Expr) -> ast::Expr {
+        let Some(object) = inner(t) else {
+            return t.clone();
+        };
+        let mark = self.cx.diags.len();
+        let ot = self.expr(object, None, Want::Borrow).ty;
+        self.cx.diags.truncate(mark);
+        match self.record_args(ot) {
+            Some((_, v)) if self.cx.ty.nothing_of(v).is_none() => {
+                synth(ast::ExprKind::NonNull(Box::new(t.clone())), t.span)
+            }
+            _ => t.clone(),
+        }
     }
 
     /// `let <iface hoisted k> = e` (appended to `stmts`), named by the result.
