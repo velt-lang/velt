@@ -558,11 +558,18 @@ pub fn poll_timer(t: &Rc<TimerCell>, cx: &mut Context<'_>) -> Poll<()> {
     Poll::Pending
 }
 
-/// Fire every timer due at `now`, in (deadline, creation) order: each wakes its task, which goes
-/// to the back of the ready queue in that order (also one that was queued already), so the
-/// tasks resume in timer order.
+/// Fire every timer due at `now`, in (deadline, creation) order, and the timers of
+/// `setTimeout` / `setInterval` in Node's order (order.rs) among them by their lists' expiry:
+/// each wakes its task, which goes to the back of the ready queue in that order (also one that
+/// was queued already), so the tasks resume in timer order.
 fn fire_due(now: f64) {
     loop {
+        let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
+        if let Some(list) = super::order::first_expiry().filter(|x| *x <= now) {
+            if sleep.is_none_or(|s| list <= s) && super::order::fire_list(now) {
+                continue;
+            }
+        }
         let due = with_exec(|e| match e.timers.peek() {
             Some(t) if t.0.deadline <= now => e.timers.pop().map(|t| t.0.cell),
             _ => None,
@@ -578,7 +585,7 @@ fn fire_due(now: f64) {
 }
 
 /// Wake `w`; a task of this executor goes to the back of the ready queue even if it was queued.
-fn wake_last(w: Waker) {
+pub(super) fn wake_last(w: Waker) {
     if !std::ptr::eq(w.vtable(), &VTABLE) {
         w.wake();
         return;
@@ -593,7 +600,7 @@ fn wake_last(w: Waker) {
 /// Fire the timers that are due now (between two task polls, so a busy program still sees its
 /// timers fire, in order).
 fn fire_due_now() {
-    if with_exec(|e| e.timers.is_empty()) {
+    if with_exec(|e| e.timers.is_empty()) && super::order::first_expiry().is_none() {
         return;
     }
     fire_due(platform::monotonic_ms());
@@ -601,7 +608,12 @@ fn fire_due_now() {
 
 /// Sleep until the earliest timer and fire every timer that is due; false if there is none.
 fn wait_for_timers() -> bool {
-    let Some(first) = with_exec(|e| e.timers.peek().map(|t| t.0.deadline)) else {
+    let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
+    let Some(first) = [sleep, super::order::first_expiry()]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+    else {
         return false;
     };
     platform::sleep_ms(first - platform::monotonic_ms());

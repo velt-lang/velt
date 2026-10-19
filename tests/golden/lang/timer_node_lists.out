@@ -1,0 +1,14 @@
+main end
+A 10
+C 10
+B 12
+X 40
+Y 40
+Z 50
+E 60
+D 60
+F 70
+G 60, created by E
+interval run 1
+interval run 2
+T 70, created by the interval

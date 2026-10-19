@@ -21,6 +21,7 @@ declare function velt_rt_keep_alive_release();
 declare function velt_rt_timer_new(ms: i64): u64;
 declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;
 declare function velt_rt_timer_again(timer: u64, ms: i64);
+declare function velt_rt_timer_clear(timer: u64);
 declare function velt_rt_timer_free(timer: u64);
 
 // A timer's state, behind one lock shared by the handle and the task. While the timer is ref'd
@@ -41,14 +42,17 @@ class TimerState {
   refd: bool;
   // This timer holds a keep-alive reference.
   held: bool;
+  // Its place in the order of timers (velt_rt_timer_new) until its task frees it (0 then).
+  timer: u64;
 
-  constructor() {
+  constructor(timer: u64) {
     this.started = false;
     this.running = 0;
     this.stopped = false;
     this.finished = false;
     this.refd = true;
     this.held = false;
+    this.timer = timer;
   }
 
   // Takes or releases the keep-alive reference to match the state.
@@ -61,6 +65,13 @@ class TimerState {
       velt_rt_keep_alive_release();
     }
     this.held = want;
+  }
+
+  // The task is done with its place in the order: frees it (under the lock, so `clear()` never
+  // sees a freed one).
+  release() {
+    velt_rt_timer_free(this.timer);
+    this.timer = 0;
   }
 
   // The task is due to run: true if it should (it was not cleared), and a run is now in
@@ -108,6 +119,10 @@ export class Timer {
     this.state.with((s) => {
       if (repeats || !s.started) {
         s.stopped = true;
+        // Out of the order at once, like Node's `clearTimeout`: its turn completes now.
+        if (s.timer != 0) {
+          velt_rt_timer_clear(s.timer);
+        }
         s.update();
       }
     });
@@ -161,8 +176,8 @@ export class Timer {
 
 // A new timer's state; it holds a keep-alive reference from the start, so `main` returning right
 // after `setTimeout` already waits for it.
-function newState(): shared<Mutex<TimerState>> {
-  const state = shared(new Mutex<TimerState>(new TimerState()));
+function newState(timer: u64): shared<Mutex<TimerState>> {
+  const state = shared(new Mutex<TimerState>(new TimerState(timer)));
   state.with((s) => s.update());
   return state;
 }
@@ -191,8 +206,9 @@ export function clearImmediate(t: Timer) {
 // A timeout due `ms` from now: its place in the order of timers is taken now (velt_rt_timer_new).
 // It runs as a promise of the current task, which goes on running it after `main` returns.
 function schedule(task: () => Promise<void>, ms: i64): Timer {
-  const state = newState();
-  const run = fireOnce(velt_rt_timer_new(ms), task, state.clone());
+  const timer = velt_rt_timer_new(ms);
+  const state = newState(timer);
+  const run = fireOnce(timer, task, state.clone());
   return new Timer(state, false);
 }
 
@@ -207,9 +223,10 @@ export function clearTimeout(t: Timer) {
  * overlap interleave at their `await`s on the timer's task; they never run in parallel.
  */
 export function setInterval(task: () => Promise<void>, ms: i64): Timer {
-  const state = newState();
   const every = ms < 1 ? 1 : ms;
-  const run = fireEvery(velt_rt_timer_new(every), every, task, state.clone());
+  const timer = velt_rt_timer_new(every);
+  const state = newState(timer);
+  const run = fireEvery(timer, every, task, state.clone());
   return new Timer(state, true);
 }
 
@@ -226,8 +243,11 @@ async function fireOnce(
   state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   await velt_rt_timer_turn(timer, 0);
-  velt_rt_timer_free(timer);
-  if (!state.with((s) => s.begin())) {
+  const go = state.with((s) => {
+    s.release();
+    return s.begin();
+  });
+  if (!go) {
     return;
   }
   await task();
@@ -242,8 +262,14 @@ async function fireEvery(
 ): Promise<void> {
   while (true) {
     await velt_rt_timer_turn(timer, 0);
-    if (!state.with((s) => s.begin())) {
-      velt_rt_timer_free(timer);
+    const go = state.with((s) => {
+      const go = s.begin();
+      if (!go) {
+        s.release();
+      }
+      return go;
+    });
+    if (!go) {
       return;
     }
     // Not awaited: the next run is due `ms` after this one started, whether or not it has

@@ -26,15 +26,85 @@ async fn turns(timers: &[u64], polled: &[usize]) -> Vec<usize> {
     order
 }
 
+/// The order a timers pass runs `timers` (delay, start) in when every one is due by `now`
+/// (one task, Node's lists): indices into `timers`.
+fn pass(timers: &[(u64, u64)], now: u64) -> Vec<usize> {
+    let mut o = Order::new();
+    let keys: Vec<Key> = timers
+        .iter()
+        .map(|&(ms, start)| o.insert_at(ms, start, None))
+        .collect();
+    let mut ran = Vec::new();
+    let mut clock = || now;
+    while let Some(k) = o.next(None, true, &mut clock) {
+        ran.push(keys.iter().position(|x| *x == k).unwrap());
+        assert!(o.take(k));
+    }
+    assert!(o.is_empty());
+    ran
+}
+
+/// Node's rule: one list per delay, lists by (expiry, list id), each list's due timers in
+/// insertion order before the next list.
+#[test]
+fn a_pass_runs_node_lists_in_expiry_then_id_order() {
+    // `A 10, B 12, busy(5), C 10`, due together: A and C share the 10 list.
+    assert_eq!(pass(&[(10, 0), (12, 0), (10, 5)], 45), [0, 2, 1]);
+    // `X 4, A 5, busy(3), B 4`.
+    assert_eq!(pass(&[(4, 0), (5, 0), (4, 3)], 43), [0, 2, 1]);
+    // Equal expiry: the list created first.
+    assert_eq!(pass(&[(5, 3), (8, 0), (5, 3)], 20), [0, 2, 1]);
+}
+
+/// A partly due list waits for its next timer with a new id: behind a list of the same expiry
+/// that was created before the pass.
+#[test]
+fn a_partly_due_list_gets_a_new_id() {
+    let mut o = Order::new();
+    let a = o.insert_at(10, 0, None); // 10 list, expiry 10, id 1
+    let b = o.insert_at(10, 8, None); // due 18
+    let c = o.insert_at(13, 5, None); // 13 list, expiry 18, id 2
+    let mut now = 12;
+    let mut clock = || now;
+    assert_eq!(o.next(None, true, &mut clock), Some(a));
+    assert!(o.take(a));
+    // Nothing else is due by 12; the 10 list now waits for 18 with id 3, after the 13 list.
+    assert_eq!(o.next(None, true, &mut clock), None);
+    now = 30;
+    let mut clock = || now;
+    assert_eq!(o.next(None, true, &mut clock), Some(c));
+    assert!(o.take(c));
+    assert_eq!(o.next(None, true, &mut clock), Some(b));
+    assert!(o.take(b));
+    assert!(o.is_empty());
+}
+
+/// A pass reads `now` once: a timer due later is left for the next pass, even if the clock has
+/// moved on meanwhile.
+#[test]
+fn a_pass_keeps_its_now() {
+    let mut o = Order::new();
+    let a = o.insert_at(5, 0, None);
+    let b = o.insert_at(6, 0, None);
+    let mut reads = vec![20, 5];
+    let mut clock = || reads.pop().unwrap();
+    assert_eq!(o.next(None, true, &mut clock), Some(a));
+    assert!(o.take(a));
+    // The pass at 5 has nothing more: `b` is due at 6, by the next pass (read 20).
+    assert_eq!(o.next(None, true, &mut clock), Some(b));
+    assert!(o.take(b));
+    assert!(o.is_empty());
+}
+
 // One test: the order is process-wide.
 #[test]
-fn turns_follow_deadline_then_creation_order() {
+fn turns_follow_the_order() {
     rt().block_on(async {
         // Equal deadlines (#1328), polled in reverse.
         let eq: Vec<u64> = (0..5).map(|_| velt_rt_timer_new(3)).collect();
         assert_eq!(turns(&eq, &[4, 3, 2, 1, 0]).await, [0, 1, 2, 3, 4]);
 
-        // By deadline first, then creation; a cleared (freed) timer does not hold the others.
+        // By deadline first; a cleared timer does not hold the others.
         let hs = [
             velt_rt_timer_new(6),
             velt_rt_timer_new(2),
@@ -42,9 +112,11 @@ fn turns_follow_deadline_then_creation_order() {
             velt_rt_timer_new(2),
             velt_rt_timer_new(1),
         ];
-        // SAFETY: a live handle, not used again.
-        unsafe { velt_rt_timer_free(hs[4]) };
+        // SAFETY: a live handle.
+        unsafe { velt_rt_timer_clear(hs[4]) };
         assert_eq!(turns(&hs, &[0, 2, 3, 1]).await, [1, 3, 2, 0]);
+        // A cleared timer's turn is ready at once.
+        assert_eq!(turns(&hs, &[4]).await, [4]);
 
         // An interval's next run goes behind the timers queued before it: `b` is created before
         // `a` is queued again with the same delay, so `b` (an earlier or equal due time, created
@@ -59,20 +131,22 @@ fn turns_follow_deadline_then_creation_order() {
         assert_eq!(turns(&hs2, &[0]).await, [0]);
         // SAFETY: live handles, not used again.
         unsafe {
-            for h in eq.into_iter().chain(hs.into_iter().take(4)).chain(hs2) {
+            for h in eq.into_iter().chain(hs).chain(hs2) {
                 velt_rt_timer_free(h);
             }
         }
-        assert!(ORDER.lock().queue.is_empty());
+        assert!(ORDER.lock().is_empty());
 
         // A timer whose task is busy (in a poll) does not hold back a later one of another
         // task; it takes its turn once that task is idle again.
         let task = super::super::gate::Gate::new_busy();
-        let (key, at) = ORDER.lock().insert(0, Some(task.clone()));
+        let (key, at) = ORDER.lock().insert(0, Some(task.clone()), None);
         let first = Box::into_raw(Box::new(Handle {
             key: Some(key),
             at,
             task: Some(task.clone()),
+            waker: None,
+            ran: None,
         })) as u64;
         let second = velt_rt_timer_new(0);
         assert_eq!(turns(&[first, second], &[1]).await, [1]);
@@ -83,6 +157,6 @@ fn turns_follow_deadline_then_creation_order() {
             velt_rt_timer_free(first);
             velt_rt_timer_free(second);
         }
-        assert!(ORDER.lock().queue.is_empty());
+        assert!(ORDER.lock().is_empty());
     });
 }

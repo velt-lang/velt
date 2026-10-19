@@ -317,9 +317,20 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     // which is running) after the ones woken before, and the root, when it waits for one of the
     // timers itself, resumes at its place among them.
     let mut root_at = None;
+    // Nodes woken by what those run, which wait for the next poll (see below).
+    let mut later = VecDeque::new();
     if let Some(t) = d.timers {
         shared.notified.store(true, SeqCst);
         shared.take(&mut (*set).pending);
+        if !(*set).pending.is_empty() && t.has_due() {
+            // The nodes woken before run before due timers fire: a leaf of one may hold a waker
+            // that no longer reaches it (a loser its combinator gave up, losers.rs), and points
+            // it at the node now, so its timer wakes it in timer order, not in the order the
+            // nodes were queued (a poll that came late, after busy code or on a loaded machine,
+            // found both timers of two losers due).
+            run_pending(d, (*set).pending.len(), None);
+            shared.take(&mut later);
+        }
         let before = (*set).pending.len();
         root_at = t.fire(d.task).map(|n| before + n);
     }
@@ -327,8 +338,22 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     shared.waker.register(d.task);
     shared.notified.store(false, SeqCst);
     shared.take(&mut (*set).pending);
-    // Only nodes woken before this drain: one woken again meanwhile waits for the next poll.
-    for ran in 0..(*set).pending.len() {
+    run_pending(d, (*set).pending.len(), root_at);
+    for SendPtr(f) in later {
+        // Queued again (its reference and `QUEUED` flag go along); the task is woken for it.
+        if !shared.push(f) {
+            node::head(f).flags.fetch_and(!QUEUED, AcqRel);
+            node::release(f);
+        }
+    }
+}
+
+/// Run the first `n` nodes of the pending queue (`root_at`: the root resumes before the one at
+/// that index). Only nodes woken before this drain: one woken again meanwhile waits for the
+/// next poll.
+unsafe fn run_pending(d: &mut Driver<'_>, n: usize, root_at: Option<usize>) {
+    let set = d.set;
+    for ran in 0..n {
         if root_at == Some(ran) {
             (d.root)();
             if has_microtasks(set) {
