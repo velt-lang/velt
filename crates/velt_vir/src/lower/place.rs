@@ -203,18 +203,13 @@ impl FnLower<'_, '_> {
         let (ok, null) = (self.new_block(), self.new_block());
         self.branch(some, ok, null);
         self.switch_to(null);
-        // What was narrowed (a field path, or a variable a closure assigns) and the nothing
-        // its type has.
-        let what = match inner.kind {
-            hir::ExprKind::Field { .. } => "field",
-            _ => "variable",
-        };
+        // The nothing the field's type has (`undefined` for an optional field).
         let word = match self.cx.kind(oty) {
             TyKind::Option(_, n) => n.word(),
             _ => "null",
         };
         let msg = format!(
-            "a narrowed {what} was set to {word} before this read{}",
+            "a narrowed field was set to {word} before this read{}",
             self.panic_suffix()
         );
         let msg = self.str_lit(&msg);
