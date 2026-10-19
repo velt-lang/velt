@@ -1,9 +1,11 @@
 //! Gated functions (#1330): a std function whose first statement is
 //! `__intrinsic_target("sha-x86")` is compiled for that CPU extension (backends may use it
 //! anywhere in the function), so it must only run where the CPU has it. Sema checks every call:
-//! it sits in the `then` branch of `if (u32x4.hasShaX86())`, or in a function gated on the same
-//! target. A gated function cannot be used as a value, and a closure written inside one starts
-//! without its target (`Frame::target`).
+//! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt:simd's method, resolved by
+//! definition), or in a function gated on the same target. `f.call(this, …)` and
+//! `f.apply(this, [...])` are direct calls of `f` and checked as such. A gated function cannot
+//! be used as a value, and a closure written inside one starts without its target
+//! (`Frame::target`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -35,24 +37,27 @@ fn target_call(stmt: &ast::Stmt) -> Option<&str> {
     }
 }
 
-/// The CPU extension the condition `cond` checks: `u32x4.hasShaArm()` or `u32x4.hasShaX86()`.
-pub(super) fn guard_of(cond: &ast::Expr) -> Option<CpuTarget> {
-    let ast::ExprKind::Call { callee, args, .. } = &cond.kind else {
-        return None;
-    };
-    let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
-        return None;
-    };
-    let ast::ExprKind::Ident(ty) = &object.kind else {
-        return None;
-    };
-    if ty.name != "u32x4" || !args.is_empty() {
-        return None;
-    }
-    CpuTarget::ALL.into_iter().find(|t| t.check() == prop.name)
-}
-
 impl FnCx<'_, '_> {
+    /// The CPU extension the condition `c` checks: a call of velt:simd's `u32x4.hasShaArm()` or
+    /// `u32x4.hasShaX86()`, resolved to its definition (so also through `import { u32x4 as V }`,
+    /// and never a user type or function that is only named like it).
+    pub(super) fn cpu_guard(&self, c: &hir::Expr) -> Option<CpuTarget> {
+        let hir::ExprKind::Call {
+            callee: hir::Callee::Def(d, _),
+            args,
+        } = &c.kind
+        else {
+            return None;
+        };
+        let f = self.cx.try_fn(*d)?;
+        if !args.is_empty() || !self.cx.scopes[f.module].is_std {
+            return None;
+        }
+        CpuTarget::ALL
+            .into_iter()
+            .find(|t| f.name == format!("std/simd/sha::u32x4.{}", t.check()))
+    }
+
     /// The target function `d` is gated on: its first statement names it (std functions only).
     pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTarget> {
         let f = self.cx.fn_info(d);

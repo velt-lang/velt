@@ -261,7 +261,7 @@ impl FnCx<'_, '_> {
         // and ends with what still holds there: a branch's own assignments win over the facts it
         // started from (#1226). Those end states are joined below.
         // `if (u32x4.hasShaX86())`: the `then` branch may call functions gated on it.
-        let guard = super::gated::guard_of(cond);
+        let guard = self.cpu_guard(&c);
         if let Some(g) = guard {
             self.f.cpu_guards.push(g);
         }

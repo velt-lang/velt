@@ -236,3 +236,105 @@ export function gated(): i64 {
         ],
     );
 }
+
+const ONE_GATED: &str = r#"
+export function gated(x: i64): i64 {
+  __intrinsic_target("sha-arm");
+  return x + 1;
+}
+"#;
+
+#[test]
+fn the_check_is_velt_simds_method_not_its_name() {
+    // A user type named `u32x4` with a `hasShaArm` that returns true is not the CPU check.
+    let fake = "import { gated } from \"velt:zz_gated\";\n\nclass u32x4 {\n  static hasShaArm(): bool {\n    return true;\n  }\n}\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated(1));\n  }\n}\n";
+    check_fails(
+        ONE_GATED,
+        fake,
+        &["`gated` runs only where the CPU has `sha-arm`, so it must be called behind that check"],
+    );
+    // velt:simd's `u32x4` imported under another name is.
+    let dir = test_dir::TestDir::new();
+    let alias = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 as V } from \"velt:simd\";\n\nfunction main() {\n  console.log(V.hasShaArm() ? gated(1) : 2);\n  if (V.hasShaArm()) {\n    console.log(gated(1));\n  } else {\n    console.log(2);\n  }\n}\n";
+    let out = velt(&dir, ONE_GATED, alias, &["run"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a conditional expression is not a guard"
+    );
+    assert!(
+        stderr.contains("must be called behind that check"),
+        "{stderr}"
+    );
+    let alias = alias.replace("  console.log(V.hasShaArm() ? gated(1) : 2);\n", "");
+    let out = velt(&dir, ONE_GATED, &alias, &["run"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    // Debug builds (Cranelift) report the extension unavailable.
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2", "{stderr}");
+}
+
+#[test]
+fn call_and_apply_are_direct_calls() {
+    let main = "import { gated } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(gated.call(undefined, 1), gated.apply(undefined, [2]));\n  }\n  console.log(gated.call(undefined, 3));\n  console.log(gated.apply(undefined, [4]));\n}\n";
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, ONE_GATED, main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    assert_eq!(
+        err.matches("must be called behind that check").count(),
+        2,
+        "only the two calls outside the check:\n{err}"
+    );
+}
+
+#[test]
+fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
+    // In a function gated on `sha-arm`, the check of `sha-arm` in an inlined method is `1`, so
+    // the emulation behind it is dead; the guarded call into it stays a call.
+    let probe = r#"
+import { u32x4 } from "velt:simd";
+
+export function rounds(a: u32x4, n: i64): u32x4 {
+  __intrinsic_target("sha-arm");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.sha256h(a, x);
+  }
+  return x;
+}
+"#;
+    let main = "import { rounds } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(rounds(u32x4.splat(1), 3).lane(0));\n  }\n}\n";
+    let dir = test_dir::TestDir::new();
+    let args = [
+        "build",
+        "--release",
+        "--emit",
+        "llvm",
+        "--target",
+        "aarch64-unknown-linux-gnu",
+    ];
+    let out = velt(&dir, probe, main, &args);
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let gated = ir
+        .split("\ndefine ")
+        .find(|f| f.contains("zz__gatedN6rounds") && f.contains("\"target-features\"=\"+sha2\" {"))
+        .expect("the gated function");
+    assert!(!gated.contains("@velt.simd.has_sha_arm()"), "{gated}");
+    assert!(gated.contains("store i8 1,"), "{gated}");
+    let caller = ir
+        .split("\ndefine ")
+        .find(|f| f.contains("velt_main") && f.contains("zz__gatedN6rounds"))
+        .expect("the caller");
+    assert!(
+        caller
+            .lines()
+            .any(|l| l.contains("zz__gatedN6rounds") && l.ends_with(" noinline")),
+        "{caller}"
+    );
+}

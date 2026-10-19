@@ -1,7 +1,7 @@
 // check: also with VELT_SIMD_DISABLE=sha
 // The SHA instructions of `velt:simd` (#1330): SHA-256 and SHA-1 computed with the published ARM
 // (ACLE) and Intel (SHA-NI) instruction sequences, against the FIPS 180 digests, and every
-// operation on 1000 pseudo-random inputs folded into a checksum. Where the CPU has an extension
+// operation on 10,000 pseudo-random inputs folded into a checksum. Where the CPU has an extension
 // (arm64 and x86-64 release builds) its operations run as instructions, elsewhere (and in debug
 // builds, on wasm, with VELT_SIMD_DISABLE=sha) as the emulation: the same output everywhere is the
 // differential test between the two.
@@ -201,7 +201,7 @@ function main() {
   for (let k: usize = 0; k < names.length; k++) {
     sums.push(0xcbf29ce484222325);
   }
-  for (let n = 0; n < 1000; n++) {
+  for (let n = 0; n < 10000; n++) {
     const a = u32x4.splat(next()).withLane(1, next()).withLane(2, next()).withLane(3, next());
     const b = u32x4.splat(next()).withLane(1, next()).withLane(2, next()).withLane(3, next());
     const c = u32x4.splat(next()).withLane(1, next()).withLane(2, next()).withLane(3, next());

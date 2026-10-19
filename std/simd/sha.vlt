@@ -9,9 +9,10 @@
 // checks are false on another architecture, on WebAssembly and in debug (Cranelift) builds, and
 // with `VELT_SIMD_DISABLE=sha`, which runs the emulation on a CPU that has the instructions.
 //
-// The instructions are as fast as the checks around them allow: a loop of them pays one branch
-// (the flag is read once), but to get the bare instructions, write the loop in a function gated
-// on the extension (`__intrinsic_target`, std only), as std/crypto.vlt does.
+// The instructions are as fast as the checks around them allow: in a loop of them the flag is
+// read once, before the loop, and tested in every iteration. In a function gated on the
+// extension (`__intrinsic_target`, std only, as std/crypto.vlt's) the check is true and the
+// methods are the bare instructions.
 
 // Whether the CPU has the ARMv8 SHA instructions (the runtime's `velt_cpu_sha_arm`).
 declare function velt_simd_has_sha_arm(): bool;
@@ -82,7 +83,7 @@ extend u32x4 {
     return rol(e, 30);
   }
 
-  /** ARM SHA1SU0: the first half of the SHA-1 message schedule update, of `this` (w0), `w1` and `w2`. */
+  /** ARM SHA1SU0: the first half of the SHA-1 message schedule update, of `this` (w0), `w1` and `w2` (each word W0 of its four in lane 0). */
   sha1su0(w1: u32x4, w2: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha1su0(this, w1, w2);
@@ -90,7 +91,7 @@ extend u32x4 {
     return emulSha1su0(this, w1, w2);
   }
 
-  /** ARM SHA1SU1: the second half of the SHA-1 message schedule update, of `this` and `w3`. */
+  /** ARM SHA1SU1: the second half of the SHA-1 message schedule update, of `this` and `w3` (W0 in lane 0). */
   sha1su1(w3: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha1su1(this, w3);
@@ -98,7 +99,7 @@ extend u32x4 {
     return emulSha1su1(this, w3);
   }
 
-  /** ARM SHA256H: four SHA-256 rounds, the new `abcd` from `this` (abcd), `efgh` and `wk`. */
+  /** ARM SHA256H: four SHA-256 rounds, the new `abcd` from `this` (abcd, a in lane 0), `efgh` (e in lane 0) and `wk`. */
   sha256h(efgh: u32x4, wk: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha256h(this, efgh, wk);
@@ -106,7 +107,7 @@ extend u32x4 {
     return sha256Hash(this, efgh, wk, true);
   }
 
-  /** ARM SHA256H2: four SHA-256 rounds, the new `efgh` from `this` (efgh), `abcd` (as it was before `sha256h`) and `wk`. */
+  /** ARM SHA256H2: four SHA-256 rounds, the new `efgh` from `this` (efgh, e in lane 0), `abcd` (a in lane 0, as it was before `sha256h`) and `wk`. */
   sha256h2(abcd: u32x4, wk: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha256h2(this, abcd, wk);
@@ -114,7 +115,7 @@ extend u32x4 {
     return sha256Hash(abcd, this, wk, false);
   }
 
-  /** ARM SHA256SU0: the first half of the SHA-256 message schedule update, of `this` (w0) and `w1`. */
+  /** ARM SHA256SU0: the first half of the SHA-256 message schedule update, of `this` (w0) and `w1` (W0 in lane 0). */
   sha256su0(w1: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha256su0(this, w1);
@@ -122,7 +123,7 @@ extend u32x4 {
     return emulSha256su0(this, w1);
   }
 
-  /** ARM SHA256SU1: the second half of the SHA-256 message schedule update, of `this`, `w2` and `w3`. */
+  /** ARM SHA256SU1: the second half of the SHA-256 message schedule update, of `this`, `w2` and `w3` (W0 in lane 0). */
   sha256su1(w2: u32x4, w3: u32x4): u32x4 {
     if (velt_simd_has_sha_arm()) {
       return velt_simd_u32x4_sha256su1(this, w2, w3);
@@ -142,7 +143,7 @@ extend u32x4 {
     return emulSha256rnds2(this, abef, wk);
   }
 
-  /** x86 SHA256MSG1: the first part of the SHA-256 message schedule, of `this` and `b`. */
+  /** x86 SHA256MSG1: the first part of the SHA-256 message schedule, of `this` and `b` (W0 in lane 0). */
   sha256msg1(b: u32x4): u32x4 {
     if (velt_simd_has_sha_x86()) {
       return velt_simd_u32x4_sha256msg1(this, b);
@@ -150,7 +151,7 @@ extend u32x4 {
     return emulSha256msg1(this, b);
   }
 
-  /** x86 SHA256MSG2: the last part of the SHA-256 message schedule, of `this` and `b`. */
+  /** x86 SHA256MSG2: the last part of the SHA-256 message schedule, of `this` and `b` (W0 in lane 0). */
   sha256msg2(b: u32x4): u32x4 {
     if (velt_simd_has_sha_x86()) {
       return velt_simd_u32x4_sha256msg2(this, b);
@@ -190,7 +191,7 @@ extend u32x4 {
     return b.withLane(3, b.lane(3) + rol(this.lane(3), 30));
   }
 
-  /** x86 SHA1MSG1: the first part of the SHA-1 message schedule, of `this` and `b`. */
+  /** x86 SHA1MSG1: the first part of the SHA-1 message schedule, of `this` and `b` (W0 in lane 3, as Intel's state). */
   sha1msg1(b: u32x4): u32x4 {
     if (velt_simd_has_sha_x86()) {
       return velt_simd_u32x4_sha1msg1(this, b);
@@ -198,7 +199,7 @@ extend u32x4 {
     return emulSha1msg1(this, b);
   }
 
-  /** x86 SHA1MSG2: the last part of the SHA-1 message schedule, of `this` and `b`. */
+  /** x86 SHA1MSG2: the last part of the SHA-1 message schedule, of `this` and `b` (W0 in lane 3, as Intel's state). */
   sha1msg2(b: u32x4): u32x4 {
     if (velt_simd_has_sha_x86()) {
       return velt_simd_u32x4_sha1msg2(this, b);

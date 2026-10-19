@@ -75,20 +75,22 @@ published code ports line by line.
 | Method | Instruction |
 |---|---|
 | `abcd.sha1c(e, wk)` `sha1p` `sha1m`, `u32x4.sha1h(e)` | ARM SHA1C, SHA1P, SHA1M (four rounds; `e` a `u32`), SHA1H |
-| `w0.sha1su0(w1, w2)`, `t.sha1su1(w3)` | ARM SHA1SU0, SHA1SU1 |
+| `w0.sha1su0(w1, w2)`, `t.sha1su1(w3)` | ARM SHA1SU0, SHA1SU1 (W0 in lane 0) |
 | `abcd.sha256h(efgh, wk)`, `efgh.sha256h2(abcd, wk)` | ARM SHA256H, SHA256H2 (four rounds; state ABCD / EFGH, A in lane 0) |
-| `w0.sha256su0(w1)`, `t.sha256su1(w2, w3)` | ARM SHA256SU0, SHA256SU1 |
+| `w0.sha256su0(w1)`, `t.sha256su1(w2, w3)` | ARM SHA256SU0, SHA256SU1 (W0 in lane 0) |
 | `cdgh.sha256rnds2(abef, wk)` | x86 SHA256RNDS2 (two rounds; state ABEF / CDGH with A in lane 3; `wk`'s lanes 0 and 1 are the implicit `xmm0`) |
-| `a.sha256msg1(b)`, `a.sha256msg2(b)` | x86 SHA256MSG1, SHA256MSG2 |
+| `a.sha256msg1(b)`, `a.sha256msg2(b)` | x86 SHA256MSG1, SHA256MSG2 (W0 in lane 0) |
 | `abcd.sha1rnds4(ewk, func)` | x86 SHA1RNDS4 (four rounds, A in lane 3; `func` 0–3 is the immediate, a RangeError past 3) |
-| `a.sha1nexte(b)`, `a.sha1msg1(b)`, `a.sha1msg2(b)` | x86 SHA1NEXTE, SHA1MSG1, SHA1MSG2 |
+| `a.sha1nexte(b)`, `a.sha1msg1(b)`, `a.sha1msg2(b)` | x86 SHA1NEXTE, SHA1MSG1, SHA1MSG2 (W0 in lane 3, as the state) |
 | `u32x4.hasShaArm()`, `u32x4.hasShaX86()` | whether the CPU has them (x86: SHA with SSSE3 and SSE4.1) |
 
 Every method works everywhere: it is the instruction where the CPU has it, and otherwise an
 exact emulation in Velt with the same result. The checks are false on another architecture, on
 WebAssembly, in debug builds (Cranelift has no SHA instructions) and when `VELT_SIMD_DISABLE=sha`
-is set (to test the emulation on a CPU that has them). Reading the check costs one branch per
-loop, not per call. With the shuffles above (`T.shuffle`, `reverseBytes`) these are what the
+is set (to test the emulation on a CPU that has them). In a loop of them the flag is read once,
+before the loop, and tested in every iteration (a predictable branch per method); std's hashes
+run their loops in functions compiled for the extension, where the check is known to be true
+and there is no branch. With the shuffles above (`T.shuffle`, `reverseBytes`) these are what the
 published SHA-1 / SHA-256 routines use:
 
 ```ts
