@@ -219,6 +219,11 @@ pub struct Function {
     /// (rt_abi_async.md §1): param 0 is its frame, which the caller hands over exclusively for
     /// the duration of the call. Set by lowering; `velt_opt` keeps it on clones.
     pub is_poll: bool,
+    /// A gated function (`__intrinsic_target`, rt_abi.md "SIMD"): it runs only where the CPU has
+    /// this extension (sema checks every call), so backends compile it with the extension's
+    /// whole feature set and its SHA operations as the bare instructions. `None` for every
+    /// other function. Inlining keeps a gated body out of callers with another target.
+    pub target: Option<crate::simd::Ext>,
 }
 
 /// What every caller guarantees about one `Ptr` param for the duration of the call
@@ -261,6 +266,7 @@ impl Function {
             locs: Vec::new(),
             param_attrs: Vec::new(),
             is_poll: false,
+            target: None,
         }
     }
 

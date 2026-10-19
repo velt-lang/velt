@@ -41,7 +41,7 @@ use velt_common::Span;
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
-pub use numeric::{FloatTy, IntTy, SimdTy};
+pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use table::TyTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -187,6 +187,9 @@ pub struct Program {
     /// generator's resume function then also handles an error thrown in at each `yield`;
     /// otherwise it has no code for that.
     pub generator_throw: bool,
+    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// (#1330): lowering gives the VIR function its target.
+    pub cpu_targets: HashMap<DefId, CpuTarget>,
 }
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
