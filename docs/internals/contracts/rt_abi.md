@@ -347,6 +347,13 @@ inline. They never cross the C ABI, so no target's vector calling convention is 
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements.
 
+A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
+(`velt_simd_u32x4_shuffle_1_0_7_6`; indices below twice the lane count, a lane of the first
+argument then of the second), so the mask is a constant wherever the call is: `(a, b) -> v`. No
+std file declares one: sema checks the literals of `T.shuffle(a, b, …)` and lowering declares the
+extern (HIR `Intrinsic::SimdShuffle`). `velt_simd_<type>_reverse_bytes` (16-, 32- and 64-bit
+integer lanes) reverses the bytes within each lane.
+
 ## Module state [additive, #76]
 
 ```c

@@ -454,7 +454,8 @@ one that stops early, or a sum of floats, whose order it must keep.
   evaluation of an arrow or function expression is a new function, as in JS, also when it
   captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
   made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with
-  `==` (`includes` and keys also find `NaN`, as in JS). Comparing costs only the programs
+  `==` (`includes` and keys also find `NaN`, as in JS), except that `Map` and `Set` keys of
+  a struct type compare by content. Comparing costs only the programs
   that do it: there, an arrow without captures gets an empty environment of its own when it
   is created, and a struct converted to an interface value that is compared is counted, so
   the interface value refers to it rather than to a copy.
@@ -1601,7 +1602,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `getOrInsert(k, () => v)`. Keys compare as in JS: numbers, `bool` and `string` by value,
   objects (class instances, object types, arrays, maps, records, interface and function
   values) by identity, as `===` compares them, so two equal object literals are two keys and a
-  key changed after insertion keeps its entry; tuples compare part by part. Float keys compare
+  key changed after insertion keeps its entry; tuples compare part by part. Structs are Velt
+  value types: their keys compare and hash by content, field by field, so an equal struct finds
+  the entry. Float keys compare
   like JS's (SameValueZero: `0` and `-0` are one key, `NaN` finds itself)
   ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
   include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
