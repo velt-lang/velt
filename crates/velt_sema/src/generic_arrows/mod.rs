@@ -16,7 +16,7 @@
 mod local;
 mod recursive;
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -28,9 +28,9 @@ pub(crate) struct Lifted {
     /// Every module, with its generic arrow constants rewritten.
     pub modules: Vec<SourceModule>,
     /// Name spans of the functions made from local (non-module-level) generic arrows.
-    pub local_fns: HashSet<Span>,
+    pub local_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included.
-    pub all_fns: HashSet<Span>,
+    pub all_fns: FxHashSet<Span>,
 }
 
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
@@ -77,7 +77,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
-    let local_fns: HashSet<Span> = locals.lifted.into_iter().collect();
+    let local_fns: FxHashSet<Span> = locals.lifted.into_iter().collect();
     let all_fns = local_fns.iter().copied().chain(module_fns).collect();
     Some(Lifted {
         modules,

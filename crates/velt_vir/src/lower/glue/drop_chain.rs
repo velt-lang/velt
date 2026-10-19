@@ -20,7 +20,7 @@
 //! hold a subclass, whose drop goes through its vtable); so do self references through arrays,
 //! maps and other types.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -53,10 +53,10 @@ impl Cx<'_> {
     /// (only memory is freed, in whatever order)? Conservative: function values, interfaces,
     /// promises and `shared` values may hold anything.
     pub(super) fn drop_is_silent(&mut self, t: TyId) -> bool {
-        self.silent_in(t, &mut HashSet::new())
+        self.silent_in(t, &mut FxHashSet::default())
     }
 
-    fn silent_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn silent_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !self.needs_drop(t) || !seen.insert(t) {
             // A type reached again through itself is decided where it was first reached.
             return true;

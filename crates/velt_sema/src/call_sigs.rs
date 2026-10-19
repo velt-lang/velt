@@ -136,8 +136,8 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
 /// (`type EffectFn = () => void`), and of the interfaces extending one, in any module: an
 /// interface extending one (`interface Subscriber extends EffectFn { … }`) is a function with
 /// properties too (#921).
-fn function_names(modules: &[SourceModule]) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::new();
+fn function_names(modules: &[SourceModule]) -> rustc_hash::FxHashSet<String> {
+    let mut names = rustc_hash::FxHashSet::default();
     let items = || {
         modules
             .iter()
@@ -173,7 +173,7 @@ fn function_names(modules: &[SourceModule]) -> std::collections::HashSet<String>
 }
 
 /// Is `base` (an interface's `extends` entry) one of the `names` of `function_names`?
-fn names_function(base: &ast::TypeExpr, names: &std::collections::HashSet<String>) -> bool {
+fn names_function(base: &ast::TypeExpr, names: &rustc_hash::FxHashSet<String>) -> bool {
     matches!(&base.kind, ast::TypeExprKind::Named { path, .. } if path.len() == 1 && names.contains(&path[0].name))
 }
 

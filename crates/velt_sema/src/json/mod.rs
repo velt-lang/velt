@@ -18,7 +18,7 @@
 //! [`crate::object_copies`]: `console.log` and `===` on a type parameter (std's `indexOf` and
 //! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -77,7 +77,7 @@ impl Uses {
 
 /// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form, with
 /// their guard bits (`inst_sites::carry_guard`).
-type Needs = HashMap<DefId, Vec<(TyId, Need, u64)>>;
+type Needs = FxHashMap<DefId, Vec<(TyId, Need, u64)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
@@ -93,18 +93,18 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         .iter()
         .enumerate()
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
-    let std_fns: HashSet<DefId> = uses
+    let std_fns: FxHashSet<DefId> = uses
         .iter()
         .map(|(f, _)| *f)
         .filter(|f| is_std_fn(cx, *f))
         .collect();
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
-    let mut needs: Needs = HashMap::new();
-    let mut checked: HashSet<(TyId, Span, Need)> = HashSet::new();
+    let mut needs: Needs = FxHashMap::default();
+    let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     // A type without a JSON form is reported once per place, whether it is parsed, written or
     // both (`JSON.stringify(JSON.parse<T>(s))`).
-    let mut reported: HashSet<(TyId, Span)> = HashSet::new();
+    let mut reported: FxHashSet<(TyId, Span)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
@@ -192,7 +192,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
-        let mut seen: HashSet<TyId> = HashSet::new();
+        let mut seen: FxHashSet<TyId> = FxHashSet::default();
         ids.f = DefId(i as u32);
         let guards = guards_of(ids.tys, &mut f.body.block);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
@@ -489,7 +489,7 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
     let undef = |cx: &Ctx, t: TyId| cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
     if parse {
         let mut stack = vec![t];
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
                 continue;
@@ -516,7 +516,7 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
         return Some("`JSON.stringify` of a function with properties (Node returns `undefined`, not a string)");
     }
     let mut stack = vec![t];
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     while let Some(t) = stack.pop() {
         if !seen.insert(t) {
             continue;

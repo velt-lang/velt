@@ -9,7 +9,7 @@
 //! used as the receiver of a builtin array operation (`out.push(x)`), never stored, passed on or
 //! captured. Anything else is reported at the widening, with the conversion to write instead.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -93,8 +93,8 @@ fn report(cx: &mut Ctx, d: DefId, c: &FreshCheck) {
 /// The functions among `roots` (and the functions their results depend on) that return fresh
 /// values: start from those whose own `return`s qualify, then drop any that depends on one that
 /// does not, until nothing changes.
-fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> HashSet<DefId> {
-    let mut deps: HashMap<DefId, Option<Vec<DefId>>> = HashMap::new();
+fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> FxHashSet<DefId> {
+    let mut deps: FxHashMap<DefId, Option<Vec<DefId>>> = FxHashMap::default();
     let mut work: Vec<DefId> = roots.collect();
     while let Some(d) = work.pop() {
         if deps.contains_key(&d) {
@@ -106,7 +106,7 @@ fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> HashSet<DefI
         }
         deps.insert(d, own);
     }
-    let mut fresh: HashSet<DefId> = deps
+    let mut fresh: FxHashSet<DefId> = deps
         .iter()
         .filter(|(_, v)| v.is_some())
         .map(|(d, _)| *d)
@@ -149,13 +149,13 @@ fn own_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
     }
     let mut r = Returns {
         callees: vec![],
-        returned: HashMap::new(),
+        returned: FxHashMap::default(),
     };
     let returns = std::mem::take(&mut uses.returns);
     if !returns.iter().all(|e| r.expr(e, true)) {
         return None;
     }
-    let params: HashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
+    let params: FxHashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
     let locals: Vec<LocalId> = r.returned.keys().copied().collect();
     for l in locals {
         if !fresh_local(cx, l, &params, &uses, &mut r) {
@@ -169,7 +169,7 @@ fn own_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
 fn fresh_local(
     cx: &Ctx,
     l: LocalId,
-    params: &HashSet<LocalId>,
+    params: &FxHashSet<LocalId>,
     uses: &Uses,
     r: &mut Returns,
 ) -> bool {
@@ -279,7 +279,7 @@ struct Returns {
     /// Functions whose results are returned.
     callees: Vec<DefId>,
     /// How often each local is returned.
-    returned: HashMap<LocalId, u32>,
+    returned: FxHashMap<LocalId, u32>,
 }
 
 impl Returns {
@@ -312,12 +312,12 @@ struct Uses {
     /// `return` values.
     returns: Vec<Expr>,
     /// Every value a local is initialized or assigned with.
-    inits: HashMap<LocalId, Vec<Expr>>,
+    inits: FxHashMap<LocalId, Vec<Expr>>,
     /// Occurrences of each local.
-    total: HashMap<LocalId, u32>,
+    total: FxHashMap<LocalId, u32>,
     /// Occurrences that neither store nor pass on its value: read through (`xs.length`,
     /// `xs[i]`, a field), the receiver of a builtin (`xs.push(x)`), assigned to.
-    allowed: HashMap<LocalId, u32>,
+    allowed: FxHashMap<LocalId, u32>,
     /// Closures created in the body.
     closures: Vec<DefId>,
 }

@@ -21,7 +21,7 @@ mod infer;
 mod inits;
 mod sets;
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
@@ -37,9 +37,9 @@ use crate::hir::{DefId, TyId};
 #[derive(Default)]
 struct Visited {
     /// Functions whose bodies' sources are counted (in their own generic context).
-    fns: HashSet<DefId>,
+    fns: FxHashSet<DefId>,
     /// Entries of `Ctx::provisional_slots` counted.
-    provisional: HashSet<usize>,
+    provisional: FxHashSet<usize>,
     inits: InitsSeen,
 }
 

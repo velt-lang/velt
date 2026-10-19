@@ -7,7 +7,7 @@
 //! here — a closure literal in the argument, or a `const` bound to one — that is an error;
 //! otherwise the many-threads check where the value is made panics (velt_vir glue/many.rs).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -63,7 +63,7 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
-        let mut reported = HashSet::new();
+        let mut reported = FxHashSet::default();
         for (point, closures) in points {
             for c in closures {
                 if reported.insert(c) {
@@ -76,8 +76,8 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
 
 /// `(function, parameter index)` of parameters that a function captures in the closure it
 /// passes to `Intrinsic::HttpHandler` (std/http.vlt `serve`'s `handler`).
-fn handler_params(cx: &Ctx, fns: &[DefId]) -> HashSet<(DefId, usize)> {
-    let mut out = HashSet::new();
+fn handler_params(cx: &Ctx, fns: &[DefId]) -> FxHashSet<(DefId, usize)> {
+    let mut out = FxHashSet::default();
     for &d in fns {
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
             continue;
@@ -110,8 +110,8 @@ fn handler_params(cx: &Ctx, fns: &[DefId]) -> HashSet<(DefId, usize)> {
 }
 
 /// `const` locals initialized with a closure literal or a method value (`const h = o.handle`).
-fn closure_consts(b: &mut crate::hir::Block, locals: &[LocalDef]) -> HashMap<LocalId, DefId> {
-    struct Lets<'a>(&'a [LocalDef], HashMap<LocalId, DefId>);
+fn closure_consts(b: &mut crate::hir::Block, locals: &[LocalDef]) -> FxHashMap<LocalId, DefId> {
+    struct Lets<'a>(&'a [LocalDef], FxHashMap<LocalId, DefId>);
     impl VisitMut for Lets<'_> {
         fn stmt(&mut self, s: &mut Stmt) {
             if let S::Let {
@@ -128,21 +128,21 @@ fn closure_consts(b: &mut crate::hir::Block, locals: &[LocalDef]) -> HashMap<Loc
             }
         }
     }
-    let mut v = Lets(locals, HashMap::new());
+    let mut v = Lets(locals, FxHashMap::default());
     visit::block(b, &mut v);
     v.1
 }
 
 /// The closures `e` makes reachable that are visible here: literals in it and `const`s bound
 /// to one.
-fn closures_in(e: &Expr, bound: &HashMap<LocalId, DefId>) -> Vec<DefId> {
+fn closures_in(e: &Expr, bound: &FxHashMap<LocalId, DefId>) -> Vec<DefId> {
     let mut e = e.clone();
     let mut out = vec![];
     visit::expr(&mut e, &mut Found(bound, &mut out));
     out
 }
 
-struct Found<'a, 'b>(&'a HashMap<LocalId, DefId>, &'b mut Vec<DefId>);
+struct Found<'a, 'b>(&'a FxHashMap<LocalId, DefId>, &'b mut Vec<DefId>);
 
 impl VisitMut for Found<'_, '_> {
     fn expr(&mut self, e: &mut Expr) {

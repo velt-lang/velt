@@ -15,7 +15,7 @@
 //! reads along a field path (`o.1.0`, `(*p).1.0`) and pointers to a field (`p = &o.1`, the
 //! narrowed payload of `f: F | null`) see the inner aggregate's constants.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{
     AggId, AggLayout, Const, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
@@ -70,9 +70,9 @@ impl Known {
 #[derive(Default)]
 pub(crate) struct Facts {
     /// Aggregate local → its constant fields.
-    pub direct: HashMap<Local, Known>,
+    pub direct: FxHashMap<Local, Known>,
     /// Pointer local → constant fields of what it points to.
-    pub pointers: HashMap<Local, Known>,
+    pub pointers: FxHashMap<Local, Known>,
 }
 
 /// A whole assignment of an aggregate local.
@@ -99,7 +99,7 @@ struct Observed {
 
 /// Analyze `func`.
 pub(crate) fn analyze(aggs: &[AggLayout], func: &Function, ro: &ReadOnly) -> Facts {
-    let mut seen: HashMap<Local, Observed> = HashMap::new();
+    let mut seen: FxHashMap<Local, Observed> = FxHashMap::default();
     for (i, l) in func.locals.iter().enumerate().skip(func.params.len()) {
         if matches!(l.ty, Ty::Agg(_)) {
             seen.insert(Local(i as u32), Observed::default());
@@ -116,7 +116,7 @@ pub(crate) fn analyze(aggs: &[AggLayout], func: &Function, ro: &ReadOnly) -> Fac
     let usage = Usage::of(func);
     let read_only = read_only_pointers(func, ro, &seen);
     // Locals whose address escapes (or whose fields are rewritten wholesale) are unknown.
-    let mut pointers: HashMap<Local, Vec<(Local, Vec<u32>)>> = HashMap::new();
+    let mut pointers: FxHashMap<Local, Vec<(Local, Vec<u32>)>> = FxHashMap::default();
     seen.retain(|&a, obs| {
         let keep = !obs.dirty.contains(&None) && !obs.defs.is_empty();
         match safe_pointers(func, &usage, &read_only, obs) {
@@ -147,14 +147,14 @@ pub(crate) fn analyze(aggs: &[AggLayout], func: &Function, ro: &ReadOnly) -> Fac
 fn solve(
     aggs: &[AggLayout],
     func: &Function,
-    seen: &HashMap<Local, Observed>,
-) -> HashMap<Local, Known> {
-    let mut pending: HashMap<Local, usize> = HashMap::new();
-    let mut dependents: HashMap<Local, Vec<Local>> = HashMap::new();
+    seen: &FxHashMap<Local, Observed>,
+) -> FxHashMap<Local, Known> {
+    let mut pending: FxHashMap<Local, usize> = FxHashMap::default();
+    let mut dependents: FxHashMap<Local, Vec<Local>> = FxHashMap::default();
     for (&a, obs) in seen {
         // Copies of candidates, whole or into a field of an aggregate rvalue; each counted
         // once. A local copied into itself depends on nothing it does not already know.
-        let deps: HashSet<Local> = obs
+        let deps: FxHashSet<Local> = obs
             .defs
             .iter()
             .flat_map(|d| match d {
@@ -175,7 +175,7 @@ fn solve(
         .iter()
         .filter_map(|(&a, &c)| (c == 0).then_some(a))
         .collect();
-    let mut decided: HashMap<Local, Option<Known>> = HashMap::new();
+    let mut decided: FxHashMap<Local, Option<Known>> = FxHashMap::default();
     while let Some(a) = ready.pop() {
         let Ty::Agg(id) = func.locals[a.0 as usize].ty else {
             continue;
@@ -198,7 +198,7 @@ fn solve(
         .collect()
 }
 
-fn observe_stmt(s: &Stmt, seen: &mut HashMap<Local, Observed>) {
+fn observe_stmt(s: &Stmt, seen: &mut FxHashMap<Local, Observed>) {
     let Stmt::Assign(dst, rv) = s else { return };
     if let Rvalue::AddrOf(q) = rv {
         if let Some(obs) = seen.get_mut(&q.local) {
@@ -220,7 +220,7 @@ fn observe_stmt(s: &Stmt, seen: &mut HashMap<Local, Observed>) {
 }
 
 /// Record a write of `dst` (with `rv` for assignments, `None` for call results).
-fn observe_write(dst: &Place, rv: Option<&Rvalue>, seen: &mut HashMap<Local, Observed>) {
+fn observe_write(dst: &Place, rv: Option<&Rvalue>, seen: &mut FxHashMap<Local, Observed>) {
     let Some(obs) = seen.get_mut(&dst.local) else {
         return;
     };
@@ -243,12 +243,12 @@ fn observe_write(dst: &Place, rv: Option<&Rvalue>, seen: &mut HashMap<Local, Obs
 fn read_only_pointers(
     func: &Function,
     ro: &ReadOnly,
-    seen: &HashMap<Local, Observed>,
-) -> HashSet<Local> {
+    seen: &FxHashMap<Local, Observed>,
+) -> FxHashSet<Local> {
     let candidates: Vec<Local> = seen
         .values()
         .flat_map(|obs| obs.pointers.iter().flatten().map(|(p, _)| *p))
-        .collect::<HashSet<_>>()
+        .collect::<FxHashSet<_>>()
         .into_iter()
         .collect();
     let verdicts = ro.read_only_locals(func, &candidates, true);
@@ -263,7 +263,7 @@ fn read_only_pointers(
 fn safe_pointers(
     func: &Function,
     usage: &Usage,
-    read_only: &HashSet<Local>,
+    read_only: &FxHashSet<Local>,
     obs: &Observed,
 ) -> Option<Vec<(Local, Vec<u32>)>> {
     let mut out = Vec::with_capacity(obs.pointers.len());
@@ -298,7 +298,7 @@ fn copied_local(op: &Operand) -> Option<Local> {
 fn def_field(
     def: &Def,
     f: u32,
-    decided: &HashMap<Local, Option<Known>>,
+    decided: &FxHashMap<Local, Option<Known>>,
     id: AggId,
 ) -> Option<FieldValue> {
     match def {
@@ -327,7 +327,7 @@ fn constant_fields(
     id: AggId,
     layout: &AggLayout,
     obs: &Observed,
-    decided: &HashMap<Local, Option<Known>>,
+    decided: &FxHashMap<Local, Option<Known>>,
 ) -> Option<Known> {
     let arity_ok = obs.defs.iter().all(|d| match d {
         Def::Aggregate(ops) => ops.len() == layout.fields.len(),

@@ -9,9 +9,10 @@
 //! implementation that exists then and to the ones created later, so a program that never
 //! writes through an interface keeps its tables (and its code) unchanged.
 //!
-//! Every implementation records how it stores each field ([`SetterSrc`]) when it is created; the setter methods are synthesized only once the interface is written through.
+//! Every implementation records how it stores each field ([`SetterSrc`]) when it is created;
+//! the setter methods are synthesized only once the interface is written through.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -24,14 +25,14 @@ use crate::hir::{AdtKind, DefId, PassMode, TyId, TyKind};
 #[derive(Default)]
 pub(crate) struct IfaceWrites {
     /// Interfaces with setter slots.
-    written: HashSet<DefId>,
+    written: FxHashSet<DefId>,
     /// Per `Ctx::impls` index: how each field of its interface is stored, in field order. An
     /// implementation without an entry cannot be written through.
-    sources: HashMap<u32, Vec<SetterSrc>>,
+    sources: FxHashMap<u32, Vec<SetterSrc>>,
     /// `(interface, field)`: a part of this `readonly` field is written through the interface.
-    parts: HashSet<(DefId, usize)>,
+    parts: FxHashSet<(DefId, usize)>,
     /// The names of interface fields whose values a read copies ([`Ctx::copied_part`]).
-    copied_names: Option<HashSet<String>>,
+    copied_names: Option<FxHashSet<String>>,
 }
 
 /// How an implementation stores one interface field.
@@ -82,7 +83,7 @@ impl Ctx<'_> {
     /// Does some interface have a field `name` whose value a read may copy?
     pub(crate) fn copied_field_name(&mut self, name: &str) -> bool {
         if self.iface_writes.copied_names.is_none() {
-            let mut names = HashSet::new();
+            let mut names = FxHashSet::default();
             for info in &self.info {
                 if let DefInfo::Iface(i) = info {
                     for f in &i.fields {

@@ -49,7 +49,7 @@ the two rebuilds `velt_opt` and everything above it. (`--workspace --test golden
 
 The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substrings),
 `VELT_GOLDEN_MODES=debug` or `release` (one build mode only), `VELT_GOLDEN_JOBS=<n>` (default
-half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
+one per core, at most 16), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
 (the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
 directory fail the run too). The debug runs use the runtime's checking allocator
 (`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free (a read through a dangling

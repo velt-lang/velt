@@ -20,7 +20,7 @@
 //! - The drop of a closure env whose captures lead to a function value: every chain through
 //!   closures passes through an env, so classes and structs need not count function values.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -52,7 +52,7 @@ impl Cx<'_> {
         chain: Option<&Chain>,
     ) -> bool {
         !chain.is_some_and(|c| c.loops_over(f))
-            && self.leads_to(t, Some(ty), false, &mut HashSet::new())
+            && self.leads_to(t, Some(ty), false, &mut FxHashSet::default())
     }
 
     /// Can dropping a struct, enum or object type value of `ty` nest another drop of a `ty`
@@ -62,7 +62,7 @@ impl Cx<'_> {
             return false;
         }
         let parts = self.part_types(ty);
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         parts
             .into_iter()
             .any(|p| self.leads_to(p, Some(ty), false, &mut seen))
@@ -71,7 +71,7 @@ impl Cx<'_> {
     /// Can dropping a value of `t` run drop glue chosen at run time, a function value's
     /// included?
     pub(in crate::lower) fn drop_runs_unknown(&mut self, t: TyId) -> bool {
-        self.leads_to(t, None, true, &mut HashSet::new())
+        self.leads_to(t, None, true, &mut FxHashSet::default())
     }
 
     /// Does the drop of `t` reach a value of type `target`, or drop glue chosen at run time
@@ -81,7 +81,7 @@ impl Cx<'_> {
         t: TyId,
         target: Option<TyId>,
         fns: bool,
-        seen: &mut HashSet<TyId>,
+        seen: &mut FxHashSet<TyId>,
     ) -> bool {
         if Some(t) == target {
             return true;

@@ -6,7 +6,7 @@
 //! once the program writes through the interface, a setter per writable field
 //! (`crate::iface_writes`).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Diagnostic;
 
@@ -23,7 +23,7 @@ pub(super) fn build_impls(cx: &mut Ctx) {
         .map(DefId)
         .filter(|d| cx.adt(*d).is_some_and(|a| !a.implements.is_empty()))
         .collect();
-    let mut getters = Getters::new();
+    let mut getters = Getters::default();
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
@@ -37,7 +37,7 @@ pub(super) fn build_impls(cx: &mut Ctx) {
 
 /// (type, field index) → its getter, shared by every interface that declares the field (an
 /// interface and the ones it extends).
-type Getters = HashMap<(DefId, usize), DefId>;
+type Getters = FxHashMap<(DefId, usize), DefId>;
 
 /// One `C implements I<args>` being checked.
 struct Pair<'b> {

@@ -417,7 +417,7 @@ impl FnCx<'_, '_> {
 
 /// Does one of `stmts` assign the local named `name`?
 fn assigns(stmts: &[ast::Stmt], name: &str) -> bool {
-    let mut names = super::assigned::Assigned::new();
+    let mut names = super::assigned::Assigned::default();
     for st in stmts {
         super::assigned::assigned_in_stmt(st, &mut names);
     }

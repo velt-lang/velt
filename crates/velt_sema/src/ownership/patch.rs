@@ -13,7 +13,7 @@
 //! Callee modes: `Callee::Def` / `New` the function's, `Virtual` the vtable entry's (joined over
 //! overrides), `Dyn` / `ParamMethod` the interface method's (joined over implementations).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -31,8 +31,8 @@ use crate::visit;
 pub(super) fn patch_calls(
     cx: &mut Ctx,
     b: &mut Block,
-    borrowed: &HashSet<LocalId>,
-    reported: &mut HashSet<Span>,
+    borrowed: &FxHashSet<LocalId>,
+    reported: &mut FxHashSet<Span>,
 ) -> bool {
     let mut changed = false;
     let mut errors = vec![];
@@ -129,7 +129,7 @@ fn escape_literal_args(
     cx: &mut Ctx,
     args: &[Expr],
     keeps: &[bool],
-    borrowed: &HashSet<LocalId>,
+    borrowed: &FxHashSet<LocalId>,
 ) -> bool {
     let mut changed = false;
     for (k, a) in args.iter().enumerate() {
@@ -151,8 +151,8 @@ fn escape_literal_args(
 
 /// Spans of the calls in `b` that are awaited directly (`await f(...)`): their callee finishes
 /// before the caller's frame does.
-fn awaited_calls(b: &mut Block) -> HashSet<Span> {
-    let mut out = HashSet::new();
+fn awaited_calls(b: &mut Block) -> FxHashSet<Span> {
+    let mut out = FxHashSet::default();
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         if let E::Await(inner) = &e.kind {
             if matches!(inner.kind, E::Call { .. }) {

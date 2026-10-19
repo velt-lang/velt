@@ -14,7 +14,7 @@
 //!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped with `velt_rt_fut_drop`;
 //! - function values and closures → `{ code: ptr, env: ptr }`; interface values → `{ data, vtable }`.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, Nothing, TyId, TyKind};
 
@@ -233,7 +233,7 @@ impl<'h> Cx<'h> {
             hir::Def::Adt(a) if a.kind == AdtKind::Anon => a.fields.iter().map(|f| f.ty).collect(),
             _ => vec![],
         };
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut stack: Vec<TyId> = fields(d);
         let mut found = false;
         while let Some(t) = stack.pop() {
@@ -308,7 +308,7 @@ impl<'h> Cx<'h> {
         }
         if self.anon.ops.is_none() {
             let keys: Vec<(TyId, TyId)> = self.hir.type_ops.iter().map(|(k, v)| (*k, *v)).collect();
-            let mut by_canon = HashMap::new();
+            let mut by_canon = FxHashMap::default();
             for (k, v) in keys {
                 let TyKind::Op(o, args) = self.kind(k) else {
                     continue;
@@ -661,15 +661,15 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
 /// Canonical anonymous object types (`Cx::canon`).
 #[derive(Default)]
 pub(super) struct AnonShapes {
-    memo: HashMap<TyId, TyId>,
+    memo: FxHashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
-    reps: HashMap<Vec<(String, TyId, bool, bool)>, TyId>,
+    reps: FxHashMap<Vec<(String, TyId, bool, bool)>, TyId>,
     /// The same for unions, by sorted member list.
-    union_reps: HashMap<Vec<TyId>, TyId>,
+    union_reps: FxHashMap<Vec<TyId>, TyId>,
     /// Anonymous defs that reach themselves through fields (`Cx::reaches_itself`).
-    recursive: HashMap<DefId, bool>,
+    recursive: FxHashMap<DefId, bool>,
     /// `hir::Program::type_ops` by canonical arguments (`Cx::reduce_op`), built on first miss.
-    ops: Option<HashMap<TyId, TyId>>,
+    ops: Option<FxHashMap<TyId, TyId>>,
 }
 
 /// Where a generic union's variant lives in the canonical union (`Cx::union_variant`).

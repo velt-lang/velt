@@ -3,13 +3,13 @@
 //! that closures assign: a call may run such a closure between a check and a use, so those
 //! variables are never narrowed (`narrow.rs`, `closure_assigned`).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 /// Assigned names, each with the span of one assignment to it.
-pub(crate) type Assigned<'a> = HashMap<&'a str, Span>;
+pub(crate) type Assigned<'a> = FxHashMap<&'a str, Span>;
 
 /// Names assigned anywhere in `s`.
 pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
@@ -37,7 +37,7 @@ pub(crate) fn assigned_by_closures<'a>(
     stmts: &'a [ast::Stmt],
     exprs: impl IntoIterator<Item = &'a ast::Expr>,
 ) -> Assigned<'a> {
-    let mut out = Assigned::new();
+    let mut out = Assigned::default();
     let mut w = Walk {
         out: &mut out,
         direct: false,
@@ -51,7 +51,7 @@ pub(crate) fn assigned_by_closures<'a>(
 /// The fields of `this` that `stmts` assign (`this.x = …`) outside closures: a constructor's
 /// assignments (a closure cannot assign a `readonly` field).
 pub(crate) fn this_fields_assigned(stmts: &[ast::Stmt]) -> Assigned<'_> {
-    let mut out = Assigned::new();
+    let mut out = Assigned::default();
     let mut w = Walk {
         out: &mut out,
         direct: false,
@@ -214,8 +214,8 @@ impl<'a> Walk<'a, '_> {
     /// What a closure assigns, except its parameters and the locals its body declares (at its
     /// top level, before the assignment: an earlier one may name an enclosing variable).
     fn closure(&mut self, params: Vec<&'a str>, defaults: Vec<&'a ast::Expr>, body: Body<'a>) {
-        let mut own: HashSet<&'a str> = params.into_iter().collect();
-        let mut inner = Assigned::new();
+        let mut own: FxHashSet<&'a str> = params.into_iter().collect();
+        let mut inner = Assigned::default();
         defaults
             .into_iter()
             .for_each(|d| assigned_in_expr(d, &mut inner));
@@ -234,7 +234,7 @@ impl<'a> Walk<'a, '_> {
         self.add_free(inner, &own);
     }
 
-    fn add_free(&mut self, names: Assigned<'a>, own: &HashSet<&'a str>) {
+    fn add_free(&mut self, names: Assigned<'a>, own: &FxHashSet<&'a str>) {
         for (name, span) in names {
             if !own.contains(name) {
                 self.out.entry(name).or_insert(span);
@@ -252,7 +252,7 @@ fn param_names<'a>(
 ) {
     match pattern {
         Some(p) => {
-            let mut names = HashSet::new();
+            let mut names = FxHashSet::default();
             bound_names(p, &mut names);
             out.extend(names);
         }
@@ -260,7 +260,7 @@ fn param_names<'a>(
     }
 }
 
-fn bound_names<'a>(p: &'a ast::Pattern, out: &mut HashSet<&'a str>) {
+fn bound_names<'a>(p: &'a ast::Pattern, out: &mut FxHashSet<&'a str>) {
     use ast::PatternKind as P;
     match &p.kind {
         P::Ident(id) => {
