@@ -93,6 +93,8 @@ impl FnCx<'_, '_> {
         if self.cx.widened(kt) != self.cx.ty.str_ {
             return None;
         }
+        // The keys are listed through the value's descriptor (a record's by its methods).
+        self.note_dyn_members();
         Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
     }
 

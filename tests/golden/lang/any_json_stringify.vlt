@@ -41,4 +41,7 @@ function main(): void {
   console.log(JSON.stringify(r));
   const holder: { v: any; w: any } = { v: undefined, w: "w" };
   console.log(JSON.stringify(holder));
+  const when: any = new Date(0);
+  const dates: any[] = [new Date(86400000)];
+  console.log(JSON.stringify(when), JSON.stringify(dates));
 }

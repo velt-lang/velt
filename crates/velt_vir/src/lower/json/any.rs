@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use velt_sema::hir::{self, TyId, TyKind};
 
-use crate::lower::any::{TAG_FUNCTION, TAG_UNDEFINED};
+use crate::lower::any::{TAG_FUNCTION, TAG_SYMBOL, TAG_UNDEFINED};
 use crate::lower::any_member::{ST_OK, ST_UNSUPPORTED};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -24,9 +24,6 @@ use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 pub(in crate::lower) const SLOT_JSON: i128 = 14;
-
-/// The `symbol` tag (any.rs `TAG_SYMBOL`): with `undefined` and functions, what JSON leaves out.
-const TAG_SYMBOL: u64 = 5;
 
 impl FnLower<'_, '_> {
     /// Can the JSON writer (json/write.rs) write a value of the concrete type `t` that a dynamic
@@ -56,13 +53,13 @@ impl FnLower<'_, '_> {
             TyKind::Adt(d, _) => match self.cx.hir.def(d) {
                 hir::Def::Enum(_) => self.cx.is_c_like_enum(d),
                 hir::Def::Adt(a) => {
-                    if a.opaque {
-                        return false;
-                    }
-                    // A class with `toJSON()` is written as what it returns.
+                    // A class with `toJSON()` (a `Date`) is written as what it returns.
                     if let (Some(m), true) = (a.to_json, a.kind == hir::AdtKind::Class) {
                         let r = self.hook_result(m, t);
                         return self.json_dyn_ok(r, seen);
+                    }
+                    if a.opaque {
+                        return false;
                     }
                     let tys = self.cx.adt_field_tys(t);
                     let names: Vec<String> = a.fields.iter().map(|f| f.name.clone()).collect();
@@ -166,10 +163,11 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_OK);
         }
         let vp = self.any_value_place(data, ty);
-        // A class object (a record too) may hold itself through a dynamic value; a recursive
-        // object type's own writer tests that already.
+        // An object, an array or a tuple may hold itself through a dynamic value (the data
+        // pointer is its identity); a recursive object type's own writer tests that already.
         let guard = match self.cx.kind(ty) {
-            TyKind::Adt(d, _) => self.cx.is_class(ty) && !self.cx.recursive_object(d),
+            TyKind::Adt(d, _) => !self.cx.recursive_object(d),
+            TyKind::Array(_) | TyKind::Tuple(_) | TyKind::Shared(_) => true,
             _ => false,
         };
         if guard {

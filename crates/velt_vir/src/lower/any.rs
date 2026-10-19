@@ -39,7 +39,7 @@ pub(super) const TAG_NULL: u64 = 1;
 pub(super) const TAG_BOOLEAN: u64 = 2;
 pub(super) const TAG_NUMBER: u64 = 3;
 pub(super) const TAG_STRING: u64 = 4;
-const TAG_SYMBOL: u64 = 5;
+pub(super) const TAG_SYMBOL: u64 = 5;
 pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 

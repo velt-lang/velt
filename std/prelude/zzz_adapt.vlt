@@ -106,10 +106,16 @@ export function __anyHasOwn(o: any, k: string): boolean {
   return Object.keys(o).includes(k);
 }
 
-/** Member `k` (one of `Object.keys(o)`) of the value `o` holds: an array's by its index. */
+/**
+ * Member `k` (one of `Object.keys(o)`) of the value `o` holds: an array's or a string's by its
+ * index.
+ */
 function __anyMember(o: any, k: string): any {
   if (Array.isArray(o)) {
     return o[Number(k)];
+  }
+  if (typeof o === "string") {
+    return o[Number(k) as i64];
   }
   return o[k];
 }
@@ -146,7 +152,9 @@ export function __anyPrototype(v: any): ObjectPrototype | null {
   if (typeof v === "object") {
     return Object.prototype;
   }
-  panic(`TypeError: \`Object.getPrototypeOf\` of a ${typeof v} through \`any\` is not supported yet (#924)`);
+  panic(
+    `TypeError: \`Object.getPrototypeOf\` of a ${typeof v} through \`any\` is not supported yet (#924)`,
+  );
 }
 
 /** `Object.getPrototypeOf(r)` of an `any` holding a record: `null` for `Object.create(null)`'s. */
@@ -160,7 +168,9 @@ export function __anyRecordPrototype(r: any): ObjectPrototype | null {
 
 /** `Object.getPrototypeOf(v)` of an `any` holding an instance of class `name`, which Velt doesn't name. */
 export function __anyPrototypeUnsupported(name: string): ObjectPrototype | null {
-  panic(`TypeError: \`Object.getPrototypeOf\` of a ${name} through \`any\` is not supported yet (#924)`);
+  panic(
+    `TypeError: \`Object.getPrototypeOf\` of a ${name} through \`any\` is not supported yet (#924)`,
+  );
 }
 
 /** `Object.prototype.toString.call(v)` of an `any` (or `object`) `v` that holds no class instance. */
@@ -195,5 +205,7 @@ export function __anyObjectTag(v: any): string {
 
 /** `Object.prototype.toString.call(v)` of an `any` holding an instance of class `name`, whose tag Velt doesn't know. */
 export function __anyTagUnsupported(name: string): string {
-  panic(`TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`);
+  panic(
+    `TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`,
+  );
 }
