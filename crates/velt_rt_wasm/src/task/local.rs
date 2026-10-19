@@ -27,6 +27,10 @@ pub struct Started {
     result_drop: Option<ResultDropFn>,
     /// The id of the task driving it.
     task: usize,
+    /// It can reject (`velt_rt_fut_start_rejecting`): its result is a `Result`, tag first.
+    rejectable: bool,
+    /// A combinator handles its outcome (`velt_rt_futs_handled`).
+    handled: bool,
 }
 
 unsafe fn shared<'a>(f: *mut VeltFut) -> &'a RefCell<Started> {
@@ -36,10 +40,25 @@ unsafe fn shared<'a>(f: *mut VeltFut) -> &'a RefCell<Started> {
 /// Start the boxed promise `f` (anything else, or outside `block_on`, is left as it is).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+    start(f, result_drop, false);
+}
+
+/// `velt_rt_fut_start` for a promise that can reject: a rejection its owner has not claimed by
+/// the next microtask checkpoint is reported then, as in Node (velt_rt's task/local/unhandled.rs).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_start_rejecting(
+    f: *mut VeltFut,
+    result_drop: Option<ResultDropFn>,
+) {
+    start(f, result_drop, true);
+}
+
+unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejectable: bool) {
     if !boxed::is_lazy(f) || !executor::running() {
         return;
     }
     let (id, st) = adopt(f, result_drop);
+    st.borrow_mut().rejectable = rejectable;
     let w = executor::waker(id);
     // The creator goes on after this first run: its `await`s take their steps.
     let _ = executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
@@ -135,6 +154,8 @@ unsafe fn adopt(
         waiter: None,
         result_drop,
         task: 0,
+        rejectable: false,
+        handled: false,
     }));
     (*trailer(f)).started = Rc::into_raw(st.clone());
     *f = VeltFut::new(started_poll, started_drop);
@@ -162,10 +183,11 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
     (*t).live = 0;
     boxed::run_transfer(f);
     executor::count_local(false);
-    let (detached, waiter, result_drop) = {
+    let (detached, waiter, result_drop, watch) = {
         let mut s = st.borrow_mut();
         s.done = true;
-        (s.detached, s.waiter.take(), s.result_drop)
+        let watch = s.rejectable && !s.handled;
+        (s.detached, s.waiter.take(), s.result_drop, watch)
     };
     if detached {
         if let Some(d) = result_drop {
@@ -176,6 +198,9 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
         boxed::free(f);
     } else if let Some(w) = waiter {
         executor::wake_next(w);
+    } else if watch && *state(f) != 0 {
+        // Rejected while nobody waits for it: reported at the checkpoint unless claimed first.
+        WATCHED.with(|q| q.borrow_mut().push_back((f, Rc::clone(st))));
     }
     Poll::Ready(())
 }
@@ -196,7 +221,9 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
             (*f).poll.0,
             started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
         ) {
-            shared(f).borrow_mut().result_drop = quiet_drop;
+            let mut s = shared(f).borrow_mut();
+            s.result_drop = quiet_drop;
+            s.handled = true;
         }
         super::spawn::mark_join_handled(f, quiet_drop);
     }
@@ -253,6 +280,10 @@ thread_local! {
     /// Rejected promises to report once the microtask queue is drained, with their drops.
     static DEFERRED: RefCell<VecDeque<(*mut VeltFut, ResultDropFn)>> =
         const { RefCell::new(VecDeque::new()) };
+    /// Promises that rejected while their owner did not wait for them (`drive`): reported once
+    /// the microtask queue is drained unless the owner claimed them by then.
+    static WATCHED: RefCell<VecDeque<(*mut VeltFut, Rc<RefCell<Started>>)>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 /// Drop the unclaimed result of finished promise `f` with `d`; true when it is an unhandled
@@ -288,6 +319,26 @@ pub(super) fn flush_unhandled() {
         unsafe {
             d(state(f));
             boxed::free(f);
+        }
+    }
+    while let Some((f, st)) = WATCHED.with(|q| q.borrow_mut().pop_front()) {
+        let (unclaimed, d) = {
+            let mut s = st.borrow_mut();
+            // A detached promise was disposed of by its owner's drop (and may be freed).
+            let waiting = s.waiter.take();
+            let unclaimed = !s.detached && !s.delivered && !s.handled && waiting.is_none();
+            s.waiter = waiting;
+            (unclaimed, s.result_drop)
+        };
+        if let (true, Some(d)) = (unclaimed, d) {
+            // SAFETY: the owner still holds `f` (not detached). A promise handed to another task
+            // (its transfer is set) is that task's to claim; otherwise the report ends the
+            // process.
+            unsafe {
+                if (*trailer(f)).transfer.is_none() {
+                    d(state(f));
+                }
+            }
         }
     }
 }

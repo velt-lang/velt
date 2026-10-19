@@ -116,6 +116,9 @@ pub(crate) struct LocalSet {
     /// Rejected promises nobody handles, reported once the microtask queue is drained
     /// (unhandled.rs; each holds a reference).
     pub(super) unhandled: Vec<*mut VeltFut>,
+    /// Promises that rejected while nobody awaited them: reported once the microtask queue is
+    /// drained unless their owner claimed them by then (unhandled.rs; each holds a reference).
+    pub(super) rejections: Vec<*mut VeltFut>,
     /// The task's gate (none until it first creates a timer; gate.rs).
     pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
@@ -136,6 +139,7 @@ impl LocalSet {
             micro: super::micro::Queue::new(),
             adopting: 0,
             unhandled: Vec::new(),
+            rejections: Vec::new(),
             gate: None,
         })
     }
@@ -350,7 +354,7 @@ impl Drop for LocalSet {
             // SAFETY: the set is closed: this is the queue's last consumer.
             unsafe { self.shared.release_queued() };
         }
-        for f in self.unhandled.drain(..) {
+        for f in self.unhandled.drain(..).chain(self.rejections.drain(..)) {
             // SAFETY: a deferred rejection holds a reference (unhandled.rs).
             unsafe { node::release(f) };
         }

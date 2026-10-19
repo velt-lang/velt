@@ -1,0 +1,46 @@
+// check: no leaks
+// Timer callbacks run in Node's order whichever task runs them (#1328): by due time, timers due
+// together in creation order, each callback followed by the microtasks it queued before the next
+// one starts. Every timer here is created in one synchronous run, so the order follows from the
+// delays and the creation order alone, never from how fast the machine is.
+
+function main() {
+  // Equal delays: creation order.
+  for (const n of ["a", "b", "c", "d", "e"]) {
+    setTimeout(() => {
+      console.log("timeout", n);
+      queueMicrotask(() => console.log("microtask", n));
+    }, 5);
+  }
+
+  // Shorter delays first, though created later; `setTimeout(f, 0)` is `setTimeout(f, 1)`.
+  setTimeout(() => console.log("delay 3"), 3);
+  setTimeout(() => console.log("delay 2"), 2);
+  setTimeout(() => console.log("delay 1"), 1);
+  setTimeout(() => console.log("delay 0"), 0);
+
+  // A callback clears a timer due at the same time or just after it: it never runs.
+  const victim = setTimeout(() => console.log("cleared timer ran"), 10);
+  setTimeout(() => {
+    console.log("clearing");
+    clearTimeout(victim);
+  }, 9);
+
+  // Timers created by a callback (the last timer due): a microtask first, then the immediate,
+  // then the timeout.
+  setTimeout(() => {
+    console.log("outer");
+    setTimeout(() => console.log("nested timeout"), 0);
+    setImmediate(() => console.log("nested immediate"));
+    queueMicrotask(() => console.log("nested microtask"));
+  }, 30);
+
+  // An interval runs in turn with a timeout due at the same time, which clears it.
+  const every = setInterval(() => console.log("interval"), 12);
+  setTimeout(() => {
+    console.log("stopping interval");
+    clearInterval(every);
+  }, 12);
+
+  console.log("main end");
+}

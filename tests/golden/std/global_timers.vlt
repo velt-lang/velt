@@ -1,11 +1,17 @@
 // setTimeout, clearTimeout, setInterval and clearInterval are globals, as in TypeScript: no
 // import. An interval runs until it is cleared (each run here waits for `main` to answer, so
 // the clear comes before the next run is due); clearInterval also cancels a timeout, and
-// clearTimeout an interval, like Node. Events are ordered by channels, not by time.
+// clearTimeout an interval, like Node. Events are ordered by channels, not by time: a run that
+// is due before the clear does nothing after the third.
 
 import { channel, Channel } from "velt:channel";
 
 async function tick(runs: shared<i64>, out: Channel<i64>, ack: Channel<bool>): Promise<void> {
+  // A run that came due before `main` cleared the interval (a loaded machine) does nothing
+  // (#909).
+  if (runs.get() >= 3) {
+    return;
+  }
   runs.add(1);
   try {
     await out.send(runs.get());

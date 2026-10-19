@@ -17,6 +17,7 @@ mod losers;
 mod micro;
 mod module_state;
 mod node;
+mod order;
 mod set;
 mod timers;
 mod unhandled;
@@ -31,6 +32,7 @@ pub(crate) use module_state::{
     release_outside as module_release_outside,
 };
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
+pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;
 
@@ -70,6 +72,8 @@ struct TaskCx {
     word: Cell<u32>,
     /// The microtask being run is a waiter's step already (micro.rs).
     credit: Cell<bool>,
+    /// The time read first during this poll ([`poll_now`]).
+    now: std::cell::OnceCell<tokio::time::Instant>,
 }
 
 thread_local! {
@@ -104,6 +108,17 @@ fn current_turn() -> u32 {
     let tcx = CURRENT.with(Cell::get);
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { tcx.as_ref() }.map_or(0, |t| t.turn)
+}
+
+/// The time as read first during the poll being run (`Instant::now()` outside a task): timers
+/// count their delays from it (order.rs).
+fn poll_now() -> tokio::time::Instant {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    match unsafe { tcx.as_ref() } {
+        Some(t) => *t.now.get_or_init(tokio::time::Instant::now),
+        None => tokio::time::Instant::now(),
+    }
 }
 
 /// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
@@ -207,6 +222,7 @@ impl SetPtr {
             yielded: Cell::new(false),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
+            now: std::cell::OnceCell::new(),
         };
         let _enter = Enter::new(&tcx);
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
@@ -241,7 +257,7 @@ impl SetPtr {
             });
         }
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
-        if !self.0.is_null() && !(*self.0).unhandled.is_empty() {
+        if !self.0.is_null() && unhandled::waiting(self.0) {
             unhandled::flush(self.0);
         }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
@@ -390,6 +406,21 @@ pub unsafe extern "C" fn velt_rt_fut_box(
 /// runs when it is awaited or spawned).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+    start(f, result_drop, false);
+}
+
+/// [`velt_rt_fut_start`] for a promise that can reject (its result is a `Result`, tag first): a
+/// rejection its owner has not claimed by the next microtask checkpoint is reported as uncaught
+/// then, as in Node (unhandled.rs).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_start_rejecting(
+    f: *mut VeltFut,
+    result_drop: Option<ResultDropFn>,
+) {
+    start(f, result_drop, true);
+}
+
+unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: bool) {
     if !node::is_lazy(f) {
         return;
     }
@@ -400,6 +431,9 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let set = task_set(&*tcx);
     node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
+    if rejecting {
+        node::mark_rejectable(f);
+    }
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
     let t = &*tcx;

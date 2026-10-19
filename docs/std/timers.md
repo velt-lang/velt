@@ -1,16 +1,20 @@
 # velt:timers
 
-`import { setImmediate, Ticker } from "velt:timers"`. Timers and a pull-based interval.
-`setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` and `Timer` are globals (from the
-[prelude](prelude.md)), as in TypeScript; `velt:timers` exports them too. A timer takes a
+`import { Ticker } from "velt:timers"`. Timers and a pull-based interval.
+`setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate`, `clearImmediate`
+and `Timer` are globals (from the [prelude](prelude.md)), as in Node; `velt:timers` exports them
+too. A timer takes a
 callback, like JS: one returning the promise to run (`() => save(doc)` or `async () => { … }`),
 or a plain one (`() => console.log("x")`, a function name or a local function value,
 `setTimeout(tick, 10)`, whose parameters, if any, are optional or have defaults and are left
 out), which the compiler runs as an `async` one. The callback owns what it captures; the task
 runs as its own spawned task, so an error it throws is uncaught (catch inside the task).
 
-- `setTimeout(task: () => Promise<void>, ms): Timer`, `setImmediate(task): Timer`,
-  `clearTimeout(t)`, `delay(ms)` (the same as `sleep`).
+- `setTimeout(task: () => Promise<void>, ms): Timer` (`ms` at least 1, like Node:
+  `setTimeout(f, 0)` is `setTimeout(f, 1)`), `clearTimeout(t)`, `delay(ms)` (the same as
+  `sleep`).
+- `setImmediate(task): Timer` runs `task` once the running code and the callbacks it queued are
+  done, before the timers created after it; `clearImmediate(t)` cancels it.
 - `setInterval(task: () => Promise<void>, ms): Timer` runs `task` every `ms` milliseconds (at
   least 1, like Node) until `clearInterval(t)`, on a fixed schedule like Node's: a run is due
   every `ms`, also while the previous run's promise is still pending. Runs that overlap
@@ -20,6 +24,13 @@ runs as its own spawned task, so an error it throws is uncaught (catch inside th
   `cleared`, `started` (an interval: it ran at least once). `clearTimeout` and `clearInterval`
   both work on either kind, as in Node. Dropping a `Timer` does not cancel it. `unref()`,
   `ref()` and `hasRef()` work like Node's `Timeout` (`unref()` and `ref()` return the timer).
+
+Timer callbacks run in Node's order, whichever task created the timers: by due time, and timers
+due together in the order they were created (`setTimeout(a, 5); setTimeout(b, 5)` runs `a`, then
+`b`). Each callback runs up to its first `await` and the callbacks (microtasks) it queued run
+before the next timer's callback starts, as in Node, so a callback can still `clearTimeout` a timer
+due in the same tick. A timer whose task starts late (a loaded machine) holds back the timers due
+after it instead of being overtaken. Callbacks that `await` go on concurrently, like in Node.
 
 A pending timer keeps the process alive after `main` returns, as in Node: the program ends once
 every timer has fired and its callback's promise has settled, or was cleared. An interval keeps
