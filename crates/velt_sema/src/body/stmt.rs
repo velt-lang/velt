@@ -449,6 +449,16 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
+        // `let f = () => {}`: assigning `f` a closure that throws makes it throw
+        // (`throws::fn_types`).
+        let (ty, init) = match init {
+            Some(h) if ann.is_none() && v.kind == ast::VarKind::Let => {
+                let site = self.cx.untyped_let_site(ty, name.span, self.module);
+                let h = if site == ty { h } else { self.coerce(h, site) };
+                (site, Some(h))
+            }
+            init => (ty, init),
+        };
         if ty == self.cx.ty.unit {
             let mut d = Diagnostic::error(
                 format!("variable `{}` cannot have type `void`", name.name),

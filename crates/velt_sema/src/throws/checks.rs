@@ -93,29 +93,36 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
     let mn = cx.display(m);
     let f = cx.fn_info(d);
     let d = if f.kind == FnKind::Closure {
-        let (what, fix) = match allowed {
-            Some(t) => (
-                format!("allows only `{}`", cx.display(t)),
-                format!("add `{mn}` to the function type's `throws`"),
-            ),
-            None => (
-                "does not allow throwing".to_string(),
-                format!("write the function type with `throws {mn}`"),
-            ),
-        };
         let used_as = closure_type(cx, d, allowed);
         // A function type written without `throws` throws what is stored into it: the program
         // is checked again with this one's errors (`fn_types`), which drops this report.
-        if let Some(own) = own_final(cx, d) {
-            cx.seed_fn_sites(used_as, own);
-        }
+        let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own));
+        let inferred = cx.fn_sites.inferred.contains(&used_as);
+        let what = match allowed {
+            Some(t) if !inferred => format!("allows only `{}`", cx.display(t)),
+            _ => "does not allow throwing".to_string(),
+        };
+        let fix = match allowed {
+            Some(_) if !inferred => format!("add `{mn}` to the function type's `throws`"),
+            _ => format!("write the function type with `throws {mn}`"),
+        };
         let used_as = cx.display(used_as);
-        Diagnostic::error(
+        let mut diag = Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
             at,
         )
-        .with_note(format!("it is used as `{used_as}`"))
-        .with_note(format!("catch the error inside the function, or {fix}"))
+        .with_note(format!("it is used as `{used_as}`"));
+        if matched && cx.fn_sites.is_last() {
+            diag = diag.with_note(format!(
+                "the error types of function types written without `throws` are inferred from what is stored into them; that inference hit its limit ({} checks of the program) here",
+                crate::FN_SITE_ROUNDS + 1
+            ));
+        } else if inferred || matched {
+            diag = diag.with_note(format!(
+                "the error types of function types written without `throws` are inferred from what is stored into them, which can't include `{mn}`"
+            ));
+        }
+        diag.with_note(format!("catch the error inside the function, or {fix}"))
     } else {
         let name = short_name(&f.name);
         Diagnostic::error(
@@ -126,6 +133,28 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         .with_note(format!("add `{mn}` to the `throws` clause, or catch it"))
     };
     cx.error(d);
+}
+
+/// Closures among `fns` used as values of a function type that does not allow what they throw
+/// now: add their errors to the sites the type may come from (`fn_types`), so calls through
+/// those sites throw them in this inference too. True when a site's set grew.
+pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
+    let before = cx.fn_sites.added;
+    for &d in fns {
+        let f = cx.fn_info(d);
+        let Some(decl) = f.declared_throws.filter(|t| !t.from_body) else {
+            continue;
+        };
+        if f.kind != FnKind::Closure {
+            continue;
+        }
+        let own = own_final(cx, d);
+        if let (Some(own), Some(_)) = (own, cx.error_outside(decl.ty, own)) {
+            let used_as = closure_type(cx, d, decl.ty);
+            cx.seed_fn_sites(used_as, own);
+        }
+    }
+    cx.fn_sites.added > before
 }
 
 /// The function type closure `d` has (with the errors it may throw).

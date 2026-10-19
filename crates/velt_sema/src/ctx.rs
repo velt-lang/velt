@@ -679,6 +679,16 @@ impl<'m> Ctx<'m> {
                 throws,
             } => {
                 let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                // A function type written without `throws`, as written (`throws::fn_types`).
+                if self.fn_sites.inferred.contains(&t) {
+                    let ret = match self.ty.kind(*ret) {
+                        TyKind::Promise(v, _) => {
+                            format!("Promise<{}>", self.display_in(*v, names))
+                        }
+                        _ => self.display_in(*ret, names),
+                    };
+                    return format!("({}) => {ret}", ps.join(", "));
+                }
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {

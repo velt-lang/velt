@@ -253,9 +253,9 @@ fn check_on_current_thread(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
-    let new_cx = |held_borrows: bool, seeds: &throws::FnTypeSeeds| {
+    let new_cx = |held_borrows: bool, seeds: &throws::FnTypeSeeds, last: bool| {
         let mut cx = ctx::Ctx::new(modules, root);
-        cx.fn_sites = throws::FnSites::new(seeds.clone());
+        cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
@@ -289,16 +289,16 @@ fn check_on_current_thread(
     // Function types written without `throws` throw what the closures stored into them throw
     // (`throws::fn_types`): check again while those sets grow.
     let mut seeds = throws::FnTypeSeeds::default();
-    let (mut cx, mut entry) = new_cx(true, &seeds);
-    for _ in 0..FN_SITE_ROUNDS {
+    let (mut cx, mut entry) = new_cx(true, &seeds, false);
+    for round in 1..=FN_SITE_ROUNDS {
         let Some(grown) = cx.fn_sites.grown() else {
             break;
         };
         seeds = grown;
-        (cx, entry) = new_cx(true, &seeds);
+        (cx, entry) = new_cx(true, &seeds, round == FN_SITE_ROUNDS);
     }
     if retry_sharing(&cx) {
-        (cx, entry) = new_cx(false, &seeds);
+        (cx, entry) = new_cx(false, &seeds, true);
     }
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -348,9 +348,10 @@ fn check_on_current_thread(
     (Some(program), diags)
 }
 
-/// How many times a program is checked again for the error types of function types written
-/// without `throws` (each check finds the errors of the closures whose errors come through
-/// such a type that the previous one inferred).
+/// How many times at most a program is checked again for the error types of function types
+/// written without `throws`. The sets are propagated within one check's inference, so one more
+/// check is usually enough; another one is needed when the sets change what a check infers
+/// from them before inference (a `catch` that rethrows, an async function's rejection type).
 pub(crate) const FN_SITE_ROUNDS: usize = 8;
 
 /// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
@@ -398,6 +399,9 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);
+    if cx.fn_sites.again() {
+        return;
+    }
     cx.borrow_pass_errors = error_count(cx) > before;
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
@@ -414,6 +418,11 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
+    // The program is checked again with the error types of function types written without
+    // `throws` that this check found (`throws::fn_types`): the rest would be redone.
+    if cx.fn_sites.again() {
+        return;
+    }
     hooks::check_throws(cx);
     record_keys::check_instantiations(cx);
     json::check_json_types(cx);

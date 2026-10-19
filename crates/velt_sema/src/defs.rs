@@ -139,6 +139,10 @@ pub(crate) enum ThrowSrc {
     /// until resolved ([`crate::throws`]), so classes whose initializers construct each other
     /// in a cycle get the whole cycle's errors whatever order they are checked in.
     Defaults(DefId, Vec<TyId>, Span),
+    /// A call through a function value of this type: what is stored into the function types
+    /// written without `throws` it may come from (`throws::fn_types`), beyond what the type
+    /// says (that is a [`ThrowSrc::Direct`] of its own).
+    Indirect(TyId, Span),
 }
 
 impl ThrowSrc {
@@ -147,6 +151,7 @@ impl ThrowSrc {
             ThrowSrc::Direct(_, s)
             | ThrowSrc::Call(_, _, s)
             | ThrowSrc::Defaults(_, _, s)
+            | ThrowSrc::Indirect(_, s)
             | ThrowSrc::Slot { span: s, .. } => *s,
         }
     }
@@ -156,6 +161,7 @@ impl ThrowSrc {
     pub fn used_at(&self, span: Span, mut f: impl FnMut(TyId) -> TyId) -> ThrowSrc {
         match self {
             ThrowSrc::Direct(t, _) => ThrowSrc::Direct(f(*t), span),
+            ThrowSrc::Indirect(t, _) => ThrowSrc::Indirect(f(*t), span),
             ThrowSrc::Call(d, args, _) => {
                 ThrowSrc::Call(*d, args.iter().map(|&t| f(t)).collect(), span)
             }

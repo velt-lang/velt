@@ -36,6 +36,10 @@ pub(crate) enum Portable {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FnTypeSeeds {
     sites: HashMap<Span, Vec<Portable>>,
+    /// The error types the previous check inferred for the functions declared before any body
+    /// is checked, by `DefId` and declaration span: what a recursive call counts while the
+    /// callee is still being checked ([`Ctx::recursion_hint`]).
+    hints: HashMap<DefId, (Span, Vec<Portable>)>,
 }
 
 /// The sites of one check: the sets it applies and what it found.
@@ -49,20 +53,41 @@ pub(crate) struct FnSites {
     /// `seeds` with what this check found added.
     found: FnTypeSeeds,
     grew: bool,
+    /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
+    /// for the current `found`.
+    indirect: HashMap<TyId, Option<TyId>>,
+    /// How many errors were added to `found`.
+    pub added: usize,
+    /// The site types resolved with an inferred error type: shown as written, without it.
+    pub inferred: HashSet<TyId>,
+    last: bool,
 }
 
 impl FnSites {
-    pub fn new(seeds: FnTypeSeeds) -> Self {
+    /// The sites of a check with `seeds`; `last`: the program is not checked again whatever
+    /// this check finds.
+    pub fn new(seeds: FnTypeSeeds, last: bool) -> Self {
         FnSites {
             found: seeds.clone(),
             seeds,
+            last,
             ..Default::default()
         }
     }
 
     /// The sets to check the program with again, when this check added to them.
     pub fn grown(&self) -> Option<FnTypeSeeds> {
-        self.grew.then(|| self.found.clone())
+        (self.grew && !self.last).then(|| self.found.clone())
+    }
+
+    /// Is this the last check, whatever it finds?
+    pub fn is_last(&self) -> bool {
+        self.last
+    }
+
+    /// Will the program be checked again (the passes after throws inference can be skipped)?
+    pub fn again(&self) -> bool {
+        self.grew && !self.last
     }
 }
 
@@ -88,10 +113,12 @@ impl Ctx<'_> {
             self.no_void_error(e, t.span);
             e
         });
+        let inferred = throws.is_none();
         let err = match err {
             Some(e) => self.canon_error(Some(e)),
             None => self.site_error(span, env.module),
         };
+        let inferred = inferred && err.is_some();
         let err = err.unwrap_or(never);
         let throws = match self.ty.kind(ret).clone() {
             TyKind::Promise(v, e) if err != never => {
@@ -109,7 +136,48 @@ impl Ctx<'_> {
         if throws_clause.is_none() {
             self.record_fn_site(span, env.module, t);
         }
+        if inferred {
+            self.fn_sites.inferred.insert(t);
+        }
         t
+    }
+
+    /// The type of a `let` declared at `span` in module `module` without a type, from its
+    /// initializer's type `t`: a function type is a site too (it may be assigned a closure that
+    /// throws), as if written there.
+    pub(crate) fn untyped_let_site(&mut self, t: TyId, span: Span, module: usize) -> TyId {
+        let TyKind::FnPtr {
+            params,
+            mut ret,
+            throws,
+        } = self.ty.kind(t).clone()
+        else {
+            return t;
+        };
+        let never = self.ty.never;
+        let rejects = matches!(self.ty.kind(ret), TyKind::Promise(_, e) if *e != never);
+        if throws != never || rejects {
+            return t;
+        }
+        let Some(err) = self.site_error(span, module) else {
+            self.record_fn_site(span, module, t);
+            return t;
+        };
+        let throws = match self.ty.kind(ret).clone() {
+            TyKind::Promise(v, _) => {
+                ret = self.ty.promise_rejecting(v, err);
+                never
+            }
+            _ => err,
+        };
+        let s = self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+        });
+        self.record_fn_site(span, module, s);
+        self.fn_sites.inferred.insert(s);
+        s
     }
 
     /// A function type without `throws` written at `span` in module `module`, resolved to
@@ -137,15 +205,10 @@ impl Ctx<'_> {
 
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
-    /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
-    /// reach every function type of the same shape, and a `catch` around a call through one
-    /// reads `e.message` as TypeScript code does.
+    /// `err` can't be kept (then the use is reported).
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
-            if !self.is_error_class(m) {
-                return false;
-            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -161,10 +224,79 @@ impl Ctx<'_> {
                 if !set.contains(p) {
                     set.push(p.clone());
                     self.fn_sites.grew = true;
+                    self.fn_sites.added += 1;
+                    self.fn_sites.indirect.clear();
                 }
             }
         }
         !matching.is_empty()
+    }
+
+    /// What a call through a value of function type `t` throws beyond what `t` says: what is
+    /// stored into the sites `t` may come from, as found so far (`None` before anything is).
+    /// The error types of the functions calling through such a type grow with them, and so
+    /// do the sets of the sites those functions are stored into: the sets are propagated in
+    /// the inference of one check (`throws::infer_all`), and the program is checked again
+    /// once, with them.
+    pub(crate) fn indirect_error(&mut self, t: TyId) -> Option<TyId> {
+        if self.fn_sites.found.sites.is_empty() {
+            return None;
+        }
+        if let Some(e) = self.fn_sites.indirect.get(&t) {
+            return *e;
+        }
+        let matching: Vec<Span> = (self.fn_sites.sites.iter())
+            .filter(|(_, g)| self.site_matches(*g, t, 0))
+            .map(|(s, _)| *s)
+            .collect();
+        let mut members = vec![];
+        for s in matching {
+            for p in self
+                .fn_sites
+                .found
+                .sites
+                .get(&s)
+                .cloned()
+                .unwrap_or_default()
+            {
+                members.extend(self.unport(&p));
+            }
+        }
+        let e = self.error_union(&members);
+        self.fn_sites.indirect.insert(t, e);
+        e
+    }
+
+    /// Keep the error types this check inferred for the next check, when there is one.
+    pub(crate) fn record_recursion_hints(&mut self, fns: &[DefId]) {
+        if !self.fn_sites.again() {
+            return;
+        }
+        for &d in fns {
+            if d.0 as usize >= self.collected_defs {
+                continue;
+            }
+            let Some(t) = self.fn_info(d).throws else {
+                continue;
+            };
+            let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
+                .map(|m| self.port(m, 0))
+                .collect();
+            if let Some(ms) = ms {
+                let span = self.def_spans[d.0 as usize];
+                self.fn_sites.found.hints.insert(d, (span, ms));
+            }
+        }
+    }
+
+    /// What the previous check inferred function `d` throws (see [`FnTypeSeeds::hints`]).
+    pub(crate) fn recursion_hint(&mut self, d: DefId) -> Option<TyId> {
+        let (span, ms) = self.fn_sites.seeds.hints.get(&d)?.clone();
+        if self.def_spans.get(d.0 as usize) != Some(&span) {
+            return None;
+        }
+        let ms: Vec<TyId> = ms.iter().filter_map(|p| self.unport(p)).collect();
+        self.error_union(&ms)
     }
 
     /// Can a value of `used` have been typed by site type `g`: equal, with `g`'s type
@@ -247,24 +379,6 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
-    }
-
-    /// Is `t` the prelude's `Error` or a class extending it?
-    fn is_error_class(&mut self, t: TyId) -> bool {
-        let Some(root) = self.prelude_adt("Error") else {
-            return false;
-        };
-        let mut cur = t;
-        for _ in 0..64 {
-            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
-                return true;
-            }
-            match self.base_of(cur) {
-                Some(b) => cur = b,
-                None => return false,
-            }
-        }
-        false
     }
 
     /// `from` and `to` are function types that differ only in what they throw: `Some(true)`

@@ -1,5 +1,6 @@
 //! Type assertions that narrow (docs/reference/types.md "Type assertions"): `x as T` with
-//! `x: T | null` (or `| undefined`), and `u as A` with `u` a union that has the member `A`.
+//! `x: T | null` (or `| undefined`), and `u as A` with `u` a union that has the member `A` (or
+//! members that convert to `A`: `e as Error` of a caught `string | AErr`).
 //! TypeScript trusts them; Velt checks them, as it checks `x!`: the value is `T`'s, or the
 //! program panics (`type assertion failed: …`). A value of the wrong type never reads as `T`.
 //!
@@ -49,11 +50,88 @@ impl FnCx<'_, '_> {
                 if present.ty == target {
                     return Ok(present);
                 }
+                if !self.has_member(present.ty, target) {
+                    return self.members_assertion(present, target, span);
+                }
                 self.member_assertion(present, target, span)
             }
             _ if self.has_member(h.ty, target) => self.member_assertion(h, target, span),
-            _ => Err(h),
+            _ => self.members_assertion(h, target, span),
         }
+    }
+
+    /// Union value `h` as `target`, which some of its members convert to (`e as Error` of a
+    /// caught `string | AErr`): those members converted, a panic for the others.
+    fn members_assertion(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let (Some((def, _)), Some(members)) =
+            (self.cx.union_def(h.ty), self.cx.union_members(h.ty))
+        else {
+            return Err(h);
+        };
+        let Some((class, _)) = self.cx.class_of(target) else {
+            return Err(h);
+        };
+        let fits: Vec<bool> = (members.iter())
+            .map(|m| self.cx.is_instance_of(*m, class))
+            .collect();
+        if !fits.iter().any(|f| *f) || fits.iter().all(|f| *f) {
+            return Err(h);
+        }
+        let consume = !is_place(&h) || outer_mode(&h) == Some(UseMode::Move);
+        let mut arms = vec![];
+        for (v, m) in members.iter().enumerate().filter(|(v, _)| fits[*v]) {
+            let mode = if self.cx.is_copy(*m) {
+                UseMode::Copy
+            } else if consume {
+                UseMode::Move
+            } else {
+                UseMode::Borrow
+            };
+            let b = self.new_local("<asserted>", *m, false, span, LocalKind::Bind);
+            let value = self.mk(H::Local(b, mode), *m, span);
+            arms.push(hir::Arm {
+                pat: hir::Pat {
+                    kind: P::Variant {
+                        def,
+                        variant: v as u32,
+                        args: vec![hir::Pat {
+                            kind: P::Binding(b, mode),
+                            ty: *m,
+                            span,
+                        }],
+                    },
+                    ty: h.ty,
+                    span,
+                },
+                guard: None,
+                body: self.coerce(value, target),
+            });
+        }
+        let shown = self.cx.display(target);
+        let msg = self.str_lit(
+            &format!("TypeError: type assertion failed: the value is not of type `{shown}`"),
+            span,
+        );
+        let never = self.cx.ty.never;
+        arms.push(hir::Arm {
+            pat: hir::Pat {
+                kind: P::Wildcard,
+                ty: h.ty,
+                span,
+            },
+            guard: None,
+            body: self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
+        });
+        let kind = H::Match {
+            scrutinee: Box::new(h),
+            arms,
+        };
+        Ok(self.mk(kind, target, span))
     }
 
     /// `x as T & object` for an `x` whose type is the type parameter `T` (or `T | null`)

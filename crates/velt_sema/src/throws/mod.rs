@@ -74,6 +74,7 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
     for s in srcs {
         let t = match s {
             ThrowSrc::Direct(t, _) => Some(*t),
+            ThrowSrc::Indirect(t, _) => cx.indirect_error(*t),
             ThrowSrc::Call(g, targs, _) => {
                 let t = def_now(cx, *g, visited);
                 subst_error(cx, t, targs)

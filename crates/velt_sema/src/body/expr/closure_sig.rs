@@ -139,7 +139,13 @@ impl FnCx<'_, '_> {
         self.cx.fn_info_mut(me).throw_srcs = so_far;
         let t = crate::throws::srcs_now(self.cx, &frame.uncaught);
         self.cx.fn_info_mut(me).throw_srcs = vec![];
-        t
+        // A program checked again for the error types of function types written without
+        // `throws` (`throws::fn_types`): a call back counts what the function threw in the
+        // previous check.
+        let calls_back = (frame.uncaught.iter())
+            .any(|s| matches!(s, crate::defs::ThrowSrc::Call(g, ..) if *g == me));
+        let hint = calls_back.then(|| self.cx.recursion_hint(me)).flatten();
+        self.cx.join_errors(t, hint)
     }
 
     /// `(params) => ret throws err`, or for an async arrow `(params) => Promise<ret, err>`.
