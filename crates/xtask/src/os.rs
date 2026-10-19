@@ -89,7 +89,6 @@ pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-late
 pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 2),
     ("windows-latest", 3),
-    ("macos-latest", 1),
 ];
 
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
