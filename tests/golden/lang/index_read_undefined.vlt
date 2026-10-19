@@ -1,0 +1,43 @@
+// check: no leaks
+// An array element read where the program expects `T | undefined` (returned from a function
+// returning `T | undefined`, or stored in such a variable) is `undefined` outside the array, as
+// in Node; an element type that holds `undefined` reads so everywhere.
+function firstOf<T>(xs: T[]): T | undefined {
+  return xs[0];
+}
+
+function lastOf(xs: number[]): number | undefined {
+  return xs[xs.length - 1];
+}
+
+class Box {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function main(): void {
+  const none: number[] = [];
+  console.log(firstOf(none), firstOf([4, 5]), firstOf(["a"]));
+  console.log(lastOf([]), lastOf([1, 2]));
+  const names: string[] = ["x"];
+  const s: string | undefined = names[3];
+  console.log(s, s === undefined);
+  let t: string | undefined;
+  t = names[0];
+  console.log(t);
+  t = names[-1];
+  console.log(t);
+  const boxes: Box[] = [new Box(1)];
+  const b: Box | undefined = boxes[1];
+  console.log(b, firstOf(boxes)?.n);
+  const holes: (number | undefined)[] = [1, undefined];
+  const h = holes[5];
+  console.log(holes[0], holes[1], h, typeof h);
+  const maybe: (string | null)[] = [null];
+  const m: string | null | undefined = maybe[0];
+  const n: string | null | undefined = maybe[1];
+  const w: string | null | undefined = names[9];
+  console.log(m, n, w);
+}
