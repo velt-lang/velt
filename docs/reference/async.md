@@ -575,7 +575,12 @@ async function main() {
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
   awaited (when the task rejects, or when the handle is dropped after it did), and a stored
-  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  promise that rejects after it was dropped unawaited. As in Node, a stored promise that
+  rejects while its owner does not wait for it is reported too, once the callbacks queued
+  before have run (the microtask queue is drained), even though the owner still holds it:
+  `const p = f(); await sleep(10); await p;` ends the process at the rejection if `f` rejects
+  first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
+  it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
   error fails its `taskScope`.
 
