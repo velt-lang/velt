@@ -1,0 +1,14 @@
+// `"k" in o` on an optional `any` field the program also stores a dynamic value in (which
+// may hold `undefined`, a key Node finds) is the #930 error: Velt keeps the field as its value
+// or nothing, so the test would answer `false`.
+interface Cell { value: number; extra?: any }
+function has(x: Cell | null): boolean { return !!x && "extra" in x; }
+function main() {
+  const a: Cell = { value: 1, extra: undefined };
+  const u: any = undefined;
+  const b: Cell = { value: 2, extra: u };
+  const c: Cell = { value: 3 };
+  c.extra = undefined;
+  const d = { value: 4 } as Cell;
+  console.log(has(a), has(b), has(c), has(d), "extra" in a);
+}

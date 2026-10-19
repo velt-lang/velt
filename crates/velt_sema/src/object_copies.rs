@@ -42,6 +42,10 @@ pub(crate) struct Copy {
     pub source: Option<String>,
     /// The source is a literal nothing else refers to: only the copy's shape can show.
     pub fresh: bool,
+    /// The copy has the source's fields in the source's order, of the same types: of a fresh
+    /// source, printing, serializing, listing the keys of or spreading the copy shows what the
+    /// original would (an optional field the source lacks is absent in the copy).
+    pub in_order: bool,
 }
 
 /// An assignment to field `name` of a value of type `ty` (`None`: a type parameter's, which may
@@ -212,16 +216,25 @@ fn mark_proxy_only(cx: &mut Ctx, strict: &[(Span, TyId)]) {
     }
 }
 
-/// An assignment to a copied or absent field of either type of `c`.
+/// An assignment to a copied or absent field of either type of `c`: one through `any` if there
+/// is one (the order of the writes depends on the order the modules are checked in).
 fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write> {
     if c.fresh {
         return None;
     }
-    writes.iter().find(|w| {
-        (w.name.is_empty() || c.fields.contains(&w.name) || c.absent.contains(&w.name))
+    let mut found = None;
+    for w in writes {
+        let hit = (w.name.is_empty() || c.fields.contains(&w.name) || c.absent.contains(&w.name))
             && w.ty
-                .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to))
-    })
+                .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to));
+        if hit && w.name.is_empty() {
+            return Some(w);
+        }
+        if hit && found.is_none() {
+            found = Some(w);
+        }
+    }
+    found
 }
 
 /// Does looking at a `t` (`how`) show that `c` made a copy?
@@ -252,6 +265,9 @@ fn sees(
             members.into_iter().any(|m| related(cx, m, c.to))
         }
         Seen::Dynamic(_) => false,
+        Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys if c.fresh && c.in_order => {
+            false
+        }
         Seen::Spread => {
             related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
@@ -351,9 +367,10 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
             "a field is assigned here".to_string(),
         )
     } else {
+        let name = cx.shown_name(&w.name);
         (
-            format!("field `{}`", w.name),
-            format!("`{}` is assigned here", w.name),
+            format!("field `{name}`"),
+            format!("`{name}` is assigned here"),
         )
     };
     let d = Diagnostic::error(
@@ -409,7 +426,13 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
 fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     let (from, to) = (cx.display(c.from), cx.display(c.to));
     let src = c.source.as_deref().unwrap_or("x");
-    let fields: Vec<String> = c.fields.iter().map(|f| format!("{f}: {src}.{f}")).collect();
+    // A symbol key as written: `[KEY]: x[KEY]`.
+    let fields: Vec<String> = (c.fields.iter())
+        .map(|f| match cx.key_spelling(f) {
+            Some(k) => format!("{k}: {src}{k}"),
+            None => format!("{f}: {src}.{f}"),
+        })
+        .collect();
     let fields = match c.source {
         Some(_) => format!("`{{ {} }}`", fields.join(", ")),
         // An element of a converted array, or another value without a name.
