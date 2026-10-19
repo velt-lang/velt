@@ -403,6 +403,11 @@ impl FnCx<'_, '_> {
             Ok(()) => return,
             Err(Some(h)) => Some(h),
             Err(None) => v.init.as_ref().map(|e| match ann {
+                // `const t: readonly string[] = NAMES`: a read-only variable may hold a copy.
+                Some(t) if v.ty.as_ref().is_some_and(crate::body::is_readonly_array) => {
+                    let h = self.expr(e, Some(t), Want::Move);
+                    self.readonly_array_arg(h, t)
+                }
                 Some(t) => self.expr_coerce(e, t, Want::Move),
                 None => self.expr(e, None, Want::Move),
             }),

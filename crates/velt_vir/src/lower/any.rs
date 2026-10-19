@@ -584,13 +584,25 @@ impl FnLower<'_, '_> {
         let out = Place::local(self.temp(vt));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
-        if let TyKind::Option(inner, _) = self.cx.kind(ty) {
+        if let TyKind::Option(inner, n) = self.cx.kind(ty) {
             // `null` / `undefined` give the nothing (their box is dropped), anything else is
-            // checked as the payload.
+            // checked as the payload. On `T | null | undefined` (an option of a `T | null`),
+            // only the outer option's own nothing gives its nothing: the other one is the
+            // payload's (`null` is `Some(None)`).
             let done = self.new_block();
             let tag = self.any_tag_of(desc.clone());
-            let one = cint(TAG_NULL as i128, Ty::U64);
-            let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag, one));
+            let nil = if matches!(self.cx.kind(inner), TyKind::Option(..)) {
+                let own = if n.has_null() {
+                    TAG_NULL
+                } else {
+                    TAG_UNDEFINED
+                };
+                let own = cint(own as i128, Ty::U64);
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, own))
+            } else {
+                let one = cint(TAG_NULL as i128, Ty::U64);
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag, one))
+            };
             let (nil_bb, some_bb) = (self.new_block(), self.new_block());
             self.branch(nil, nil_bb, some_bb);
             self.switch_to(nil_bb);
