@@ -30,7 +30,9 @@ const UNSUPPORTED: &[&str] = &[
     "console_std_handles",
     "await_order_resolve",
     "promise_shared_inflight",
-    "spawn_shared_promise_",
+    "spawn_shared_promise_alias",
+    "spawn_shared_promise_map",
+    "spawn_shared_promise_spawned",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
