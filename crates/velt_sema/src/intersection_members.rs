@@ -288,7 +288,7 @@ impl Ctx<'_> {
             .map(|&(k, ty)| crate::collect::getters::field_getter(self, d, self_ty, k, ty))
             .collect();
         let setters = self
-            .writable_fields(iface)
+            .setter_fields(iface)
             .iter()
             .map(|&j| SetterSrc::Field {
                 d,

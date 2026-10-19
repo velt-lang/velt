@@ -1,0 +1,55 @@
+// check: no leaks
+// Writes into tuple fields on receivers that are not a plain path (an index with an effect, a
+// conditional, a call with a closure argument, a non-null assertion), for classes, object
+// types and interface values alike: evaluated once, in order, and the write lands.
+interface T { t: [number, string]; m(): number; }
+class C { t: [number, string] = [1, "a"]; }
+type O = { t: [number, string] };
+function mk(): C { return new C(); }
+const cs: C[] = [new C(), new C()];
+let i = 0;
+cs[i++].t[0] = 5;
+cs[i - 1].t[1] += "x";
+const c = i > 0;
+(c ? cs[0] : cs[1]).t[0] += 2;
+cs.find((q) => q.t[0] === 7)!.t[1] = "found";
+console.log(cs[0].t[0], cs[0].t[1], cs[1].t[0], i);
+const os: O[] = [{ t: [1, "a"] }, { t: [2, "b"] }];
+let j = 0;
+os[j++].t[0] = 9;
+os[j].t[1] = "q";
+console.log(os[0].t[0], os[1].t[1], j);
+const m: Map<string, T> = new Map();
+m.set("a", { t: [1, "a"], m(): number { return 1; } });
+m.get("a")!.t[0] = 33;
+m.get("a")!.t[1] += "z";
+console.log(m.get("a")!.t[0], m.get("a")!.t[1]);
+const xs: T[] = [{ t: [1, "a"], m(): number { return 1; } }];
+let k = 0;
+const vv = (xs[k++].t[1] += "!");
+const ww = xs[--k].t[0]++;
+console.log(vv, ww, xs[0].t[0], k);
+let tt: T | undefined = xs[0];
+tt!.t[0] = 77;
+console.log(xs[0].t[0]);
+
+// With an await or a throw in the right-hand side, and a right-hand side (or another task)
+// that drops every other reference to the receiver.
+const lit = (n: number, s: string): T => ({ t: [n, s], m(): number { return n; } });
+async function val(n: number): Promise<number> { await Promise.resolve(0); return n; }
+async function go(): Promise<void> {
+  const xs: T[] = [lit(1, "a"), lit(2, "b")];
+  let i = 0;
+  xs[i++].t[0] = await val(3);
+  xs.find((q) => q.t[1] === "b")!.t[0] += await val(4);
+  console.log(xs[0].t[0], xs[1].t[0], i);
+  try {
+    xs[i--].t[1] = (() => { xs.length = 0; if (i < 5) throw new Error("boom"); return "z"; })();
+  } catch (e) { console.log((e as Error).message, i, xs.length); }
+  const ys: T[] = [lit(1, "y".repeat(3))];
+  const p = (async () => { ys.find((q) => q.t[0] === 1)!.t[0] = await val(9); })();
+  ys.pop();
+  await p;
+  console.log(ys.length);
+}
+await go();

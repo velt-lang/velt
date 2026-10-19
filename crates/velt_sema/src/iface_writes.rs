@@ -2,14 +2,14 @@
 //! note on issue #1112, hir_encodings.md "Interface values").
 //!
 //! An interface's table holds its methods, then one getter per field (`collect::getters`). An
-//! interface the program writes a field through also gets one setter slot per writable field,
-//! after the getters: slot `methods + fields + k`, `k` counting the writable fields before the
-//! field. The setters are added when the first write through the interface is checked, to every
+//! interface the program writes a field through also gets one setter slot per field, after the
+//! getters: slot `methods + fields + k` for field `k`. A `readonly` field's setter is only used
+//! to write back a changed part of the field (`x.o.v = 5`, `body/expr/iface_nested.rs`; TS
+//! `readonly` is shallow): user code cannot assign the field itself. The setters are added when the first write through the interface is checked, to every
 //! implementation that exists then and to the ones created later, so a program that never
 //! writes through an interface keeps its tables (and its code) unchanged.
 //!
-//! Every implementation records how it stores each writable field ([`SetterSrc`]) when it is
-//! created; the setter methods are synthesized only once the interface is written through.
+//! Every implementation records how it stores each field ([`SetterSrc`]) when it is created; the setter methods are synthesized only once the interface is written through.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,20 +17,24 @@ use velt_common::{Diagnostic, Span};
 
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::ctx::Ctx;
-use crate::defs::ParamSig;
-use crate::hir::{DefId, PassMode, TyId};
+use crate::defs::{DefInfo, ParamSig};
+use crate::hir::{AdtKind, DefId, PassMode, TyId, TyKind};
 
 /// The interfaces written through and how their implementations store fields.
 #[derive(Default)]
 pub(crate) struct IfaceWrites {
     /// Interfaces with setter slots.
     written: HashSet<DefId>,
-    /// Per `Ctx::impls` index: how each writable field of its interface is stored, in field
-    /// order. An implementation without an entry cannot be written through.
+    /// Per `Ctx::impls` index: how each field of its interface is stored, in field order. An
+    /// implementation without an entry cannot be written through.
     sources: HashMap<u32, Vec<SetterSrc>>,
+    /// `(interface, field)`: a part of this `readonly` field is written through the interface.
+    parts: HashSet<(DefId, usize)>,
+    /// The names of interface fields whose values a read copies ([`Ctx::copied_part`]).
+    copied_names: Option<HashSet<String>>,
 }
 
-/// How an implementation stores one writable interface field.
+/// How an implementation stores one interface field.
 #[derive(Clone)]
 pub(crate) enum SetterSrc {
     /// Field `index` (of type `ty`) of struct / class / object type `d`, self type `self_ty`.
@@ -51,16 +55,55 @@ pub(crate) enum SetterSrc {
     },
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
+    /// The same for a `readonly` field (of type `ty`; struct `d`, self type `self_ty`): an
+    /// error only when a part of the field is written through the interface.
+    Unwritable {
+        span: Span,
+        name: String,
+        d: DefId,
+        self_ty: TyId,
+        ty: TyId,
+    },
 }
 
 impl Ctx<'_> {
-    /// The indexes of the fields of `iface` that are not `readonly`.
-    pub(crate) fn writable_fields(&self, iface: DefId) -> Vec<usize> {
-        self.iface(iface).map_or(vec![], |i| {
-            (0..i.fields.len())
-                .filter(|&k| !i.fields[k].readonly)
-                .collect()
-        })
+    /// Does reading a field of type `ty` through an interface give a copy that a write in place
+    /// would not reach (a tuple, an object type, an option of one; a type parameter may be one)?
+    pub(crate) fn copied_part(&self, ty: TyId, params: bool) -> bool {
+        let ty = self.ty.opt_payload(ty).unwrap_or(ty);
+        match self.ty.kind(ty) {
+            TyKind::Tuple(_) => true,
+            TyKind::Param(_) => params,
+            TyKind::Adt(d, _) => self.adt(*d).is_some_and(|a| a.kind != AdtKind::Class),
+            _ => false,
+        }
+    }
+
+    /// Does some interface have a field `name` whose value a read may copy?
+    pub(crate) fn copied_field_name(&mut self, name: &str) -> bool {
+        if self.iface_writes.copied_names.is_none() {
+            let mut names = HashSet::new();
+            for info in &self.info {
+                if let DefInfo::Iface(i) = info {
+                    for f in &i.fields {
+                        if self.copied_part(f.ty, true) {
+                            names.insert(f.name.clone());
+                        }
+                    }
+                }
+            }
+            self.iface_writes.copied_names = Some(names);
+        }
+        self.iface_writes
+            .copied_names
+            .as_ref()
+            .is_some_and(|n| n.contains(name))
+    }
+
+    /// The indexes of the fields of `iface` (each has a setter slot once it is written through).
+    pub(crate) fn setter_fields(&self, iface: DefId) -> Vec<usize> {
+        self.iface(iface)
+            .map_or(vec![], |i| (0..i.fields.len()).collect())
     }
 
     /// Does the program write a field through `iface`?
@@ -68,14 +111,48 @@ impl Ctx<'_> {
         self.iface_writes.written.contains(&iface)
     }
 
-    /// The setter slot of field `field` of `iface` (`None` for a `readonly` field).
+    /// The setter slot of field `field` of `iface`.
     pub(crate) fn setter_slot(&self, iface: DefId, field: usize) -> Option<u32> {
         let i = self.iface(iface)?;
-        let k = self
-            .writable_fields(iface)
-            .iter()
-            .position(|&f| f == field)?;
-        Some((i.methods.len() + i.fields.len() + k) as u32)
+        (field < i.fields.len()).then_some((i.methods.len() + i.fields.len() + field) as u32)
+    }
+
+    /// A part of `readonly` field `field` of `iface` is written through the interface at
+    /// `span` (its setter writes the changed part back). Reports the object literals that
+    /// cannot take it (a getter without a setter) and returns false then.
+    pub(crate) fn mark_part_written(&mut self, iface: DefId, field: usize, span: Span) -> bool {
+        if !self.mark_iface_written(iface, span) {
+            return false;
+        }
+        if !self.iface_writes.parts.insert((iface, field)) {
+            return true;
+        }
+        let mut found = vec![];
+        for (&i, srcs) in &self.iface_writes.sources {
+            if self.impls[i as usize].iface != iface {
+                continue;
+            }
+            if let Some(SetterSrc::Unwritable { span, name, .. }) = srcs.get(field) {
+                found.push((*span, name.clone()));
+            }
+        }
+        found.sort_by_key(|(s, _)| (s.file, s.lo, s.hi));
+        let ok = found.is_empty();
+        for (span, name) in found {
+            self.part_unwritable(iface, span, &name);
+        }
+        ok
+    }
+
+    fn part_unwritable(&mut self, iface: DefId, span: Span, name: &str) {
+        let iname = self.iface_name(iface);
+        self.error(
+            Diagnostic::error(
+                format!("this object literal has a getter but no setter for `{name}`, a part of which is changed through `{iname}`"),
+                span,
+            )
+            .with_note(format!("add `set {name}(v)` to the object literal: the changed value is written back through it")),
+        );
     }
 
     /// Implementation `index` stores the writable fields of its interface as `srcs` (in field
@@ -135,7 +212,7 @@ impl Ctx<'_> {
         }
         let srcs = self.iface_writes.sources[&index].clone();
         let mut defs = vec![];
-        for src in srcs {
+        for (k, src) in srcs.into_iter().enumerate() {
             match src {
                 SetterSrc::Field {
                     d,
@@ -162,6 +239,21 @@ impl Ctx<'_> {
                         .with_note(format!("add `set {name}(v)` to the object literal")),
                     );
                     return;
+                }
+                SetterSrc::Unwritable {
+                    span,
+                    name,
+                    d,
+                    self_ty,
+                    ty,
+                } => {
+                    if self.iface_writes.parts.contains(&(iface, k)) {
+                        self.part_unwritable(iface, span, &name);
+                        return;
+                    }
+                    defs.push(crate::collect::getters::unused_setter(
+                        self, d, self_ty, &name, ty,
+                    ));
                 }
             }
         }

@@ -186,7 +186,7 @@ impl Ctx<'_> {
             }
             found.push((index, *ty));
         }
-        let writable = self.writable_fields(iface);
+        let writable = self.setter_fields(iface);
         let setters = writable
             .iter()
             .map(|&k| crate::iface_writes::SetterSrc::Field {

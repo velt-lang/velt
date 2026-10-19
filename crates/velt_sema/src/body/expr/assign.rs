@@ -290,7 +290,7 @@ impl FnCx<'_, '_> {
 
     /// [`Self::assign`]; with `as_value`, a read-modify-write of an accessor also produces the
     /// assignment's value (returned `true`: the expression is that value).
-    fn assign_as(
+    pub(super) fn assign_as(
         &mut self,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,

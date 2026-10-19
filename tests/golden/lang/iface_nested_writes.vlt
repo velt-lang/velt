@@ -143,5 +143,97 @@ function dropped(): void {
   console.log(one.get(), holder.length);
 }
 
+// The right-hand side runs before the field is read: a change it makes to the same field is
+// kept (JS writes into the array the object holds when the element is assigned). A compound
+// assignment reads the old element first.
+function order(): void {
+  const y: T = { t: [1, "a"], get(): string { return "y"; } };
+  y.t[0] = (() => {
+    y.t[1] = "rhs";
+    return 2;
+  })();
+  console.log(y.t[0], y.t[1]);
+  y.t[1] += (() => {
+    y.t[1] = "lost";
+    y.t[0] = 3;
+    return "!";
+  })();
+  console.log(y.t[0], y.t[1]);
+  const n: N = { m: [null, 1], tag(): string { return "n"; } };
+  n.m[0] ??= (() => {
+    n.m[1] = 2;
+    return 5;
+  })();
+  n.m[0] ??= (() => {
+    n.m[1] = 99;
+    return 6;
+  })();
+  console.log(n.m[0], n.m[1]);
+  const c: T = new C();
+  const v = (c.t[0] = (() => {
+    c.t[1] = "v";
+    return 8;
+  })());
+  console.log(v, c.get(), c.t[1]);
+}
+
+interface N {
+  m: [number | null, number];
+  tag(): string;
+}
+
+// Receivers that are not a plain path: evaluated once, in order, and the write lands.
+function receivers(): void {
+  const lit = (n: number, s: string): T => ({ t: [n, s], get(): string { return s; } });
+  const xs: T[] = [lit(1, "a"), lit(2, "b")];
+  let i = 0;
+  xs[i++].t[0] = 50;
+  console.log(xs[0].t[0], i);
+  xs[i--].t[0]++;
+  console.log(xs[1].t[0], i);
+  const c = xs.length > 1;
+  (c ? xs[0] : xs[1]).t[0] = 60;
+  xs[0]["t"][0] += 11;
+  xs[0]["t"][1] = "k";
+  console.log(xs[0].t[0], xs[0].t[1]);
+  const fs = [(): T => xs[1]];
+  fs[0]().t[0] = 81;
+  console.log(xs[1].t[0]);
+  xs.find((q) => q.t[1] === "b")!.t[0] = 90;
+  const r = (xs.find((q) => q.t[1] === "k")!.t[1] = "found");
+  console.log(xs[1].t[0], xs[0].t[1], r);
+  // The right-hand side drops every other reference to the receiver.
+  xs.find((q) => q.t[0] === 90)!.t[1] = (() => {
+    xs.length = 0;
+    return "gone".repeat(2);
+  })();
+  console.log(xs.length);
+}
+
+// Another task changes the field while the right-hand side waits: both writes are kept.
+async function val(n: number): Promise<number> {
+  await Promise.resolve(0);
+  return n;
+}
+
+async function raced(): Promise<void> {
+  const x: T = { t: [1, "a"], get(): string { return "x"; } };
+  const p = (async () => {
+    x.t[0] = await val(100);
+  })();
+  x.t[1] = "other";
+  await p;
+  console.log(x.t[0], x.t[1]);
+  const q = (async () => {
+    x.t[1] += await val(7);
+  })();
+  x.t[0] = 1;
+  await q;
+  console.log(x.t[0], x.t[1]);
+}
+
 run();
 dropped();
+order();
+receivers();
+await raced();

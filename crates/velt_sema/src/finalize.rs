@@ -85,7 +85,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         .collect();
     let hidden = cx.hidden_keys();
     let setters = match cx.iface_written(d) {
-        true => cx.writable_fields(d),
+        true => cx.setter_fields(d),
         false => vec![],
     };
     let i = cx.iface(d).expect("ICE: interface info");
