@@ -253,6 +253,12 @@ pub(crate) struct Frame {
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: std::collections::HashMap<LocalId, DefId>,
+    /// The property writes after the declaration being checked, which a cast of a function to
+    /// a callable object type there takes as members (`expr::callables`, #921).
+    pub callable_writes: Option<expr::PendingWrites>,
+    /// Variables made functions with properties by `Object.assign(f, { … })`, with the call's
+    /// span (`expr::callables`).
+    pub assign_targets: Vec<(LocalId, Span)>,
     /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
     /// them another `this` is not supported yet (`call_apply`).
     pub method_values: std::collections::HashSet<LocalId>,
@@ -348,6 +354,8 @@ impl Frame {
             await_using: Default::default(),
             readonly_arrays: Default::default(),
             closure_consts: Default::default(),
+            callable_writes: None,
+            assign_targets: vec![],
             method_values: Default::default(),
             tries: vec![],
             uncaught: vec![],

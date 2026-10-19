@@ -454,6 +454,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         value: None,
         span: body.span,
     };
+    fcx.reused_assign_targets(&mut block);
     if f.kind == FnKind::Ctor {
         fcx.check_ctor(&f, &block);
     }

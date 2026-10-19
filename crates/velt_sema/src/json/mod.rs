@@ -497,6 +497,9 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
             if undef(cx, t) {
                 return Some("`JSON.parse` into a type that may hold `undefined`");
             }
+            if cx.is_callable_object(t) {
+                return Some("`JSON.parse` into a function with properties (#921)");
+            }
             stack.extend(children(cx.ty.kind(t)));
             if let TyKind::Adt(d, _) = cx.ty.kind(t) {
                 stack.extend(parsed_field_tys(cx, *d));
@@ -506,6 +509,11 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
     }
     if undef(cx, t) {
         return Some("`JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string)");
+    }
+    // A function with properties is a function to JSON: left out of objects, `null` in arrays
+    // (lowering), and `undefined` itself.
+    if cx.is_callable_object(cx.ty.opt_payload(t).unwrap_or(t)) {
+        return Some("`JSON.stringify` of a function with properties (Node returns `undefined`, not a string)");
     }
     let mut stack = vec![t];
     let mut seen = HashSet::new();
@@ -621,6 +629,11 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {
             if stack.contains(&t) || cx.is_json_value(d) {
+                return None;
+            }
+            // A function with properties is written as a function is (left out, `null` in an
+            // array: velt_vir `json/write.rs`); parsing into one is reported before.
+            if !parse && cx.is_callable_object(t) {
                 return None;
             }
             // `Record<K, V>` is an object (`record_keys` checked `K` where the type was resolved

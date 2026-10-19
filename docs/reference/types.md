@@ -1085,8 +1085,15 @@ none is: `T & object` at `number` is `never`, so sigx's `PrimitiveSignal<T> | Si
 at a `number` is `PrimitiveSignal<number>`; `never & X` is `never`. In a generic body,
 `T & object` is `T` under a `T extends object` bound (an overload returning `Signal<T>` fits an
 implementation returning `Signal<T & object>`), and a value of `T & object` (or of an
-intersection with such a part) is an `object`, so it can be a `WeakMap` key. `Omit<T, never>`
-and `Pick<T, never>` name no fields.
+intersection with such a part) is an `object`, so it can be a `WeakMap` key. So is an
+intersection with a part that is an object type and no part that is a type parameter
+(`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
+with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`). `x as T & object`, for an `x` of a type parameter `T` without an
+`object` bound, is checked at run time: the value itself (not a copy) when it is an object, a
+`TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
+that rules primitives out, as sigx's `signal` does). A generic alias used at
+type parameters (`Signal<{ value: V }>` in `function f<V>`) is the object type its intersection
+makes, as if written out. `Omit<T, never>` and `Pick<T, never>` name no fields.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };
@@ -1375,10 +1382,10 @@ console.log(b.v); // hi
   type (`<T>(f: () => T) => T`), which is not supported yet and is reported where it is used.
   A call signature alone (`interface F { (x: T): R }`, `type F = { (x: T): R }`) declares the
   function type `(x: T) => R`: a value of it is called as `f(x)`, any function or arrow of that
-  type is one, and `typeof f` is `"function"`. With members or other call signatures, an object
-  type or interface with call signatures is a function with properties or an overloaded
-  function (TypeScript's `((x: T) => R) & { stop(): void }`), which is not supported yet
-  (#921); a generic call signature (`<T>(x: T): T`) is a generic function type and a
+  type is one, and `typeof f` is `"function"`. With members, an object type or interface with
+  one call signature is a [function with properties](functions.md#functions-with-properties)
+  (TypeScript's `((x: T) => R) & { stop(): void }`); several call signatures (an overloaded
+  function) are not supported yet; a generic call signature (`<T>(x: T): T`) is a generic function type and a
   construct signature (`new (x: T): C`; as in TypeScript, `new(…)` in an object type is never
   a method, while in a class it is) a construct type, both planned
   ([Functions](functions.md#arrow-functions-and-function-types)). Optional parameters in a
@@ -1704,8 +1711,9 @@ does is an error saying it is not supported yet, never a quiet difference.
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
   and one holding `undefined` where the target can't hold it is a `TypeError`)
   and returns `target` itself. A `Record` target takes any keys; an object or class target only
-  fields its type declares (adding one is not supported yet). Assigning onto a function (#921) or
-  from a value that may hold another class is not supported yet.
+  fields its type declares (adding one is not supported yet). `Object.assign(fn, { … })` onto a
+  function makes a [function with properties](functions.md#functions-with-properties).
+  Assigning from a value that may hold another class is not supported yet.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
   writing one is a compile error, as in TypeScript. Node throws a `TypeError` when a frozen
   object's field is written through any reference, so a frozen object converts only to types

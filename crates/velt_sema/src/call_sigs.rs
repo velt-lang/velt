@@ -84,8 +84,13 @@ fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
 /// The modules with every module-level interface that has signatures rewritten into a type
 /// alias, or `None` when there is none; with the errors found.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, Vec<Diagnostic>) {
-    let callable =
-        |i: &ast::Item| matches!(&i.kind, ast::ItemKind::Interface(d) if !d.call_sigs.is_empty());
+    let fn_bases = function_names(modules);
+    let callable = |i: &ast::Item| match &i.kind {
+        ast::ItemKind::Interface(d) => {
+            !d.call_sigs.is_empty() || d.extends.iter().any(|b| names_function(b, &fn_bases))
+        }
+        _ => false,
+    };
     if !modules.iter().any(|m| m.ast.items.iter().any(callable)) {
         return (None, vec![]);
     }
@@ -99,12 +104,17 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
                 ast.items = items
                     .into_iter()
                     .map(|item| match item.kind {
-                        ast::ItemKind::Interface(d) if !d.call_sigs.is_empty() => ast::Item {
-                            kind: ast::ItemKind::TypeAlias(interface_alias(
-                                d, item.span, &mut diags,
-                            )),
-                            ..item
-                        },
+                        ast::ItemKind::Interface(d)
+                            if !d.call_sigs.is_empty()
+                                || d.extends.iter().any(|b| names_function(b, &fn_bases)) =>
+                        {
+                            ast::Item {
+                                kind: ast::ItemKind::TypeAlias(interface_alias(
+                                    d, item.span, &mut diags,
+                                )),
+                                ..item
+                            }
+                        }
                         _ => item,
                     })
                     .collect();
@@ -120,6 +130,51 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
         })
         .collect();
     (Some(out), diags)
+}
+
+/// The names of the type aliases of function types and of the interfaces with call signatures
+/// (`type EffectFn = () => void`), and of the interfaces extending one, in any module: an
+/// interface extending one (`interface Subscriber extends EffectFn { … }`) is a function with
+/// properties too (#921).
+fn function_names(modules: &[SourceModule]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    let items = || {
+        modules
+            .iter()
+            .filter(|m| !m.is_std)
+            .flat_map(|m| &m.ast.items)
+    };
+    for item in items() {
+        match &item.kind {
+            ast::ItemKind::TypeAlias(a)
+                if matches!(a.ty.kind, ast::TypeExprKind::Function { .. }) =>
+            {
+                names.insert(a.name.name.clone());
+            }
+            ast::ItemKind::Interface(d) if d.call_sigs.len() == 1 => {
+                names.insert(d.name.name.clone());
+            }
+            _ => {}
+        }
+    }
+    loop {
+        let before = names.len();
+        for item in items() {
+            if let ast::ItemKind::Interface(d) = &item.kind {
+                if d.extends.iter().any(|b| names_function(b, &names)) {
+                    names.insert(d.name.name.clone());
+                }
+            }
+        }
+        if names.len() == before {
+            return names;
+        }
+    }
+}
+
+/// Is `base` (an interface's `extends` entry) one of the `names` of `function_names`?
+fn names_function(base: &ast::TypeExpr, names: &std::collections::HashSet<String>) -> bool {
+    matches!(&base.kind, ast::TypeExprKind::Named { path, .. } if path.len() == 1 && names.contains(&path[0].name))
 }
 
 /// The type alias an interface with signatures declares (at `span`).
