@@ -616,7 +616,6 @@ impl<'h> Cx<'h> {
         self.ty(t) == Ty::Unit
     }
 
-    /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
     /// The JS error class standard library class `d` stands for (`TypeError` for `UrlError`):
     /// the prelude `error` class other than `Error` it extends, when declared outside the
     /// prelude's `error` module.
@@ -638,6 +637,7 @@ impl<'h> Cx<'h> {
         (base != "Error").then(|| base.to_string())
     }
 
+    /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
     pub(super) fn type_name(&self, t: TyId) -> String {
         let full = match self.types.kind(t) {
             TyKind::Adt(d, _) | TyKind::Dyn(d, _) => match self.hir.def(*d) {
