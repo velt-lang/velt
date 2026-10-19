@@ -5,8 +5,8 @@
 //! prelude `Map` and `Record` classes compare by content in any key order (Node's
 //! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
 //! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
-//! instances, object types, arrays, interface and function values) hash their identity, the rest
-//! by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
+//! instances, object types, arrays, interface and function values) hash their identity, a type
+//! declared with `struct` its fields, the rest by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
 //! strings hash their bytes with `velt_rt_str_hash`.
 //!
 //! `Intrinsic::Eq` and `Intrinsic::KeyEq` compare floats with JS's SameValueZero, as JS
@@ -141,6 +141,11 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
+            // A `struct` key hashes its content, as `KeyEq` compares it (same.rs).
+            _ if self.cx.content_key(ty) => {
+                let a = self.addr(place.clone());
+                self.call_glue(Glue::Hash, ty, vec![a])
+            }
             _ if self.cx.is_object(ty) && !self.cx.is_fn_or_dyn(ty) => {
                 self.identity_hash(place, ty)
             }
@@ -420,7 +425,7 @@ impl FnLower<'_, '_> {
             lw.assign(Place::local(h), Rvalue::Use(n));
         };
         match self.cx.kind(ty) {
-            TyKind::Tuple(_) => {
+            TyKind::Tuple(_) | TyKind::Adt(..) if !self.is_enum(ty) => {
                 for (x, _, t) in self.struct_parts(&place, &place, ty) {
                     let v = self.hash_value(&x, t);
                     add(self, v);

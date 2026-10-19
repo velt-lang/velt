@@ -207,6 +207,13 @@ pub enum Op {
     /// lanes: 32-bit integers to `f32` (rounded to nearest), `f32` to 32-bit integers
     /// (truncated, clamped to the range, NaN to 0).
     Convert(Lanes),
+    /// `(v) -> v`: the bytes of each lane in reverse order (big-endian words to native and
+    /// back). 16-, 32- and 64-bit integers.
+    ReverseBytes,
+    /// `(a, b) -> v`: byte `i` of the result is byte `mask[i]` of the 32 bytes of `a` followed
+    /// by `b` (a constant: the symbol spells it in lanes, `velt_simd_u32x4_shuffle_1_0_7_6`,
+    /// which `of_symbol` turns into bytes). Every type.
+    Shuffle([u8; 16]),
 }
 
 /// An operation on a mask: one lane per vector lane, all bits set or none.
@@ -250,7 +257,10 @@ impl SimdCall {
             return Some(SimdCall::Mask(bits, mask_op(op)?));
         }
         let lanes = Lanes::named(ty)?;
-        let op = vector_op(op)?;
+        let op = match op.strip_prefix("shuffle_") {
+            Some(indices) => Op::Shuffle(shuffle_mask(lanes, indices)?),
+            None => vector_op(op)?,
+        };
         supported(lanes, op).then_some(SimdCall::Vector(lanes, op))
     }
 
@@ -281,6 +291,7 @@ impl SimdCall {
                 | Op::As(_)
                 | Op::WidenLow
                 | Op::WidenHigh
+                | Op::ReverseBytes
                 | Op::Convert(_) => (vec![V128], V128),
                 Op::Shl | Op::Shr => (vec![V128, U32], V128),
                 Op::Select => (vec![V128, V128, V128], V128),
@@ -288,6 +299,44 @@ impl SimdCall {
             },
         }
     }
+}
+
+/// The byte mask (as `Op::Shuffle` takes it, of one vector) that reverses the bytes within each
+/// lane of `lanes`: what `Op::ReverseBytes` is.
+pub fn reversed_bytes(lanes: Lanes) -> [u8; 16] {
+    let width = (lanes.bits() / 8) as u8;
+    std::array::from_fn(|i| {
+        let i = i as u8;
+        i - i % width + (width - 1 - i % width)
+    })
+}
+
+/// The symbol of the shuffle of `lanes` that picks lane `indices[i]` (of `a`'s lanes followed by
+/// `b`'s) for lane `i`.
+pub fn shuffle_symbol(lanes: Lanes, indices: &[u8]) -> String {
+    let spelled: Vec<String> = indices.iter().map(u8::to_string).collect();
+    format!("velt_simd_{}_shuffle_{}", lanes.name(), spelled.join("_"))
+}
+
+/// The byte mask of a shuffle spelled as `lanes.count()` lane indices below twice that,
+/// separated by `_` (`1_0_7_6` for a `u32x4`).
+fn shuffle_mask(lanes: Lanes, spelled: &str) -> Option<[u8; 16]> {
+    let count = lanes.count() as usize;
+    let width = (lanes.bits() / 8) as usize;
+    let indices: Vec<usize> = spelled
+        .split('_')
+        .map(|i| i.parse().ok())
+        .collect::<Option<_>>()?;
+    if indices.len() != count || indices.iter().any(|&i| i >= 2 * count) {
+        return None;
+    }
+    let mut mask = [0u8; 16];
+    for (lane, &from) in indices.iter().enumerate() {
+        for byte in 0..width {
+            mask[lane * width + byte] = (from * width + byte) as u8;
+        }
+    }
+    Some(mask)
 }
 
 /// The lane width of the mask type `name` (`mask8x16`).
@@ -362,6 +411,7 @@ fn vector_op(name: &str) -> Option<Op> {
         "widen_low" => Op::WidenLow,
         "widen_high" => Op::WidenHigh,
         "narrow" => Op::Narrow,
+        "reverse_bytes" => Op::ReverseBytes,
         _ => return None,
     })
 }
@@ -382,6 +432,7 @@ fn supported(lanes: Lanes, op: Op) -> bool {
         Op::And | Op::Or | Op::Xor | Op::Not | Op::Shl | Op::Shr => !float,
         Op::WidenLow | Op::WidenHigh => !float && bits <= 32,
         Op::Narrow => !float && (bits == 16 || bits == 32),
+        Op::ReverseBytes => !float && bits >= 16,
         Op::Convert(to) => {
             let pair = |a: Lanes, b: Lanes| a.bits() == 32 && b == Lanes::F32 && !a.is_float();
             pair(lanes, to) || pair(to, lanes)
@@ -393,6 +444,32 @@ fn supported(lanes: Lanes, op: Op) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shuffles_spell_lanes_and_mean_bytes() {
+        let call = SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7_6").unwrap();
+        let mut mask = [0u8; 16];
+        for (lane, from) in [1u8, 0, 7, 6].into_iter().enumerate() {
+            for byte in 0..4 {
+                mask[lane * 4 + byte] = from * 4 + byte as u8;
+            }
+        }
+        assert_eq!(call, SimdCall::Vector(Lanes::U32, Op::Shuffle(mask)));
+        assert_eq!(
+            shuffle_symbol(Lanes::U32, &[1, 0, 7, 6]),
+            "velt_simd_u32x4_shuffle_1_0_7_6"
+        );
+        // Wrong count, out of range, not a number.
+        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7"), None);
+        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7_8"), None);
+        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_x_6"), None);
+        assert_eq!(
+            SimdCall::of_symbol("velt_simd_u32x4_reverse_bytes"),
+            Some(SimdCall::Vector(Lanes::U32, Op::ReverseBytes))
+        );
+        assert_eq!(SimdCall::of_symbol("velt_simd_u8x16_reverse_bytes"), None);
+        assert_eq!(SimdCall::of_symbol("velt_simd_f32x4_reverse_bytes"), None);
+    }
 
     #[test]
     fn symbols() {

@@ -37,6 +37,8 @@ browser, Node.js, wasmtime and wasmer do).
 | `v.zipLow(o)` `v.zipHigh(o)` | the lanes of the low (high) halves of `v` and `o` in turn: `v0, o0, v1, o1, …` |
 | `v.widenLow()` `v.widenHigh()` | the low (high) half's lanes at twice the width, `u8x16` to `u16x8`: 8-, 16- and 32-bit integers |
 | `v.narrow(o)` | the lanes of `v`, then of `o`, at half the width, clamped to its range, two `u16x8` to a `u8x16`: 16- and 32-bit integers |
+| `T.shuffle(a, b, i0, …)` | one lane index per lane: lane `k` is lane `ik` of `a`'s lanes followed by `b`'s (`0` to `n - 1` from `a`, `n` to `2n - 1` from `b`), like WebAssembly's `i8x16.shuffle` and LLVM's `shufflevector`. The indices must be integer literals (a compile error otherwise): they are compiled into the instruction. `u32x4.shuffle(v, v, 1, 0, 3, 2)` swaps neighbouring lanes, `u8x16.shuffle(a, b, 8, 9, …, 23)` is the bytes from the middle of `a`, `b` (`palignr`) |
+| `v.reverseBytes()` | the bytes of each lane in reverse order, so big-endian words read with `load` become their values: 16-, 32- and 64-bit integers |
 | `toF32x4()` | `i32x4`, `u32x4`: each lane as the nearest `f32` |
 | `toI32x4()` `toU32x4()` | `f32x4`: each lane truncated toward zero and clamped to the range, NaN as 0 |
 | `v.asU8x16()`, … | the same 128 bits as another vector type, nothing converted: to and from `u8x16`, and between the types with as many lanes |

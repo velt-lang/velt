@@ -454,7 +454,8 @@ one that stops early, or a sum of floats, whose order it must keep.
   evaluation of an arrow or function expression is a new function, as in JS, also when it
   captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
   made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with
-  `==` (`includes` and keys also find `NaN`, as in JS). Comparing costs only the programs
+  `==` (`includes` and keys also find `NaN`, as in JS), except that `Map` and `Set` keys of
+  a struct type compare by content. Comparing costs only the programs
   that do it: there, an arrow without captures gets an empty environment of its own when it
   is created, and a struct converted to an interface value that is compared is counted, so
   the interface value refers to it rather than to a copy.
@@ -1079,7 +1080,9 @@ through such a parameter comes from the fields the object part names (`T = { n: 
 `Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
 for a value declared `A & { id: string }`), else from the whole argument
 (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
-TypeScript. `any`, `unknown` and
+TypeScript. Such an argument is inferred from before the other arguments are checked, so
+`reset(s, { st: "done", data: null })` with `reset<T>(s: Signal<T>, v: T)` checks the literal
+against the `T` that `s` fixes. `any`, `unknown` and
 `object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
 `object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
 `object & X` keeps only the members of `X` that are objects, and has no value (`never`) when
@@ -1095,7 +1098,10 @@ with an unbounded `T` is not an `object` (at `T = string` it is a branded `strin
 `TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
 that rules primitives out, as sigx's `signal` does). A generic alias used at
 type parameters (`Signal<{ value: V }>` in `function f<V>`) is the object type its intersection
-makes, as if written out. `Omit<T, never>` and `Pick<T, never>` name no fields.
+makes, as if written out. So is a generic function's result `Signal<T>` at a `T` that mentions
+the caller's type parameters (`signal({ st: "idle", data: d as D | null })` in
+`function cell<D>`): its fields are read, written, destructured and reached with `?.`, and
+`$set` is called, on the same value. `Omit<T, never>` and `Pick<T, never>` name no fields.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };
@@ -1123,15 +1129,24 @@ console.log(last, t.a, t.id); // 2 1 x
 
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
+- A field that is a type parameter in one part and a type in another (`{ a: D } & { a: string }`)
+  is `D` when `D`'s constraint is that type (`D extends string`), the deferred `D & X` when `X` is
+  an object type or a type parameter, and an error otherwise. Two function types in one field
+  (nested `Signal<Signal<T>>`'s `$set`s) are one function when one of them takes every argument
+  the other does (its parameters have a subset of the other's fields); other overloads are
+  errors.
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
   discriminants), TypeScript makes the type, or the field, `never`; Velt reports
   ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
-  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
-  (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
+  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays (also `Signal<T>` at
+  an array `T`, reported at the call) and function types (overloads) are not parts either;
+  `T extends A & B` stays a bound on two interfaces.
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
-  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
-  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+  is passed on and returned as it is, and the members of its object parts are read (also with
+  `?.` and destructuring), written and called on the value itself (`x.id = "b"`, `s.$set(v)` for
+  `s: Signal<T>`); its conversion to one part (`T` or `{ id: string }`) and building one
+  (`{ ...t, id }`) are not supported yet (#350).
 - An intersection is the same type as the object type with its fields written out, so where a
   program has both forms, inference through `T & { id: string }` treats them alike: an object
   literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type
@@ -1587,7 +1602,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `getOrInsert(k, () => v)`. Keys compare as in JS: numbers, `bool` and `string` by value,
   objects (class instances, object types, arrays, maps, records, interface and function
   values) by identity, as `===` compares them, so two equal object literals are two keys and a
-  key changed after insertion keeps its entry; tuples compare part by part. Float keys compare
+  key changed after insertion keeps its entry; tuples compare part by part. Structs are Velt
+  value types: their keys compare and hash by content, field by field, so an equal struct finds
+  the entry. Float keys compare
   like JS's (SameValueZero: `0` and `-0` are one key, `NaN` finds itself)
   ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
   include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding

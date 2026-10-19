@@ -4,7 +4,8 @@
 //! `velt` command line and packages, and the standard library; a change there (or to the build,
 //! CI or scripts, which select everything) runs every OS in the queue. The front end and the
 //! tooling are portable Rust: Linux checks them, and the full gate on Windows and macOS after
-//! each push to `main` catches the rare exception.
+//! the push to `main` catches the rare exception. A change the queue checked on every OS skips
+//! that second run ([`after_merge_reason`]).
 
 use crate::graph::Graph;
 
@@ -48,4 +49,31 @@ pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<St
         }
     }
     None
+}
+
+/// Files that key or fill the build cache (Swatinem/rust-cache in `.github/actions/setup`): the
+/// toolchain and the dependencies. Only the pushes to `main` save the cache.
+const CACHE_INPUTS: &[&str] = &[
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/",
+    ".github/actions/setup/",
+];
+
+/// Why the whole gate runs on Windows and macOS after a change lands on `main`, or `None` when
+/// the merge queue already ran it there. `other_os` is the change's [`other_os_reason`]: on the
+/// push, `cargo xtask affected --base HEAD^1` plans the same change the queue planned (the queue
+/// tests each entry on its `base_sha`, which becomes `HEAD^1` on `main`). The gate runs when
+///
+/// - the queue checked Linux only, so Windows and macOS have not seen the change, or
+/// - the change touches the toolchain or the dependencies: the run refreshes the Windows and
+///   macOS build caches, which only pushes to `main` save.
+pub fn after_merge_reason(paths: &[String], other_os: &Option<String>) -> Option<String> {
+    if other_os.is_none() {
+        return Some("the merge queue checked Linux only".into());
+    }
+    paths
+        .iter()
+        .find(|p| CACHE_INPUTS.iter().any(|c| p.starts_with(c)))
+        .map(|p| format!("{p} changed: refresh the build cache"))
 }

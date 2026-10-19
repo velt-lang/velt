@@ -255,6 +255,9 @@ pub struct Plan {
     /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
     /// (crates/xtask/src/os.rs).
     pub other_os: Option<String>,
+    /// Why the whole gate runs on Windows and macOS after the change lands on `main`; `None`:
+    /// the queue already ran it there (crates/xtask/src/os.rs, [`os::after_merge_reason`]).
+    pub after_merge: Option<String>,
     /// How velt_syntax's robustness test cuts the goldens, if it runs.
     pub sweep: Sweep,
     /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
@@ -272,6 +275,9 @@ impl Plan {
         Plan {
             full: true,
             other_os: Some(reason.clone()),
+            // Without the changes (`--full`, or git can't tell them) nobody knows which OSes the
+            // queue checked: check them all again.
+            after_merge: Some(reason.clone()),
             reasons: vec![reason],
             rust: true,
             packages: BTreeSet::new(),
@@ -301,6 +307,7 @@ impl Plan {
         Plan {
             full: false,
             other_os: None,
+            after_merge: None,
             reasons: vec![],
             rust: false,
             packages: BTreeSet::new(),
@@ -331,9 +338,11 @@ impl Plan {
         for path in paths {
             match classify(graph, path) {
                 Effect::Everything => {
+                    let everything = Plan::everything(format!("{path} changed"));
                     return Plan {
                         sweep: plan.sweep,
-                        ..Plan::everything(format!("{path} changed"))
+                        after_merge: os::after_merge_reason(paths, &everything.other_os),
+                        ..everything
                     };
                 }
                 Effect::Nothing => {}
@@ -387,6 +396,7 @@ impl Plan {
             .cloned()
             .collect();
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
+        plan.after_merge = os::after_merge_reason(paths, &plan.other_os);
         plan
     }
 
@@ -607,9 +617,14 @@ impl Plan {
         ));
         let os = match &self.other_os {
             Some(reason) => format!("Linux, Windows, macOS ({reason})"),
-            None => "Linux (Windows and macOS after merging, on main)".into(),
+            None => "Linux".into(),
         };
         out.push_str(&format!("  merge queue OSes: {os}\n"));
+        let after = match &self.after_merge {
+            Some(reason) => format!("Windows, macOS ({reason})"),
+            None => "none (the queue checked every OS)".into(),
+        };
+        out.push_str(&format!("  whole gate after merging, on main: {after}\n"));
         out
     }
 }
