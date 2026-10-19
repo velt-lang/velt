@@ -506,7 +506,10 @@ A generic union whose type argument brings a nothing (`T | string | undefined` a
 `T = number | null`) holds it like the union written out (`number | string | null | undefined`):
 `== null`, `===`, `??` and narrowing see it, inside the generic function too. An `any` or
 `unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
-undefined`) gives `null` for a `null` and `undefined` for an `undefined`. `undefined`
+undefined`) gives `null` for a `null` and `undefined` for an `undefined`. Converted to a
+`T | null` or a `T | undefined`, it gives the nothing that type has, and stops with a
+`TypeError` for the other one (`const n: number | null = v` with a `v` holding `undefined`), as
+for any other value the type cannot hold: Node would keep the `undefined`. `undefined`
 alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
 `(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
@@ -551,23 +554,39 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
+A parameter's default applies where the argument is `undefined`, as in JavaScript:
+`f(undefined)` and `f(v)` with a `v: number | undefined` that holds `undefined` give
+`function f(x = 5)` its `5`. A parameter whose type allows `undefined` may have a default
+too (`function f(x: number | undefined = 5)`, or `status = 302` in a method whose interface
+declares `status?: number`); it is a `number` in the body.
+
+```ts
+function label(n: number = 1, unit: string = "px"): string {
+  return `${n}${unit}`;
+}
+
+function inc(n: number | undefined = 7): number {
+  return n + 1;
+}
+
+const found = [1, 2].find((x) => x > 5); // number | undefined
+console.log(label(found), label(undefined, "em"), inc(), inc(undefined), inc(1)); // 1px 1em 8 8 2
+```
+
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
 `null | undefined` alone as a written type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
 the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
-other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
-a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
+other than `undefined` on a parameter whose type allows both nothings (`T | null | undefined`);
+and a type argument whose nothing differs from one the generic keeps
 of it, directly or through what it calls (a `T | undefined` for `Map.set`
 or a generic function holding a `T | null`), which includes a generic
 alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
 `T | null | undefined`. Also not supported yet, although TypeScript accepts them:
 
-- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for a parameter
-  with a default (`f(undefined)` for `function f(x = 5)`): leave the argument out (an optional
-  parameter, `f(x?: number)`, takes `undefined`);
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
   reach the comparator;
@@ -607,13 +626,15 @@ nothings alike:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result may be `undefined`),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null` and `case undefined`. The type of `x ?? d` is `x`'s
+  see below), and so does a truthy chain that goes on after `x?.` (`if (x?.m.has(k))
+  x.m.get(k)`, `if (x?.ok())`); `switch` supports `case null` and `case undefined`. The type of `x ?? d` is `x`'s
   non-null type when `d` converts to it, else `d`'s type when `x`'s non-null type converts to
   that, else their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
   `number | string`.
 - `x ??= d` assigns `d` when `x` is `null` or `undefined` and narrows `x` (likewise `x ||= d`
-  and `x &&= d`). The target may not call a function yet (`m[key()] ??= v`): store the key in a
-  variable first.
+  and `x &&= d`). Its value is `x` afterwards, which is not null when `d` is not, also for a
+  module-level variable (`(handlers ??= []).push(h)`). The target may not call a function yet
+  (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
   trusts it; Velt checks it: a nothing panics with `non-null assertion failed`.
 - `a?: T` reads as `T | undefined`, and `a?: T | null` as `T | null | undefined`. An optional
@@ -1173,7 +1194,8 @@ const id: UserId = "u-1"; // error: a plain `string` does not convert to it; bra
 ### Indexed access types
 
 `T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
-of the fields' types, as in TypeScript: `Person["name"]` is `string`. A key that is not a field
+of the fields' types, as in TypeScript: `Person["name"]` is `string`, and an optional field
+`email?: string` gives `string | undefined`. A key that is not a field
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
