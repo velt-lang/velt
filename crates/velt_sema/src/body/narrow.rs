@@ -529,6 +529,9 @@ impl FnCx<'_, '_> {
                 }),
         };
         let Some((l, nullable, u)) = found else {
+            if let Some(token) = self.nullable_instance_field(e, class) {
+                return (vec![Fact::NonNull(token)], vec![]);
+            }
             self.note_mutable_test(e);
             return (vec![], vec![]);
         };
