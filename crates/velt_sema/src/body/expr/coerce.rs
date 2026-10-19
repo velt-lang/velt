@@ -205,6 +205,12 @@ impl FnCx<'_, '_> {
         {
             return self.adapt_fn(h, exp);
         }
+        if self.drops_void_params(h.ty, exp) {
+            // `(value: void) => void` where `() => void` is expected (a `Promise<void>`'s
+            // `resolve` stored in a `() => void`): TypeScript lets a trailing `void`
+            // parameter be left out, so a wrapper calls it without the argument.
+            return self.adapt_fn(h, exp);
+        }
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
@@ -544,5 +550,31 @@ impl FnCx<'_, '_> {
                 .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
         };
         fa == fb && opt(self.cx, da) != opt(self.cx, db)
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is function type `from` function type `to` with trailing `void` parameters added?
+    fn drops_void_params(&self, from: TyId, to: TyId) -> bool {
+        let (
+            TyKind::FnPtr {
+                params: fp,
+                ret: fr,
+                throws: ft,
+            },
+            TyKind::FnPtr {
+                params: tp,
+                ret: tr,
+                throws: tt,
+            },
+        ) = (self.cx.ty.kind(from), self.cx.ty.kind(to))
+        else {
+            return false;
+        };
+        fp.len() > tp.len()
+            && fp[..tp.len()] == tp[..]
+            && fp[tp.len()..].iter().all(|&p| p == self.cx.ty.unit)
+            && fr == tr
+            && ft == tt
     }
 }
