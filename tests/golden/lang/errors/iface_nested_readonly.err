@@ -1,0 +1,2 @@
+iface_nested_readonly.vlt:9:3: error: changing a part of `p` through an interface or generic value is not supported yet: it is a readonly field
+  = note: make the field writable in `Pair`: the changed part is then written back through it

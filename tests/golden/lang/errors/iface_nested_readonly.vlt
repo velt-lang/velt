@@ -1,0 +1,16 @@
+// Changing a part of a readonly field through an interface value would change a copy (the
+// interface has no setter for it to write the part back through): an error, not a lost write.
+interface Pair {
+  readonly p: [number, string];
+  name(): string;
+}
+
+function rename(x: Pair): void {
+  x.p[1] = "renamed";
+}
+
+function main() {
+  const lit: Pair = { p: [1, "a"], name: () => "lit" };
+  rename(lit);
+  console.log(lit.p[1]);
+}

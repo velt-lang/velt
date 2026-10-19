@@ -1,0 +1,124 @@
+// check: no leaks
+// Writing into a part of a field read through an interface (a tuple element, a nested tuple,
+// a field of an object inside a tuple) changes the field the object holds, as in JS, whether
+// the interface value is an object literal or a class instance, and every other reference to
+// the object sees it. Compound writes, `++` and assignments used as values too, with the
+// receiver evaluated once.
+interface T {
+  t: [number, string];
+  get(): string;
+}
+
+function setT(x: T): void {
+  x.t[0] = 5;
+}
+
+class C implements T {
+  t: [number, string] = [2, "b"];
+  get(): string {
+    return "c" + this.t[0];
+  }
+}
+
+interface P {
+  x: number;
+  y: number;
+}
+
+interface H {
+  ps: P[];
+  n: [[number, number], string];
+  q: [P, number];
+  label(): string;
+}
+
+function upd(h: H): void {
+  h.ps[0].x = 7;
+  h.n[0][1] = 9;
+  h.q[0].y = 4;
+  h.q[1] *= 3;
+}
+
+class HC implements H {
+  ps: P[] = [{ x: 0, y: 0 }];
+  n: [[number, number], string] = [[0, 0], "hc"];
+  q: [P, number] = [{ x: 1, y: 1 }, 1];
+  label(): string {
+    return this.n[1] + this.n[0][1] + this.q[1];
+  }
+}
+
+// Through a generic bounded by the interface.
+function bump<X extends T>(x: X): void {
+  x.t[0] = x.t[0] * 2;
+  x.t[1] += "+";
+}
+
+function deep(n: number): number {
+  const xs = [n, n + 1];
+  return n <= 0 ? 0 : xs[1] + deep(n - 1) - n;
+}
+
+function fill(x: T, n: number): void {
+  for (let i = 0; i < n; i++) {
+    x.t[1] = "s".repeat(i + 1);
+  }
+}
+
+function run(): void {
+  const a: T = { t: [1, "a"], get(): string { return "g"; } };
+  setT(a);
+  console.log(a.t[0], a.t[1]);
+  const c: T = new C();
+  setT(c);
+  console.log(c.t[0], c.get());
+
+  // Other holders of the same object see the write.
+  const holder: T[] = [a, c];
+  holder[0].t[1] = "z";
+  holder[1].t[0] += 10;
+  holder[1].t[0]++;
+  console.log(a.t[1], c.t[0], holder[0].t[1], holder[1].get());
+
+  // Nested tuples, a tuple of objects, arrays of objects.
+  const h: H = {
+    ps: [{ x: 1, y: 2 }],
+    n: [[1, 2], "q"],
+    q: [{ x: 0, y: 0 }, 2],
+    label(): string {
+      return "lit";
+    },
+  };
+  upd(h);
+  const alias = h;
+  console.log(h.ps[0].x, h.n[0][1], h.q[0].y, h.q[1], alias.n[0][1], alias.label());
+  const hc: H = new HC();
+  upd(hc);
+  console.log(hc.label(), hc.q[0].y);
+
+  // The value of the assignment, and the receiver evaluated once.
+  let calls = 0;
+  const pick = (): T => {
+    calls++;
+    return holder[1];
+  };
+  const v = (a.t[0] = 42);
+  const w = a.t[0]++;
+  const u = ++a.t[0];
+  const s = (a.t[1] += "!");
+  console.log(v, w, u, a.t[0], s, a.t[1]);
+  pick().t[0] = 11;
+  pick().t[0] += 1;
+  console.log(calls, c.t[0]);
+
+  const cc = new C();
+  bump(cc);
+  bump(cc);
+  console.log(cc.t[0], cc.t[1]);
+
+  // Deep recursion between the writes and the reads (stack reuse), strings rebuilt.
+  fill(a, 5);
+  console.log(deep(2000), a.t[1], holder[0].t[1]);
+}
+
+run();

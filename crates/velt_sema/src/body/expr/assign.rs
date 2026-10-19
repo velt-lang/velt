@@ -11,7 +11,7 @@ use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
 
 /// What an assignment writes to.
-enum AssignTarget {
+pub(super) enum AssignTarget {
     /// A writable place (`BorrowMut` modes).
     Place(hir::Expr),
     /// `obj.name` where `name` is a setter, or a field written through an interface
@@ -25,7 +25,7 @@ enum AssignTarget {
     Dynamic(hir::Expr),
 }
 
-use super::assign_paths::{is_plain_path, is_pure_place};
+use super::assign_paths::is_plain_path;
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -301,6 +301,10 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.keyed_assign(op, target, value, span) {
             return (h, false);
         }
+        let w = super::iface_nested::NestedWrite::Assign(op, value);
+        if let Some(r) = self.iface_nested_write(target, w, as_value, span) {
+            return r;
+        }
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
             let checked = self.assign_target(target, span);
             if let Some(AssignTarget::Setter(obj)) = checked {
@@ -324,55 +328,6 @@ impl FnCx<'_, '_> {
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
         }
-    }
-
-    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
-    fn logical_assign(
-        &mut self,
-        op: ast::BinaryOp,
-        checked: Option<AssignTarget>,
-        target: &ast::Expr,
-        value: &ast::Expr,
-        span: Span,
-    ) -> hir::Expr {
-        // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
-        // as usual. That reads the target twice, which is only right when reading it has no
-        // effect (JS evaluates `xs[f()]` once).
-        if !is_pure_place(target) {
-            self.cx.error(
-                Diagnostic::error(
-                    "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
-                    target.span,
-                )
-                .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
-            );
-            self.expr(value, None, Want::Borrow);
-            return self.error_expr(span);
-        }
-        // A target in error is reported once, here.
-        match checked {
-            None => {
-                self.expr(value, None, Want::Borrow);
-                return self.error_expr(span);
-            }
-            Some(
-                AssignTarget::Place(_)
-                | AssignTarget::Record(_)
-                | AssignTarget::Setter(_)
-                | AssignTarget::Indexer(_)
-                | AssignTarget::Dynamic(_),
-            ) => {}
-        }
-        let rhs = ast::Expr {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::ExprKind::Binary {
-                op,
-                lhs: Box::new(target.clone()),
-                rhs: Box::new(value.clone()),
-            },
-            span: value.span,
-        };
-        self.assign(None, target, &rhs, span)
     }
 
     /// `target = value` / `target op= value` (`op` not logical).
@@ -547,6 +502,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if let Some(h) = self.keyed_update(op, prefix, target, as_value, span) {
+            return h;
+        }
+        let w = super::iface_nested::NestedWrite::Update(op, prefix);
+        if let Some((h, _)) = self.iface_nested_write(target, w, as_value, span) {
             return h;
         }
         let place = match self.assign_target(target, span) {
