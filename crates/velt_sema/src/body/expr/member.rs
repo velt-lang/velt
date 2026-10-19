@@ -3,10 +3,11 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+pub(crate) use super::member_keys::{literal_key, member_view};
+
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::defs::Bound;
 use crate::hir::{self, AdtKind, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 use crate::ide::record::Target;
 
@@ -29,71 +30,53 @@ impl FnCx<'_, '_> {
 
     /// Field `name` of struct / class / object values of type `t`: (index, field type).
     pub(crate) fn field_of(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
-        self.cx.field_of(t, name)
+        // A class and its subclass may each have a field `#x` (`Ctx::field_seen_from`).
+        let owner = self.name_owner(name);
+        self.cx.field_seen_from(t, name, owner)
     }
 
     /// `x.field` on an interface value or bounded generic: a call of the field's getter slot
-    /// (see `collect::getters`); the result is an owned copy / clone.
-    fn iface_field(
+    /// (see `collect::getters`); the result is an owned copy / clone. Writes go through the
+    /// setter slot (`iface_write`), never through this place.
+    pub(super) fn iface_field(
         &mut self,
         mut obj: hir::Expr,
         prop: &ast::Ident,
         want: Want,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (bounds, on_param) = match self.cx.ty.kind(obj.ty) {
-            TyKind::Dyn(d, args) => (
-                vec![Bound {
-                    iface: *d,
-                    args: args.clone(),
-                }],
-                false,
-            ),
-            TyKind::Param(n) => (
-                self.bounds.get(*n as usize).cloned().unwrap_or_default(),
-                true,
-            ),
-            _ => return Err(obj),
+        let Some(f) = self.iface_field_of(obj.ty, &prop.name) else {
+            return Err(obj);
         };
-        for b in bounds {
-            let Some(i) = self.cx.iface(b.iface) else {
-                continue;
-            };
-            let Some(idx) = i.fields.iter().position(|f| f.name == prop.name) else {
-                continue;
-            };
-            let (fty, slot) = (i.fields[idx].ty, (i.methods.len() + idx) as u32);
-            self.cx
-                .rec_ref(prop.span, Target::Field(b.iface, idx as u32));
-            let fty = self.cx.ty.subst(fty, &b.args);
-            if want == Want::BorrowMut {
-                self.cx.err(
-                    format!(
-                        "cannot modify `{}` through an interface or generic value",
-                        prop.name
-                    ),
-                    prop.span,
-                );
-                return Ok(self.error_expr(span));
-            }
-            set_place_mode(&mut obj, UseMode::Borrow);
-            let callee = if on_param {
-                Callee::ParamMethod {
-                    iface: b.iface,
-                    iface_args: b.args.clone(),
-                    slot,
-                    method_type_args: vec![],
-                }
-            } else {
-                Callee::Dyn { slot }
-            };
-            let kind = H::Call {
-                callee,
-                args: vec![obj],
-            };
-            return Ok(self.mk(kind, fty, span));
+        let slot = self.cx.iface(f.iface).map_or(0, |i| i.methods.len()) + f.index;
+        self.cx
+            .rec_ref(prop.span, Target::Field(f.iface, f.index as u32));
+        if want == Want::BorrowMut {
+            self.cx.err(
+                format!(
+                    "cannot modify `{}` through an interface or generic value",
+                    prop.name
+                ),
+                prop.span,
+            );
+            return Ok(self.error_expr(span));
         }
-        Err(obj)
+        set_place_mode(&mut obj, UseMode::Borrow);
+        let callee = if f.on_param {
+            Callee::ParamMethod {
+                iface: f.iface,
+                iface_args: f.args,
+                slot: slot as u32,
+                method_type_args: vec![],
+            }
+        } else {
+            Callee::Dyn { slot: slot as u32 }
+        };
+        let kind = H::Call {
+            callee,
+            args: vec![obj],
+        };
+        Ok(self.mk(kind, f.ty, span))
     }
 
     /// `obj.prop` as a field place used per `want`.
@@ -113,12 +96,19 @@ impl FnCx<'_, '_> {
         }
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
+            // `null` for a `T | null`, `undefined` for a `T | undefined`.
+            let what = self.cx.ty.nothing_of(obj.ty).map_or("null", |n| n.word());
             self.cx.error(
-                Diagnostic::error(format!("value of type `{tn}` may be null"), obj.span)
+                Diagnostic::error(format!("value of type `{tn}` may be {what}"), obj.span)
                     .with_note(format!("use `?.{}` or check `!= null` first", prop.name)),
             );
             return None;
         }
+        // `x.f = v` on an `any` (reads were handled by `member_value`).
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return Some(h),
+            Err(obj) => obj,
+        };
         let mut obj = match self.iface_field(obj, prop, want, span) {
             Ok(call) => return Some(call),
             Err(obj) => obj,
@@ -151,6 +141,12 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
+        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
+            return;
+        }
+        if crate::collect::exports::member_maybe_dropped(self.cx, t, &prop.name) {
+            return; // the parser may have dropped its declaration (`Ctx::recovered`)
+        }
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
                 format!("cannot read `{}`: it has a setter but no getter", prop.name),
@@ -159,7 +155,10 @@ impl FnCx<'_, '_> {
         }
         let tn = self.cx.display(t);
         let mut d = Diagnostic::error(
-            format!("no field `{}` on type `{tn}`", prop.name),
+            format!(
+                "no field `{}` on type `{tn}`",
+                self.cx.shown_name(&prop.name)
+            ),
             prop.span,
         );
         if self.adt_of(t).is_some() {
@@ -167,17 +166,31 @@ impl FnCx<'_, '_> {
                 "objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys",
             );
         }
+        if matches!(
+            self.cx.ty.kind(t),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        ) {
+            d = d.with_note(super::callables::FN_PROPERTY_NOTE);
+        }
         if let Some(note) = self.narrowing_note(t) {
             d = d.with_note(note);
+        }
+        if matches!(self.cx.ty.kind(t), hir::TyKind::Op(hir::TyOp::Intersect, _)) {
+            d = d.with_note(
+                "in generic code, the members of an intersection with a type parameter part are not available yet (#350); callers see them once the type arguments are known",
+            );
         }
         if let Some(note) = self.unnarrowed_note(obj) {
             d = d.with_note(note);
         }
         if self.method_exists(t, &prop.name) {
-            d = d.with_note(format!(
-                "`{}` is a method: call it with `.{}()`",
-                prop.name, prop.name
-            ));
+            d = d.with_note(match self.cx.key_spelling(&prop.name) {
+                Some(key) => format!("`{key}` is a method: call it with `o{key}()`"),
+                None => format!(
+                    "`{}` is a method: call it with `.{}()`",
+                    prop.name, prop.name
+                ),
+            });
         }
         self.cx.error(d);
     }
@@ -206,6 +219,25 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
+            // `this.NAME` / `this.f` in a static method: the class it was called on.
+            if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
+                return h;
+            }
+            if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
+                return h;
+            }
+            let cname = self
+                .cx
+                .adt(this)
+                .map(|a| a.name.clone())
+                .unwrap_or_default();
+            self.cx.err(
+                format!("`{cname}` has no static member `{}`", prop.name),
+                prop.span,
+            );
+            return self.error_expr(span);
+        }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
                 if matches!(
@@ -226,7 +258,7 @@ impl FnCx<'_, '_> {
                     let mut d = Diagnostic::error(msg, span);
                     if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
                     {
-                        d = d.with_note(process_note(&prop.name));
+                        d = d.with_note(super::process::process_note(&prop.name));
                     }
                     self.cx.error(d);
                     return self.error_expr(span);
@@ -242,6 +274,9 @@ impl FnCx<'_, '_> {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
                     if let Some(h) = self.static_field(d, prop, want, span) {
+                        return h;
+                    }
+                    if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {
@@ -261,7 +296,12 @@ impl FnCx<'_, '_> {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
         let obj = self.expr(object, None, Want::Borrow);
-        let h = self.member_of(obj, prop, want, span);
+        if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            return self.method_value(obj, object, prop, exp, span);
+        }
+        let r = self.in_place_receiver(object, obj);
+        let h = self.member_of(r.recv, prop, want, span);
+        let h = self.after_receiver(r.before, h);
         let h = self.narrowed_field(object, prop, h, want);
         self.downcast_field(object, prop, h)
     }
@@ -274,9 +314,26 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `xs.length`, a `size` getter: a number in user code (`numbers`).
+        let h = self.member_value(obj, prop, want, span);
+        self.std_number(h)
+    }
+
+    fn member_value(
+        &mut self,
+        obj: hir::Expr,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let obj = match self.dynamic_get(obj, &prop.name, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         if self.record_args(obj.ty).is_some() {
             return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
+        let obj = self.unbrand(obj);
         let obj = self.widen_literal_receiver(obj, &prop.name);
         if prop.name == "length" {
             let t = obj.ty;
@@ -287,6 +344,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
+        let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,
             Err(obj) => obj,
@@ -311,8 +369,42 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
         }
+        if let Some(h) = self.keyed_read(object, index, want, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
-        self.index_of(obj, index, want, span)
+        let r = self.in_place_receiver(object, obj);
+        let h = self.index_of(r.recv, index, want, span);
+        let h = self.after_receiver(r.before, h);
+        // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
+        match self.single_key(index) {
+            Some(name) => {
+                let prop = ast::Ident {
+                    name,
+                    span: index.span,
+                };
+                let h = self.narrowed_field(object, &prop, h, want);
+                self.downcast_field(object, &prop, h)
+            }
+            None => h,
+        }
+    }
+
+    /// Does `o[name]` on a value of type `t` name a field (an object type, struct, interface,
+    /// union or type parameter, possibly nullable or shared; a class only for one of its fields,
+    /// getters or setters, so `m["k"]` on a `Map` keeps the indexing error)?
+    fn has_fields(&mut self, t: TyId, name: &str) -> bool {
+        if self.cx.class_of(t).is_some() {
+            return crate::reserved_key(name)
+                || self.field_of(t, name).is_some()
+                || self.has_getter(t, name)
+                || self.has_setter(t, name);
+        }
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
+            TyKind::Option(inner, _) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            _ => false,
+        }
     }
 
     pub(super) fn index_of(
@@ -322,12 +414,38 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let obj = match self.dynamic_index(obj, index, want, span) {
+            Ok(h) => return h,
+            Err(obj) => obj,
+        };
         let t = obj.ty;
+        // `o[KEY]` with a symbol constant: the member the symbol names.
+        if let Some(key) = self.symbol_key_of(index) {
+            if self.has_fields(t, &key) {
+                return self.symbol_index(obj, key, index, want, span);
+            }
+        }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
+            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+                let prop = ast::Ident {
+                    name: "__index".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
+            // `xs[i]` on a typed array: `xs.__index(i)` (`indexers`).
+            TyKind::Adt(..)
+                if self.has_indexer(t)
+                    && literal_key(index).is_none()
+                    && self.symbol_key_of(index).is_none() =>
+            {
+                self.indexer_read(obj, index, span)
+            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {
@@ -340,6 +458,36 @@ impl FnCx<'_, '_> {
             TyKind::Error | TyKind::Never => {
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
+            }
+            // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
+            // same property either way; the quoted form allows any name). Only on a type with
+            // fields: a `Map` keeps its "use a method" error.
+            _ if self
+                .single_key(index)
+                .is_some_and(|k| self.has_fields(t, &k)) =>
+            {
+                let prop = ast::Ident {
+                    name: self.single_key(index).unwrap_or_default(),
+                    span: index.span,
+                };
+                if literal_key(index).is_none() {
+                    // `o[k]` with `const k = "a"`: `k` counts as used.
+                    self.expr(index, None, Want::Borrow);
+                }
+                if crate::reserved_key(&prop.name) {
+                    // Not the private field `#x`, a symbol-keyed member or the prototype.
+                    self.cx
+                        .err(crate::reserved_key_message(&prop.name), index.span);
+                    return self.error_expr(span);
+                }
+                if matches!(want, Want::BorrowMut) {
+                    let Some(place) = self.field_access(obj, &prop, want, span) else {
+                        return self.error_expr(span);
+                    };
+                    self.check_readonly(&place, &prop);
+                    return place;
+                }
+                self.member_of(obj, &prop, want, span)
             }
             _ => {
                 let tn = self.cx.display(t);
@@ -433,11 +581,44 @@ impl FnCx<'_, '_> {
         self.mk(kind, ety, span)
     }
 
-    pub(crate) fn cast(&mut self, expr: &ast::Expr, ty: &ast::TypeExpr, span: Span) -> hir::Expr {
+    pub(crate) fn cast(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         let target = self.resolve(ty);
-        let inner = self.expr(expr, None, Want::Borrow);
+        if let Some(h) = self.callable_cast(expr, target, span) {
+            return h;
+        }
+        if let Some(base) = self.cx.brand_base(target) {
+            return self.brand_cast(expr, target, base, want, span);
+        }
+        if !self.cx.ty.is_numeric(target) && target != self.cx.ty.bool_ {
+            return self.type_assertion(expr, target, want, span);
+        }
+        // An integer literal cast to an integer type is an exact integer first, so the cast
+        // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
+        let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
+        let inner = self.expr(expr, hint, Want::Borrow);
+        if self.cx.dynamic(inner.ty).is_some() {
+            return self.cast_dynamic(inner, target);
+        }
+        // `id as string`: a brand's value as its primitive.
+        let inner = match self.cx.brand_base(inner.ty) == Some(target) {
+            true => return self.unbrand(inner),
+            false => inner,
+        };
         // A literal type casts as its base type (`k as f64` with `k: 1 | 2`).
         let inner = self.widen_value(inner);
+        // An integer from the standard library made a number (`xs.length as usize`,
+        // `s.charCodeAt(i) as i64`) converts from the integer itself: the same value, since
+        // such numbers are below 2^53, without a round trip through `f64`.
+        let inner = match inner.kind {
+            H::Cast(x) if self.cx.ty.is_int(target) && self.is_std_api_value(&x) => *x,
+            kind => hir::Expr { kind, ..inner },
+        };
         let src = inner.ty;
         let t = &self.cx.ty;
         let c_like = self.is_c_like_enum(src) && !self.is_string_enum(src);
@@ -455,8 +636,103 @@ impl FnCx<'_, '_> {
         self.mk(H::Cast(Box::new(inner)), target, span)
     }
 
+    /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
+    /// converts nothing. `e` is typed in the context of `T`, as for an annotation, so a literal
+    /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`. A
+    /// literal type (or a union with one, `"c" as "a" | "c" | null`) takes a value that converts
+    /// to it as it is; a wider value (a `string` as `"a" | "b"`) would need a test.
+    fn type_assertion(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let inner = self.expr(expr, Some(target), want);
+        if self.cx.dynamic(inner.ty).is_some() {
+            if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
+                return h;
+            }
+        }
+        // `x as object` of an unbounded `T` (issue #926): checked at run time.
+        let coerced = self
+            .try_coerce(inner, target)
+            .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.param_as_object_part(h, target))
+            .or_else(|h| self.narrowing_assertion(h, target, span));
+        match coerced {
+            Ok(h) => h,
+            Err(h) => {
+                let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));
+                if let (Some(from), Some(to)) = nothings {
+                    if !from.within(to) && !self.cx.ty.has_error(h.ty) {
+                        // TypeScript keeps the value (`undefined` stays `undefined`); the type
+                        // `T | null | undefined` that could hold it comes with phase 1b.
+                        let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                        self.cx.error(
+                            Diagnostic::error(
+                                format!("a cast from `{s}` to `{d}` is not supported yet (#930)"),
+                                span,
+                            )
+                            .with_note(format!(
+                                "the value would stay `{}`, which `{d}` cannot hold yet; convert it instead (`x ?? {}`)",
+                                from.word(),
+                                to.word()
+                            )),
+                        );
+                        return self.error_expr(span);
+                    }
+                }
+                if !self.cx.ty.has_error(h.ty) {
+                    let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                    let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    if self.cx.has_literal_member(target) {
+                        diag = diag.with_note(
+                            "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
+                        );
+                    }
+                    self.cx.error(diag);
+                }
+                self.error_expr(span)
+            }
+        }
+    }
+
+    /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to
+    /// it, such as a literal), keeping the value.
+    fn brand_cast(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        base: TyId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let inner = self.expr(expr, Some(base), want);
+        let inner = self.unbrand(inner);
+        match self.try_coerce(inner, base) {
+            Ok(mut h) => {
+                h.ty = target;
+                h
+            }
+            Err(h) => {
+                let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                self.cx.error(
+                    Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span).with_note(
+                        format!(
+                            "`{d}` is a branded `{}`: only a `{}` can be branded",
+                            self.cx.display(base),
+                            self.cx.display(base)
+                        ),
+                    ),
+                );
+                self.error_expr(span)
+            }
+        }
+    }
+
     /// Enum without payloads (casts to its discriminant).
-    fn is_c_like_enum(&self, t: TyId) -> bool {
+    pub(crate) fn is_c_like_enum(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self
                 .cx
@@ -472,29 +748,20 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
-/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
-/// `env` (`super::process`); the rest is in `velt:process`.
-fn process_note(name: &str) -> String {
-    match name {
-        "stdout" | "stderr" => format!(
-            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
-        ),
-        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
-                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
-                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
-            .to_string(),
-        "cwd" | "chdir" => {
-            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
-        }
-        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
-              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
-              `velt:process`"
-            .to_string(),
-    }
+/// The type of `x as const` (the parser's `const` type name).
+pub(crate) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+    matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
 }
 
-/// The type of `x as const` (the parser's `const` type name).
-pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
-    matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
+/// An integer literal without a suffix, possibly negated or in parentheses (`-1`, `(300)`).
+pub(super) fn untyped_int(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. }) => true,
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        }
+        | ast::ExprKind::Paren(expr) => untyped_int(expr),
+        _ => false,
+    }
 }

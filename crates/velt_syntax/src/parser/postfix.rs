@@ -14,9 +14,13 @@ impl<'a> Parser<'a> {
             let kind = match self.peek() {
                 Tok::Dot => {
                     self.bump();
+                    let prop = match self.at(Tok::PrivateName) {
+                        true => self.take_ident(),
+                        false => self.parse_prop_name()?,
+                    };
                     ExprKind::Member {
                         object: Box::new(e),
-                        prop: self.parse_prop_name()?,
+                        prop,
                         optional: false,
                     }
                 }
@@ -27,7 +31,7 @@ impl<'a> Parser<'a> {
                     args: self.parse_args()?,
                     optional: false,
                 },
-                Tok::LBracket if self.at_symbol_key() => ExprKind::Member {
+                Tok::LBracket if self.at_well_known_key() => ExprKind::Member {
                     object: Box::new(e),
                     prop: self.parse_symbol_key()?,
                     optional: false,
@@ -76,7 +80,7 @@ impl<'a> Parser<'a> {
     /// `[ index ]`
     fn parse_index(&mut self) -> PResult<Expr> {
         self.bump(); // [
-        let index = self.parse_expr()?;
+        let index = self.allow_in(|p| p.parse_expr())?;
         self.expect(Tok::RBracket)?;
         Ok(index)
     }
@@ -108,6 +112,12 @@ impl<'a> Parser<'a> {
                 object,
                 optional: true,
             }),
+            Tok::PrivateName => {
+                // TS18030.
+                let span = self.cur_span();
+                self.error("an optional chain cannot contain private names", span);
+                Err(Fail)
+            }
             t if Self::is_name(t) => Ok(ExprKind::Member {
                 prop: self.take_ident(),
                 object,
@@ -195,7 +205,7 @@ impl<'a> Parser<'a> {
         let saved_flag = std::mem::replace(&mut self.hit_depth_limit, false);
         self.speculating += 1;
         self.bump();
-        let is_ternary = self.parse_assign().is_ok() && self.at(Tok::Colon);
+        let is_ternary = self.allow_in(|p| p.parse_assign()).is_ok() && self.at(Tok::Colon);
         let then_end = (self.pos, self.prev_hi);
         self.speculating -= 1;
         let too_deep = self.hit_depth_limit;
@@ -215,6 +225,9 @@ impl<'a> Parser<'a> {
         is_ternary
     }
 
+    /// Can `t` be the first token of an expression? Every token `parse_unary_inner` and
+    /// `parse_primary` accept (a contextual word such as `undefined`, `delete` or `super` is a
+    /// `Tok::Ident`); keep the three in step.
     fn can_start_expr(t: Tok) -> bool {
         match t {
             Tok::Ident
@@ -222,6 +235,8 @@ impl<'a> Parser<'a> {
             | Tok::Float(_)
             | Tok::Str(_)
             | Tok::Template(..)
+            | Tok::Regex(_)
+            | Tok::PrivateName
             | Tok::Lt
             | Tok::JsxLt
             | Tok::LParen
@@ -242,9 +257,13 @@ impl<'a> Parser<'a> {
                             | Kw::Null
                             | Kw::This
                             | Kw::New
+                            | Kw::Function
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
+                            | Kw::Import
+                            | Kw::Typeof
+                            | Kw::Void
                     )
             }
             _ => false,
@@ -261,6 +280,10 @@ impl<'a> Parser<'a> {
 
     /// Comma-separated expressions / `...spread` up to (not including) `close`.
     pub(super) fn parse_elems(&mut self, close: Tok) -> PResult<Vec<Expr>> {
+        self.allow_in(|p| p.parse_elems_in(close))
+    }
+
+    fn parse_elems_in(&mut self, close: Tok) -> PResult<Vec<Expr>> {
         let mut out = Vec::new();
         while !self.at(close) {
             out.push(self.parse_elem()?);

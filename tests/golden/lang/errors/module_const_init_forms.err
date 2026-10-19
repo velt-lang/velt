@@ -1,0 +1,1 @@
+module_const_init_forms.vlt:32:7: error: module constant `A` depends on itself through `readA`

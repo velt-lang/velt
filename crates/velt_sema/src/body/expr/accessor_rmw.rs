@@ -19,6 +19,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::assign_paths::is_pure_value;
 use super::setters::{side_effect_free, synth};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
@@ -58,9 +59,13 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        let later = match rmw {
+            Rmw::Compound(_, v) | Rmw::Logical(_, v) => Some(v),
+            Rmw::Update(..) => None,
+        };
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, later, &mut stmts);
         let e = self.accessor_rmw_in(recv, prop, rmw, as_value, span, &mut stmts);
         self.pop_scope();
         e
@@ -111,11 +116,6 @@ impl FnCx<'_, '_> {
                     ast::UpdateOp::Dec => ast::BinaryOp::Sub,
                 };
                 (binary(op, old_ref(), one, span), None)
-            }
-            Rmw::Logical(op @ (ast::BinaryOp::Or | ast::BinaryOp::And), _)
-                if self.reject_logical_assign(op, old_ty, span) =>
-            {
-                return self.error_expr(span);
             }
             Rmw::Logical(op, v) if as_value => {
                 let cond = self.decides(op, old_ref(), span);
@@ -229,7 +229,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         self.push_scope();
-        let recv = self.receiver_once(obj, object, &mut stmts);
+        let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
         let v = match self.setter_param_ty(recv.ty, &prop.name) {
             Some(t) => self.value_for(value, t),
             None => self.expr(value, None, Want::Move),
@@ -261,15 +261,20 @@ impl FnCx<'_, '_> {
     }
 
     /// The receiver to read and write through: `obj` itself when evaluating it again has no
-    /// effect (a variable, `this`, a path of fields), else a temporary holding it. A path through
-    /// a getter (`h.inner.value++`) runs that getter once, as in JS.
-    fn receiver_once(
+    /// effect (a variable, `this`, a path of fields) and `later` (the value evaluated between
+    /// the read and the write, if any) cannot change what it names, else a temporary holding
+    /// it. A path through a getter (`h.inner.value++`) runs that getter once, as in JS, and in
+    /// `holder.val += f()` the setter runs on the object `holder` named before `f` ran, even
+    /// when `f` assigns another one to `holder`.
+    pub(super) fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
         object: &ast::Expr,
+        later: Option<&ast::Expr>,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        if side_effect_free(object) && is_field_path(&obj) {
+        let stable = is_this(object) || later.is_none_or(is_pure_value);
+        if stable && side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
         set_place_mode(&mut obj, UseMode::Move);
@@ -280,7 +285,7 @@ impl FnCx<'_, '_> {
 
     /// `if` condition under which `old op= v` assigns: `old == null` for `??=`, `!old` for
     /// `||=`, `old` for `&&=`.
-    fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
+    pub(super) fn decides(&mut self, op: ast::BinaryOp, old: ast::Expr, span: Span) -> hir::Expr {
         let test = match op {
             ast::BinaryOp::Nullish => {
                 let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
@@ -299,7 +304,12 @@ impl FnCx<'_, '_> {
     }
 
     /// `const <name> = init` (appended to `stmts`), visible by `name` in the innermost scope.
-    fn bind_temp(&mut self, name: &str, init: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> LocalId {
+    pub(super) fn bind_temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> LocalId {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
@@ -310,7 +320,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The value of temporary `l` as the result of the block.
-    fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
+    pub(super) fn read_temp(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
         let mode = if self.cx.is_copy(ty) {
             UseMode::Copy
         } else {
@@ -320,8 +330,17 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// `this` (parentheses removed), which nothing can assign another object to.
+fn is_this(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => is_this(inner),
+        _ => false,
+    }
+}
+
 /// Is `e` a variable or a path of fields of one (no getter or other call on the way)?
-fn is_field_path(e: &hir::Expr) -> bool {
+pub(super) fn is_field_path(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } => is_field_path(base),
@@ -329,7 +348,7 @@ fn is_field_path(e: &hir::Expr) -> bool {
     }
 }
 
-fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
+pub(super) fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast::Expr {
     synth(
         ast::ExprKind::Binary {
             op,
@@ -340,11 +359,11 @@ fn binary(op: ast::BinaryOp, lhs: ast::Expr, rhs: ast::Expr, span: Span) -> ast:
     )
 }
 
-fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
+pub(super) fn stmt(kind: hir::StmtKind, span: Span) -> hir::Stmt {
     hir::Stmt { kind, span }
 }
 
-fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
+pub(super) fn block(stmts: Vec<hir::Stmt>, value: Option<hir::Expr>, span: Span) -> hir::Block {
     hir::Block {
         stmts,
         value: value.map(Box::new),

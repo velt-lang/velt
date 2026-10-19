@@ -1,0 +1,15 @@
+// A module-level constant holding a function that replaces `o.inner` (#876), passed to a
+// function that calls its parameter, and called itself: both assignments are errors (JavaScript
+// prints 100 twice).
+type Inner = { v: number };
+type Outer = { inner: Inner };
+function reset(o: Outer): number { o.inner = { v: 100 }; return 13; }
+function run(f: (o: Outer) => number, o: Outer): number { return f(o); }
+const R = reset;
+function main() {
+  const o: Outer = { inner: { v: 0 } };
+  o.inner.v = run(R, o);
+  console.log(o.inner.v);
+  o.inner.v = R(o);
+  console.log(o.inner.v);
+}

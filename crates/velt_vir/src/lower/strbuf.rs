@@ -19,6 +19,14 @@ impl FnLower<'_, '_> {
         (buf, bp)
     }
 
+    /// [`new_strbuf`](Self::new_strbuf) with a capacity computed at run time (a `u64`).
+    pub(super) fn new_strbuf_sized(&mut self, cap: Operand) -> (vir::Local, Operand) {
+        let buf = self.temp(Ty::Agg(STR_AGG));
+        let bp = self.addr(Place::local(buf));
+        self.call_rt(Rt::StrbufNew, vec![cap, bp.clone()], None);
+        (buf, bp)
+    }
+
     /// Append static text to the builder at `buf` (one byte, or a static chunk).
     pub(super) fn push_text(&mut self, buf: &Operand, text: &str) {
         match text.as_bytes() {
@@ -42,6 +50,13 @@ impl FnLower<'_, '_> {
     /// Append the string at address `s` to the builder at `buf`.
     pub(super) fn push_str(&mut self, buf: &Operand, s: Operand) {
         self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), s], None);
+    }
+
+    /// Append the float `v` of type `ty` the way `console.log` prints it (`-0` is `-0`).
+    pub(super) fn push_inspect_float(&mut self, buf: &Operand, v: Operand, ty: TyId) {
+        let from = self.cx.ty(ty);
+        let v = self.cast_to(v, from, Ty::F64);
+        self.call_rt(Rt::StrbufPushInspectF64, vec![buf.clone(), v], None);
     }
 
     /// Append an int/float/bool (or C-like enum discriminant) `v` of type `ty` in JS format.

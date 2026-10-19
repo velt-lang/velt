@@ -1,0 +1,37 @@
+// sigx/router (imported as "@sigx/velt/router"): a minimal router whose API is the same in the
+// browser (../../src/router.js) and on the server, so shared components can route. The current
+// path is a signal: on the server it is the request's path; in the browser `Link` and the back
+// button change it and the app re-renders.
+//
+// It takes `ctx` rather than looking the router up with `useRouter()`: sigx's injection needs a
+// "current component", which Velt does not have yet (render-local context, #386).
+
+import { component, SetupContext } from "./component";
+import { Signal } from "./reactivity";
+
+export class Router {
+  path: Signal<string>;
+
+  constructor(path: Signal<string>) {
+    this.path = path;
+  }
+
+  // On the server there is nowhere to navigate to: only the browser's router changes the URL.
+  navigate(href: string) {
+    this.path.value = href;
+  }
+}
+
+export function createRouter<P>(ctx: SetupContext<P>, path: string): Router {
+  return new Router(ctx.signal(path));
+}
+
+// `<a href>` to `href`, marked `active` on the current path. In the browser a click navigates
+// without a page load.
+export const Link = component<{ router: Router; href: string; label: string }>((ctx) => {
+  return () => (
+    <a href={ctx.props.href} class={ctx.props.router.path.value === ctx.props.href ? "active" : ""}>
+      {ctx.props.label}
+    </a>
+  );
+});

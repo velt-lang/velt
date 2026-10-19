@@ -1,8 +1,8 @@
 // Bubble sort, insertion sort and selection sort on copies of the same data.
-function bubble(xs: i64[]) {
+function bubble(xs: number[]) {
   const n = xs.length;
-  for (let i: usize = 0; i < n; i++) {
-    for (let j: usize = 0; j + 1 < n - i; j++) {
+  for (let i: number = 0; i < n; i++) {
+    for (let j: number = 0; j + 1 < n - i; j++) {
       if (xs[j] > xs[j + 1]) {
         const t = xs[j];
         xs[j] = xs[j + 1];
@@ -12,8 +12,8 @@ function bubble(xs: i64[]) {
   }
 }
 
-function insertion(xs: i64[]) {
-  for (let i: usize = 1; i < xs.length; i++) {
+function insertion(xs: number[]) {
+  for (let i: number = 1; i < xs.length; i++) {
     const v = xs[i];
     let j = i;
     while (j > 0 && xs[j - 1] > v) {
@@ -24,8 +24,8 @@ function insertion(xs: i64[]) {
   }
 }
 
-function selection(xs: i64[]) {
-  for (let i: usize = 0; i < xs.length; i++) {
+function selection(xs: number[]) {
+  for (let i: number = 0; i < xs.length; i++) {
     let m = i;
     for (let j = i + 1; j < xs.length; j++) {
       if (xs[j] < xs[m]) {

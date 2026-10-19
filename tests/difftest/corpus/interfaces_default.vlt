@@ -1,12 +1,12 @@
 // Interfaces with several implementations, dispatch through interface-typed arrays and params.
 interface Scorer {
-  score(word: string): i64;
+  score(word: string): number;
   name(): string;
 }
 
 class LengthScorer implements Scorer {
-  score(word: string): i64 {
-    return word.length as i64;
+  score(word: string): number {
+    return word.length as number;
   }
   name(): string {
     return "length";
@@ -14,9 +14,9 @@ class LengthScorer implements Scorer {
 }
 
 class VowelScorer implements Scorer {
-  score(word: string): i64 {
+  score(word: string): number {
     let n = 0;
-    for (let i = 0; i < (word.length as i64); i++) {
+    for (let i = 0; i < (word.length as number); i++) {
       if ("aeiou".includes(word.slice(i, i + 1))) {
         n++;
       }
@@ -29,11 +29,11 @@ class VowelScorer implements Scorer {
 }
 
 class WeightedScorer implements Scorer {
-  weight: i64;
-  constructor(weight: i64) {
+  weight: number;
+  constructor(weight: number) {
     this.weight = weight;
   }
-  score(word: string): i64 {
+  score(word: string): number {
     return word.charCodeAt(0) * this.weight;
   }
   name(): string {

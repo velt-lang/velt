@@ -33,8 +33,8 @@ use super::{Cx, FnLower, Glue, Work};
 use crate::vir::{self, Operand, Place, Ty};
 
 impl Cx<'_> {
-    /// Can a value of `t` reach a counted object (itself, or any part stored in it), or a
-    /// promise whose result can? Only such values have anything to transfer.
+    /// Can a value of `t` reach a counted object (itself, or any part stored in it), a weak map
+    /// or ref, or a promise whose result can? Only such values have anything to transfer.
     pub(super) fn holds_counted(&mut self, t: TyId) -> bool {
         self.holds_counted_in(t, &mut HashSet::new())
     }
@@ -43,7 +43,9 @@ impl Cx<'_> {
         if !seen.insert(t) {
             return false;
         }
-        if self.counted(t) {
+        // A weak map or ref is not counted, but its transfer glue panics (glue/transfer.rs):
+        // it cannot go to another thread, moved or copied.
+        if self.counted(t) || self.weak_class(t).is_some() {
             return true;
         }
         let parts = match self.kind(t) {
@@ -54,6 +56,8 @@ impl Cx<'_> {
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             // Its result reaches the awaiter on another task (`velt_rt_fut_transfer`, #160).
             TyKind::Promise(r, e) => vec![r, e],
+            // The object behind it may be of any subclass, with fields of its own.
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
@@ -75,6 +79,7 @@ impl Cx<'_> {
             TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
             TyKind::Shared(_) | TyKind::Promise(..) => return false,
             TyKind::Array(e) => vec![e],
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
@@ -96,6 +101,7 @@ impl Cx<'_> {
             TyKind::Shared(_) | TyKind::Promise(..) => return false,
             TyKind::Adt(..) if self.own_clone(t).is_some() => return true,
             TyKind::Array(e) => vec![e],
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };

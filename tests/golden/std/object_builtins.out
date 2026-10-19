@@ -1,0 +1,62 @@
+true false true true false
+true false true true
+true false false
+false true false true
+true false
+false true false
+false false true
+7 3 s a none
+true false false
+{ a: 3, b: 'y', c: true } true
+5 0 <p>
+{ a: 9, b: 'kept' }
+{ a: 9, b: 'new' }
+{ x: 3, y: 2 } true [ 'x', 'y' ]
+{ '2': 2, x: 3, y: 2, z: 26 }
+{ name: 'inert', n: 0 } inert [ 'name', 'n' ]
+inert:0
+{ a: 3, b: 2 }
+{ '1': 'one', '2': 'two', b: 'bee' }
+{ on: true, off: false } { on: true, off: false }
+{ g: 1, h: 2 }
+true false false
+true true false
+true false true
+true false false
+true false
+[object Array]
+[object String]
+[object Number]
+[object Boolean]
+[object Map]
+[object Set]
+[object Date]
+[object Error]
+[object Object]
+[object Object]
+[object Function]
+[object Null]
+[object Number]
+true true
+true false
+true false true
+true true true
+true false false
+[Object: null prototype] {} {} Base {} Object(0) [] Object [Map] {}
+[ {} ] { proto: [Object: null prototype] {} }
+[object Object] [object Object] {} []
+[Object: null prototype] { a: 1, b: 2 } [ 'a', 'b' ] {"a":1,"b":2} 1
+false true true false
+false true
+true false
+[Object: null prototype] {} [ [Object: null prototype] {} ]
+{
+  deep: {
+    deeper: {
+      dict: [Object: null prototype],
+      empty: [Object: null prototype] {}
+    }
+  }
+}
+{ a: 1, b: 2 } true
+true false

@@ -17,6 +17,7 @@ pub mod lsp;
 mod package;
 mod project;
 mod registry;
+mod target;
 pub mod test;
 mod ts_compat;
 mod version;
@@ -48,6 +49,8 @@ pub fn execute(cmd: Command) -> ExitCode {
             Ok(())
         }
         Command::Clean => clean::clean_command(),
+        Command::Target(action) => target::target_command(&action),
+        Command::Toolchain => toolchain_without_launcher(),
         Command::Build(args) => return build::build_command(&args),
         Command::Run {
             build: args,
@@ -61,7 +64,21 @@ pub fn execute(cmd: Command) -> ExitCode {
             release,
             locked,
             watch,
-        } => return test::test_command(path.as_deref(), release, locked, watch),
+            filter,
+            exact,
+            no_run,
+            json,
+        } => {
+            let opts = test::TestOptions {
+                release,
+                locked,
+                filter,
+                exact,
+                no_run,
+                json,
+            };
+            return test::test_command(path.as_deref(), &opts, watch);
+        }
         Command::Fmt { paths, check } => return fmt::fmt_command(&paths, check),
         Command::Lsp => lsp::lsp_command(),
         Command::Doc(args) => doc::doc_command(&args),
@@ -74,6 +91,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             template,
             force,
         } => create::init_package(name.as_deref(), template, force),
+        Command::InitEditor { editor, dir } => create::init_editor(editor, dir.as_deref()),
         Command::Add {
             name,
             version,
@@ -121,4 +139,16 @@ pub fn execute(cmd: Command) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `velt toolchain` reached a toolchain: it was started directly, not through the launcher
+/// (which runs that command itself).
+fn toolchain_without_launcher() -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "velt".into());
+    Err(format!(
+        "`velt toolchain` is run by the velt launcher (<root>/bin/velt, which the installer puts \
+         on PATH); this velt ({exe}) was started directly"
+    ))
 }

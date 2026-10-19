@@ -1,0 +1,9 @@
+{ type: '#text', props: {}, text: 'hi', [Symbol(sigx:vnode)]: true }
+{ type: 'div', props: { id: 1 } }
+true false true false
+{"type":"#text","props":{},"text":"hi"} [ 'type', 'props', 'text' ]
+{ type: 'span', props: {}, text: 'hi', [Symbol(sigx:vnode)]: true } true true
+{ type: 'div', props: { id: 1 }, [Symbol(sigx:vnode)]: true } true true
+false
+{ value: 4, [Symbol(sigx.count)]: 8 } true {"value":4}
+vnode counted cell other other

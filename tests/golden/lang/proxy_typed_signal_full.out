@@ -1,0 +1,22 @@
+computed: write x0
+render: 0 false
+computed: write x1
+render: 1 false
+computed: write x2
+render: 2 false
+computed: test x2
+computed: test (done) x2
+render: 2 true
+same nested proxy: true
+computed: test (done) x10
+render: 10 true
+computed: ship x10
+render: 10 false
+computed: ship (done) x10
+render: 10 true
+ship (done) x10 ship (done) x10
+cart: 0 items, 0
+cart: 1 items, 0
+cart: 1 items, 5
+cart: 2 items, 5
+cart: 2 items, 12

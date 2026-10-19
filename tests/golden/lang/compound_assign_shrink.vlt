@@ -1,0 +1,11 @@
+// A compound assignment whose right-hand side shrinks the array below the index: the write is
+// bounds-checked after the right-hand side ran, so it panics (`index out of bounds`, exit 101)
+// where JS would extend the array (`[5]` becomes `[10]`). Velt arrays never grow by assignment.
+function main() {
+  const xs: number[] = [5, 6];
+  xs[0] += xs.pop()!;
+  console.log(xs.length, xs[0]);
+  const ys: number[] = [5];
+  ys[0] += ys.pop()!;
+  console.log("not reached", ys.length);
+}

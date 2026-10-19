@@ -1,0 +1,608 @@
+//! The toolchain root (`~/.velt`, `%LOCALAPPDATA%\velt` on Windows):
+//!
+//! ```text
+//! <root>/bin/velt              the launcher, the only thing on PATH
+//! <root>/toolchains/<version>/ a release's prefix (bin/, lib/, std/)
+//! <root>/links/<name>          a file holding the path of a prefix built elsewhere
+//! <root>/default               the toolchain used outside a package or without a pin
+//! ```
+//!
+//! The root is found from the launcher's own path (`<root>/bin/velt`), so a root anywhere works
+//! without configuration. Each prefix finds its own `lib/` and `std/` from its `bin/velt`, so the
+//! launcher runs that file, never a link to it.
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use semver::Version;
+
+pub const BIN_DIR: &str = "bin";
+pub const TOOLCHAINS_DIR: &str = "toolchains";
+pub const LINKS_DIR: &str = "links";
+pub const DEFAULT_FILE: &str = "default";
+
+/// `<prefix>/bin/velt[.exe]`: the compiler of a toolchain prefix.
+pub fn velt_exe(prefix: &Path) -> PathBuf {
+    prefix
+        .join(BIN_DIR)
+        .join(format!("velt{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// One toolchain: an installed release, or a prefix linked under a name.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Toolchain {
+    Version(Version),
+    Linked(String),
+}
+
+impl Toolchain {
+    /// A version (`0.1.3`) or a link name (`dev`).
+    pub fn parse(text: &str) -> Result<Toolchain, String> {
+        let text = text.trim();
+        if let Ok(v) = Version::parse(text) {
+            return Ok(Toolchain::Version(v));
+        }
+        check_link_name(text).map(|()| Toolchain::Linked(text.to_string()))
+    }
+}
+
+impl fmt::Display for Toolchain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Toolchain::Version(v) => write!(f, "{v}"),
+            Toolchain::Linked(name) => f.write_str(name),
+        }
+    }
+}
+
+/// A link name starts with a letter, so it is never read as a version, and is a single path
+/// segment that is a file name on every OS.
+pub fn check_link_name(name: &str) -> Result<(), String> {
+    let ok = name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'));
+    if ok && is_windows_device_name(name) {
+        Err(format!(
+            "`{name}` is a device name on Windows (`con`, `nul`, `com1`, …), not a toolchain name"
+        ))
+    } else if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` is neither a version (such as `0.1.0`) nor a toolchain name (lowercase \
+             letters, digits, `-`, `_` and `.`, starting with a letter)"
+        ))
+    }
+}
+
+/// `con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`, alone or before an extension
+/// (`nul.txt`): Windows opens the device for these, whatever the directory
+/// (`vpm::manifest::is_windows_device_name` has the same rule for package names).
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_lowercase();
+    match stem.as_bytes() {
+        b"con" | b"prn" | b"aux" | b"nul" => true,
+        [b'c', b'o', b'm', d] | [b'l', b'p', b't', d] => d.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+/// The directory holding the launcher and the toolchains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Root {
+    dir: PathBuf,
+}
+
+impl Root {
+    pub fn new(dir: impl Into<PathBuf>) -> Root {
+        Root { dir: dir.into() }
+    }
+
+    /// The root of the launcher at `exe` (`<root>/bin/velt`).
+    pub fn of_launcher(exe: &Path) -> Option<Root> {
+        let bin = exe.parent()?;
+        if bin.file_name()? != BIN_DIR {
+            return None;
+        }
+        bin.parent().map(Root::new)
+    }
+
+    /// The root of the installed toolchain whose `bin/velt` is `exe`
+    /// (`<root>/toolchains/<version>/bin/velt`); `None` for one elsewhere (a checkout, a link).
+    pub fn of_toolchain_exe(exe: &Path) -> Option<Root> {
+        let version_dir = exe.parent()?.parent()?;
+        let toolchains = version_dir.parent()?;
+        if toolchains.file_name()? != TOOLCHAINS_DIR {
+            return None;
+        }
+        Version::parse(&version_dir.file_name()?.to_string_lossy()).ok()?;
+        toolchains.parent().map(Root::new)
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn toolchains_dir(&self) -> PathBuf {
+        self.dir.join(TOOLCHAINS_DIR)
+    }
+
+    pub fn version_dir(&self, version: &Version) -> PathBuf {
+        self.toolchains_dir().join(version.to_string())
+    }
+
+    /// The installed release versions, oldest first. Directories that are not a version
+    /// (`.<v>.<pid>` staging) or have no `bin/velt` are skipped.
+    pub fn versions(&self) -> Vec<Version> {
+        let mut versions: Vec<Version> = std::fs::read_dir(self.toolchains_dir())
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter_map(|e| Version::parse(&e.file_name().to_string_lossy()).ok())
+                    .filter(|v| velt_exe(&self.version_dir(v)).is_file())
+                    .collect()
+            })
+            .unwrap_or_default();
+        versions.sort();
+        versions
+    }
+
+    /// The linked toolchains, by name, with the prefix each names.
+    pub fn links(&self) -> Vec<(String, PathBuf)> {
+        let mut links: Vec<(String, PathBuf)> = std::fs::read_dir(self.dir.join(LINKS_DIR))
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter_map(|e| {
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        check_link_name(&name).ok()?;
+                        let prefix = std::fs::read_to_string(e.path()).ok()?;
+                        Some((name, PathBuf::from(prefix.trim_end_matches(['\n', '\r']))))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        links.sort();
+        links
+    }
+
+    /// The prefix of `toolchain`, whether or not it is installed.
+    pub fn prefix(&self, toolchain: &Toolchain) -> Result<PathBuf, String> {
+        match toolchain {
+            Toolchain::Version(v) => Ok(self.version_dir(v)),
+            Toolchain::Linked(name) => self
+                .links()
+                .into_iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, prefix)| prefix)
+                .ok_or_else(|| {
+                    format!("no toolchain is linked as `{name}` (`velt toolchain link {name} <prefix>`)")
+                }),
+        }
+    }
+
+    /// Whether `toolchain`'s compiler is there.
+    pub fn is_installed(&self, toolchain: &Toolchain) -> bool {
+        self.prefix(toolchain)
+            .is_ok_and(|prefix| velt_exe(&prefix).is_file())
+    }
+
+    /// `<root>/default`, when it names a toolchain.
+    pub fn default(&self) -> Result<Option<Toolchain>, String> {
+        let path = self.dir.join(DEFAULT_FILE);
+        match std::fs::read_to_string(&path) {
+            Ok(text) if text.trim().is_empty() => Ok(None),
+            Ok(text) => Toolchain::parse(&text)
+                .map(Some)
+                .map_err(|e| format!("{}: {e}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+        }
+    }
+
+    pub fn set_default(&self, toolchain: &Toolchain) -> Result<(), String> {
+        write_file(&self.dir.join(DEFAULT_FILE), &format!("{toolchain}\n"))
+    }
+
+    /// Link `name` to the toolchain prefix `prefix`: it must hold `bin/velt` and `std/`, and not
+    /// be a launcher's root (`toolchains/`), whose `bin/velt` would run the launcher again.
+    pub fn link(&self, name: &str, prefix: &Path) -> Result<(), String> {
+        check_link_name(name)?;
+        let is_this_root = matches!(
+            (prefix.canonicalize(), self.dir.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        );
+        if is_this_root || prefix.join(TOOLCHAINS_DIR).is_dir() {
+            return Err(format!(
+                "{} is the root of a velt launcher, not a toolchain prefix (link one of its \
+                 {TOOLCHAINS_DIR}/<version> directories, or the prefix of a build)",
+                prefix.display()
+            ));
+        }
+        for (needed, is) in [
+            (velt_exe(Path::new("")), velt_exe(prefix).is_file()),
+            (PathBuf::from("std"), prefix.join("std").is_dir()),
+        ] {
+            if !is {
+                return Err(format!(
+                    "{} is not a toolchain prefix: it has no {}",
+                    prefix.display(),
+                    needed.display()
+                ));
+            }
+        }
+        let prefix = std::path::absolute(prefix)
+            .map_err(|e| format!("cannot resolve {}: {e}", prefix.display()))?;
+        write_file(
+            &self.dir.join(LINKS_DIR).join(name),
+            &format!("{}\n", prefix.display()),
+        )
+    }
+
+    /// The installed versions a link points into: its prefix is the version's directory or inside
+    /// it (`velt toolchain link dev <root>/toolchains/0.1.1`). Removing one would break the link.
+    pub fn linked_versions(&self) -> Vec<Version> {
+        let targets: Vec<PathBuf> = self
+            .links()
+            .into_iter()
+            .filter_map(|(_, prefix)| prefix.canonicalize().ok())
+            .collect();
+        self.versions()
+            .into_iter()
+            .filter(|v| {
+                self.version_dir(v)
+                    .canonicalize()
+                    .is_ok_and(|dir| targets.iter().any(|t| t.starts_with(&dir)))
+            })
+            .collect()
+    }
+
+    /// Remove an installed version or a link (a link's prefix stays). A version is renamed
+    /// aside first and then deleted, so it is gone whole or not at all: a rename that fails
+    /// (Windows: a file of it is open) reports it in use and leaves it complete.
+    pub fn remove(&self, toolchain: &Toolchain) -> Result<(), String> {
+        let not_installed = || format!("toolchain {toolchain} is not installed");
+        match toolchain {
+            Toolchain::Linked(name) => {
+                let path = self.dir.join(LINKS_DIR).join(name);
+                std::fs::remove_file(&path).map_err(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound => not_installed(),
+                    _ => format!("cannot remove {}: {e}", path.display()),
+                })
+            }
+            Toolchain::Version(v) => {
+                let path = self.version_dir(v);
+                if !path.exists() {
+                    return Err(not_installed());
+                }
+                let aside = self
+                    .toolchains_dir()
+                    .join(format!(".{v}.removing.{}", crate::install::unique()));
+                std::fs::rename(&path, &aside).map_err(|e| {
+                    format!(
+                        "velt {v} is in use (a running velt, or a program it built, has a file of \
+                         it open), so it was left as it is; stop it and try again ({e})"
+                    )
+                })?;
+                std::fs::remove_dir_all(&aside).map_err(|e| {
+                    format!(
+                        "velt {v} is removed, but {} is left behind: {e}",
+                        aside.display()
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// The installed versions `velt toolchain prune` removes from `versions`: all but the default and,
+/// for each `major.minor`, the version a pin like `"0.1"` runs: its newest release (a pin skips
+/// pre-releases), or its newest pre-release when it has no release yet; and all in `keep` (the
+/// default, the one the current directory selects, those a link points into). One a lockfile
+/// still names is installed again when it is next used.
+pub fn prunable(versions: &[Version], keep: &[Version]) -> Vec<Version> {
+    let newest_of_minor = |v: &Version| {
+        let minor = || {
+            versions
+                .iter()
+                .filter(|o| o.major == v.major && o.minor == v.minor)
+        };
+        let kept = minor()
+            .filter(|o| o.pre.is_empty())
+            .max()
+            .or_else(|| minor().max());
+        kept == Some(v)
+    };
+    versions
+        .iter()
+        .filter(|v| !newest_of_minor(v) && !keep.contains(v))
+        .cloned()
+        .collect()
+}
+
+/// The bytes the files under `path` take (0 when it can't be read).
+pub fn dir_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The target packs installed in the toolchain `prefix` (`velt target add`): the directories of
+/// `lib/targets/` with a kit stamp (`velt_link::kit::STAMP`), sorted, without this machine's
+/// own kit, which comes with the toolchain.
+pub fn installed_target_packs(prefix: &Path) -> Vec<String> {
+    let host = crate::release::host_triple();
+    let dir = prefix.join("lib").join("targets");
+    let mut packs: Vec<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| is_target_name(name) && *name != host)
+                .filter(|name| dir.join(name).join("kit.stamp").is_file())
+                .collect()
+        })
+        .unwrap_or_default();
+    packs.sort();
+    packs
+}
+
+/// A target triple as a directory name may be one: `[a-z0-9_.-]+`, not starting with `-` or
+/// `.` (a staging directory). Other names are not packs; this also keeps them from reaching a
+/// command line as an option or a shell word.
+fn is_target_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', '.'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-'))
+}
+
+/// The installed version whose target packs a newly installed `version` takes over: the newest
+/// older one of the same `major.minor` (the one a pin like `"0.1"` ran until now).
+pub fn predecessor(versions: &[Version], version: &Version) -> Option<Version> {
+    versions
+        .iter()
+        .filter(|v| v.major == version.major && v.minor == version.minor && *v < version)
+        .max()
+        .cloned()
+}
+
+/// Write `text` to `path` through a temporary file, so a reader never sees half of it.
+pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}", std::process::id()));
+    std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("cannot write {}: {e}", path.display())
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    pub(crate) fn fake_prefix(prefix: &Path) {
+        std::fs::create_dir_all(prefix.join(BIN_DIR)).unwrap();
+        std::fs::create_dir_all(prefix.join("std")).unwrap();
+        std::fs::write(velt_exe(prefix), b"").unwrap();
+    }
+
+    #[test]
+    fn the_root_is_found_from_the_launcher() {
+        let root = Root::of_launcher(Path::new("/h/.velt/bin/velt")).unwrap();
+        assert_eq!(root.dir(), Path::new("/h/.velt"));
+        assert_eq!(
+            root.version_dir(&v("0.1.0")),
+            Path::new("/h/.velt/toolchains/0.1.0")
+        );
+        assert_eq!(Root::of_launcher(Path::new("/h/.velt/velt")), None);
+        let installed = Path::new("/h/.velt/toolchains/0.2.1/bin/velt");
+        assert_eq!(
+            Root::of_toolchain_exe(installed).unwrap().dir(),
+            Path::new("/h/.velt")
+        );
+        assert_eq!(
+            Root::of_toolchain_exe(Path::new("/src/velt/target/debug/velt")),
+            None
+        );
+        assert_eq!(
+            Root::of_toolchain_exe(Path::new("/h/.velt/toolchains/dev/bin/velt")),
+            None
+        );
+    }
+
+    #[test]
+    fn installed_versions_links_and_the_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Root::new(tmp.path());
+        assert!(root.versions().is_empty() && root.links().is_empty());
+        assert_eq!(root.default().unwrap(), None);
+        for ver in ["0.2.0", "0.1.0", "0.10.0"] {
+            fake_prefix(&root.version_dir(&v(ver)));
+        }
+        // Staging directories, other names and prefixes without a compiler are not versions.
+        std::fs::create_dir_all(root.toolchains_dir().join(".0.3.0.42/bin")).unwrap();
+        std::fs::create_dir_all(root.toolchains_dir().join("0.4.0")).unwrap();
+        std::fs::create_dir_all(root.toolchains_dir().join("notes")).unwrap();
+        assert_eq!(root.versions(), [v("0.1.0"), v("0.2.0"), v("0.10.0")]);
+
+        let dev = tmp.path().join("checkout/prefix");
+        assert!(root
+            .link("dev", &dev)
+            .unwrap_err()
+            .contains("not a toolchain prefix"));
+        fake_prefix(&dev);
+        root.link("dev", &dev).unwrap();
+        let dev_tc = Toolchain::parse("dev").unwrap();
+        assert_eq!(root.prefix(&dev_tc).unwrap(), dev);
+        assert!(root.is_installed(&dev_tc));
+        assert!(root.link("0.1.0", &dev).is_err() && root.link("../x", &dev).is_err());
+        // A launcher's root is not a toolchain: its bin/velt would run the launcher again.
+        std::fs::create_dir_all(root.dir().join(BIN_DIR)).unwrap();
+        std::fs::write(velt_exe(root.dir()), b"").unwrap();
+        let err = root.link("loop", root.dir()).unwrap_err();
+        assert!(err.contains("is the root of a velt launcher"), "{err}");
+        let no_std = tmp.path().join("no-std");
+        std::fs::create_dir_all(no_std.join(BIN_DIR)).unwrap();
+        std::fs::write(velt_exe(&no_std), b"").unwrap();
+        assert!(root
+            .link("x", &no_std)
+            .unwrap_err()
+            .contains("it has no std"));
+
+        root.set_default(&Toolchain::Version(v("0.2.0"))).unwrap();
+        assert_eq!(
+            root.default().unwrap(),
+            Some(Toolchain::Version(v("0.2.0")))
+        );
+        root.set_default(&dev_tc).unwrap();
+        assert_eq!(root.default().unwrap(), Some(dev_tc.clone()));
+
+        root.remove(&dev_tc).unwrap();
+        assert!(dev.join("bin").is_dir(), "a link's prefix stays");
+        assert!(!root.is_installed(&dev_tc));
+        root.remove(&Toolchain::Version(v("0.1.0"))).unwrap();
+        assert_eq!(root.versions(), [v("0.2.0"), v("0.10.0")]);
+        // Nothing renamed aside is left.
+        let hidden: Vec<_> = std::fs::read_dir(root.toolchains_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("removing"))
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?}");
+        assert!(root
+            .remove(&Toolchain::Version(v("0.1.0")))
+            .unwrap_err()
+            .contains("not installed"));
+    }
+
+    #[test]
+    fn toolchain_names() {
+        assert_eq!(
+            Toolchain::parse("0.1.0").unwrap(),
+            Toolchain::Version(v("0.1.0"))
+        );
+        assert_eq!(
+            Toolchain::parse("dev\n").unwrap(),
+            Toolchain::Linked("dev".into())
+        );
+        for bad in ["0.1", "Dev", "", "a/b", "..", "1x"] {
+            assert!(Toolchain::parse(bad).is_err(), "{bad}");
+        }
+        for device in ["con", "nul", "nul.txt", "com1", "lpt9", "aux"] {
+            let err = Toolchain::parse(device).unwrap_err();
+            assert!(err.contains("device name on Windows"), "{device}: {err}");
+        }
+        assert!(Toolchain::parse("console").is_ok() && Toolchain::parse("com").is_ok());
+    }
+
+    #[test]
+    fn prune_keeps_the_default_and_the_newest_of_each_minor() {
+        let versions: Vec<Version> = ["0.1.0", "0.1.2", "0.1.3", "0.2.0-rc.1", "0.2.0", "1.0.0"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        let shown = |p: Vec<Version>| p.iter().map(Version::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            shown(prunable(&versions, &[])),
+            ["0.1.0", "0.1.2", "0.2.0-rc.1"]
+        );
+        // Kept: the default, the one this directory selects, those a link points into.
+        assert_eq!(
+            shown(prunable(&versions, &[v("0.1.0"), v("0.2.0-rc.1")])),
+            ["0.1.2"]
+        );
+        // A newer pre-release doesn't displace the release a pin runs; a minor with only
+        // pre-releases keeps its newest.
+        let with_rc: Vec<Version> = ["0.1.3", "0.1.4-rc.1", "0.3.0-rc.1", "0.3.0-rc.2"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        assert_eq!(shown(prunable(&with_rc, &[])), ["0.1.4-rc.1", "0.3.0-rc.1"]);
+        assert!(prunable(&[v("0.1.0")], &[]).is_empty());
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/b")).unwrap();
+        std::fs::write(tmp.path().join("a/b/f"), [0u8; 1000]).unwrap();
+        std::fs::write(tmp.path().join("g"), [0u8; 24]).unwrap();
+        assert_eq!(dir_size(tmp.path()), 1024);
+    }
+
+    #[test]
+    fn versions_a_link_points_into() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Root::new(tmp.path());
+        for ver in ["0.1.0", "0.1.1", "0.2.0"] {
+            fake_prefix(&root.version_dir(&v(ver)));
+        }
+        assert!(root.linked_versions().is_empty());
+        root.link("dev", &root.version_dir(&v("0.1.1"))).unwrap();
+        // A prefix inside a version's directory counts too.
+        let inner = root.version_dir(&v("0.2.0")).join("inner");
+        fake_prefix(&inner);
+        root.link("inner", &inner).unwrap();
+        let elsewhere = tmp.path().join("checkout");
+        fake_prefix(&elsewhere);
+        root.link("checkout", &elsewhere).unwrap();
+        assert_eq!(root.linked_versions(), [v("0.1.1"), v("0.2.0")]);
+    }
+
+    #[test]
+    fn target_packs_and_the_version_a_new_one_follows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let targets = tmp.path().join("lib/targets");
+        let host = crate::release::host_triple();
+        // Triples that are never a CI machine's (the host's own kit is not a pack).
+        for (triple, stamp) in [
+            (host.as_str(), true),
+            ("wasm32-wasip1", true),
+            ("riscv64gc-unknown-linux-gnu", true),
+            ("broken-target", false),
+            (".x86_64-unknown-linux-gnu.42-0", true),
+            // Not target names: never passed on as arguments.
+            ("--exit=3", true),
+            ("a b", true),
+            ("x;y", true),
+            ("Upper", true),
+        ] {
+            std::fs::create_dir_all(targets.join(triple)).unwrap();
+            if stamp {
+                std::fs::write(targets.join(triple).join("kit.stamp"), "").unwrap();
+            }
+        }
+        assert_eq!(
+            installed_target_packs(tmp.path()),
+            ["riscv64gc-unknown-linux-gnu", "wasm32-wasip1"]
+        );
+        assert!(installed_target_packs(&tmp.path().join("none")).is_empty());
+
+        let versions: Vec<Version> = ["0.1.0", "0.1.2", "0.2.0", "0.1.5"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        assert_eq!(predecessor(&versions, &v("0.1.3")), Some(v("0.1.2")));
+        assert_eq!(predecessor(&versions, &v("0.1.6")), Some(v("0.1.5")));
+        assert_eq!(predecessor(&versions, &v("0.2.1")), Some(v("0.2.0")));
+        assert_eq!(predecessor(&versions, &v("0.3.0")), None);
+        assert_eq!(predecessor(&versions, &v("0.1.0")), None);
+    }
+}

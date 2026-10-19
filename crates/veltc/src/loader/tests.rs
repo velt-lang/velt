@@ -93,77 +93,6 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
 }
 
 #[test]
-fn globals_load_when_a_user_module_names_them() {
-    let t = Tree::new();
-    let std = t.path("std");
-    t.write(
-        "std/prelude/core.vlt",
-        "export function id(): i64 { return 0; }
-",
-    );
-    t.write(
-        "std/prelude/global/web.vlt",
-        "export { fetch, Response } from \"velt:web\";
-",
-    );
-    t.write(
-        "std/prelude/global/url.vlt",
-        "export { URL } from \"velt:url\";
-",
-    );
-    // A std module that mentions a global's name does not load it.
-    t.write(
-        "std/web.vlt",
-        "// URL
-export function fetch() {}
-export class Response {}
-",
-    );
-    t.write(
-        "std/url.vlt",
-        "export class URL {}
-",
-    );
-    let opts = || LoadOptions {
-        std_root: Some(std.clone()),
-        ..Default::default()
-    };
-    let plain = t.write(
-        "p/plain.vlt",
-        "// prefetch
-function main() {}
-",
-    );
-    let (l, diags, _) = load(&plain, opts());
-    assert!(diags.is_empty(), "{:?}", messages(&diags));
-    assert_eq!(paths(&l), ["std/prelude/core", "main"]);
-
-    t.write(
-        "p/lib.vlt",
-        "export async function get() { await fetch(); }
-",
-    );
-    let root = t.write(
-        "p/main.vlt",
-        "import { get } from \"./lib\";
-function main() {}
-",
-    );
-    let (l, diags, _) = load(&root, opts());
-    assert!(diags.is_empty(), "{:?}", messages(&diags));
-    assert_eq!(
-        paths(&l),
-        [
-            "std/prelude/core",
-            "main",
-            "lib",
-            "std/prelude/global/web",
-            "std/web"
-        ]
-    );
-}
-
-#[test]
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");
@@ -384,7 +313,7 @@ fn path_aliases_resolve_like_relative_imports() {
     assert_eq!(paths(&l), ["main", "util/strings", "ui"]);
     assert_eq!(
         messages(&diags),
-        ["invalid package name `@other` in module specifier `@other/x`"]
+        ["package `@other/x` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)"]
     );
 }
 
@@ -635,4 +564,142 @@ fn unreadable_extra_roots_are_reported_in_their_file() {
     );
     let span = diags[0].labels[0].span;
     assert_eq!(sm.get(span.file).path, gone);
+}
+
+#[test]
+fn npm_workspace_packages_load_from_their_sources() {
+    let t = Tree::new();
+    t.write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+    t.write(
+        "packages/reactivity/package.json",
+        r#"{ "name": "@sigx/reactivity", "exports": {
+            ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+            "./internals": { "types": "./dist/internals.d.ts", "import": "./dist/internals.js" } } }"#,
+    );
+    t.write(
+        "packages/reactivity/src/index.ts",
+        "import { track } from \"./internals.js\";\nexport function signal(): void { track(); }\n",
+    );
+    t.write(
+        "packages/reactivity/src/internals.ts",
+        "export function track(): void {}\n",
+    );
+    t.write("packages/json/src/lib.vlt", "export function parse() {}\n");
+    t.write(
+        "packages/json/package.json",
+        r#"{ "name": "json", "main": "./dist/x.js" }"#,
+    );
+    let root = t.write(
+        "packages/app/src/main.ts",
+        "import { signal } from \"@sigx/reactivity\";\nimport { track } from \"@sigx/reactivity/internals\";\nimport { parse } from \"json\";\nimport { x } from \"@sigx/reactivity/nope\";\nimport { y } from \"@sigx/missing\";\nfunction main() {}\n",
+    );
+    // `json` is a Velt dependency of the importer: it wins over the workspace's npm package.
+    let resolver = MapResolver(BTreeMap::from([(
+        "json".to_string(),
+        t.path("packages/json"),
+    )]));
+    let (l, diags, _) = load(
+        &root,
+        LoadOptions {
+            packages: Some(&resolver),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        paths(&l),
+        [
+            "main",
+            "../../reactivity/src",
+            "../../reactivity/src/internals",
+            "json"
+        ]
+    );
+    assert_eq!(
+        messages(&diags),
+        [
+            "package `@sigx/reactivity` does not export `./nope` (`exports` in its package.json)",
+            "package `@sigx/missing` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)",
+        ]
+    );
+}
+
+#[test]
+fn ambient_constants_without_a_define_are_errors_only_when_used() {
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/src/env.d.ts",
+        "declare const __DEV__: boolean;\ndeclare module 'x' { }\n",
+    );
+    // Declared and named in a string, never used as a value: no error.
+    let root = t.write(
+        "lib/src/main.ts",
+        "declare global {\n  var __HOOK__: number;\n}\nconst KEY: string = \"__HOOK__\";\nfunction main(): void {\n  if (__DEV__) {\n    console.log(KEY);\n  }\n}\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`__DEV__` is declared here but has no value"]
+    );
+}
+
+#[test]
+fn ambient_declarations_of_modules_are_not_global() {
+    // #1091 review: `export declare const` (and any `declare const` of a file with imports or
+    // exports) belongs to its module; a local of the same name elsewhere is no use of it.
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/index.d.ts",
+        "export declare const version: string;\nexport declare function label(): string;\n",
+    );
+    t.write(
+        "lib/src/env.d.ts",
+        "declare const MISSING: number;\ndeclare const FLAG: boolean;\n",
+    );
+    t.write(
+        "lib/src/own.ts",
+        "declare const LOCAL: number;\nexport function own(): number {\n  return LOCAL;\n}\n",
+    );
+    // A script (no imports or exports) whose top-level `const` declares the name itself.
+    let root = t.write(
+        "lib/src/main.ts",
+        "const MISSING: number = 3;\nfunction named(): string {\n  const version = \"local\";\n  return version;\n}\nconsole.log(MISSING);\nconsole.log(named());\nconsole.log(FLAG ? 1 : 2);\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`FLAG` is declared here but has no value"]
+    );
+    // A module's own ambient declaration is checked against its own uses.
+    let root = t.write(
+        "lib/src/main.ts",
+        "import { own } from \"./own\";\nconsole.log(own());\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`LOCAL` is declared here but has no value"]
+    );
+}
+
+#[test]
+fn declare_global_in_a_declaration_file_gives_variables_and_keeps_interfaces() {
+    // `declare global` is parsed once (`parse_augment`): its interfaces are an augmentation,
+    // its variables ambient declarations, read from a package's `.d.ts` too.
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/src/globals.d.ts",
+        "export {};\ndeclare global {\n  var __HOOK__: number;\n  interface Hooks {\n    a: number;\n  }\n}\n",
+    );
+    let root = t.write(
+        "lib/src/main.ts",
+        "export {};\ndeclare global {\n  var __OTHER__: string;\n  interface Window {\n    x: number;\n  }\n}\nconsole.log(__HOOK__);\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`__HOOK__` is declared here but has no value"]
+    );
 }

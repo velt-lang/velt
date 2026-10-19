@@ -6,12 +6,12 @@
 declare function velt_rt_fnv1a64_str(s: string): u64;
 declare function velt_rt_fnv1a64_bytes(data: u8[]): u64;
 
-// The 64-bit FNV-1a hash of the UTF-8 bytes of `s`.
+/** The 64-bit FNV-1a hash of the UTF-8 bytes of `s`. */
 export function fnv1a64(s: string): u64 {
   return velt_rt_fnv1a64_str(s);
 }
 
-// The 64-bit FNV-1a hash of `data`.
+/** The 64-bit FNV-1a hash of `data`. */
 export function fnv1a64Bytes(data: u8[]): u64 {
   return velt_rt_fnv1a64_bytes(data);
 }

@@ -2,17 +2,31 @@
 # Download and install a released Velt toolchain on Linux or macOS.
 #
 #   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
-#   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh -s -- --prefix ~/velt
+#   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh -s -- --version 0.1.1
+#
+# Versions install side by side (#948, docs/tooling/platforms.md): the toolchain goes into
+# <root>/toolchains/<version>/, and the launcher into <root>/bin/velt, the one directory on PATH.
+# It runs the version each package pins (`velt` in package.vlt), else the default. Running this
+# again with another version adds it beside the others.
 #
 # Options (environment variable in parentheses):
-#   --version <v>     the release to install, e.g. 0.1.0 (VELT_INSTALL_VERSION); default: the release
+#   --version <v>     the release to install, e.g. 0.1.1 (VELT_INSTALL_VERSION); default: the release
 #                     this script was published with, or the latest release
-#   --prefix <dir>    where to install (VELT_INSTALL_PREFIX); default: ~/.velt/toolchain
-#   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading
-#   --no-modify-path  do not add <prefix>/bin to PATH in your shell profiles
-# VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests).
+#   --prefix <dir>    the root (VELT_INSTALL_PREFIX); default: ~/.velt
+#   --default         make this version the default (the first one installed always is)
+#   --force           reinstall a version that is already installed
+#   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading,
+#                     checked against its release's SHA256SUMS and SHA256SUMS.sig beside it
+#   --unverified      with --archive: install it without those (unchecked)
+#   --no-modify-path  do not add <root>/bin to PATH in your shell profiles
+# VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests), and
+# VELT_INSTALL_PUBLIC_KEY (64 hex digits per key, several separated by commas) the release keys,
+# for another build's releases.
 #
-# The prefix's bin/, lib/ and std/ are replaced wholesale (docs/tooling/platforms.md).
+# A download is checked against the release's SHA256SUMS, and that file against its signature
+# (SHA256SUMS.sig) with the velt release key when OpenSSL can check Ed25519 signatures (OpenSSL
+# 3.0 or newer; not macOS's LibreSSL). The installed launcher checks every later download itself.
+# Downloads are https only (with every redirect), or http to this machine (tests).
 set -eu
 
 # The release workflow replaces this with the version it publishes.
@@ -20,9 +34,20 @@ published_version="@VELT_RELEASE_VERSION@"
 
 base_url=${VELT_INSTALL_BASE_URL:-https://github.com/velt-lang/velt}
 version=${VELT_INSTALL_VERSION:-}
-prefix=${VELT_INSTALL_PREFIX:-"$HOME/.velt/toolchain"}
+prefix=${VELT_INSTALL_PREFIX:-"$HOME/.velt"}
 archive=
+unverified=0
 modify_path=1
+make_default=0
+force=0
+
+# The velt release keys (velt_toolchain::signature::RELEASE_PUBLIC_KEYS), as the base64 of the DER
+# OpenSSL reads, one per line: the signing key, then the backup (its private half offline). A
+# signature by either is accepted.
+release_keys='MCowBQYDK2VwAyEAlXBDOAeP85PjjZH6CzVAe++R8saiPgF4bNYBUQBhBcs=
+MCowBQYDK2VwAyEAhLsoc87pXkeARf8hldf47bhP3iHuvXuW4ASCtSByZL4='
+pem() { printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n' "$1"; }
+
 
 say() { printf '%s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -32,13 +57,19 @@ while [ $# -gt 0 ]; do
         --version) [ $# -ge 2 ] || err "--version needs a value"; version=$2; shift 2 ;;
         --prefix) [ $# -ge 2 ] || err "--prefix needs a value"; prefix=$2; shift 2 ;;
         --archive) [ $# -ge 2 ] || err "--archive needs a value"; archive=$2; shift 2 ;;
+        --unverified) unverified=1; shift ;;
         --no-modify-path) modify_path=0; shift ;;
+        --default) make_default=1; shift ;;
+        --force) force=1; shift ;;
         -h|--help)
-            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--archive <file>] [--no-modify-path]"
+            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--default] [--force] [--archive <file> [--unverified]] [--no-modify-path]"
             exit 0 ;;
         *) err "unknown option: $1 (see --help)" ;;
     esac
 done
+if [ "$unverified" = 1 ] && [ -z "$archive" ]; then
+    err "--unverified goes with --archive <file>"
+fi
 
 # --- the target triple of this machine -------------------------------------------------------
 detect_target() {
@@ -51,7 +82,8 @@ detect_target() {
     esac
     case "$os" in
         Linux)
-            if ls /lib/ld-musl-* >/dev/null 2>&1 || (ldd --version 2>&1 | grep -qi musl); then
+            # The C library itself: glibc systems can have musl installed too (/lib/ld-musl-*).
+            if ldd --version 2>&1 | grep -qi musl; then
                 err "no prebuilt Velt for musl (Alpine); build it from source (docs/tooling/platforms.md)"
             fi
             echo "$arch-unknown-linux-gnu" ;;
@@ -68,10 +100,22 @@ detect_target() {
 }
 
 # --- downloads ----------------------------------------------------------------------------------
+# https only, redirects included, as the launcher downloads (velt_toolchain::install); plain http
+# only to this machine, for tests and local mirrors.
+case "$base_url" in
+    https://*) protocols='=https' ;;
+    http://localhost:*|http://localhost/*|http://127.0.0.1:*|http://127.0.0.1/*|http://\[::1\]:*|http://\[::1\]/*)
+        protocols='=http' ;;
+    *) err "VELT_INSTALL_BASE_URL must be an https:// URL (or http:// to this machine): $base_url" ;;
+esac
 if command -v curl >/dev/null 2>&1; then
-    fetch() { curl --proto '=https,http' -fsSL --retry 3 -o "$2" "$1"; }
+    fetch() { curl --proto "$protocols" --proto-redir "$protocols" -fsSL --retry 3 -o "$2" "$1"; }
 elif command -v wget >/dev/null 2>&1; then
-    fetch() { wget -q --tries=3 -O "$2" "$1"; }
+    if [ "$protocols" = '=https' ]; then
+        fetch() { wget -q --https-only --tries=3 -O "$2" "$1"; }
+    else
+        fetch() { wget -q --tries=3 -O "$2" "$1"; }
+    fi
 else
     fetch() { err "neither curl nor wget is installed"; }
 fi
@@ -79,7 +123,8 @@ fi
 # The tag of the latest release, from the redirect of <base>/releases/latest to .../tag/<tag>.
 latest_tag() {
     if command -v curl >/dev/null 2>&1; then
-        url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$base_url/releases/latest") || return 1
+        url=$(curl --proto "$protocols" --proto-redir "$protocols" -fsSLI -o /dev/null \
+            -w '%{url_effective}' "$base_url/releases/latest") || return 1
     else
         url=$(wget -q -S --max-redirect=0 --spider "$base_url/releases/latest" 2>&1 |
             sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\r' | tail -n 1)
@@ -95,17 +140,123 @@ sha256_of() {
         sha256sum "$1" | cut -d ' ' -f 1
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | cut -d ' ' -f 1
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 -r "$1" | cut -d ' ' -f 1
     else
         return 1
     fi
 }
 
+# Hex digits to the bytes they stand for, through printf's octal escapes (POSIX sh has no \x).
+hex_to_bytes() {
+    # shellcheck disable=SC2059
+    printf "$(printf '%s' "$1" | tr 'A-F' 'a-f' | awk '{
+        h = "0123456789abcdef"
+        for (i = 1; i < length($0); i += 2)
+            printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+    }')"
+}
+
+# <file> against its entry <name> in $tmp/SHA256SUMS. The signature vouches for SHA256SUMS only:
+# without the archive's hash it vouches for nothing installed, so there is no going on without one.
+check_sums() { # <file> <name>
+    expected=$(awk -v f="$2" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
+    [ -n "$expected" ] || err "SHA256SUMS has no entry for $2"
+    actual=$(sha256_of "$1") ||
+        err "cannot hash $2: install sha256sum, shasum or openssl"
+    [ "$actual" = "$expected" ] || err "checksum mismatch for $2 (expected $expected, got $actual)"
+}
+
+# $tmp/SHA256SUMS against $tmp/SHA256SUMS.sig with the release key: the checksum shows the
+# download is intact, the signature that the velt project published it (whatever mirror served
+# it).
+check_signature() {
+    if ! command -v openssl >/dev/null 2>&1 ||
+        ! pem "$(printf '%s\n' "$release_keys" | head -n 1)" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+        ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
+        if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
+            err "VELT_INSTALL_PUBLIC_KEY is set, but no OpenSSL here checks Ed25519 signatures (OpenSSL 3.0 or newer)"
+        fi
+        say "note: no OpenSSL that checks Ed25519 signatures here (OpenSSL 3.0 or newer), so only" \
+            "the checksum was checked (it shows the archive is intact, not who published it)" >&2
+        return 0
+    fi
+    if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
+        # Hex keys, separated by commas. An Ed25519 public key's DER is a fixed 12-byte header
+        # and the 32-byte key.
+        release_keys=
+        # No file-name expansion of the words (`*` would name files).
+        set -f
+        for hex in $(printf '%s' "$VELT_INSTALL_PUBLIC_KEY" | tr ',' ' '); do
+            # Exactly 32 bytes in hex, as the launcher reads them (OpenSSL would ignore extras).
+            case "$hex" in
+                *[!0-9a-fA-F]*) err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)" ;;
+            esac
+            [ "${#hex}" = 64 ] ||
+                err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)"
+            der=$(printf '302a300506032b6570032100%s' "$hex" | tr 'A-F' 'a-f' | awk '{
+                h = "0123456789abcdef"
+                for (i = 1; i < length($0); i += 2)
+                    printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+            }')
+            # shellcheck disable=SC2059
+            b64=$(printf "$der" | openssl base64 -A) || err "VELT_INSTALL_PUBLIC_KEY: $hex is not a key"
+            pem "$b64" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+                err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)"
+            release_keys="$release_keys$b64
+"
+        done
+        set +f
+        [ -n "$release_keys" ] || err "VELT_INSTALL_PUBLIC_KEY names no key"
+    fi
+    # The release workflow writes the signature as its 64 raw bytes; hex is read too, as the
+    # launcher does. Only a file the size of one in hex (128 digits, and a line end) is read as
+    # text: the shell would warn about the NUL bytes of a raw signature.
+    sig_size=$(wc -c < "$tmp/SHA256SUMS.sig" | tr -d ' ')
+    case "$sig_size" in
+        128|129|130)
+            sig_hex=$(LC_ALL=C tr -d ' \r\n' < "$tmp/SHA256SUMS.sig")
+            case "$sig_hex" in
+                *[!0-9a-fA-F]*) ;;
+                *)
+                    if [ "${#sig_hex}" = 128 ]; then
+                        hex_to_bytes "$sig_hex" > "$tmp/SHA256SUMS.sig"
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+    for b64 in $release_keys; do
+        pem "$b64" > "$tmp/release-key.pem"
+        if openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
+            -in "$tmp/SHA256SUMS" -sigfile "$tmp/SHA256SUMS.sig" >/dev/null 2>&1; then
+            say "checked the signature of SHA256SUMS with the velt release key"
+            return 0
+        fi
+    done
+    err "SHA256SUMS does not match its signature with the velt release keys: refusing this download"
+}
+
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t velt)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+staging=
+trap 'rm -rf "$tmp"; if [ -n "$staging" ]; then rm -rf "$staging"; fi' EXIT INT TERM
 
 if [ -n "$archive" ]; then
     [ -f "$archive" ] || err "no such archive: $archive"
     say "installing Velt from $archive"
+    if [ "$unverified" = 1 ]; then
+        say "warning: installing $archive without checking it (--unverified)" >&2
+    else
+        # As `velt toolchain install --from`: the release's SHA256SUMS and its signature beside it.
+        beside=$(dirname -- "$archive")
+        if [ ! -f "$beside/SHA256SUMS" ] || [ ! -f "$beside/SHA256SUMS.sig" ]; then
+            err "cannot check $archive: put its release's SHA256SUMS and SHA256SUMS.sig beside it, or pass --unverified to install it unchecked"
+        fi
+        cp "$beside/SHA256SUMS" "$tmp/SHA256SUMS"
+        cp "$beside/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"
+        check_sums "$archive" "$(basename -- "$archive")"
+        check_signature
+    fi
 else
     target=$(detect_target)
     if [ -z "$version" ] && [ "${published_version#@}" = "$published_version" ]; then
@@ -122,13 +273,10 @@ else
     fetch "$url/$name.tar.gz" "$tmp/$name.tar.gz" ||
         err "download failed: $url/$name.tar.gz (is $version a release with a $target build?)"
     fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || err "download failed: $url/SHA256SUMS"
-    expected=$(awk -v f="$name.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
-    [ -n "$expected" ] || err "SHA256SUMS has no entry for $name.tar.gz"
-    if actual=$(sha256_of "$tmp/$name.tar.gz"); then
-        [ "$actual" = "$expected" ] || err "checksum mismatch for $name.tar.gz (expected $expected, got $actual)"
-    else
-        say "warning: neither sha256sum nor shasum is installed; skipping the checksum check" >&2
-    fi
+    check_sums "$tmp/$name.tar.gz" "$name.tar.gz"
+    fetch "$url/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
+        err "download failed: $url/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
+    check_signature
     archive="$tmp/$name.tar.gz"
 fi
 
@@ -140,20 +288,67 @@ for d in "$tmp/unpacked"/*/; do
     if [ -f "$d/bin/velt" ]; then dist=${d%/}; break; fi
 done
 [ -n "$dist" ] || err "$archive is not a Velt release archive (no */bin/velt inside)"
+[ -f "$dist/bin/velt-launcher" ] ||
+    err "$archive has no launcher (bin/velt-launcher): velt 0.1.0 predates it; this installer installs later releases"
+chmod +x "$dist/bin/velt" "$dist/bin/velt-launcher"
+# `velt <version> (<commit> <triple>)`
+installed=$("$dist/bin/velt" --version) || err "the velt in $archive does not run on this system"
+version=$(printf '%s\n' "$installed" | awk '{ print $2 }')
+[ -n "$version" ] || err "cannot read the version of the velt in $archive"
 
-mkdir -p "$prefix" || err "cannot create $prefix"
-prefix=$(cd "$prefix" && pwd)
-for d in bin lib std; do
-    rm -rf "${prefix:?}/$d"
-    if [ -d "$dist/$d" ]; then cp -R "$dist/$d" "$prefix/$d"; fi
-done
-for f in README.md LICENSE-MIT LICENSE-APACHE; do
-    if [ -f "$dist/$f" ]; then cp "$dist/$f" "$prefix/"; fi
-done
-chmod +x "$prefix/bin/velt"
-bin="$prefix/bin"
-installed=$("$bin/velt" --version) || err "the installed $bin/velt does not run on this system"
-say "installed $installed into $prefix"
+mkdir -p "$prefix/toolchains" "$prefix/bin" || err "cannot create $prefix"
+root=$(cd "$prefix" && pwd)
+dest="$root/toolchains/$version"
+if [ -f "$dest/bin/velt" ] && [ "$force" = 0 ]; then
+    say "velt $version is already installed in $dest (--force reinstalls it)"
+else
+    # Into place whole: a staging copy, renamed over (an older copy is renamed aside first).
+    staging="$root/toolchains/.$version.$$"
+    rm -rf "$staging"
+    cp -R "$dist" "$staging"
+    if [ -d "$dest" ]; then
+        mv "$dest" "$root/toolchains/.$version.old.$$" ||
+            err "cannot replace $dest (in use?)"
+        rm -rf "$root/toolchains/.$version.old.$$"
+    fi
+    mv "$staging" "$dest"
+    staging=
+    say "installed $installed into $dest"
+fi
+
+# The launcher: replaced unless the one installed belongs to a newer velt. Anything that doesn't
+# answer `velt-launcher <version>` is not a launcher, and is replaced.
+launcher_version() {
+    "$1" toolchain --version 2>/dev/null |
+        sed -n 's/^velt-launcher \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\(-[0-9A-Za-z.-]*\)\{0,1\}\)$/\1/p' |
+        head -n 1
+}
+# <version> as a sortable key: major.minor.patch, then 1 for a release or 0 for a pre-release
+# (which comes before its release), then the pre-release text.
+version_key() {
+    core=${1%%-*}
+    case "$1" in *-*) pre=0; tag=${1#*-} ;; *) pre=1; tag= ;; esac
+    printf '%s.%s %s\n' "$core" "$pre" "$tag"
+}
+newer_or_same() { # <a> <b>: a >= b
+    [ "$(printf '%s\n%s\n' "$(version_key "$1")" "$(version_key "$2")" |
+        sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1)" = "$(version_key "$1")" ]
+}
+current=
+if [ -x "$root/bin/velt" ]; then current=$(launcher_version "$root/bin/velt" || true); fi
+if [ -z "$current" ] || newer_or_same "$version" "$current"; then
+    cp "$dist/bin/velt-launcher" "$root/bin/.velt.$$"
+    chmod +x "$root/bin/.velt.$$"
+    mv -f "$root/bin/.velt.$$" "$root/bin/velt"
+fi
+
+if [ "$make_default" = 1 ] || [ ! -s "$root/default" ]; then
+    printf '%s\n' "$version" > "$root/default"
+    say "velt $version is the default (packages that pin another version run that one)"
+fi
+bin="$root/bin"
+VELT_TOOLCHAIN="$version" "$bin/velt" --version >/dev/null ||
+    err "the launcher in $bin does not run velt $version"
 
 # --- PATH ---------------------------------------------------------------------------------------
 add_line() { # <file> <line>
@@ -179,14 +374,8 @@ if [ "$modify_path" = 1 ]; then
 fi
 
 # --- next steps ---------------------------------------------------------------------------------
-if ! command -v cc >/dev/null 2>&1; then
-    say ""
-    say "Velt links programs with the system C toolchain, which is missing:"
-    case "$(uname -s)" in
-        Darwin) say "  xcode-select --install" ;;
-        *) say "  sudo apt install build-essential    (or: sudo dnf install gcc)" ;;
-    esac
-fi
+# The toolchain links programs with its bundled linker: no C compiler needed (`velt doctor` says
+# what is missing, if anything).
 say ""
 if [ "$on_path" = 0 ]; then
     if [ "$modify_path" = 1 ]; then
@@ -198,3 +387,8 @@ if [ "$on_path" = 0 ]; then
     say ""
 fi
 say "Then check the installation with:  velt doctor"
+if [ -d "$HOME/.velt/toolchain/bin" ] && [ "$root" = "$HOME/.velt" ]; then
+    say ""
+    say "An earlier install (one toolchain, before the launcher) is in ~/.velt/toolchain; remove it"
+    say "with \`rm -rf ~/.velt/toolchain\` and its PATH line from your shell profile."
+fi

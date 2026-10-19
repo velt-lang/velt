@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # TechEmpower Framework Benchmarks tests (JSON, plaintext, db, queries, fortunes, updates) for
-# the Velt, Node, Node-cluster, Bun, Go and Rust servers in bench/web. See bench/web/README.md.
+# the Velt (template literals and TSX), Node, Node-cluster, Bun, Go and Rust servers in bench/web.
+# See bench/web/README.md.
 #
 # Usage: bench/web/run.sh   (needs wrk, python3, the toolchains of the chosen SERVERS and a
 #                            database from bench/web/db/db.sh up)
 # Knobs (environment):
-#   SERVERS         velt node node-cluster bun go rust
+#   SERVERS         velt velt-tsx node node-cluster bun go rust (also: velt-per-core, the Velt
+#                   server under VELT_SCHEDULER=per-core)
 #   TESTS           json plaintext db queries fortunes updates
 #   QUICK=1         5 s runs, 2 s warm-up and fewer levels (a smoke run; numbers mean little)
 #   DURATION        seconds per measurement (15; QUICK 5)      WARMUP  seconds (5; QUICK 2)
@@ -18,6 +20,8 @@
 #   VELT            the velt compiler (target/release/velt, target/debug/velt, then PATH);
 #                   VELT_STD defaults to this checkout's std/
 #   RUST_TARGET_DIR cargo target dir for the Rust server (bench/web/rust/target)
+#   SERVER_CPUS     Linux: pin each server to these CPUs (taskset -c list), e.g. 0,2,4,6
+#   CLIENT_CPUS     Linux: pin wrk to these CPUs, so it never competes with the server
 #   OUT             results file prefix (bench/web/results/run-<timestamp>): writes
 #                   OUT.jsonl (one JSON object per measurement) and OUT.md (table rows)
 # Only kills the servers it started.
@@ -40,7 +44,11 @@ else
   CONC_PLAINTEXT="${CONC_PLAINTEXT:-256 1024}"
   QUERY_COUNTS="${QUERY_COUNTS:-1 5 10 15 20}"
 fi
-SERVERS="${SERVERS:-velt node node-cluster bun go rust}"
+SERVERS="${SERVERS:-velt velt-tsx node node-cluster bun go rust}"
+SERVER_PIN=()
+CLIENT_PIN=()
+if [ -n "${SERVER_CPUS:-}" ]; then SERVER_PIN=(taskset -c "$SERVER_CPUS"); fi
+if [ -n "${CLIENT_CPUS:-}" ]; then CLIENT_PIN=(taskset -c "$CLIENT_CPUS"); fi
 TESTS="${TESTS:-json plaintext db queries fortunes updates}"
 QUERY_CONNS="${QUERY_CONNS:-512}"
 PIPELINE="${PIPELINE:-16}"
@@ -82,7 +90,8 @@ find_velt() {
 
 build() {
   case "$1" in
-    velt) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
+    velt | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
+    velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.vlt" -o "$WORK/velt-tsx-server" ;;
     node | node-cluster)
       [ -d "$HERE/node/node_modules" ] || (cd "$HERE/node" && npm ci --no-audit --no-fund) ;;
     bun) ;;
@@ -96,12 +105,14 @@ build() {
 start() {
   local log="$WORK/$1.log"
   case "$1" in
-    velt) "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
-    node) node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
-    node-cluster) CLUSTER=1 node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
-    bun) bun "$HERE/bun/server.ts" "$2" >"$log" 2>&1 & ;;
-    go) "$WORK/go-server" "$2" >"$log" 2>&1 & ;;
-    rust) "$RUST_TARGET_DIR/release/web-bench-axum" "$2" >"$log" 2>&1 & ;;
+    velt) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
+    velt-per-core) VELT_SCHEDULER=per-core ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
+    velt-tsx) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/velt-tsx-server" "$2" >"$log" 2>&1 & ;;
+    node) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
+    node-cluster) CLUSTER=1 ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
+    bun) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} bun "$HERE/bun/server.ts" "$2" >"$log" 2>&1 & ;;
+    go) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$WORK/go-server" "$2" >"$log" 2>&1 & ;;
+    rust) ${SERVER_PIN[@]+"${SERVER_PIN[@]}"} "$RUST_TARGET_DIR/release/web-bench-axum" "$2" >"$log" 2>&1 & ;;
   esac
   STARTED_PID=$!
   PIDS+=("$STARTED_PID")
@@ -128,9 +139,9 @@ random_port() {
 run_wrk() {
   local threads=$((THREADS < $2 ? THREADS : $2))
   if [ "$4" -gt 1 ]; then
-    wrk -t "$threads" -c "$2" -d "${3}s" --latency -s "$HERE/pipeline.lua" "$1" -- "$4"
+    ${CLIENT_PIN[@]+"${CLIENT_PIN[@]}"} wrk -t "$threads" -c "$2" -d "${3}s" --latency -s "$HERE/pipeline.lua" "$1" -- "$4"
   else
-    wrk -t "$threads" -c "$2" -d "${3}s" --latency "$1"
+    ${CLIENT_PIN[@]+"${CLIENT_PIN[@]}"} wrk -t "$threads" -c "$2" -d "${3}s" --latency "$1"
   fi
 }
 

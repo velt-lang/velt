@@ -1,0 +1,27 @@
+// An async arrow stored where a `void` callback is expected (a field, an array) and then called
+// from an HTTP handler runs on several threads: modifying a capture is an error there.
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+async function main() {
+  let last = "";
+  const i = new Input();
+  i.onChange = async (v: string) => {
+    last = v;
+  };
+  let seen = "";
+  const hs: ((v: string) => void)[] = [];
+  hs.push(async (v: string) => {
+    seen = v;
+  });
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    hs[0]("y");
+    return new Response("ok");
+  });
+  await a.shutdown();
+  console.log(last, seen);
+}

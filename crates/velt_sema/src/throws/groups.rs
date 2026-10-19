@@ -322,7 +322,7 @@ pub(crate) fn member_bound(cx: &mut Ctx, b: &GroupBound, m: DefId) -> Option<TyI
     };
     let args = args.or_else(|| impl_args(cx, iface, m));
     let t = match args {
-        Some(args) => cx.ty.subst(t, &args),
+        Some(args) => cx.subst(t, &args),
         None => t,
     };
     cx.canon_error(Some(t))
@@ -349,12 +349,12 @@ fn iface_args_of(cx: &mut Ctx, d: DefId, iface: DefId, depth: u32) -> Option<Vec
             return Some(imp.args);
         }
         if let Some(args) = iface_args_of(cx, imp.iface, iface, depth + 1) {
-            return Some(args.iter().map(|t| cx.ty.subst(*t, &imp.args)).collect());
+            return Some(args.iter().map(|t| cx.subst(*t, &imp.args)).collect());
         }
     }
     let (bd, bargs) = base.and_then(|b| cx.class_of(b))?;
     let args = iface_args_of(cx, bd, iface, depth + 1)?;
-    Some(args.iter().map(|t| cx.ty.subst(*t, &bargs)).collect())
+    Some(args.iter().map(|t| cx.subst(*t, &bargs)).collect())
 }
 
 /// The interface arguments of an implementation of `iface` that uses `m` (`extend` blocks).

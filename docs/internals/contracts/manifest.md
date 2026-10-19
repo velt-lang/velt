@@ -9,6 +9,7 @@ import type { Package } from "velt:package";
 export const pkg: Package = {
   name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
   version: "0.1.0",             // semver, required
+  velt: "0.1",                  // optional: the toolchain versions that build it (additive)
   entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
   dependencies: {
     json: "1.2",                // registry package, semver requirement
@@ -63,6 +64,60 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   filled in (`entry`, `dependencies: {}`, `paths: {}`, and `native.path`/`targets`/`wasm` when
   `native` is present).
 
+## Scoped names (additive, #929)
+- `name` and the keys of `dependencies` may be scoped, `@scope/name`, each part lowercase
+  letters and digits (starting with either) joined by single `-` or `_`, not a Windows device
+  name (`vpm::manifest::is_valid_dependency_name`); `is_valid_package_name` (registry names)
+  stays unscoped. A scoped dependency needs a `path` ("dependency `@x/y` needs a `path`:
+  registries hold unscoped packages only"); a scoped package can't have `native`.
+  `"@scope/name/sub"` imports the dependency's `src/sub`.
+
+## `define` (additive, #929)
+- `define: Record<string, string>`: name (`[A-Za-z_$][A-Za-z0-9_$]*`) → the source of a literal
+  (`vpm::manifest::define_literal`: `true`, `false`, `null`, a non-negative number, a string in
+  double quotes (JSON) or in single quotes without escapes). Only the root package's apply
+  (`vpm::PackageGraph::defines`). The loader parses each non-std module with them
+  (`velt_syntax::parse_with`, `ParseOptions::defines`): an identifier expression (or
+  shorthand property) of a defined name that nothing in its scope declares
+  (`velt_syntax::scope::free_values`) is the literal.
+- Ambient declarations: `declare const|let|var NAME: T;` (also `export declare …`) and
+  `declare global { [declare] var NAME: T; … }` are returned by `parse_with` in
+  `Parsed::ambient`, not as items (`parse_file` keeps reporting them as errors, so the formatter
+  never drops them). `declare global { … }` is parsed once, as an `ItemKind::Augment` holding
+  its interfaces and namespaces of types (`ItemKind::Namespace`, `ast/blocks.rs`; sema declares
+  such a namespace in its module, as a `declare namespace`); only its variables go to
+  `Parsed::ambient`, and any other declaration in it is an error. `Ambient::global` marks
+  those in `declare global`, and `Parsed::is_module` a source with a top-level `import` or
+  `export`: the others of such a module are its own, and those of a declaration file that is a
+  module are not read. The loader also reads them
+  from the `.d.ts` files of each package it loads a module of (the nearest directory with a
+  `package.json` or `package.vlt`: its own `.d.ts` files and those below `src/`, skipping
+  `node_modules`, `target`, `dist`, hidden and symlinked directories and nested packages),
+  ignoring those files' syntax errors. A name a module refers to (`free_values`; any module for
+  a global declaration, its own module otherwise) without a `define` is an error at its first
+  declaration ("`X` is declared here but has no value"); so is a `define`
+  whose literal is not of a declared `boolean`, `string` or `number`.
+
+## npm packages (additive, #929)
+`vpm::npm::NpmResolver`. The loader asks it about a bare specifier (one `resolve_spec`
+classifies as a package, or rejects, other than `std…` and `velt:…`) that no `paths` alias
+matches and that is not a Velt dependency of the importing package. Its answer is a file,
+loaded like a relative import's (the importer's origin). Order: `node_modules/<name>/package.json`
+in the importer's directory and each ancestor (skipping `node_modules` directories
+themselves; a symlinked package directory is replaced by its real path), the nearest ancestor whose `package.json` has that `name`, then the first ancestor
+that is a workspace root (`pnpm-workspace.yaml` `packages:`, or `package.json` `workspaces`;
+globs with `*`, `**` and `!`; `**` does not enter symlinks; at most
+`vpm::npm::workspace::MAX_DIRS` directories are listed, and when a walk stops there, an unresolved import's error gets `NpmResolver::workspace_note`). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
+subpath, then the `*` pattern with the longest prefix; conditions in written order under
+`vpm::npm::SERVER_CONDITIONS` plus `default`: the targets of `types` and `velt` are hints, and
+besides them only the first other matching condition's target is kept, as Node takes it
+(`exports::Targets::runtime`, named by the no-source error); targets are tried `velt` hints
+first, then the runtime target, then `types` hints; `null` under a matching condition
+is not exported), else `types`, `typings`, `main`, `./index`;
+without `exports` a subpath names that path. Each target maps to source candidates
+(`vpm::npm::source_candidates`) and the first existing file wins. Errors: a subpath not
+exported, an `exports` mixing subpaths and conditions, a target without a source.
+
 ## Fields
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt:x"` and `"./x"`
   never do.
@@ -79,8 +134,18 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
   and `velt manifest --json` prints them when present.
 - A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
-- `velt.lock.json` (generated JSON: `{ "version": 1, "packages": [...] }`, pretty-printed, stable
-  key order, trailing newline) pins exact versions + content hashes; a package with only the
+- `velt.lock.json` (generated JSON: `{ "version": 1, "velt": "<version>", "packages": [...] }`,
+  pretty-printed, stable key order, trailing newline) pins exact versions + content hashes, and
+  (additive, #960; optional, so still format 1) the toolchain version that builds the package:
+  for a package with a `velt` requirement only (none otherwise, and a recorded one is dropped):
+  `vpm::install` writes the running version into a new lock, keeps the recorded one unless
+  `update` runs or the requirement no longer accepts it (then it writes the running one), and
+  under `--locked` neither adds nor changes it and fails when they differ: "`velt.lock.json` pins
+  velt <locked>, but this is velt <running>, and --locked was passed: …", or, when the
+  requirement no longer accepts the locked version, "… which the package's velt pin "<req>" no
+  longer accepts, and --locked was passed: run `velt install` (or `velt update`) without
+  --locked to record velt <running>". A `velt` that is not a semver version is an error when the
+  lock is read; a package with only the
   former `velt.lock` (TOML) gets an error saying to run `velt install`. The registry for the POC is a
   local directory (`$VELT_REGISTRY`, default `~/.velt/registry/<name>/<version>/`), cache in
   `~/.velt/cache`.
@@ -191,3 +256,25 @@ Contract: [native_abi.md](native_abi.md).
   target is an error.
 - Cache: `<cache>/native/<name>-<version>/<triple>/` (verified prebuilt bundles) and
   `<triple>-source/` (built from source); `<cache>` is vpm's package cache (`$VELT_HOME/cache`).
+
+## Toolchain requirement (additive, #948)
+```ts ignore
+velt: "0.1",
+```
+- `velt` is a `velt_toolchain::Requirement`: a version without an operator (`X`, `X.Y`,
+  `X.Y.Z`, optionally with a pre-release) means `~` that version (the newest patch of its minor;
+  `"1"` is any `1.x`); any other text is a `semver::VersionReq` (`=0.1.3`, `>=0.1, <0.3`, `^1.2`).
+  A value that is neither is an error at the value: "velt `<text>` is not a version requirement"
+  (an empty or blank one: "velt the version requirement is empty …").
+- `velt new` / `velt init` write `velt: "<major>.<minor>"` of the toolchain that runs them, or
+  its whole `<major>.<minor>.<patch>-<pre>` when it is a pre-release
+  (`velt_toolchain::requirement::pin_for`, `vpm::scaffold::this_toolchain_pin`): the pin always
+  accepts the toolchain that wrote it. `to_vlt` writes the field after `version`, and
+  `velt manifest --json` prints it as `"velt"` when present.
+- Every command that reads the package (`Project::open`, `velt manifest`) warns on stderr,
+  `package.vlt asks for velt "<req>", but this is velt <version>; it may not build the package`,
+  when the requirement doesn't accept the running velt's version and `$VELT_LAUNCHER` is unset.
+- The reader only checks the syntax. Choosing the toolchain is the launcher's job (#948), which
+  reads this one field with `velt_toolchain::pin::find_pin` (the nearest `package.vlt` above the
+  working directory; a manifest that does not parse counts as no pin, and the toolchain then
+  reports it).

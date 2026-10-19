@@ -9,10 +9,15 @@
 # the shared runtime (the default), the static one (VELT_RT_LINK=static), and a rebuild with
 # nothing changed (the link is skipped).
 #
-#   bench/compile/run.sh [runs] [units] [path to velt]
+#   bench/compile/run.sh [--link-only] [runs] [units] [path to velt]
+#
+# --link-only prints only the second table (check and link times), skipping the front-end runs
+# (which need several GB of memory for long_main).
 #
 # Without a velt path it builds velt (release) first. Needs python3 (or python) on PATH.
 set -euo pipefail
+LINK_ONLY=0
+if [ "${1:-}" = "--link-only" ]; then LINK_ONLY=1; shift; fi
 RUNS=${1:-10}
 UNITS=${2:-1000}
 VELT=${3:-}
@@ -29,9 +34,10 @@ if [ -z "$VELT" ]; then
   VELT="$TARGET/release/velt"
 fi
 
-"$PYTHON" - "$RUNS" "$UNITS" "$VELT" "$HERE" "$ROOT" "$OUT" <<'EOF'
+"$PYTHON" - "$RUNS" "$UNITS" "$VELT" "$HERE" "$ROOT" "$OUT" "$LINK_ONLY" <<'EOF'
 import os, re, subprocess, sys, time
-runs, units, velt, here, root, out = int(sys.argv[1]), int(sys.argv[2]), *sys.argv[3:]
+runs, units, velt, here, root, out, link_only = int(sys.argv[1]), int(sys.argv[2]), *sys.argv[3:]
+link_only = link_only == "1"
 
 def program(n, chain):
     unit = open(f"{here}/unit.tmpl").read().replace("\r\n", "\n")
@@ -65,24 +71,29 @@ for name, text in ((f"units_{units}", program(units, 8)), (f"chain_{units}", pro
 
 stages = ["parse", "sema", "lower", "verify", "optimize"]
 front = ["parse", "sema", "lower"]
-print("| program | root file lines | load + parse | sema | lower | verify | optimize | front end |")
-print("|---|---|---|---|---|---|---|---|")
-for name, path in programs.items():
-    best = {}
-    for _ in range(runs):
-        r = subprocess.run([velt, "build", "-v", "--release", path, "--emit", "vir"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        if r.returncode != 0:
-            sys.exit(f"velt build {path} failed:\n{r.stderr}")
-        times = dict((m[1], float(m[2])) for m in re.finditer(r"^velt: (\w+)\s+([\d.]+) ms", r.stderr, re.M))
-        times["front"] = sum(times[s] for s in front)
-        for k, v in times.items():
-            best[k] = min(best.get(k, v), v)
-    lines = sum(1 for _ in open(path))
-    print(f"| {name} | {lines} | " + " | ".join(f"{best[s]:.1f}" for s in stages + ["front"]) + " |")
-print()
-print(f"Best of {runs} runs per stage, milliseconds (`velt build -v --release --emit vir`); "
-      "front end = best run's parse + sema + lower.")
+
+def front_end_table():
+    print("| program | root file lines | load + parse | sema | lower | verify | optimize | front end |")
+    print("|---|---|---|---|---|---|---|---|")
+    for name, path in programs.items():
+        best = {}
+        for _ in range(runs):
+            r = subprocess.run([velt, "build", "-v", "--release", path, "--emit", "vir"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if r.returncode != 0:
+                sys.exit(f"velt build {path} failed:\n{r.stderr}")
+            times = dict((m[1], float(m[2])) for m in re.finditer(r"^velt: (\w+)\s+([\d.]+) ms", r.stderr, re.M))
+            times["front"] = sum(times[s] for s in front)
+            for k, v in times.items():
+                best[k] = min(best.get(k, v), v)
+        lines = sum(1 for _ in open(path))
+        print(f"| {name} | {lines} | " + " | ".join(f"{best[s]:.1f}" for s in stages + ["front"]) + " |")
+    print()
+    print(f"Best of {runs} runs per stage, milliseconds (`velt build -v --release --emit vir`); "
+          "front end = best run's parse + sema + lower.")
+
+if not link_only:
+    front_end_table()
 
 def timed(args, env=None):
     """Run velt; (stage times from -v, wall milliseconds)."""

@@ -1,0 +1,97 @@
+// Builds a small tree and runs seek's whole pipeline (parallel walk, search tasks, printer) on it
+// (golden: demo.out). Output lines are sorted: files are searched in parallel, so their order
+// varies from run to run.
+import { mkdirSync, removeSync, writeFileSync } from "velt:fs";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { chdir, cwd } from "velt:process";
+import { RegExp } from "velt:regex";
+import { execute } from "./src/app";
+
+// The tree: [path, contents].
+function files(): string[][] {
+  return [
+    [".gitignore", "*.log\nbuild/\n!keep.log\n"],
+    ["README.md", "# Demo\nSeek finds text fast.\nTry seek -i to ignore case.\n"],
+    [
+      "src/main.ts",
+      "// TODO: greet more people\nexport function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\nconst ok = true; // broken? no, ok\n",
+    ],
+    [
+      "src/util.ts",
+      "export function add(a: number, b: number): number {\n  return a + b; // TODO overflow\n}\nconst x\n  = y;\n",
+    ],
+    ["src/café.ts", "export const café = \"crème brûlée\";\nexport const emoji = \"😀 café\";\n"],
+    ["src/.secret.ts", "export const token = \"greet\";\n"],
+    ["docs/.gitignore", "draft.md\n"],
+    ["docs/guide.md", "Use `seek greet` to find greet.\n"],
+    ["docs/draft.md", "greet (draft, ignored)\n"],
+    ["build/out.js", "function greet() {}\n"],
+    ["debug.log", "greet log line\n"],
+    ["keep.log", "kept log line\n"],
+    ["data.bin", "greet\u0000binary\n"],
+  ];
+}
+
+/// Prints what `seek <argv>` writes, then its exit code.
+async function seek(argv: string[], sorted: bool = true) {
+  console.log(`$ seek ${argv.join(" ")}`);
+  const out: string[] = [];
+  const code = await execute(
+    argv,
+    true,
+    (s) => {
+      out.push(s);
+    },
+    (s) => {
+      out.push(`${s}\n`);
+    },
+  );
+  const lines = out
+    .join("")
+    .split("\n")
+    .filter((l) => l !== "");
+  const hit = new RegExp("\u001b\\[1;31m(.*?)\u001b\\[0m", "g");
+  const ansi = new RegExp("\u001b\\[[0-9;]*m", "g");
+  if (sorted) {
+    lines.sort();
+  }
+  for (const l of lines) {
+    // Make the highlighting visible («match») and drop the other colors.
+    console.log(ansi.replace(hit.replace(l, "«$1»"), ""));
+  }
+  console.log(`[exit ${code}]`);
+}
+
+async function main() {
+  const home = cwd();
+  // Unique, so concurrent runs (worktrees, sharded goldens) don't remove each other's tree.
+  const root = `${tmpdir()}/seek-demo-${uuidv4()}`;
+  mkdirSync(root, { recursive: true });
+  for (const [path, text] of files()) {
+    const slash = path.lastIndexOf("/");
+    if (slash > 0) {
+      mkdirSync(`${root}/${path.slice(0, slash)}`, { recursive: true });
+    }
+    writeFileSync(`${root}/${path}`, text);
+  }
+  chdir(root);
+
+  await seek(["greet"]); // .gitignore'd, hidden and binary files are skipped
+  await seek(["-i", "SEEK"]);
+  await seek(["-w", "ok"]);
+  await seek(["-c", "-t", "ts", "function"]);
+  await seek(["-l", "é"]);
+  await seek(["x\\s+y"]); // a match never spans lines
+  await seek(["--color", "always", "-F", "a + b"]);
+  await seek(["--heading", "TODO", "src/main.ts"], false);
+  await seek(["-f"]);
+  await seek(["-f", "-H", "secret"]);
+  await seek(["--no-ignore", "-l", "log line"]);
+  await seek(["nothing-here"]);
+  await seek(["("], false);
+  await seek(["--bogus"]);
+
+  chdir(home);
+  removeSync(root, { recursive: true });
+}

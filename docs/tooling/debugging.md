@@ -2,26 +2,42 @@
 
 Velt executables are native programs with standard debug info, so any native debugger works:
 LLDB or CodeLLDB on macOS and Linux, GDB on Linux, the Visual Studio debugger on Windows.
-Breakpoints go on `.vlt` lines, and the call stack shows Velt function names.
+Breakpoints go on `.vlt` lines, and the call stack shows Velt function names. In VS Code, F5
+builds and debugs with nothing to configure ([VS Code](#vs-code)).
 
 ## Which build has line information
 
-| Build | Line info (`.vlt` file:line) | Use it for |
-|---|---|---|
-| `velt build --backend llvm` | yes, unoptimized | stepping, breakpoints, locals |
-| `velt build --release -g` | yes, optimized (LLVM when clang is installed) | profiling, crash addresses |
-| `velt build` / `velt run` (Cranelift, the debug default) | yes on Linux; macOS untested; function symbols on Windows | stepping, breakpoints, backtraces |
-| `velt dev --exe` | as `velt build` | attaching to a running version |
-| `velt dev` (JIT) | yes with GDB or LLDB on Linux; macOS untested (LLDB needs `plugin.jit-loader.gdb.enable on`); none on Windows | breakpoints and stepping in the running program |
+| Build | Line info (`.vlt` file:line) | Variables | Use it for |
+|---|---|---|---|
+| `velt build` (Cranelift, the debug default) | yes; on Windows when the bundled linker links it (the default of a released toolchain), else function symbols only | as line info | stepping, breakpoints, backtraces, inspecting values |
+| `velt run`, `velt test` | as `velt build` | no (values stay in registers, which is faster) | running and testing |
+| `velt build --backend llvm` | yes, unoptimized | no | stepping, breakpoints, backtraces |
+| `velt build --release -g` | yes, optimized (LLVM when clang is installed) | no | profiling, crash addresses |
+| `velt dev --exe` | as `velt build` | as `velt build` | attaching to a running version |
+| `velt dev` (JIT) | yes with GDB or LLDB on Linux; macOS untested (LLDB needs `plugin.jit-loader.gdb.enable on`); none on Windows | no | breakpoints and stepping in the running program |
 
-The LLVM backend needs clang ([Platforms](platforms.md#prerequisites)). On Windows the linker
-writes a `.pdb` next to the `.exe` (CodeView); elsewhere the debug info is DWARF. On macOS it
-stays in the object file next to the executable (`target/velt/<name>.o`), so keep it there, or
-run `dsymutil target/velt/<name>` to bundle it.
+The LLVM backend needs clang ([Platforms](platforms.md#prerequisites)). On Windows its builds
+get a `.pdb` next to the `.exe` (CodeView), which the Visual Studio debugger reads; the default
+(Cranelift) build keeps DWARF in the `.exe` itself, which LLDB (CodeLLDB) reads, beside the
+`.pdb`. Elsewhere the debug info is DWARF. On macOS it
+stays in the object files next to the executable (`target/velt/<name>.o`, plus `<name>.cgu1.o`,
+… when a large program is split into codegen units), so keep them there, or run `dsymutil
+target/velt/<name>` to bundle it.
 
-Cranelift builds carry line tables only: breakpoints, stepping and backtraces work by `.vlt`
-line, but locals are not shown (use `--backend llvm` for those). On Windows they have function
-symbols only.
+Debug builds by `velt build` (what F5 debugs) and `velt dev --exe` also describe each function's
+parameters and local variables with their source types: a debugger shows `count` as an `i64`, a
+class value as a pointer whose fields it expands (`p->x`), an enum by its member name, and
+`NULL` for an empty `T | null` of a class. LLDB with Velt's formatters (which the VS Code
+extension loads, [Command line](#command-line) shows how) also shows a string as its text, an
+array as `len=N` with its elements, a union by its active member, and other options as `null` or
+their value; without them those are raw words. Variables of `async` functions, generators and
+inlined code are not shown yet. A variable is shown from the line declaring it to the end of its
+block; inside a closure, the variables it captures are shown too. Setting a number, boolean or
+other scalar from the debugger (`expr x = 100`, VS Code's *Set Value*) shows the new value, but
+the program keeps using the old one. On Windows a build that MSVC's `link.exe` links (a
+toolchain without the bundled linker, or `VELT_LINKER=system`) has function symbols only, since
+`link.exe` would cut the DWARF sections' names. On macOS, executables are signed ad hoc without
+the hardened runtime, so LLDB can launch and attach to them.
 
 Panics print `panic: <message> at <file>:<line>:<col>` even without a debugger, and exit with
 code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).
@@ -29,29 +45,68 @@ code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).
 ## Command line
 
 ```sh
-velt build app.vlt --backend llvm
+velt build app.vlt
 lldb target/velt/app
+(lldb) command script import <velt>/share/velt/lldb/velt_lldb.py
 (lldb) breakpoint set -f app.vlt -l 12
 (lldb) run
+(lldb) frame variable
 ```
+
+The `command script import` loads the formatters; `velt doctor` prints the script's path (the
+*debugger scripts* line), and `velt build --json` reports it as `lldbScript`. To load them in
+every session, put the line in `~/.lldbinit`.
 
 GDB: `gdb target/velt/app`, then `break app.vlt:12` and `run`.
 
 ## VS Code
 
-1. Install the Velt extension ([Editors](editors.md#visual-studio-code)). It enables breakpoints
-   in `.vlt` files for every debugger.
-2. Install a debugger extension: **CodeLLDB** (`vadimcn.vscode-lldb`) on macOS and Linux, or the
-   **C/C++** extension (`ms-vscode.cpptools`, which provides `cppvsdbg`) on Windows.
-3. Copy `editors/vscode/templates/launch.json` and `tasks.json` into your project's `.vscode/`.
+1. Install the Velt extension ([Editors](editors.md#visual-studio-code)) and a debugger extension:
+   **CodeLLDB** (`vadimcn.vscode-lldb`, recommended: it includes LLDB), **LLDB DAP**
+   (`llvm-vs-code-extensions.lldb-dap`) or **C/C++** (`ms-vscode.cpptools`). Without one, F5
+   offers to install CodeLLDB.
+2. Press **F5** in a package (a folder with `package.vlt`), or with a `.vlt` file open outside
+   one. Or use **▶ Run | Debug** above `main`, or the run and debug buttons of the editor title.
+   In a test file, **▶ Run test | Debug test** above each test runs it, or debugs its test
+   program (`velt test <file> --filter <test> --exact --no-run --json` builds it).
 
-| Configuration | What it does |
+The extension runs `velt build --json` (in the default, Cranelift build, so clang is not
+needed), shows build errors in the *Problems* view, and starts the debugger on the executable
+the build reports. It picks the first installed of CodeLLDB, LLDB DAP and C/C++; the
+`velt.debug.engine` setting chooses one.
+
+**Windows:** debug with CodeLLDB or LLDB DAP, which read the DWARF of the default build. The
+C/C++ extension's Visual Studio debugger reads only PDBs: for it, add `"buildArgs":
+["--backend", "llvm"]` (needs clang) to the configuration (the extension warns otherwise).
+Linked by `link.exe` instead of the bundled linker, the default build has no line information,
+and the extension warns that breakpoints will not bind.
+
+A `launch.json` is optional. `velt new` and `velt init` write one, `velt init --editor vscode`
+adds one to an existing package (it keeps files that exist), and so does **Velt: Generate
+launch.json**:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [{ "type": "velt", "request": "launch", "name": "Debug" }]
+}
+```
+
+A `velt` configuration takes:
+
+| Attribute | Meaning |
 |---|---|
-| *Velt: debug current file* | runs `velt build <file> --backend llvm`, then launches `target/velt/<stem>` under the debugger |
-| *Velt: debug package* | `velt build --backend llvm` in the package root, then launches `target/velt/<folder name>`; if the package name differs from the folder name, edit `program` |
-| *Velt: attach to a running program* | pick a process, for example a `velt run` program or the current version of a `velt dev --exe` session |
+| `file` | build and debug this file (e.g. `"${file}"`) instead of the package |
+| `program` | the executable to debug (default: the one `velt build` makes) |
+| `args`, `env`, `cwd` | the program's arguments, environment and working directory |
+| `build` | `false` skips `velt build` (then set `program`) |
+| `buildArgs` | extra `velt build` options, e.g. `["--backend", "llvm"]` |
+| `stopOnEntry` | stop before `main` runs |
 
-Build errors from the tasks appear in the *Problems* view.
+`"request": "attach"` with `"pid": "${command:pickProcess}"` attaches to a running program; the
+picker lists Velt programs (built into `target/velt/`) first.
+`editors/vscode/templates/` has a `launch.json` with each kind and a `tasks.json` for
+`velt dev --exe`.
 
 ### `velt dev` and the debugger
 
@@ -75,10 +130,11 @@ without watching for changes): `gdb -ex 'set breakpoint pending on' -ex 'break a
 --args velt dev --host app.vlt`. Hot-swapped functions are announced too. On Windows, or to attach
 from VS Code:
 
-- run `velt dev --exe app.vlt` (or the task *velt: dev --exe (current file)*): each version is a
-  linked executable, and *Velt: attach to a running program* attaches to the current one (after
-  a reload, attach again to the new process);
-- or stop `velt dev` and use *Velt: debug current file*.
+- run `velt dev --exe app.vlt` (or the task *velt: dev --exe (current file)* of
+  `editors/vscode/templates/tasks.json`): each version is a linked executable, and an attach
+  configuration (`"request": "attach"`) attaches to the current one (after a reload, attach again
+  to the new process);
+- or stop `velt dev` and press F5.
 
 ## WebAssembly
 

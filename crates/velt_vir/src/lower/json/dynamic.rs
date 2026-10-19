@@ -11,12 +11,12 @@
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
-use crate::lower::{Cx, FnLower, Glue, VtableKey};
+use crate::lower::{Cx, FnLower, VtableKey};
 use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
 
 impl Cx<'_> {
     /// Concrete strict descendants of class type `cls` that can be written as JSON.
-    fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
+    pub(super) fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
         let TyKind::Adt(target, args) = self.kind(cls) else {
             return vec![];
         };
@@ -78,13 +78,14 @@ impl Cx<'_> {
     /// Does `t` have a JSON form? The lowering-side mirror of sema's stringify check
     /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like
     /// enums, unions of writable members, `json.Value`, `Map<string, V>`, and structs, classes
-    /// and object literals without private fields whose fields are writable. `stack` holds the
-    /// ADTs being visited (recursive types).
+    /// and object literals whose written fields are writable: `#x` fields are skipped, `private`
+    /// ones are written, and a type holding std's private state (`AdtDef::opaque`) has no JSON
+    /// form. `stack` holds the ADTs being visited (recursive types).
     fn json_writable(&mut self, t: TyId, stack: &mut Vec<TyId>) -> bool {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Literal(_) => true,
-            TyKind::Array(e) | TyKind::Option(e) => self.json_writable(e, stack),
+            TyKind::Array(e) | TyKind::Option(e, _) => self.json_writable(e, stack),
             TyKind::Tuple(es) => es.into_iter().all(|e| self.json_writable(e, stack)),
             TyKind::Adt(d, args) => {
                 if stack.contains(&t) || self.is_json_value(t) {
@@ -104,7 +105,7 @@ impl Cx<'_> {
 
     /// The parts of ADT `d<args>` that must be writable: fields, union members' payloads, or
     /// the value type of a `Map<string, V>`, or nothing for C-like enums. `None`: no JSON form
-    /// (other maps, payload enums, types with private fields).
+    /// (other maps, payload enums, types holding std's private state).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
             // `Record<K, V>` is an object (sema checked its keys).
@@ -117,9 +118,26 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
-            // Private fields (runtime handles in std) are never written.
-            hir::Def::Adt(a) if a.private_fields => return None,
-            hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+            // A class with `toJSON()` is written as what it returns.
+            hir::Def::Adt(hir::AdtDef {
+                to_json: Some(m), ..
+            }) => {
+                let m = *m;
+                let cls = self.intern(TyKind::Adt(d, args.to_vec()));
+                let targs = self.method_targs(m, cls);
+                let ret = self.fn_def(m).ret;
+                return Some(vec![self.subst(ret, &targs)]);
+            }
+            // std's private state (runtime handles) has no JSON form.
+            hir::Def::Adt(a) if a.opaque => return None,
+            // ES private fields (`#x`) and symbol keys are never written; `private x` is, as
+            // in Node.
+            hir::Def::Adt(a) => a
+                .fields
+                .iter()
+                .filter(|f| !velt_sema::property_order::is_hidden_key(&f.name))
+                .map(|f| f.ty)
+                .collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],
             hir::Def::Enum(e) if e.is_union => e
                 .variants
@@ -150,6 +168,7 @@ impl FnLower<'_, '_> {
         buf: &Operand,
         place: &Place,
         ty: TyId,
+        key: Option<&Place>,
         write_static: impl FnOnce(&mut Self),
     ) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
@@ -173,8 +192,7 @@ impl FnLower<'_, '_> {
             self.branch(hit, then, next);
             self.switch_to(then);
             // A class value is its object pointer, so `place` is also a `sub`-typed place.
-            let a = self.addr(place.clone());
-            self.call_glue(Glue::JsonWrite, sub, vec![buf.clone(), a]);
+            self.json_write_with(buf, place, sub, key);
             self.goto(done);
             self.switch_to(next);
         }

@@ -13,13 +13,13 @@ velt dev server.vlt       # one file
 Take a server that counts requests:
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const hits = shared(0);
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     hits.add(1);
-    return Response.text(`hello #${hits.get()}\n`);
+    return new Response(`hello #${hits.get()}\n`);
   });
 }
 ```

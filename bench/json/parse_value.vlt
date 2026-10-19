@@ -14,7 +14,7 @@ function main() {
   let sum: i64 = 0;
   for (let round = 0; round < 8; round++) {
     const v = JSON.parseValue(text);
-    sum += v.len() + (v.at(round)?.len() ?? 0);
+    sum += (v.len() + (v.at(round)?.len() ?? 0)) as i64;
   }
   console.log(text.length, sum);
 }

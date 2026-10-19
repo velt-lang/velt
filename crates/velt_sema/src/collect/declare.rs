@@ -64,7 +64,6 @@ pub(crate) fn fn_placeholder<'m>(
         ret: crate::hir::TyId(0),
         ret_span: None,
         ret_source: crate::defs::RetSource::Known,
-        ret_inferred_int: false,
         fixed_modes: matches!(
             kind,
             FnKind::Extern | FnKind::Closure | FnKind::IfaceDefault
@@ -82,8 +81,10 @@ pub(crate) fn fn_placeholder<'m>(
         soft_moves: vec![],
         is_private: false,
         is_getter: false,
+        inherits_this: false,
         escaping: false,
         keeps_fn_params: false,
+        mutated_captures: vec![],
         soft_params: vec![],
     }
 }
@@ -117,7 +118,11 @@ fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
         ast::ItemKind::Enum(e) => &e.name,
         ast::ItemKind::Interface(d) => &d.name,
         ast::ItemKind::TypeAlias(a) => &a.name,
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
     })
 }
 
@@ -130,7 +135,11 @@ pub(super) fn new_def<'m>(
     q: String,
 ) -> Option<(&'m ast::Ident, Item)> {
     let (name, info): (&ast::Ident, DefInfo<'m>) = match &item.kind {
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => return None,
         ast::ItemKind::Function(f) => {
             let src = Some(FnSource::Decl(f));
             let info = fn_placeholder(q, f.sig.name.span, f.sig.span, m, FnKind::Free, src);
@@ -182,10 +191,25 @@ pub(super) fn new_def<'m>(
 
 fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
     if cx.scopes[m].items.contains_key(&name.name) {
-        cx.err(
+        let mut d = Diagnostic::error(
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
+        let earlier_iface = matches!(cx.scopes[m].items.get(&name.name), Some(Item::Def(d)) if matches!(cx.info[d.0 as usize], DefInfo::Iface(_)));
+        if matches!(item.kind, ast::ItemKind::Interface(_)) || earlier_iface {
+            // TypeScript also merges an interface with a class, function or namespace (#384).
+            d = d.with_note(format!(
+                "Velt merges an interface only with other interface declarations: give `{0}` another name, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
+                name.name
+            ));
+        }
+        let earlier_fn = matches!(cx.scopes[m].items.get(&name.name), Some(Item::Def(d)) if matches!(cx.info[d.0 as usize], DefInfo::Fn(_)));
+        if matches!(item.kind, ast::ItemKind::Function(_)) && earlier_fn {
+            d = d.with_note(
+                "overloads with a body each (Velt's form) are not supported yet: write the signatures without bodies, then one implementation that takes every form (TypeScript's form)",
+            );
+        }
+        cx.error(d);
         return;
     }
     cx.scopes[m].items.insert(name.name.clone(), it);
@@ -204,6 +228,7 @@ fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo
         generics: generic_names(&t.generics),
         fields: vec![],
         own_fields_start: 0,
+        redefined: vec![],
         base: None,
         methods: HashMap::new(),
         ctor: None,

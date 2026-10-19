@@ -1,0 +1,42 @@
+// A weak collection cannot be used inside a `shared` `Mutex`'s `with`: tasks on other threads
+// replace the key, and its release would update the map's entry (and release its value) on their
+// thread, outside the lock that guards the value.
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  k: K;
+  constructor(k: K) {
+    this.k = k;
+  }
+}
+
+async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
+  await sleep(1);
+  m.with((v) => {
+    v.k = new K(i);
+  });
+  return i;
+}
+
+async function main() {
+  const m = shared(new Mutex<Box>(new Box(new K(0))));
+  const wm = new WeakMap<K, string>();
+  m.with((v) => {
+    wm.set(v.k, "zero");
+  });
+  console.log(m.with((v) => wm.get(v.k)));
+  const ps: Promise<number>[] = [];
+  for (let i = 1; i < 9; i++) {
+    ps.push(spawn(swap(m.clone(), i)));
+  }
+  let t = 0;
+  for (const x of await Promise.all(ps)) {
+    t += x;
+  }
+  console.log(t, m.with((v) => wm.has(v.k)));
+}

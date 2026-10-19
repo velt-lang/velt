@@ -1,0 +1,1 @@
+json_std_subclass.vlt:4:54: error: cannot convert to or from JSON: `Mine` has a private field `#handle`, so it has no JSON form

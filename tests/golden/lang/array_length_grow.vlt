@@ -1,0 +1,10 @@
+// Setting a larger `length` would add empty slots in JS, which Velt has no value for: it panics
+// with the reason and the fix (the elements before it are untouched). Node prints
+// `[ 1, 2, <1 empty item> ]` here.
+function main() {
+  const xs = [1, 2];
+  xs.length = 2;
+  console.log(xs);
+  xs.length = 3;
+  console.log(xs);
+}

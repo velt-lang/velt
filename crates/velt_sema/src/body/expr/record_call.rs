@@ -13,18 +13,24 @@ use super::args::want_of;
 use super::method::Resolved;
 use super::setters::{side_effect_free, synth};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
 
 /// `(object, key)` of a record read or assignment target `object[key]` / `object.name`.
+#[derive(Clone, Copy)]
 pub(super) enum RecordKey<'a> {
     Index(&'a ast::Expr),
     Name(&'a ast::Ident),
+    /// The key of `{ [key]: value }` known only at run time: a number is converted to its
+    /// string as JavaScript does (`{ [1]: v }` has the key "1"), a symbol is an error.
+    Computed(&'a ast::Expr),
 }
 
 impl RecordKey<'_> {
     pub(super) fn side_effect_free(&self) -> bool {
         match self {
-            RecordKey::Index(e) => side_effect_free(e) || matches!(e.kind, ast::ExprKind::Lit(_)),
+            RecordKey::Index(e) | RecordKey::Computed(e) => {
+                side_effect_free(e) || matches!(e.kind, ast::ExprKind::Lit(_))
+            }
             RecordKey::Name(_) => true,
         }
     }
@@ -59,7 +65,9 @@ impl FnCx<'_, '_> {
     /// `r.__name(...)` written in user code: the record's internal methods are reserved for the
     /// record syntax (and the prelude). Reports and returns `true` if `recv` is such a call.
     pub(super) fn record_internal_call(&mut self, recv: &hir::Expr, prop: &ast::Ident) -> bool {
+        // A call the compiler wrote (a `for...in` loop's key test) has an empty span.
         if !prop.name.starts_with("__")
+            || prop.span.lo == prop.span.hi
             || self.record_args(recv.ty).is_none()
             || self.cx.scopes[self.module].is_std
         {
@@ -140,15 +148,15 @@ impl FnCx<'_, '_> {
         let mut c = self.fn_callable(def, format!("method `{method}`"), span);
         let kp = c.params.remove(0);
         let vp = checked.as_ref().map(|_| c.params.remove(0));
-        let kty = self.cx.ty.subst_known(kp.ty, &slots);
+        let kty = self.cx.subst_known(kp.ty, &slots);
         let key = self.record_key_arg(kty, &key, want_of(kp.mode));
         let ck = self.check_call(&c, slots, rest, None, span);
-        let kty = self.cx.ty.subst(kp.ty, &ck.type_args);
+        let kty = self.cx.subst(kp.ty, &ck.type_args);
         let key = self.coerce(key, kty);
         let recv = self.receiver(obj, recv_ty, self.this_mode(def), false);
         let mut args = vec![recv, key];
         if let (Some(v), Some(vp)) = (checked, vp) {
-            let vty = self.cx.ty.subst(vp.ty, &ck.type_args);
+            let vty = self.cx.subst(vp.ty, &ck.type_args);
             args.push(self.coerce(v, vty));
         }
         args.extend(ck.args);
@@ -165,6 +173,7 @@ impl FnCx<'_, '_> {
     fn record_key_arg(&mut self, k: TyId, key: &RecordKey<'_>, want: Want) -> hir::Expr {
         let id = match key {
             RecordKey::Index(e) => return self.expr(e, Some(k), want),
+            RecordKey::Computed(e) => return self.computed_key_arg(k, e, want),
             RecordKey::Name(id) => *id,
         };
         if let Some(h) = self.enum_key(k, id) {
@@ -172,6 +181,49 @@ impl FnCx<'_, '_> {
         }
         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span);
         self.expr(&lit, Some(k), want)
+    }
+
+    /// The key `e` of `{ [e]: value }` for a record keyed by `k`: on a `string`-keyed record
+    /// a number is converted to its string (as JavaScript converts a property key), and a symbol
+    /// is an error, as a symbol made at run time cannot name a member; so is any other type
+    /// (TypeScript's TS2464).
+    fn computed_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        if k != str_ {
+            return self.expr(e, Some(k), want);
+        }
+        let h = self.expr(e, None, want);
+        if self.cx.ty.is_numeric(h.ty) {
+            let span = h.span;
+            return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);
+        }
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Symbol) {
+            match &e.kind {
+                ast::ExprKind::Ident(id) => {
+                    self.cx.bad_key(&format!("[{}]", id.name), &id.name, e.span);
+                }
+                _ => self.cx.error(
+                    Diagnostic::error(
+                        "a symbol made at run time cannot be a key of an object literal",
+                        e.span,
+                    )
+                    .with_note("a computed key names a well-known symbol (`[Symbol.iterator]`), a module constant initialized with `Symbol(\"...\")`, or a string or number"),
+                ),
+            }
+            return self.error_expr(e.span);
+        }
+        self.try_coerce(h, k).unwrap_or_else(|h| {
+            // Reported here, once, rather than as a mismatch with `string`.
+            let found = self.cx.display(h.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("a computed key must be a string, number or symbol, found `{found}`"),
+                    e.span,
+                )
+                .with_note("convert it to a string first (`[String(k)]`)"),
+            );
+            self.error_expr(e.span)
+        })
     }
 
     /// The member of the string enum `k` whose value is `id` (`None`: `k` is not an enum).

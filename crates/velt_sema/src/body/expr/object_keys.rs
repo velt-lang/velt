@@ -4,11 +4,11 @@
 //! - `Object.keys(x)` accepts any object, as in TypeScript (issue #230), and returns a
 //!   `string[]`: a record's keys in insertion order (`r.__keyNames()`), or the field names of an
 //!   object type, struct or class instance in declaration order (base class fields first, as
-//!   JS defines them). The names are known statically; only an optional field of a struct
-//!   (`b?: T`) is tested at run time, and listed when it is not null, as `JSON.stringify` writes
-//!   it. A class field is always listed, optional or not, as TS-compiled classes define every
-//!   field. An object type's `b?: T` is the type `T | null` (sema keeps no separate optional
-//!   flag), so its fields are always listed, as `JSON.stringify` and `console.log` show them.
+//!   JS defines them). The names are known statically; only an optional field of a struct or
+//!   object type (`b?: T`) is tested at run time, and listed while it is present, as
+//!   `JSON.stringify` writes it: not null, or for `b?: T | null` its presence flag (a present
+//!   `null` is listed). A class field is always listed, optional or not, as TS-compiled classes
+//!   define every field.
 //! - `Object.values(r)` / `Object.entries(r)` keep one value type, so they need a `Record`
 //!   (an object literal is read as one, `record_literal.rs`).
 //!
@@ -28,13 +28,99 @@ use crate::hir::{self, AdtKind, DefId, ExprKind as H, PatKind as P, TyId, TyKind
 /// What to use instead of `Object.values` / `Object.entries` on an object that is not a record.
 const ONE_VALUE_TYPE_NOTE: &str = "they return one value type, so they need a `Record<K, V>`; list an object's keys with `Object.keys`, or keep values of different types in a `Record<string, V>` whose `V` is a union or `JsonValue`";
 
-/// A key of an object type: its name, and whether it is listed only when not null.
-struct Key {
-    name: String,
-    optional: bool,
+/// The start of the error for an `Object.keys` argument that has no keys.
+const NOT_AN_OBJECT: &str =
+    "`Object.keys` lists the keys of an object, a class or struct instance or a `Record`";
+
+/// A key of an object type: its name, whether it is listed only while present, and whether its
+/// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
+pub(super) struct Key {
+    pub(super) name: String,
+    pub(super) optional: bool,
+    presence: bool,
 }
 
 impl FnCx<'_, '_> {
+    /// `for (const k in r) body` over an open record (`Record<string, V>`, the only kind of
+    /// object `delete` removes keys from), written with an object expression that is safe to
+    /// evaluate again: the body starting with `if (!r.__has(k)) continue;`, so that a key
+    /// deleted during the loop is not visited, as in JavaScript. `None` for any other loop.
+    pub(crate) fn for_in_presence_test(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+    ) -> Option<ast::Block> {
+        let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
+            return None;
+        };
+        let (ast::ExprKind::Member { prop, .. }, [obj], ast::PatternKind::Ident(k)) =
+            (&callee.kind, args.as_slice(), &pattern.kind)
+        else {
+            return None;
+        };
+        if callee.span.lo != callee.span.hi || prop.name != "keys" || !reevaluable(obj) {
+            return None;
+        }
+        // The object's type, checked as a try (rolled back).
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let temps = self.call_temps.len();
+        let ty = self.expr(obj, None, Want::Borrow).ty;
+        mark.rollback(self.cx);
+        self.cx.diags.truncate(diags);
+        self.call_temps.truncate(temps);
+        self.restore_trial_frames(frames);
+        let (key, _) = self.record_args(ty)?;
+        if key != self.cx.ty.str_ {
+            return None;
+        }
+        let empty = velt_common::Span::new(iter.span.file, iter.span.lo, iter.span.lo);
+        let e = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span: empty,
+        };
+        let has = e(ast::ExprKind::Call {
+            callee: Box::new(e(ast::ExprKind::Member {
+                object: Box::new(obj.clone()),
+                prop: ast::Ident {
+                    name: "__has".to_string(),
+                    span: empty,
+                },
+                optional: false,
+            })),
+            type_args: vec![],
+            args: vec![e(ast::ExprKind::Ident(k.clone()))],
+            optional: false,
+        });
+        let test = ast::Stmt {
+            kind: ast::StmtKind::If {
+                cond: e(ast::ExprKind::Unary {
+                    op: ast::UnaryOp::Not,
+                    expr: Box::new(has),
+                }),
+                then: ast::Block {
+                    stmts: vec![ast::Stmt {
+                        kind: ast::StmtKind::Continue(None),
+                        span: empty,
+                    }],
+                    span: empty,
+                },
+                els: None,
+            },
+            span: empty,
+        };
+        let mut stmts = Vec::with_capacity(body.stmts.len() + 1);
+        stmts.push(test);
+        stmts.extend(body.stmts.iter().cloned());
+        Some(ast::Block {
+            stmts,
+            span: body.span,
+        })
+    }
+
     /// `Object.keys(x)`, `Object.values(x)` or `Object.entries(x)` of the prelude's `Object`
     /// (`None`: another call, or an object literal for `values` / `entries`, which the generic
     /// signature reads as a record).
@@ -58,7 +144,10 @@ impl FnCx<'_, '_> {
             return None;
         };
         let keys = prop.name == "keys";
-        if o.name != "Object" || self.is_local_name("Object") {
+        // `for (const k in o)` is a loop over the built-in `Object.keys(o)`, whose callee the
+        // parser writes with an empty span, whatever `Object` names here.
+        let for_in = keys && callee.span.lo == callee.span.hi;
+        if o.name != "Object" || (!for_in && self.is_local_name("Object")) {
             return None;
         }
         if !keys && (!matches!(prop.name.as_str(), "values" | "entries") || is_object_lit(arg)) {
@@ -66,15 +155,32 @@ impl FnCx<'_, '_> {
         }
         let prelude = self.cx.prelude_adt("Object")?;
         match self.cx.lookup_item_at(self.module, "Object", o.span) {
+            _ if for_in => {}
             Some(Item::Def(d)) if d == prelude => {}
             _ => return None,
+        }
+        if !keys {
+            if let Some(h) = self.any_values(&prop.name, arg, span) {
+                return Some(h);
+            }
         }
         let obj = self.expr(arg, None, Want::Borrow);
         if self.cx.ty.is_bottom(obj.ty) {
             return Some(self.error_expr(span));
         }
         Some(if keys {
-            self.object_keys(obj, span)
+            let mark = self.cx.diags.len();
+            let h = self.object_keys(obj, span);
+            // `for (const k in o)` is parsed as a loop over `Object.keys(o)` whose callee has an
+            // empty span: say what the loop needs (TypeScript's TS2407).
+            if for_in {
+                for d in &mut self.cx.diags[mark..] {
+                    if let Some(found) = d.message.strip_prefix(NOT_AN_OBJECT) {
+                        d.message = format!("the object of a `for...in` loop must be an object, a class or struct instance or a `Record`{found}");
+                    }
+                }
+            }
+            h
         } else {
             self.record_values(obj, &prop.name, span)
         })
@@ -101,6 +207,20 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        match self.cx.dynamic(obj.ty) {
+            // TypeScript takes `{}`, which an `unknown` is not (TS2345).
+            Some(crate::any::Dynamic::Unknown) => {
+                self.unknown_use_error(obj.span);
+                return self.error_expr(span);
+            }
+            // The keys of the value an `any`, `object` or `Function` holds, listed at run time
+            // through its descriptor (`Intrinsic::AnyKeys`).
+            Some(_) => return self.any_keys(obj, span),
+            None => {}
+        }
+        self.cx
+            .object_copies
+            .observe(obj.ty, span, crate::object_copies::Seen::Keys);
         // An interface value lists the fields of the class it holds (none can hold anything
         // else: see `iface_classes`).
         let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {
@@ -138,6 +258,51 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_array, span)
     }
 
+    /// `Object.keys(x)` of an `any`, `object` or `Function` `x`.
+    fn any_keys(&mut self, mut obj: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        // A record's keys are its `__keyNames()`, called through the member slots.
+        self.note_dyn_members();
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
+        self.intrinsic(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
+    }
+
+    /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
+    /// `x`: the prelude's `__anyValues(x)` / `__anyEntries(x)` (an `any[]` / `[string, any][]`,
+    /// as TypeScript types them). `None`: `x` is not dynamic.
+    fn any_values(&mut self, helper: &str, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+        let t = self.trial_type(arg)?;
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        let d = self.cx.dynamic(t)?;
+        if d == crate::any::Dynamic::Unknown {
+            self.expr(arg, None, Want::Borrow);
+            self.unknown_use_error(arg.span);
+            return Some(self.error_expr(span));
+        }
+        let f = match helper {
+            "values" => "__anyValues",
+            _ => "__anyEntries",
+        };
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Ident(ast::Ident {
+                        name: f.to_string(),
+                        span,
+                    }),
+                    span,
+                )),
+                type_args: vec![],
+                args: vec![arg.clone()],
+                optional: false,
+            },
+            span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, Want::Move))
+    }
+
     /// `["a", "b"]`.
     fn name_array(&mut self, keys: &[Key], span: Span) -> hir::Expr {
         let lits = keys.iter().map(|k| self.str_lit(&k.name, span)).collect();
@@ -164,7 +329,12 @@ impl FnCx<'_, '_> {
     /// The classes whose instances an interface value of `iface` (type `t`) can hold, deepest
     /// first; `None` (reported at `span`) when a type that is not a class implements it, whose
     /// values carry no class to tell them apart.
-    fn iface_classes(&mut self, iface: DefId, t: TyId, span: Span) -> Option<Vec<DefId>> {
+    pub(super) fn iface_classes(
+        &mut self,
+        iface: DefId,
+        t: TyId,
+        span: Span,
+    ) -> Option<Vec<DefId>> {
         let mut classes = vec![];
         for d in (0..self.cx.info.len() as u32).map(DefId) {
             let Some(a) = self.cx.adt(d) else { continue };
@@ -176,6 +346,10 @@ impl FnCx<'_, '_> {
                 if self.holds_class(d, iface) {
                     classes.push((self.class_depth(d), d));
                 }
+                continue;
+            }
+            // An `any` may hold anything (`Object.keys` of one is `Intrinsic::AnyKeys`).
+            if self.cx.any.is_some_and(|a| a.any == iface) {
                 continue;
             }
             if self.implements(d, iface) {
@@ -193,7 +367,7 @@ impl FnCx<'_, '_> {
 
     /// May an interface value of `iface` hold an instance of class `d`: does `d`, a base class
     /// of it or one of its subclasses implement `iface`?
-    fn holds_class(&mut self, d: DefId, iface: DefId) -> bool {
+    pub(super) fn holds_class(&mut self, d: DefId, iface: DefId) -> bool {
         if self.class_tree_implements(d, iface) {
             return true;
         }
@@ -208,7 +382,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does type definition `d` (over its own type parameters) implement `iface`?
-    fn implements(&mut self, d: DefId, iface: DefId) -> bool {
+    pub(super) fn implements(&mut self, d: DefId, iface: DefId) -> bool {
         let n = self.cx.adt(d).map_or(0, |a| a.generics.len());
         let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let t = self.cx.ty.intern(TyKind::Adt(d, params));
@@ -216,7 +390,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The number of base classes of class `d`.
-    fn class_depth(&self, d: DefId) -> usize {
+    pub(super) fn class_depth(&self, d: DefId) -> usize {
         let mut cur = self.cx.adt(d).and_then(|a| a.base);
         let mut n = 0;
         while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
@@ -239,11 +413,12 @@ impl FnCx<'_, '_> {
         let mut arms = vec![];
         for s in subs {
             let names: Vec<Key> = self.cx.adt(s).map_or(vec![], |a| {
-                let fields = a.fields.iter();
+                let fields = a.fields.iter().filter(|f| !is_private_name(&f.name));
                 fields
                     .map(|f| Key {
                         name: f.name.clone(),
                         optional: false,
+                        presence: false,
                     })
                     .collect()
             });
@@ -268,7 +443,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The keys of a value bound to `l`, testing the optional ones: `["a", ...(<keys>.b !=
-    /// null ? ["b"] : [])]`.
+    /// null ? ["b"] : [])]`, with a presence field's flag (`FieldPresent`, bound to a temporary
+    /// first) instead of the null test.
     fn present_keys(
         &mut self,
         l: hir::LocalId,
@@ -281,6 +457,11 @@ impl FnCx<'_, '_> {
             name: name.clone(),
             span,
         };
+        self.push_scope();
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name, l);
+        }
+        let mut lets = vec![];
         let elems = keys
             .iter()
             .map(|k| {
@@ -299,14 +480,17 @@ impl FnCx<'_, '_> {
                     },
                     span,
                 );
-                let present = synth(
-                    ast::ExprKind::Binary {
-                        op: ast::BinaryOp::NotEq,
-                        lhs: Box::new(field),
-                        rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
-                    },
-                    span,
-                );
+                let present = match k.presence {
+                    true => self.presence_flag(&field, &k.name, span, &mut lets),
+                    false => synth(
+                        ast::ExprKind::Binary {
+                            op: ast::BinaryOp::NotEq,
+                            lhs: Box::new(field),
+                            rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
+                        },
+                        span,
+                    ),
+                };
                 let cond = ast::ExprKind::Cond {
                     cond: Box::new(present),
                     then: Box::new(synth(ast::ExprKind::Array(vec![lit]), span)),
@@ -316,18 +500,34 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let array = synth(ast::ExprKind::Array(elems), span);
-        self.push_scope();
-        if let Some(scope) = self.f.scopes.last_mut() {
-            scope.names.insert(name, l);
-        }
         let h = self.expr(&array, Some(str_array), Want::Move);
         self.pop_scope();
-        h
+        self.with_lets(lets, h)
+    }
+
+    /// `FieldPresent(<field>)` bound to a temporary in the current scope, and the name that
+    /// reads it.
+    fn presence_flag(
+        &mut self,
+        field: &ast::Expr,
+        key: &str,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
+        let place = self.expr(field, None, Want::Borrow);
+        let b = self.cx.ty.bool_;
+        let flag = self.intrinsic(hir::Intrinsic::FieldPresent, vec![place], b, span);
+        let name = format!("<present@{}:{key}>", span.lo);
+        let read = self.temp(&name, flag, lets);
+        if let (H::Local(local, _), Some(scope)) = (&read.kind, self.f.scopes.last_mut()) {
+            scope.names.insert(name.clone(), *local);
+        }
+        synth(ast::ExprKind::Ident(ast::Ident { name, span }), span)
     }
 
     /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
     /// `None` (reported at `span`): `t` is not an object type, struct or class.
-    fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
+    pub(super) fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
         let d = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => Some(*d),
             _ => None,
@@ -339,29 +539,36 @@ impl FnCx<'_, '_> {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;
-        let keys = a.fields.iter().map(|f| Key {
-            name: f.name.clone(),
-            optional: f.optional && !class,
-        });
-        Some(keys.collect())
+        let keys = a
+            .fields
+            .iter()
+            .filter(|f| {
+                !is_private_name(&f.name) && crate::property_order::symbol_key(&f.name).is_none()
+            })
+            .map(|f| Key {
+                name: f.name.clone(),
+                optional: f.optional && !class,
+                presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
+            });
+        // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
+        let keys: Vec<Key> = keys.collect();
+        let names: Vec<&str> = keys.iter().map(|k| k.name.as_str()).collect();
+        let order = crate::property_order::js_key_order(&names);
+        let mut keys: Vec<Option<Key>> = keys.into_iter().map(Some).collect();
+        Some(order.into_iter().filter_map(|i| keys[i].take()).collect())
     }
 
     /// Reports that `Object.keys` cannot list the keys of a `t`.
     fn not_an_object<T>(&mut self, t: TyId, span: Span) -> Option<T> {
         let tn = self.cx.display(t);
-        let mut diag = Diagnostic::error(
-            format!(
-                "`Object.keys` lists the keys of an object, a class or struct instance or a `Record`, found `{tn}`"
-            ),
-            span,
-        );
+        let mut diag = Diagnostic::error(format!("{NOT_AN_OBJECT}, found `{tn}`"), span);
         let map = self.cx.prelude_adt("Map");
         let fix = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) if Some(*d) == map => Some("list a map's keys with `m.keys()`"),
             TyKind::Adt(d, _) if self.cx.is_json_value(*d) => {
                 Some("list a JSON object's keys with `v.keys()`")
             }
-            TyKind::Option(_) => Some("test for `null` first"),
+            TyKind::Option(..) => Some("test for `null` first"),
             _ => None,
         };
         if let Some(fix) = fix {
@@ -377,6 +584,26 @@ fn is_object_lit(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Paren(inner) => is_object_lit(inner),
         ast::ExprKind::Object(_) => true,
+        _ => false,
+    }
+}
+
+/// An ES private field (`#x`): `Object.keys` does not list it, as in JavaScript.
+fn is_private_name(name: &str) -> bool {
+    name.starts_with(ast::PRIVATE_NAME_PREFIX)
+}
+
+/// Can `e` be evaluated a second time to the same object without side effects (a name,
+/// `this`, or a property of one)?
+fn reevaluable(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => reevaluable(inner),
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => reevaluable(object),
         _ => false,
     }
 }

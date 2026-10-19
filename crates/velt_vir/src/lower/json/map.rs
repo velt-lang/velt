@@ -2,7 +2,10 @@
 //! insertion order, read by `new Map()` and `set(key, value)` per member (a repeated key
 //! replaces the value, like `JSON.parse`). Sema only lets maps with `string` keys through. A
 //! record keeps a `Map<K, V>` in field 0; with literal keys (`"cpu" | "mem"`, a string enum) a
-//! member whose key is not one of them is skipped, and every key is required.
+//! member whose key is not one of them is skipped, and every key is required. A record is written
+//! in JavaScript's key order (array indices first), walking the positions its `__positions`
+//! method gives; a decoded one is in document order, so it is marked `unordered` (field 1) when
+//! a key is an array index (`Record.__decoded`).
 
 use velt_sema::hir::{self, DefId, LitValue, PassMode, TyId, TyKind};
 
@@ -25,7 +28,19 @@ impl FnLower<'_, '_> {
         buf: &Operand,
         place: &Place,
         ty: TyId,
+        kv: (TyId, TyId),
+    ) {
+        self.json_write_entries(buf, place, ty, kv, None);
+    }
+
+    /// The entries of the `Map` at `place`, in insertion order or in `order` (a record's).
+    fn json_write_entries(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
         (kt, vt): (TyId, TyId),
+        order: Option<&RecordOrder>,
     ) {
         let tys = self.cx.adt_field_tys(ty);
         // Either array may be boxed (shared elsewhere in the program as the same type).
@@ -43,13 +58,22 @@ impl FnLower<'_, '_> {
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         let len = Operand::Copy(proj(&keys, Proj::Field(1)));
+        let len = self.order_len(order, len);
         self.count_loop(k, len, |lw, i| {
-            // A deleted entry's value slot is null.
+            let i = lw.order_pos(order, i);
+            // A deleted entry's value slot is null (glue/format_map.rs `map_entry_live`).
             let slot = lw.elem_place(&values, i.clone(), slot_t);
-            let live = lw.option_is_some(&slot, slot_t);
+            let (live, vp) = lw.map_entry_live(place, ty, (i.clone(), &slot, slot_t, vt));
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
+            // A dynamic value holding `undefined`, a function or a symbol is left out.
+            if lw.cx.is_dynamic(vt) {
+                let present = lw.any_json_present(&vp);
+                let written = lw.new_block();
+                lw.branch(present, written, skip);
+                lw.switch_to(written);
+            }
             let (sep_bb, entry_bb) = (lw.new_block(), lw.new_block());
             lw.branch(Operand::Copy(Place::local(first)), entry_bb, sep_bb);
             lw.switch_to(sep_bb);
@@ -61,8 +85,7 @@ impl FnLower<'_, '_> {
             let kp = lw.elem_place(&keys, i, kt);
             lw.json_write(buf, &kp, kt);
             lw.push_text(buf, ":");
-            let vp = lw.some_payload(&slot, slot_t);
-            lw.json_write(buf, &vp, vt);
+            lw.json_write_at(buf, &vp, vt, super::key::JsonKey::Str(&kp));
             lw.goto(skip);
             lw.switch_to(skip);
         });
@@ -355,9 +378,105 @@ impl FnLower<'_, '_> {
         ty: TyId,
         kv: (TyId, TyId),
     ) {
+        let order = self.record_order(place, ty);
         let map_ty = self.cx.adt_field_tys(ty)[0];
         let map = self.field_place(place, ty, 0);
-        self.json_write_map(buf, &map, map_ty, kv);
+        self.json_write_entries(buf, &map, map_ty, kv, Some(&order));
+        self.drop_record_order(order);
+    }
+
+    /// The order in which to walk the entries of the record at `place` (of the prelude `Record`
+    /// type `ty`): its `__positions()`, the entry positions in JavaScript's key order, or empty
+    /// for insertion order (always, unless a key that may be an array index was added).
+    pub(in crate::lower) fn record_order(&mut self, place: &Place, ty: TyId) -> RecordOrder {
+        let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
+            ice("Record method on a non-ADT type")
+        };
+        let def = self.class_method(d, "__positions");
+        let ret = match self.cx.hir.def(def) {
+            hir::Def::Fn(f) => f.ret,
+            _ => ice("Record.__positions is not a function"),
+        };
+        let f = self.cx.func_for(def, targs.clone());
+        let arr_ty = self.cx.subst(ret, &targs);
+        let TyKind::Array(elem) = self.cx.kind(arr_ty) else {
+            ice("Record.__positions does not return an array")
+        };
+        let vt = self.cx.ty(arr_ty);
+        let arr = self.temp(vt);
+        let mut args = vec![Operand::Copy(place.clone())];
+        // The array is an aggregate or a box, as the program uses arrays; an aggregate comes back
+        // through an out pointer.
+        let dest = match self.cx.ret_abi(arr_ty, None).out {
+            Some(_) => {
+                let a = self.addr(Place::local(arr));
+                args.push(a);
+                None
+            }
+            None => Some(Place::local(arr)),
+        };
+        self.call(vir::Callee::Func(f), args, dest, false);
+        let content = self.content(&Place::local(arr), arr_ty);
+        RecordOrder {
+            arr,
+            arr_ty,
+            elem,
+            content,
+        }
+    }
+
+    /// Release the array of `record_order`.
+    pub(in crate::lower) fn drop_record_order(&mut self, order: RecordOrder) {
+        self.drop_glue(Place::local(order.arr), order.arr_ty);
+    }
+
+    /// How many entry positions a loop over a map with `len` positions walks in `order`: the
+    /// order's length, or `len` when it is empty.
+    pub(in crate::lower) fn order_len(
+        &mut self,
+        order: Option<&RecordOrder>,
+        len: Operand,
+    ) -> Operand {
+        let Some(o) = order else {
+            return len;
+        };
+        let n = Operand::Copy(proj(&o.content, Proj::Field(1)));
+        let out = self.temp(Ty::U64);
+        self.assign(Place::local(out), Rvalue::Use(len));
+        let some = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, n.clone(), cint(0, Ty::U64)),
+        );
+        let (set, join) = (self.new_block(), self.new_block());
+        self.branch(some, set, join);
+        self.switch_to(set);
+        self.assign(Place::local(out), Rvalue::Use(n));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(Place::local(out))
+    }
+
+    /// The entry position of step `i` of such a loop: `order[i]`, or `i` when it is empty.
+    pub(in crate::lower) fn order_pos(
+        &mut self,
+        order: Option<&RecordOrder>,
+        i: Operand,
+    ) -> Operand {
+        let Some(o) = order else {
+            return i;
+        };
+        let n = Operand::Copy(proj(&o.content, Proj::Field(1)));
+        let out = self.temp(Ty::U64);
+        self.assign(Place::local(out), Rvalue::Use(i.clone()));
+        let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)));
+        let (set, join) = (self.new_block(), self.new_block());
+        self.branch(some, set, join);
+        self.switch_to(set);
+        let at = self.elem_place(&o.content, i, o.elem);
+        self.assign(Place::local(out), Rvalue::Use(Operand::Copy(at)));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(Place::local(out))
     }
 
     /// Decode an object into a new `Record<K, V>` at `place`.
@@ -376,7 +495,25 @@ impl FnLower<'_, '_> {
         let map_ty = self.cx.adt_field_tys(ty)[0];
         let map = self.field_place(place, ty, 0);
         self.json_read_map(r, &map, ctx, map_ty, kv, fail);
+        // Document order: readers put array-index keys first, when there is one.
+        let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
+            ice("Record decoded into a non-ADT type")
+        };
+        let def = self.class_method(d, "__decoded");
+        let f = self.cx.func_for(def, targs);
+        let recv = vec![Operand::Copy(place.clone())];
+        self.call(vir::Callee::Func(f), recv, None, false);
     }
+}
+
+/// The order of a record's entries for a loop over its map (`FnLower::record_order`).
+pub(in crate::lower) struct RecordOrder {
+    /// The `usize[]` of `__positions()`, owned by the loop's caller.
+    arr: Local,
+    arr_ty: TyId,
+    elem: TyId,
+    /// Its inline value.
+    content: Place,
 }
 
 /// What decoding the members of a map needs.

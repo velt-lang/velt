@@ -55,10 +55,15 @@ impl Printer<'_> {
             .split_whitespace()
             .map(|m| format!("{m} "))
             .collect();
+        // A destructured parameter shows its pattern as written.
+        let name = match &p.pattern {
+            Some(q) => self.flat(q.span),
+            None => p.name.name.clone(),
+        };
         if p.optional {
-            return format!("{mods}{}?: {}", p.name.name, self.ty_optional(&p.ty));
+            return format!("{mods}{name}?: {}", self.ty_optional(&p.ty));
         }
-        let mut out = format!("{mods}{}: {}", p.name.name, self.ty(&p.ty));
+        let mut out = format!("{mods}{name}: {}", self.ty(&p.ty));
         if let Some(default) = &p.default {
             out.push_str(" = ");
             out.push_str(&self.flat(default.span));
@@ -145,18 +150,41 @@ impl Printer<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let params: Vec<String> = params.iter().map(|p| self.fn_type_param(p)).collect();
+                let mut params: Vec<String> =
+                    params.iter().map(|p| self.fn_type_param(p)).collect();
+                if let Some(last) = params.last_mut().filter(|_| *rest) {
+                    last.insert_str(0, "...");
+                }
                 let throws = throws
                     .as_ref()
                     .map_or(String::new(), |t| format!(" throws {}", self.ty(t)));
                 format!("({}) => {}{throws}", params.join(", "), self.ty(ret))
             }
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                format!("{}{}", self.generics(type_params), self.ty(ty))
+            }
+            TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
+            TypeExprKind::TupleRest(ty) => format!("...{}", self.ty(ty)),
+            TypeExprKind::TupleOptional(ty) => format!("{}?", self.ty(ty)),
             TypeExprKind::Union(members) => {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")
             }
-            TypeExprKind::Literal(_) => self.flat(t.span),
+            TypeExprKind::Intersection(members) => {
+                let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
+                members.join(" & ")
+            }
+            TypeExprKind::Indexed { object, key } => {
+                format!("{}[{}]", self.ty_operand(object), self.ty(key))
+            }
+            TypeExprKind::Literal(_)
+            | TypeExprKind::Conditional(_)
+            | TypeExprKind::Infer(_)
+            | TypeExprKind::Mapped(_)
+            | TypeExprKind::TemplateLiteral { .. }
+            | TypeExprKind::Callable { .. } => self.flat(t.span),
             TypeExprKind::Object(fields) => {
                 if fields.is_empty() {
                     return "{}".into();
@@ -174,19 +202,58 @@ impl Printer<'_> {
                     .collect();
                 format!("{{ {} }}", fields.join("; "))
             }
+            TypeExprKind::IndexSig {
+                fields,
+                key,
+                value,
+                readonly,
+            } => {
+                let mut parts: Vec<String> = fields
+                    .iter()
+                    .map(|f| {
+                        let readonly = if f.readonly { "readonly " } else { "" };
+                        if f.optional {
+                            format!("{readonly}{}?: {}", f.name.name, self.ty_optional(&f.ty))
+                        } else {
+                            format!("{readonly}{}: {}", f.name.name, self.ty(&f.ty))
+                        }
+                    })
+                    .collect();
+                let readonly = if *readonly { "readonly " } else { "" };
+                parts.push(format!(
+                    "{readonly}[{}: {}]: {}",
+                    key.name.name,
+                    self.ty(&key.ty),
+                    self.ty(value)
+                ));
+                format!("{{ {} }}", parts.join("; "))
+            }
+            TypeExprKind::Query(path) => {
+                let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+                format!("typeof {}", path.join("."))
+            }
+            TypeExprKind::KeyOf(inner) => format!("keyof {}", self.ty_operand(inner)),
             TypeExprKind::Null => "null".into(),
+            TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
+            TypeExprKind::Predicate { param, ty, asserts } => {
+                let asserts = if *asserts { "asserts " } else { "" };
+                match ty {
+                    Some(t) => format!("{asserts}{} is {}", param.name, self.ty(t)),
+                    None => format!("{asserts}{}", param.name),
+                }
+            }
         }
     }
 
-    /// The type of `name?: T` as written: the parser added `| null`.
+    /// The type of `name?: T` as written: the parser added a zero-width `| undefined`.
     fn ty_optional(&self, t: &TypeExpr) -> String {
         let TypeExprKind::Union(members) = &t.kind else {
             return self.ty(t);
         };
         let members: Vec<String> = members
             .iter()
-            .filter(|m| !matches!(m.kind, TypeExprKind::Null))
+            .filter(|m| !(matches!(m.kind, TypeExprKind::Undefined) && m.span.lo == m.span.hi))
             .map(|m| self.ty_operand(m))
             .collect();
         members.join(" | ")
@@ -195,15 +262,18 @@ impl Printer<'_> {
     /// A type where a bare union would not parse (bounds, `extends`, `implements`, targets).
     pub(crate) fn ty_no_union(&self, t: &TypeExpr) -> String {
         match t.kind {
-            TypeExprKind::Union(_) => format!("({})", self.ty(t)),
+            TypeExprKind::Union(_) | TypeExprKind::Intersection(_) => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }
     }
 
-    /// Operand of `[]` or `|`: unions and function types need parentheses.
+    /// Operand of `[]`, `|` or `&`: unions, intersections and function types get parentheses.
     fn ty_operand(&self, t: &TypeExpr) -> String {
         match t.kind {
-            TypeExprKind::Union(_) | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
+            TypeExprKind::Union(_)
+            | TypeExprKind::Intersection(_)
+            | TypeExprKind::KeyOf(_)
+            | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }
     }

@@ -30,10 +30,30 @@ fn golden_m1_files_parse() {
                 | "class_field_uninferred.vlt"
                 | "using_syntax.vlt"
                 | "modules_export_default.vlt"
-                | "undefined_removed.vlt"
                 | "strict_mode_names.vlt"
                 | "generator_syntax.vlt"
                 | "generator_done_undefined.vlt"
+                | "private_names_syntax.vlt"
+                | "quoted_property_names_reserved.vlt"
+                | "type_param_defaults_required.vlt"
+                | "class_expression_named.vlt"
+                | "for_in_outer_variable.vlt"
+                | "overloads_missing_impl.vlt"
+                | "overloads_declarations.vlt"
+                | "object_literal_accessors.vlt"
+                | "ts_syntax_errors.vlt"
+                | "ts_parse_leftovers_errors.vlt"
+                | "catch_types_errors.vlt"
+                | "type_operators_unsupported.vlt"
+                | "param_property_pattern.vlt"
+                | "param_defaults_unsupported.vlt"
+                | "dynamic_import.vlt"
+                | "namespace_values.vlt"
+                | "overload_signature_asi_no_body.vlt"
+                | "cast_union_number_literal.vlt"
+                | "function_expression_errors.vlt"
+                | "function_expression_this_errors.vlt"
+                | "string_escape_octal.vlt"
         ) {
             continue;
         }
@@ -83,7 +103,11 @@ fn golden_hello_shape() {
 }
 
 #[test]
-fn strings_golden_unknown_escape_kept() {
-    let e = expr(r#""esc: \"q\" \ \t|""#);
+fn strings_golden_escapes() {
+    // `strings.vlt` writes `\\` for its backslash; an unknown escape such as `\ ` is the
+    // character alone, as in JS.
+    let e = expr(r#""esc: \"q\" \\ \t|""#);
     assert_eq!(sx(&e), format!("{:?}", "esc: \"q\" \\ \t|"));
+    let e = expr(r#""esc: \ \d|""#);
+    assert_eq!(sx(&e), format!("{:?}", "esc:  d|"));
 }

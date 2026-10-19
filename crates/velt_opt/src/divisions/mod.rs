@@ -21,6 +21,7 @@ use crate::locals::Usage;
 use crate::srclocs::rewrite_stmts;
 use parity::Parity;
 use range::Ranges;
+pub(crate) use range::{binary as interval_binary, Interval};
 
 /// A division this pass can make cheaper.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -107,10 +108,7 @@ fn apply(func: &mut Function, proofs: Vec<(usize, usize, Proof)>) {
     for &(bi, si, _) in &proofs {
         let temp = match candidate(&func.blocks[bi].stmts[si]) {
             Some((_, _, c, ty)) if c.count_ones() != 1 => {
-                func.locals.push(LocalDecl {
-                    ty: unsigned(ty),
-                    name: None,
-                });
+                func.locals.push(LocalDecl::new(unsigned(ty), None));
                 Some(Local(func.locals.len() as u32 - 1))
             }
             _ => None,

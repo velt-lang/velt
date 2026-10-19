@@ -27,7 +27,7 @@ async function main() {
   await note(log, "c");
   await p;
   console.log(log.lines);
-  const xs = [1, 2, 3];
+  const xs: i64[] = [1, 2, 3];
   const ys = xs;
   const t = await spawn(total(xs));
   console.log(t, xs.length, ys.length);

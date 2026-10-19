@@ -1,0 +1,22 @@
+velt actors: 1 shards, 1000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  380.1k
+    c=1/p50  2.2µs   c=1/p99  6.6µs
+    c=64/ops_per_sec  399.1k
+    c=64/p50  138.7µs   c=64/p99  651.1µs
+    c=512/ops_per_sec  361.4k
+    c=512/p50  627.1µs   c=512/p99  55.15ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  230.4k
+    c=1/p50  3.5µs   c=1/p99  10.2µs
+    c=64/ops_per_sec  277.8k
+    c=64/p50  145.1µs   c=64/p99  1.03ms
+    c=512/ops_per_sec  186.7k
+    c=512/p50  744.6µs   c=512/p99  61.30ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  135.9k   p50  5.4µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  56.2k   live 19968   rss_delta/actor  2966 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  34.2k   live 99968   rss_delta/actor  2554 B
+turns 3040611, activations 256876, deactivations 256876

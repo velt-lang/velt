@@ -1,0 +1,10 @@
+// An explicit `void` type argument doesn't make a function's parameter optional: TypeScript
+// checks the call's arity before applying the call's own type arguments (TS2554, "Expected 1
+// arguments, but got 0."). A receiver's type arguments do (`lang/void_type_arg_param.vlt`).
+function h<T>(x: T) {
+  console.log("h");
+}
+
+function main() {
+  h<void>();
+}

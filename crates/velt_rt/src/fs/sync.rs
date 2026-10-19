@@ -2,7 +2,7 @@
 //! ABI, run on the calling thread. Each writes its `IoResult` to `out` and returns nothing:
 //! `std/fs.vlt` declares a struct result, which lowers to exactly that (rt_abi_async.md §3.1).
 
-use super::ops::{self, data_arg, path_arg, VeltStat};
+use super::ops::{self, data_arg, path_arg, VeltDirents, VeltStat};
 use crate::bytes::VeltBytes;
 use crate::result::IoResult;
 use crate::str::VeltStr;
@@ -59,6 +59,40 @@ pub unsafe extern "C" fn velt_rt_fs_read_dir_sync(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_stat_sync(path: *const VeltStr, out: *mut IoResult<VeltStat>) {
     ops::stat(path_arg(path)).write_to(out);
+}
+
+/// `readDirSync(path, { withFileTypes: true })`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_read_dir_typed_sync(
+    path: *const VeltStr,
+    out: *mut IoResult<VeltDirents>,
+) {
+    ops::read_dir_typed(path_arg(path)).write_to(out);
+}
+
+/// `lstatSync(path)`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_lstat_sync(path: *const VeltStr, out: *mut IoResult<VeltStat>) {
+    ops::lstat(path_arg(path)).write_to(out);
+}
+
+/// `readlinkSync(path)`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_readlink_sync(
+    path: *const VeltStr,
+    out: *mut IoResult<VeltStr>,
+) {
+    ops::readlink(path_arg(path)).write_to(out);
+}
+
+/// `symlinkSync(target, path)`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_symlink_sync(
+    target: *const VeltStr,
+    path: *const VeltStr,
+    out: *mut IoResult<()>,
+) {
+    ops::symlink(path_arg(target), path_arg(path)).write_to(out);
 }
 
 /// `mkdirSync(path, { recursive })`.

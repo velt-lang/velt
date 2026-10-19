@@ -5,12 +5,17 @@
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Payload, Tok, TplPart};
+use velt_common::Span;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_primary(&mut self) -> PResult<Expr> {
         let lo = self.cur_lo();
         let span = self.cur_span();
         if let Some(lit) = self.literal_at_cursor() {
+            self.bump();
+            return Ok(self.mk_expr(ExprKind::Lit(lit), span));
+        }
+        if let Some(lit) = self.define_at_cursor() {
             self.bump();
             return Ok(self.mk_expr(ExprKind::Lit(lit), span));
         }
@@ -36,6 +41,11 @@ impl<'a> Parser<'a> {
                 ExprKind::This
             }
             Tok::Kw(Kw::New) => self.parse_new()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::Dot => self.parse_import_meta()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::LParen => {
+                self.dynamic_import();
+                return Err(Fail);
+            }
             Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
             Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
                 self.bump(); // async
@@ -50,10 +60,13 @@ impl<'a> Parser<'a> {
                 );
                 return Err(Fail);
             }
-            Tok::Ident if self.at_word("undefined") => self.undefined_expr(span),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                ExprKind::Lit(Lit::Undefined)
+            }
             Tok::LParen => {
                 self.bump();
-                let inner = self.parse_expr()?;
+                let inner = self.allow_in(|p| p.parse_expr())?;
                 self.expect(Tok::RParen)?;
                 // Parentheses around a JSX element are layout only (a formatter adds them to
                 // multi-line elements), so they leave no `Paren` node.
@@ -70,6 +83,14 @@ impl<'a> Parser<'a> {
             }
             Tok::LBrace => ExprKind::Object(self.parse_object_props()?),
             t if Self::is_ident_like(t) => self.parse_ident_or_struct_lit()?,
+            Tok::PrivateName => {
+                self.error(
+                    "private names are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand side of an `in` expression",
+                    span,
+                );
+                self.bump();
+                return Err(Fail);
+            }
             _ => {
                 self.error_expected("expression");
                 return Err(Fail);
@@ -77,6 +98,17 @@ impl<'a> Parser<'a> {
         };
         let span = self.span_from(lo);
         Ok(self.mk_expr(kind, span))
+    }
+
+    /// The build-time constant the identifier at the cursor stands for (`define` in
+    /// package.vlt, as Vite's `define`): a reference that nothing in its scope declares
+    /// (`crate::scope::free_values`, found by a first parse).
+    pub(super) fn define_at_cursor(&mut self) -> Option<Lit> {
+        let t = self.tok(self.pos);
+        if t.kind != Tok::Ident {
+            return None;
+        }
+        self.define_at?.get(&t.lo).cloned()
     }
 
     /// Literal value of the current token (numbers, strings, `true`/`false`/`null`), if any.
@@ -158,50 +190,20 @@ impl<'a> Parser<'a> {
 
     /// `{ key: value, shorthand, "quoted": v, ...spread }` — current token is `{`.
     fn parse_object_props(&mut self) -> PResult<Vec<ObjectProp>> {
+        self.allow_in(|p| p.parse_object_props_in())
+    }
+
+    fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
-        // `value: undefined` (its position, and its diagnostic's).
-        let mut undefined_value = None;
         while !self.at(Tok::RBrace) {
-            let ndiags = self.diags.len();
-            let prop = self.parse_object_prop()?;
-            if let ObjectProp::KeyValue(k, v) = &prop {
-                if k.name == "value"
-                    && self.text(v.span.lo, v.span.hi) == "undefined"
-                    && self.diags.len() > ndiags
-                {
-                    undefined_value = Some((props.len(), ndiags));
-                }
-            }
-            props.push(prop);
+            props.push(self.parse_object_prop()?);
             if !self.eat(Tok::Comma) {
                 break;
             }
         }
         self.expect(Tok::RBrace)?;
-        if let Some((i, d)) = undefined_value {
-            self.finished_result_value(&mut props, i, d);
-        }
         Ok(props)
-    }
-
-    /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
-    /// `value`. Says so instead of "use `null`" (which a `{ done: true }` result can't hold),
-    /// and drops the property.
-    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, d: usize) {
-        let done = props.iter().any(|p| {
-            matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
-                if k.name == "done")
-        });
-        if !done {
-            return;
-        }
-        let span = self.diags[d].labels[0].span;
-        self.diags[d] = velt_common::Diagnostic::error("`undefined` is not part of Velt", span)
-            .with_note(
-                "TypeScript allows this; Velt doesn't because it has no `undefined`, and a finished `IteratorResult` has no `value`; write `{ done: true }`",
-            );
-        props.remove(i);
     }
 
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {
@@ -222,32 +224,170 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
+            // A numeric property name, as in TypeScript: `{ 7: v }` and `{ 0x10: v }` have the
+            // keys "7" and "16".
+            Tok::Int(_) => match self.literal_at_cursor() {
+                Some(Lit::Int {
+                    value,
+                    suffix: None,
+                }) if value < 1 << 53 => {
+                    let key = Ident {
+                        name: value.to_string(),
+                        span: self.cur_span(),
+                    };
+                    self.bump();
+                    self.expect(Tok::Colon)?;
+                    return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+                }
+                _ => {
+                    self.error_expected("property name");
+                    return Err(Fail);
+                }
+            },
+            Tok::LBracket if self.at_symbol_key() => {
+                let key = self.parse_symbol_key()?;
+                self.expect(Tok::Colon)?;
+                return Ok(ObjectProp::KeyValue(key, self.parse_prop_value()?));
+            }
+            Tok::PrivateName => {
+                let span = self.cur_span();
+                self.error("private names are only allowed in class bodies", span);
+                return Err(Fail);
+            }
+            Tok::LBracket => return self.parse_computed_prop(),
             _ => {
                 self.error_expected("property name");
                 return Err(Fail);
             }
         };
         if self.eat(Tok::Colon) {
-            return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+            return Ok(ObjectProp::KeyValue(key, self.parse_prop_value()?));
         }
         if !shorthand_ok {
             self.error_expected("`:`");
             return Err(Fail);
         }
+        // `{ __DEV__ }` with a `define`: `{ __DEV__: false }`.
+        if let Some(lit) = self.define_at.and_then(|d| d.get(&key.span.lo)).cloned() {
+            let value = self.mk_expr(ExprKind::Lit(lit), key.span);
+            return Ok(ObjectProp::KeyValue(key, value));
+        }
         Ok(ObjectProp::Shorthand(key))
+    }
+
+    /// `[key]: value` with any expression as the key (a symbol key or a module constant,
+    /// `[KEY]`, is [`Self::parse_symbol_key`]'s). A string or integer literal key is the plain
+    /// key (`["a"]: 1` is `a: 1`). Any other key is known only at run time: the property is
+    /// written as a spread of a call of the prelude's [`COMPUTED_KEY_FN`], `...__computed_key(key,
+    /// value)`, which sema checks where a `Record` is built (the object has string keys).
+    fn parse_computed_prop(&mut self) -> PResult<ObjectProp> {
+        let lo = self.cur_lo();
+        self.bump(); // [
+        let key = self.allow_in(|p| p.parse_assign())?;
+        self.expect(Tok::RBracket)?;
+        let key_span = self.span_from(lo);
+        if self.at(Tok::LParen) {
+            self.error(
+                "a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression",
+                key_span,
+            );
+            return Err(Fail);
+        }
+        self.expect(Tok::Colon)?;
+        let value = self.parse_prop_value()?;
+        let plain = match &key.kind {
+            ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
+            ExprKind::Lit(Lit::Int {
+                value,
+                suffix: None,
+            }) if *value < 1 << 53 => Some(value.to_string()),
+            _ => None,
+        };
+        if let Some(name) = plain {
+            return Ok(ObjectProp::KeyValue(
+                Ident {
+                    name,
+                    span: key.span,
+                },
+                value,
+            ));
+        }
+        let callee = self.mk_expr(
+            ExprKind::Ident(Ident {
+                name: COMPUTED_KEY_FN.into(),
+                span: key_span,
+            }),
+            key_span,
+        );
+        let span = self.span_from(lo);
+        let call = ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args: vec![key, value],
+            optional: false,
+        };
+        Ok(ObjectProp::Spread(self.mk_expr(call, span)))
+    }
+
+    /// The value of an object-literal property, after `:`.
+    fn parse_prop_value(&mut self) -> PResult<Expr> {
+        self.fn_in_object = self.at_kw(Kw::Function)
+            || (self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function));
+        let value = self.parse_assign();
+        self.fn_in_object = false;
+        value
     }
 
     /// A method in an object literal: `[async] [*]name(...) { ... }`, where the name may be a
     /// symbol key (`*[Symbol.iterator]() { ... }`). `None` (nothing consumed) for a property.
     fn try_object_method(&mut self) -> PResult<Option<ObjectProp>> {
         let lo = self.cur_lo();
+        // `get name() { … }` / `set name(v) { … }`: accessors (not `get(…)`, a method named `get`).
+        if (self.at_word("get") || self.at_word("set"))
+            && (Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::Str(_)))
+            && self.nth(2) == Tok::LParen
+        {
+            let kw = self.cur_span();
+            let setter = self.at_word("set");
+            self.bump();
+            let name = self.parse_prop_key()?;
+            let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)?
+            else {
+                unreachable!("ICE: a method property is a key and a value");
+            };
+            self.check_accessor_params(&arrow, setter, kw);
+            let f = if setter { OBJECT_SET_FN } else { OBJECT_GET_FN };
+            let callee = self.mk_expr(
+                ExprKind::Ident(Ident {
+                    name: f.into(),
+                    span: kw,
+                }),
+                kw,
+            );
+            let span = arrow.span;
+            let call = ExprKind::Call {
+                callee: Box::new(callee),
+                type_args: vec![],
+                args: vec![arrow],
+                optional: false,
+            };
+            return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
+        }
         let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::LParen);
+            || (self.at_kw(Kw::Async)
+                && Self::is_name(self.nth(1))
+                && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);
         let is_generator = self.nth(off) == Tok::Star;
         let at_name = |p: &mut Self, k: usize| {
             (p.nth(k) == Tok::LBracket && p.nth_word(k + 1, "Symbol"))
+                || (p.nth(k) == Tok::LBracket
+                    && p.nth(k + 1) == Tok::Ident
+                    && p.nth(k + 2) == Tok::RBracket
+                    && p.nth(k + 3) == Tok::LParen)
                 || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::LParen)
+                // `name<T>(…) { … }`: a generic method.
+                || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::Lt)
         };
         if !is_generator && !at_name(self, off) {
             return Ok(None);
@@ -259,10 +399,129 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         let name = self.parse_member_name()?;
+        self.reject_private_name(&name);
+        if !is_generator && !name.name.starts_with("[Symbol.") {
+            return self.finish_method_prop(lo, name, is_async).map(Some);
+        }
+        if !name.name.starts_with('[') {
+            return self.generator_method_prop(lo, name, is_async).map(Some);
+        }
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
-        let body = self.parse_block()?;
-        Ok(Some(ObjectProp::Method(Box::new(FnDecl { sig, body }))))
+        let body = self.parse_fn_body()?;
+        Ok(Some(ObjectProp::Method(Box::new(FnDecl {
+            sig,
+            body,
+            overloads: vec![],
+        }))))
+    }
+
+    /// A getter takes no parameters and a setter one (as in TypeScript).
+    fn check_accessor_params(&mut self, arrow: &Expr, setter: bool, kw: Span) {
+        let ExprKind::Arrow {
+            params,
+            ret,
+            type_params,
+            ..
+        } = &arrow.kind
+        else {
+            return;
+        };
+        let msg = match (setter, params.len()) {
+            (false, 0) | (true, 1) => None,
+            (false, _) => Some("a getter cannot have parameters"),
+            (true, _) => Some("a setter must have exactly one parameter"),
+        };
+        if let Some(msg) = msg {
+            self.error(msg, kw);
+        } else if setter && ret.is_some() {
+            self.error("a setter cannot have a return type annotation", kw);
+        } else if !type_params.is_empty() {
+            self.error("an accessor cannot have type parameters", kw);
+        }
+    }
+
+    /// `*name(params) { body }` (`async *name`) in an object literal, after the name: a property
+    /// holding the generator function, `name: function* (params) { body }`.
+    fn generator_method_prop(
+        &mut self,
+        lo: u32,
+        name: Ident,
+        is_async: bool,
+    ) -> PResult<ObjectProp> {
+        let anonymous = Ident {
+            name: String::new(),
+            span: name.span,
+        };
+        let mut sig = self.parse_sig_rest(lo, anonymous, is_async)?;
+        sig.is_generator = true;
+        let body = self.parse_fn_body()?;
+        self.reject_this_in_method(&name, &body);
+        let span = self.span_from(lo);
+        let f = FnDecl {
+            sig,
+            body,
+            overloads: vec![],
+        };
+        let f = self.mk_expr(ExprKind::Function(Box::new(f)), span);
+        Ok(ObjectProp::KeyValue(name, f))
+    }
+
+    /// Reports `this` in the body of object-literal method `name` (not supported yet).
+    fn reject_this_in_method(&mut self, name: &Ident, body: &Block) {
+        if let Some(at) = this_in_block(body) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "`this` in the object-literal method `{}` is not supported yet",
+                        name.name
+                    ),
+                    at,
+                )
+                .with_note("TypeScript allows this (`this` is the object the method is called on); Velt doesn't yet because the method is a function stored in a field, which sees the variables around it but not the object; use those variables, or declare a class"),
+            );
+        }
+    }
+
+    /// `name(params) { body }` in an object literal, after the name: a property holding the
+    /// function, `name: (params) => { body }`. The parameter types may be left out: they come
+    /// from the object's context, as an arrow's do (a `ProxyHandler`'s `get(obj, prop) {}`).
+    /// `this` in the body is not supported yet (an arrow's `this` is the enclosing one).
+    fn finish_method_prop(&mut self, lo: u32, name: Ident, is_async: bool) -> PResult<ObjectProp> {
+        let type_params = self.parse_generic_params()?;
+        let params = self.parse_arrow_params()?;
+        if let Some(p) = params.iter().find(|p| p.rest) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "rest parameters of object-literal methods (`{}(...xs)`) are not supported yet",
+                        name.name
+                    ),
+                    p.name.span,
+                )
+                .with_note("take an array (`sum(xs: number[])`) and pass one, or declare a class with the method"),
+            );
+        }
+        let (ret, throws) = if self.eat(Tok::Colon) {
+            (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
+        } else {
+            (None, None)
+        };
+        let body = self.parse_fn_body()?;
+        self.reject_this_in_method(&name, &body);
+        let span = self.span_from(lo);
+        let arrow = self.mk_expr(
+            ExprKind::Arrow {
+                type_params,
+                params,
+                ret,
+                throws,
+                body: ArrowBody::Block(body),
+                is_async,
+            },
+            span,
+        );
+        Ok(ObjectProp::KeyValue(name, arrow))
     }
 
     /// `` `a ${x} b` `` — quasis come pre-cooked from the lexer.
@@ -276,7 +535,7 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         if part == TplPart::Head {
             loop {
-                exprs.push(self.parse_expr()?);
+                exprs.push(self.allow_in(|p| p.parse_expr())?);
                 let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) = self.peek()
                 else {
                     self.error_expected("`}`");
@@ -338,4 +597,21 @@ impl Parser<'_> {
         ];
         ExprKind::New { class, args }
     }
+}
+
+/// Where `body` uses `this` (in nested arrows too, which see the same `this`).
+fn this_in_block(body: &Block) -> Option<Span> {
+    struct Find(Option<Span>);
+    impl<'a> crate::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a Expr) {
+            if matches!(e.kind, ExprKind::This) && self.0.is_none() {
+                self.0 = Some(e.span);
+            }
+        }
+    }
+    let mut f = Find(None);
+    for s in &body.stmts {
+        crate::visit::walk_stmt(s, &mut f);
+    }
+    f.0
 }

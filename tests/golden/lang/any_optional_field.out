@@ -1,0 +1,8 @@
+true undefined false true { p: 1 }
+true undefined undefined { p: 2 }
+true undefined true C { q: undefined, r: undefined, s: 1 }
+true object { p: 3, q: null }
+{ p: 1 } true
+{ p: 1, q: 5 } 6
+true undefined
+{ p: 4, q: 's' } string

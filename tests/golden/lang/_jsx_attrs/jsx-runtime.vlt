@@ -1,0 +1,52 @@
+// A JSX provider with attributes on every component (docs/internals/contracts/jsx.md
+// "Attributes of every component"), the way sigx marks islands: `<Counter client:load />`
+// checks `client:load` against `IntrinsicAttributes` and passes it to `jsxComponentAttributes`,
+// not into the props. This one wraps the component in comments naming them; std/jsx renders
+// everything else. The generic lowering (no precompile exports).
+
+import { Element } from "velt:jsx/node";
+import type { AttrValue } from "velt:jsx/node";
+import { Fragment, jsxComponent, raw } from "velt:jsx/factory";
+
+export * from "velt:jsx/generic/jsx-runtime";
+
+// Attributes every component accepts besides its props, as TypeScript's
+// `JSX.IntrinsicAttributes`: checked against these types, passed to `jsxComponentAttributes`.
+export type IntrinsicAttributes = {
+  "client:load"?: boolean;
+  "client:visible"?: boolean;
+  "client:idle"?: boolean;
+  "client:media"?: string;
+};
+
+function describe(v: AttrValue): string {
+  if (typeof v === "string") {
+    return JSON.stringify(v);
+  } else if (typeof v === "boolean") {
+    return `${v}`;
+  } else if (typeof v === "number") {
+    return `${v}`;
+  }
+  return "null";
+}
+
+export function jsxComponentAttributes<P, E>(
+  component: (props: P) => Element throws E,
+  props: P,
+  key: string | null,
+  name: string,
+  names: string[],
+  values: AttrValue[],
+): Element {
+  const inner = jsxComponent(component, props, key, name);
+  // None given (an optional field a spread source did not have): no island.
+  if (names.length === 0) {
+    return inner;
+  }
+  let open = "<!--island";
+  for (let i = 0; i < names.length; i++) {
+    open += ` ${names[i]}=${describe(values[i])}`;
+  }
+  open += ` ${name.slice(name.indexOf("#") + 1)}-->`;
+  return Fragment([raw(open), inner, raw("<!--/island-->")], null);
+}

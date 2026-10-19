@@ -1,0 +1,364 @@
+// RESP2, the Redis protocol: requests are arrays of bulk strings (`*2\r\n$3\r\nGET\r\n$1\r\nk\r\n`)
+// or inline lines (`PING\r\n`); replies are written into a growable byte buffer.
+import { utf8Encode } from "velt:encoding";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+
+/// A protocol error: the connection is answered with `-ERR Protocol error: …` and closed.
+/// `detail` is the reply text as bytes: it may quote a raw byte from the request, which Redis
+/// sends back as that one byte.
+export class ProtocolError extends Error {
+  detail: u8[];
+
+  constructor(message: string, detail: u8[] | null = null) {
+    super(message);
+    this.detail = detail ?? utf8Encode(message);
+  }
+}
+
+/// `-ERR Protocol error: <detail>` with CR and LF turned into spaces, as Redis's error replies.
+export function protocolErrorReply(detail: u8[]): u8[] {
+  const head = utf8Encode("-ERR Protocol error: ");
+  const out = Buffer.alloc(head.length + detail.length + 2);
+  out.set(head, 0);
+  for (let i = 0; i < detail.length; i++) {
+    const b = detail[i];
+    out[head.length + i] = b === CR || b === LF ? 32u8 : b;
+  }
+  out[out.length - 2] = CR;
+  out[out.length - 1] = LF;
+  return out;
+}
+
+/// What Redis accepts at most for a header line or an inline command before a line ending.
+const MAX_LINE: i64 = 65536;
+const MAX_ARGS: i64 = 2147483647;
+const MAX_BULK: i64 = 536870912;
+/// Redis's `client-query-buffer-limit` default: a client whose unparsed input grows past this
+/// is disconnected.
+const MAX_QUERY: i64 = 1073741824;
+const INITIAL: i64 = 16384;
+/// A buffer this large is given back once it has been consumed.
+const SHRINK_ABOVE: i64 = 1048576;
+
+/// The client's unparsed input passed the query-buffer limit: close the connection (no reply,
+/// as Redis).
+export class QueryBufferFull extends Error {}
+
+/// Splits a byte stream into commands. Feed it what the socket reads; `next()` returns each
+/// complete command (its arguments as bytes), or null until more data arrives.
+///
+/// Every byte is parsed once: a multibulk command that is still arriving keeps the arguments
+/// read so far and how many remain (as Redis's client state does), and `need` says how many
+/// bytes the next bulk value needs before trying again. The buffer grows by doubling, is
+/// compacted in place, and shrinks back once a large command has been consumed. A CR LF
+/// sentinel after the data stops `indexOf` at the end of what arrived.
+export class RespParser {
+  private buf: u8[] = Buffer.alloc(INITIAL as usize);
+  private pos: i64 = 0; // next unparsed byte
+  private end: i64 = 0; // bytes filled
+  private need: i64 = 0; // don't try again until end - pos >= need
+  private args: u8[][] | null = null; // the multibulk command being read, if any
+  private remaining: i64 = 0; // its arguments still to come
+  private limit: i64;
+
+  constructor(limit: i64 = MAX_QUERY) {
+    this.limit = limit;
+  }
+
+  feed(data: u8[]) {
+    if (this.pos === this.end) {
+      this.pos = 0;
+      this.end = 0;
+      if (this.buf.length > SHRINK_ABOVE && data.length < INITIAL) {
+        this.buf = Buffer.alloc(INITIAL as usize);
+      }
+    }
+    if (this.end - this.pos + (data.length as i64) > this.limit) {
+      throw new QueryBufferFull("query buffer limit");
+    }
+    if (this.end + (data.length as i64) + 2 > this.buf.length) {
+      // Make room: drop the parsed prefix, then grow if that isn't enough.
+      if (this.pos > 0) {
+        this.buf.copyWithin(0, this.pos, this.end);
+        this.end -= this.pos;
+        this.pos = 0;
+      }
+      if (this.end + (data.length as i64) + 2 > this.buf.length) {
+        let size = this.buf.length * 2;
+        while (size < this.end + (data.length as i64) + 2) {
+          size *= 2;
+        }
+        const grown = Buffer.alloc(size);
+        grown.set(this.buf.slice(0, this.end), 0);
+        this.buf = grown;
+      }
+    }
+    this.buf.set(data, this.end as usize);
+    this.end += data.length as i64;
+    this.buf[this.end] = CR;
+    this.buf[this.end + 1] = LF;
+  }
+
+  /// The CR that ends the line starting at `from`, or -1 if it hasn't arrived. The sentinel CR
+  /// at `end` stops the search there.
+  private lineEnd(from: i64): i64 {
+    const cr = this.buf.indexOf(CR, from) as i64;
+    return cr < 0 || cr + 1 >= this.end ? -1 : cr;
+  }
+
+  /// A decimal number from `from` up to `stop`, as Redis's string2ll reads it; `what` names the
+  /// header in the error ("multibulk" or "bulk").
+  private int(from: i64, stop: i64, what: string): i64 {
+    let i = from;
+    const negative = i < stop && this.buf[i] === 45;
+    if (negative) {
+      i++;
+    }
+    // At most 19 digits: anything longer can't fit, and the loop below can't overflow.
+    if (i === stop || stop - i > 19) {
+      throw new ProtocolError(`invalid ${what} length`);
+    }
+    let n: i64 = 0;
+    for (; i < stop; i++) {
+      const c = this.buf[i];
+      if (c < 48 || c > 57) {
+        throw new ProtocolError(`invalid ${what} length`);
+      }
+      const d = (c as i64) - 48;
+      if (n > (9223372036854775807 - d) / 10) {
+        throw new ProtocolError(`invalid ${what} length`);
+      }
+      n = n * 10 + d;
+    }
+    return negative ? -n : n;
+  }
+
+  /// The next complete command, or null if the buffer holds only part of one. An empty array
+  /// is a command to skip (`*0` or `*-1`, which Redis ignores too).
+  next(): u8[][] | null {
+    if (this.pos >= this.end || this.end - this.pos < this.need) {
+      return null;
+    }
+    this.need = 0;
+    if (this.args == null) {
+      if (this.buf[this.pos] !== 42) {
+        return this.inline();
+      }
+      const eol = this.lineEnd(this.pos);
+      if (eol < 0) {
+        if (this.end - this.pos > MAX_LINE) {
+          throw new ProtocolError("too big mbulk count string");
+        }
+        return null;
+      }
+      const count = this.int(this.pos + 1, eol, "multibulk");
+      if (count > MAX_ARGS) {
+        throw new ProtocolError("invalid multibulk length");
+      }
+      this.pos = eol + 2;
+      this.args = [];
+      this.remaining = count;
+    }
+    // Arguments are consumed as they complete, so a command arriving in pieces is parsed once.
+    while (this.remaining > 0) {
+      const at = this.pos;
+      if (at >= this.end) {
+        return null;
+      }
+      if (this.buf[at] !== 36) {
+        const got = this.buf[at];
+        const prefix = utf8Encode("expected '$', got '");
+        const detail = Buffer.alloc(prefix.length + 2);
+        detail.set(prefix, 0);
+        detail[prefix.length] = got; // the raw byte, as Redis sends it
+        detail[prefix.length + 1] = 39;
+        throw new ProtocolError(`expected '$', got byte ${got}`, detail);
+      }
+      const lineEnd = this.lineEnd(at);
+      if (lineEnd < 0) {
+        if (this.end - at > MAX_LINE) {
+          throw new ProtocolError("too big bulk count string");
+        }
+        return null;
+      }
+      const len = this.int(at + 1, lineEnd, "bulk");
+      if (len < 0 || len > MAX_BULK) {
+        throw new ProtocolError("invalid bulk length");
+      }
+      const dataStart = lineEnd + 2;
+      if (dataStart + len + 2 > this.end) {
+        this.need = dataStart + len + 2 - this.pos;
+        return null;
+      }
+      this.args!.push(this.buf.slice(dataStart, dataStart + len));
+      this.pos = dataStart + len + 2;
+      this.remaining--;
+    }
+    const done = this.args!;
+    this.args = null;
+    return done;
+  }
+
+  /// An inline command: one line, arguments separated by spaces (what `telnet` users type).
+  private inline(): u8[][] | null {
+    const eol = this.buf.indexOf(LF, this.pos) as i64; // the sentinel LF at end + 1 stops it
+    if (eol < 0 || eol >= this.end) {
+      if (this.end - this.pos > MAX_LINE) {
+        throw new ProtocolError("too big inline request");
+      }
+      return null;
+    }
+    const stop = eol > this.pos && this.buf[eol - 1] === CR ? eol - 1 : eol;
+    const args: u8[][] = [];
+    let i = this.pos;
+    while (i < stop) {
+      while (i < stop && this.buf[i] === 32) {
+        i++;
+      }
+      const from = i;
+      while (i < stop && this.buf[i] !== 32) {
+        i++;
+      }
+      if (i > from) {
+        args.push(this.buf.slice(from, i));
+      }
+    }
+    this.pos = eol + 1;
+    return args;
+  }
+}
+
+/// A growable byte buffer for replies.
+export class Writer {
+  buf: u8[] = Buffer.alloc(4096);
+  length: i64 = 0;
+
+  private reserve(n: i64) {
+    if (this.length + n <= this.buf.length) {
+      return;
+    }
+    let size = this.buf.length * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown = Buffer.alloc(size);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  bytes(data: u8[]) {
+    this.reserve(data.length as i64);
+    this.buf.set(data, this.length as usize);
+    this.length += data.length as i64;
+  }
+
+  private byte(b: u8) {
+    this.buf[this.length] = b;
+    this.length++;
+  }
+
+  private crlf() {
+    this.byte(CR);
+    this.byte(LF);
+  }
+
+  /// `prefix`, the decimal digits of `n` and CRLF, written in place (no string, no allocation):
+  /// every bulk reply and array starts with one of these. std has no allocation-free way to
+  /// write text into a `u8[]` yet (#718); with `utf8Encode` here, LRANGE was 31% slower.
+  private header(prefix: u8, n: i64) {
+    this.reserve(24);
+    this.byte(prefix);
+    if (n < 0) {
+      this.byte(45);
+    }
+    // Digits from the non-positive value, so i64's minimum (which has no positive) works too.
+    let v = n < 0 ? n : -n;
+    const start = this.length;
+    do {
+      this.byte((48 - v % 10) as u8);
+      v = v / 10;
+    } while (v < 0);
+    // The digits went in least significant first: reverse them.
+    let i = start;
+    let j = this.length - 1;
+    while (i < j) {
+      const t = this.buf[i];
+      this.buf[i] = this.buf[j];
+      this.buf[j] = t;
+      i++;
+      j--;
+    }
+    this.crlf();
+  }
+
+  ascii(s: string) {
+    this.bytes(utf8Encode(s));
+  }
+
+  simple(s: string) {
+    this.ascii(`+${s}\r\n`);
+  }
+
+  ok() {
+    this.reserve(5);
+    this.byte(43);
+    this.byte(79);
+    this.byte(75);
+    this.crlf();
+  }
+
+  /// An error reply. CR and LF in the message become spaces, as in Redis, so text echoed from a
+  /// request can't break the reply stream.
+  error(message: string) {
+    this.ascii(`-${message.replaceAll("\r", " ").replaceAll("\n", " ")}\r\n`);
+  }
+
+  /// An error reply from raw bytes (they may quote request bytes that aren't UTF-8), with CR
+  /// and LF turned into spaces.
+  errorBytes(message: u8[]) {
+    this.reserve((message.length as i64) + 3);
+    this.byte(45);
+    for (let i = 0; i < message.length; i++) {
+      const b = message[i];
+      this.byte(b === CR || b === LF ? 32u8 : b);
+    }
+    this.crlf();
+  }
+
+  integer(n: i64) {
+    this.header(58, n);
+  }
+
+  bulk(data: u8[]) {
+    this.header(36, data.length as i64);
+    this.reserve((data.length as i64) + 2);
+    this.buf.set(data, this.length as usize);
+    this.length += data.length as i64;
+    this.crlf();
+  }
+
+  bulkString(s: string) {
+    this.bulk(utf8Encode(s));
+  }
+
+  nil() {
+    this.header(36, -1);
+  }
+
+  nilArray() {
+    this.header(42, -1);
+  }
+
+  array(n: i64) {
+    this.header(42, n);
+  }
+
+  /// The reply bytes so far; the writer starts over.
+  take(): u8[] {
+    const out = this.buf.slice(0, this.length);
+    this.length = 0;
+    return out;
+  }
+}

@@ -1,13 +1,13 @@
-//! JSX (docs/contracts/jsx.md): elements and fragments desugar into calls of the module's JSX
-//! runtime (`<jsxImportSource>/jsx-runtime`, bound as the namespace `JSX`), built from already
-//! checked HIR, so no HIR construct is JSX-specific. Generated nodes keep the spans of the JSX
-//! they come from (editor queries on tags, attributes and children work as on calls).
+//! JSX (docs/internals/contracts/jsx.md): elements and fragments desugar into calls of the module's
+//! JSX runtime (`<jsxImportSource>/jsx-runtime`, bound as the namespace `JSX`), built from already
+//! checked HIR, so no HIR construct is JSX-specific. Generated nodes keep the spans of the JSX they
+//! come from (editor queries on tags, attributes and children work as on calls).
 //!
 //! - fragment `<>…</>` → `Fragment(children, null)`;
 //! - intrinsic `<div a={x}>…</div>` → `jsx("div", ["a"], [x], children, key)` ([`attrs`]), or a
 //!   `jsxTemplate` call when the runtime supports precompilation ([`precompile`]);
-//! - component `<Card a={x}>…</Card>` → `jsxComponent(Card, { a: x, children }, key, "m#Card")`
-//!   or `jsxAsyncComponent` ([`component`], [`props`]);
+//! - component `<Card a={x}>…</Card>` → `jsxComponent(Card, { a: x, children }, key, "m#Card")` or
+//!   `jsxAsyncComponent` ([`component`], [`props`]);
 //! - children → [`children`]; `key` → [`key`].
 
 mod attrs;
@@ -17,10 +17,13 @@ mod component_call;
 mod escape;
 mod invoke;
 mod key;
+mod list_fold;
 mod messages;
 mod precompile;
 mod props;
 mod provider;
+mod sole_child;
+mod text_run;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -48,6 +51,7 @@ impl FnCx<'_, '_> {
             Some(name) => match intrinsic_tag(name) {
                 Some(tag) => {
                     self.intrinsic_type_args(el, &tag);
+                    self.void_children(p, el, &tag);
                     self.jsx_intrinsic(p, el, &tag, name.span())
                 }
                 None => self.jsx_component(p, el, name),
@@ -92,6 +96,27 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// Children of a void element (`<br>x</br>`, one the provider lists in `jsxVoidElements`)
+    /// are an error: the element has no end tag, so the children could not be rendered.
+    fn void_children(&mut self, p: &Provider, el: &ast::JsxElement, tag: &str) {
+        let kids = children::real_children(&el.children);
+        let (Some(first), Some(last)) = (kids.first(), kids.last()) else {
+            return;
+        };
+        let declared = p.void_elements.as_ref();
+        if !declared.is_some_and(|list| list.iter().any(|v| v == tag)) {
+            return;
+        }
+        let span = children::child_span(first).to(children::child_span(last));
+        self.cx.error(
+            Diagnostic::error(format!("<{tag}> is a void element and cannot have children"), span)
+                .with_note(format!(
+                    "the JSX provider '{}' writes <{tag}> without an end tag, so there is nowhere to put children: remove them",
+                    p.source
+                )),
+        );
+    }
+
     fn jsx_fragment(&mut self, p: &Provider, el: &ast::JsxElement) -> hir::Expr {
         let children = self.child_array(p, &el.children, el.span);
         let key = self.jsx_key(p, el);
@@ -105,7 +130,10 @@ impl FnCx<'_, '_> {
         tag: &str,
         tag_span: Span,
     ) -> hir::Expr {
-        if let Some(pc) = p.precompile.filter(|_| precompile::precompilable(el, tag)) {
+        if let Some(pc) = p
+            .precompile
+            .filter(|_| precompile::precompilable(p, el, tag))
+        {
             return self.jsx_template(p, pc, el, tag, tag_span);
         }
         let mut lets = vec![];

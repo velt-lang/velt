@@ -21,8 +21,19 @@
 
 mod abi;
 mod adt;
+mod any;
+mod any_checks;
+mod any_eq;
+mod any_glue;
+mod any_has;
+mod any_keys;
+mod any_member;
+mod any_proxy;
+mod any_set;
+mod any_set_site;
 mod append;
 mod array;
+mod assign_target;
 mod async_fn;
 mod attempt;
 mod boxes;
@@ -35,6 +46,7 @@ mod class_test;
 mod closure;
 mod console;
 mod ctor_init;
+mod debug_vars;
 mod dispatch;
 mod drops;
 mod entry;
@@ -44,32 +56,48 @@ mod flags;
 mod for_of;
 mod for_of_shared;
 mod foreign;
+mod frame_envs;
 mod glue;
+mod hooks;
 mod intrinsics;
+mod js_string;
 mod json;
 mod keys;
 mod layout;
 mod match_switch;
 mod matching;
+mod module_state;
 mod operand;
 mod ops;
+mod param_any;
 mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod proxy_call;
+mod proxy_method;
+mod proxy_typed;
+mod proxy_write;
 mod rc;
+mod receiver;
 mod rt;
 mod same;
+mod sequence;
 mod share;
+mod simd;
 mod srcloc;
 mod stabilize;
 mod stmt;
 mod strbuf;
 mod strings;
+mod symbols;
 mod template;
 mod track_caller;
 mod transfer;
+mod truthy;
 mod types;
+mod weak;
+mod weak_object;
 mod widen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -98,16 +126,29 @@ const MAX_BOXING_PASSES: usize = 8;
 /// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
 /// shares of types that were not counted yet (boxing/); the type table carries over, so type
 /// ids in the counted set stay valid.
-pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
+pub(crate) fn lower_program(
+    hir: &hir::Program,
+    opts: &LowerOptions,
+) -> (vir::Program, Vec<velt_common::Diagnostic>) {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
-    for _ in 0..MAX_BOXING_PASSES {
+    let mut no_await_steps = false;
+    // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
+    for _ in 0..=MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
+        cx.cell_checks = opts.cell_checks;
+        cx.no_await_steps = no_await_steps;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
+        cx.debug = (opts.debug_info && cx.locs.is_some()).then(Default::default);
         cx.seed_functions();
+        while let Some((fid, work)) = cx.queue.pop_front() {
+            cx.build_now(fid, &work);
+        }
+        // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
+        cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
@@ -118,8 +159,21 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
             }
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
+                eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
-            return cx.finish();
+            if std::env::var_os("VELT_DEBUG_PROXY").is_some() {
+                eprintln!("velt: proxiable types: {}", cx.proxiable_names().join(", "));
+            }
+            let diags = cx.nothing_clash_diagnostics();
+            let types_now = cx.types.clone();
+            let program = cx.finish();
+            if !no_await_steps && async_fn::await_order::unobservable(&program) {
+                // Lower again without the steps: the program then has no step code at all.
+                no_await_steps = true;
+                types = types_now;
+                continue;
+            }
+            return (program, diags);
         }
         types = cx.types;
         counted = next;
@@ -153,6 +207,10 @@ enum ThunkKind {
     Env(Option<TyId>),
     /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
     SelfData,
+    /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
+    /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
+    /// called on its own (without the proxy as `this`) it throws a `TypeError`.
+    Unbound,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -166,6 +224,9 @@ enum Work {
     Thunk(ThunkKind, DefId, Vec<TyId>),
     /// Drop / clone of a heap closure environment for closure `(def, targs)`.
     EnvDrop(DefId, Vec<TyId>),
+    /// `(env: ptr)`: drop the owned captures of a frame environment (frame_envs.rs), which is
+    /// not freed.
+    EnvDropFrame(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
@@ -186,6 +247,9 @@ enum Work {
     /// `(state: ptr)`: request the awaited close of an async generator instance (sets
     /// `CLOSE_BIT`; async_fn/generator.rs).
     AsyncCloseStart(DefId, Vec<TyId>),
+    /// `(state: ptr, error: ptr) -> u32`: resume a generator instance with an error thrown in
+    /// (`throw()`; async_fn/gen_send.rs).
+    GenThrow(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),
@@ -213,6 +277,8 @@ enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
+    /// `(state: ptr)`: the module state's initializer (module_state.rs).
+    ModuleInit,
 }
 
 /// Program-level lowering state.
@@ -220,13 +286,32 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
+    /// scheduler. Known once every function
+    /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
+    uses_placement: bool,
+    /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
+    /// `LowerOptions::cell_checks`).
+    cell_checks: bool,
+    /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
+    /// nothing in it can make a task's await word non-0.
+    no_await_steps: bool,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,
     externs: Vec<ExternFn>,
     extern_map: HashMap<String, ExternId>,
     statics: Vec<StaticData>,
+    /// The module state's descriptor, once a slot is used (module_state.rs).
+    module_desc: Option<StaticId>,
+    /// The module state slots some code assigns as a whole, once asked (module_state.rs).
+    reassigned_slots: Option<HashSet<hir::DefId>>,
+    /// The prelude's `Error` class, once looked up (js_string.rs).
+    prelude_error: Option<Option<hir::DefId>>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
+    /// The stored elements of each module constant table read so far (`table_read`): the data
+    /// and the length, or `None` for a constant that is not one.
+    tables: HashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: HashMap<Work, FuncId>,
@@ -244,10 +329,14 @@ struct Cx<'h> {
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
+    /// Debug types of source variables (`LowerOptions::debug_info`, debug_vars.rs).
+    debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: HashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: HashMap<String, StaticId>,
+    /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).
+    symbol_records: symbols::SymbolRecords,
     /// Types whose values carry a reference count in this pass (boxing/).
     boxing: boxing::Boxing,
     /// Sharing facts observed in this pass (boxing/).
@@ -261,6 +350,17 @@ struct Cx<'h> {
     honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
+    /// (json/key.rs); `None` until first asked.
+    json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
+    /// One type per anonymous object shape (types.rs `canon`).
+    anon: types::AnonShapes,
+    /// The function whose instance is being built (for `nothing_clashes`).
+    cur_def: Option<DefId>,
+    /// Functions whose instances made an option of an option with another nothing (`T | null`
+    /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
+    /// represent (issue #930): reported, not lowered silently.
+    nothing_clashes: Vec<Option<DefId>>,
 }
 
 /// Static ownership state of a droppable local without a drop flag.
@@ -311,6 +411,8 @@ enum DropEntry {
     /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
     /// Becomes a `Temp` once constructed.
     HalfBuilt(Place, TyId),
+    /// Owned temporary value that holds something only when the `Bool` local is true.
+    Flagged(Place, TyId, vir::Local),
     /// An owned value from which a pattern moved some parts: drop everything else.
     Rest(Place, TyId, Rc<hir::Pat>),
     /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,
@@ -340,6 +442,10 @@ enum ScopeKind {
     },
     /// Inside a `try` with `finally`: the block runs on every exit (taken while being lowered).
     Finally(Option<Rc<hir::Block>>),
+    /// A module state initializer: an error thrown in it and not caught there prints
+    /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
+    /// evaluates a module (module_state.rs).
+    Uncaught,
 }
 
 struct Scope {
@@ -374,6 +480,8 @@ struct FnLower<'c, 'h> {
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
     ref_bindings: HashSet<LocalId>,
+    /// With debug info: where the block declaring a local ends (debug_vars.rs).
+    scope_ends: HashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
     asyncx: Option<async_fn::AsyncCx>,
     /// The next call lowered is awaited or spawned right away: its promise is not started
@@ -382,22 +490,54 @@ struct FnLower<'c, 'h> {
     /// While lowering a stabilized borrow (stabilize.rs): every counted object a place
     /// projection goes through is retained until the end of the statement.
     retain_hops: bool,
+    /// Elements of arrays borrowed in place by the arguments being lowered when the array has
+    /// no other reference: checked again just before the call (stabilize.rs).
+    pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
+    /// While binding a destructuring `const` of a place others may change (matching.rs
+    /// `let_pat`): bindings by reference take owned shares instead (pattern.rs).
+    stable_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
     transfer_args: bool,
     /// The next call lowered is spawned through a function value, vtable or interface: its
     /// arguments are transferred (transfer.rs). Taken by that call before anything else.
     transfer_call: bool,
+    /// The direct method call being lowered has a receiver of a proxiable class: once the
+    /// receiver is lowered, a proxy with a `get` trap reads the method through it
+    /// (proxy_method.rs), before the other arguments.
+    proxy_recv: Option<(DefId, Vec<TyId>)>,
+    /// The call being lowered is `super.m(args)` (`Program::super_calls`): its receiver is not
+    /// read through a proxy (`call_def` takes it).
+    super_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
-    /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
-    /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
+    /// Comparing with `Object.is` (`Intrinsic::SameValue`, `Glue::SameValue`): floats compare
+    /// with JS's SameValue, `NaN` equal to itself and `0` unequal to `-0` (same.rs).
+    value_mode: bool,
+    /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`; `Intrinsic::Eq`:
+    /// `deepEqual`, `Glue::KeyEq`): floats compare with JS's SameValueZero, as
+    /// `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Lowering the module state's initializer (module_state.rs): the locals of each global's
+    /// initializer (the temporaries of a `Record` literal, ...) belong to no function body and
+    /// are declared at their `let` (`declare_init_local`).
+    init_locals: bool,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
     /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
     /// them inside them calls an out-of-line initializer function instead.
     init_stack: Vec<TyId>,
+    /// Closures of this body only ever called here: their envs live in the frame
+    /// (frame_envs.rs).
+    frame_closures: HashSet<DefId>,
+    /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
+    /// (frame_envs.rs).
+    direct_siblings: HashMap<LocalId, DefId>,
+    /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
+    self_env: Option<Local>,
+    /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:
+    /// a read `any` cannot do yet names #823 (any_member.rs `any_get_str`).
+    in_reflect: bool,
 }

@@ -1,0 +1,74 @@
+// The skip list, the random-access set and the expiry index against simple references.
+import { Expires, MemberSet, Scored, ZSet } from "../src/structs";
+
+function sorted(m: Map<string, f64>): Scored[] {
+  const out: Scored[] = [];
+  for (const [member, score] of m) {
+    out.push({ score, member });
+  }
+  out.sort(
+    (a, b) =>
+      a.score < b.score
+        ? -1
+        : a.score > b.score ? 1 : a.member < b.member ? -1 : a.member > b.member ? 1 : 0,
+  );
+  return out;
+}
+
+export function test_skip_list_matches_a_sorted_reference() {
+  const z = new ZSet();
+  const ref = new Map<string, f64>();
+  // Few distinct scores, so ties (ordered by member) are common; members get re-scored.
+  for (let i = 0; i < 3000; i++) {
+    const member = `m${Math.floor(Math.random() * 400)}`;
+    if (Math.random() < 0.3) {
+      assertEq(z.remove(member), ref.delete(member));
+    } else {
+      const score = Math.floor(Math.random() * 20) as f64;
+      assertEq(z.add(score, member), !ref.has(member));
+      ref.set(member, score);
+    }
+  }
+  const want = sorted(ref);
+  assertEq(z.size, want.length as i64);
+  assertEq(z.range(0, z.size - 1), want);
+  // Rank access from the middle.
+  if (want.length > 20) {
+    assertEq(z.range(10, 19), want.slice(10, 20));
+  }
+  assertEq(z.first(), want.length > 0 ? want[0] : null);
+}
+
+export function test_member_set_random_and_delete() {
+  const s = new MemberSet();
+  for (let i = 0; i < 100; i++) {
+    assert(s.add(`x${i}`));
+  }
+  assert(!s.add("x5"));
+  const seen = new Map<string, bool>();
+  while (s.size > 0) {
+    const m = s.random();
+    assert(!seen.has(m));
+    seen.set(m, true);
+    assert(s.delete(m));
+    assert(!s.has(m));
+  }
+  assertEq(seen.size, 100);
+}
+
+export function test_expiry_index() {
+  const e = new Expires();
+  e.set("a", 10);
+  e.set("b", 20);
+  e.set("c", 30);
+  e.set("a", 15);
+  assertEq(e.size, 3);
+  assert(e.delete("a"));
+  assert(!e.delete("a"));
+  assertEq([e.get("a"), e.get("b"), e.get("c")], [null, 20, 30]);
+  const keys: string[] = [];
+  for (let i: i64 = 0; i < e.size; i++) {
+    keys.push(e.keyAt(i));
+  }
+  assertEq(keys.toSorted(), ["b", "c"]);
+}

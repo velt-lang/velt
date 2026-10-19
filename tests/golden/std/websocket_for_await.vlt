@@ -2,7 +2,7 @@
 // velt:websocket as an async iterable: the server session iterates the messages with
 // `for await` until the client closes; the client reads replies with `for await` and leaves
 // the loop early, which keeps the connection open for `receive`.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { channel, Channel } from "velt:channel";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 
@@ -22,7 +22,7 @@ async function handle(req: Request, done: Channel<i64>): Promise<Response> {
     spawn(session(up.socket, done));
     return up.response;
   }
-  return Response.text("not a websocket");
+  return new Response("not a websocket");
 }
 
 async function main() {

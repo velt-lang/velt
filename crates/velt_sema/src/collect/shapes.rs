@@ -128,10 +128,10 @@ fn contains_by_value(
                 DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
                 _ => vec![],
             };
-            tys.into_iter().map(|f| cx.ty.subst(f, &args)).collect()
+            tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Tuple(ts) => ts,
-        TyKind::Option(x) => vec![x],
+        TyKind::Option(x, _) => vec![x],
         TyKind::Result(a, b) => vec![a, b],
         _ => vec![],
     };
@@ -142,36 +142,70 @@ fn contains_by_value(
 }
 
 /// Bounds of generic params `gs` (resolved in `env`, which already names them).
-pub(crate) fn resolve_bounds(
-    cx: &mut Ctx,
-    gs: &[ast::GenericParam],
-    env: &TyEnv,
-) -> Vec<Vec<Bound>> {
-    gs.iter()
-        .map(|g| {
-            g.bounds
-                .iter()
-                .filter_map(|b| iface_bound(cx, b, env))
-                .collect()
-        })
-        .collect()
+pub(crate) struct ParamBounds {
+    /// Interface bounds per parameter (`T extends A & B`).
+    pub bounds: Vec<Vec<Bound>>,
+    /// Per parameter, a bound that is a type (`T extends Record<string, V>`); empty when no
+    /// parameter has one. See `Generics::constraints`.
+    pub constraints: Vec<Option<TyId>>,
+}
+
+pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv) -> ParamBounds {
+    let mut out = ParamBounds {
+        bounds: vec![],
+        constraints: vec![],
+    };
+    for (i, g) in gs.iter().enumerate() {
+        let mut bounds = vec![];
+        for b in &g.bounds {
+            let ty = cx.resolve_type(b, env);
+            match as_bound(cx, ty) {
+                Some(Ok(bound)) => bounds.push(bound),
+                Some(Err(ty)) => {
+                    out.constraints.resize(i + 1, None);
+                    match out.constraints[i] {
+                        None => out.constraints[i] = Some(ty),
+                        Some(_) => cx.err(
+                            "a type parameter with more than one bound that is not an interface is not supported yet (#350)",
+                            b.span,
+                        ),
+                    }
+                }
+                None => {}
+            }
+        }
+        out.bounds.push(bounds);
+    }
+    if !out.constraints.is_empty() {
+        out.constraints.resize(gs.len(), None);
+    }
+    out
+}
+
+/// `ty` written as a bound: `Ok` with an interface bound, `Err` with a type that is no
+/// interface, `None` for an error type (reported).
+fn as_bound(cx: &Ctx, ty: TyId) -> Option<Result<Bound, TyId>> {
+    match cx.ty.kind(ty) {
+        TyKind::Dyn(iface, args) => Some(Ok(Bound {
+            iface: *iface,
+            args: args.clone(),
+        })),
+        // A field-only interface written as a type is its object type; here it is the bound.
+        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Ok(Bound {
+            iface: cx.field_only_of[d],
+            args: args.clone(),
+        })),
+        TyKind::Error => None,
+        _ => Some(Err(ty)),
+    }
 }
 
 /// A type expression that must name an interface (`extends` bound / `implements` entry).
 pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Option<Bound> {
     let ty = cx.resolve_type(t, env);
-    match cx.ty.kind(ty) {
-        TyKind::Dyn(iface, args) => Some(Bound {
-            iface: *iface,
-            args: args.clone(),
-        }),
-        // A field-only interface written as a type is its object type; here it is the bound.
-        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Bound {
-            iface: cx.field_only_of[d],
-            args: args.clone(),
-        }),
-        TyKind::Error => None,
-        _ => {
+    match as_bound(cx, ty)? {
+        Ok(b) => Some(b),
+        Err(ty) => {
             let tn = cx.display(ty);
             cx.err(format!("`{tn}` is not an interface"), t.span);
             None
@@ -181,8 +215,15 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
-    if f.optional && cx.ty.opt_payload(ty).is_none() && ty != cx.ty.error {
-        ty = cx.ty.option(ty);
+    let declared = ty;
+    // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an
+    // `any` holds the `undefined` of a left-out field itself.
+    if f.optional
+        && !cx.ty.nothing_of(ty).is_some_and(|n| n.has_undefined())
+        && ty != cx.ty.error
+        && cx.dynamic(ty).is_none()
+    {
+        ty = cx.ty.option_of(ty, crate::hir::Nothing::Undefined);
     }
     if ty == cx.ty.unit {
         cx.err(
@@ -191,8 +232,9 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         );
     }
     FieldInfo {
-        name: f.name.name.clone(),
+        name: cx.member_key(env.module, &f.name),
         ty,
+        declared,
         span: f.name.span,
         readonly: f.readonly,
         optional: f.optional,
@@ -200,29 +242,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         default: None,
         default_throws: vec![],
         private_to: f.is_private.then_some(owner),
-        inferred_int: untyped_int_field(f),
     }
-}
-
-/// `count = 0;`: the parser took the type `i64` from the literal itself (same span).
-fn untyped_int_field(f: &ast::Field) -> bool {
-    let Some(d) = &f.default else {
-        return false;
-    };
-    let mut e = d;
-    while let ast::ExprKind::Paren(x)
-    | ast::ExprKind::Unary {
-        op: ast::UnaryOp::Neg,
-        expr: x,
-    } = &e.kind
-    {
-        e = x;
-    }
-    d.span == f.ty.span
-        && matches!(
-            e.kind,
-            ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
-        )
 }
 
 fn push_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo) {
@@ -256,7 +276,8 @@ fn iface_shape(cx: &mut Ctx, d: DefId) {
     let DefInfo::Iface(i) = &mut cx.info[d.0 as usize] else {
         unreachable!("ICE: iface")
     };
-    i.generics.bounds = bounds;
+    i.generics.bounds = bounds.bounds;
+    i.generics.constraints = bounds.constraints;
     i.fields = fields;
     i.parents = parents;
 }
@@ -281,7 +302,8 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
         .filter_map(|t| iface_bound(cx, t, &env))
         .collect();
     let a = cx.adt_mut(d);
-    a.generics.bounds = bounds;
+    a.generics.bounds = bounds.bounds;
+    a.generics.constraints = bounds.constraints;
     a.fields = fields;
     a.base = base;
     a.implements = implements;
@@ -449,13 +471,40 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let inherited: Vec<FieldInfo> = cx.adt(bd).map(|b| b.fields.clone()).unwrap_or_default();
     let mut all = vec![];
     for mut f in inherited {
-        f.ty = cx.ty.subst(f.ty, &bargs);
+        f.ty = cx.subst(f.ty, &bargs);
         all.push(f);
     }
     let start = all.len();
     let own = std::mem::take(&mut cx.adt_mut(d).fields);
+    let error_class = all.iter().any(|g| cx.plain_private(g.private_to, &g.name));
+    let mut redefined = vec![];
     for f in own {
-        if all.iter().any(|g: &FieldInfo| g.name == f.name) {
+        // `name` of an error class is `Error`'s accessor: a declaration `name: string;` is that
+        // (assignments go through it), one with an initializer (`name = "AppError"`) sets it
+        // with the class's other initializers.
+        if error_class && f.name == "name" {
+            if f.has_default && !f.optional {
+                let i = all
+                    .iter()
+                    .position(|g| cx.plain_private(g.private_to, &g.name))
+                    .expect("ICE: error class without `#name`");
+                redefined.push(crate::defs::Redefined {
+                    field: i,
+                    at: all.len(),
+                    name: f.name.clone(),
+                    init: None,
+                    throws: vec![],
+                });
+            } else if !f.has_default
+                && !matches!(cx.ty.kind(f.declared), TyKind::Str | TyKind::Literal(_))
+            {
+                cx.err("`name` is inherited from `Error` as a `string`", f.span);
+            }
+            continue;
+        }
+        // A subclass's `#x` is a field of its own next to the base class's (ES private names).
+        let private_name = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
+        if !private_name && all.iter().any(|g: &FieldInfo| g.name == f.name) {
             cx.err(
                 format!("field `{}` is already declared in a base class", f.name),
                 f.span,
@@ -467,6 +516,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let a = cx.adt_mut(d);
     a.fields = all;
     a.own_fields_start = start;
+    a.redefined = redefined;
     cx.laid_out.insert(d);
 }
 

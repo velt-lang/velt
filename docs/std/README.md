@@ -5,13 +5,16 @@ The standard library is written in Velt and ships with the toolchain. Import a m
 
 ```ts ignore
 import { readFile, writeFile } from "velt:fs";
-import { Set } from "velt:collections/set";
+import { Deque } from "velt:collections/deque";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
 scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
-`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL` and `URLSearchParams`. `velt doc --std` generates HTML API documentation from the
-sources.
+`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
+`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder`, `btoa`, `atob`,
+`DOMException`, `structuredClone`, `ArrayBuffer`, `DataView`, `Uint8Array` and the other
+[typed arrays](typed_array.md), and [`ReadableStream`](streams.md).
+`velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions
 
@@ -33,8 +36,8 @@ sources.
   nothing). A promise that is neither awaited nor spawned is a compile error. `*Sync` variants
   block the calling thread.
 - **Handles**: some modules return handle structs (`TcpStream`, `FileReader`, `ChildProcess`,
-  `Database`, …) that you can pass around and capture freely and release exactly once with
-  `close()`. **Planned**
+  `Database`, …) that you can pass around and capture freely and release with `close()`
+  (closing again does nothing). **Planned**
   ([semantics stage 2 §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)):
   they become disposable classes with `using` support when the `struct` keyword is removed.
 
@@ -44,12 +47,13 @@ sources.
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
 | Network | [fetch](fetch.md) (global) · [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
-| Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
+| Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [typed arrays](typed_array.md) · [streams](streams.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
+| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
@@ -68,9 +72,10 @@ what Velt can't do on its own:
 | `velt:websocket` | tokio-tungstenite connections and server upgrades |
 | `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
 | `velt:regex` | Rust's `regex` engine |
+| `velt:channel`, `velt:task` | channel queues, abort signals and task groups |
 | `velt:child_process` | process spawning and pipes |
 | `velt:udp`, `velt:dns` | sockets and the system resolver |
-| `velt:bigint` | arbitrary-precision integers (num-bigint) |
+| `velt:bigint` | arbitrary-precision integers (dashu-int) |
 | `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt |
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
@@ -80,13 +85,15 @@ what Velt can't do on its own:
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
-`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:json`
-and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
+Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
+`velt:timers` (built on `sleep`, `spawn` and `velt:task` signals) and `velt:json`; `velt:jsx`
+too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
+runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly
 
 On the WebAssembly targets the language and the pure modules work as on native targets, and
-`velt:fs` uses the WASI file system. TCP, HTTP, child processes and the database drivers are not
-available ([WebAssembly](../tooling/webassembly.md)).
+`velt:fs` uses the WASI file system. TCP, the HTTP server, child processes and the database
+drivers are not available; `fetch` links but rejects with `IoError` `ENOTSUP` (no network)
+([WebAssembly](../tooling/webassembly.md)).

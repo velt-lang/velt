@@ -1,0 +1,21 @@
+// check: no leaks
+// A generic function whose closure, held in a `const` and only called, captures a promise.
+// The closure borrows nothing it would have to copy; the promise is still awaited once.
+async function work(n: number): Promise<string> {
+  return `done ${n}`;
+}
+
+function peek<T>(x: T): boolean {
+  return true;
+}
+
+function hold<T>(x: T): T {
+  const g = () => peek(x);
+  g();
+  return x;
+}
+
+async function main() {
+  const held = hold(work(1));
+  console.log(await held);
+}

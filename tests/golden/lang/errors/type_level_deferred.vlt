@@ -1,0 +1,23 @@
+// Deferred conditional and mapped types (#934 phase 2): what TypeScript rejects is an error here
+// too. A deferred type relates only to itself in the generic body (TS2322, TS2339), and once
+// the type arguments are known an argument must match the evaluated type (TS2345).
+type PropsAccessor<TProps> = {
+  readonly [K in keyof TProps]: TProps[K];
+};
+type IsString<T> = T extends string ? "yes" : "no";
+
+function tag<T>(x: T, t: IsString<T>): IsString<T> {
+  return t;
+}
+
+function guess<T>(x: T): IsString<T> {
+  return "no";
+}
+
+function title<T>(p: PropsAccessor<T>): string {
+  return p.title;
+}
+
+const wrong = tag(1, "yes");
+const missing = tag<{ a: number }>({ a: 1 }, "yes");
+console.log(wrong, missing, guess(1), title<{ title: string }>({ title: "t" }));

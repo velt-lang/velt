@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
 
 use super::listeners::Handover;
@@ -11,6 +11,17 @@ use super::listeners::Handover;
 /// How long a stopped program gets to finish in-flight requests before it is killed (the
 /// runtime drains for up to 1 s after a stop request).
 const STOP_GRACE: Duration = Duration::from_millis(1500);
+/// Overrides [`STOP_GRACE`], in milliseconds: tests that must act within the grace set it far
+/// longer than a loaded machine can delay them.
+pub const STOP_GRACE_ENV: &str = "VELT_DEV_STOP_GRACE_MS";
+
+/// [`STOP_GRACE`], or `$VELT_DEV_STOP_GRACE_MS`.
+fn stop_grace() -> Duration {
+    std::env::var(STOP_GRACE_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map_or(STOP_GRACE, Duration::from_millis)
+}
 
 /// How to start one version of the program.
 #[derive(Clone, Debug)]
@@ -74,13 +85,31 @@ impl Running {
         Some(code)
     }
 
+    /// How the program ended, waiting up to `within` for it to end; `None` if it still runs.
+    pub fn wait_status(&mut self, within: Duration) -> Option<ExitStatus> {
+        let deadline = Instant::now() + within;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    // Reaped: the pid may be reused from now on.
+                    super::interrupt::untrack(self.id());
+                    return Some(status);
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                _ => return None,
+            }
+        }
+    }
+
     /// Stop the program: ask it to stop (SIGTERM on Unix, `stop` on its stop channel on
-    /// Windows), then kill it after [`STOP_GRACE`]. A program that cannot be asked is killed
+    /// Windows), then kill it after [`STOP_GRACE`] ([`STOP_GRACE_ENV`]). A program that cannot be asked is killed
     /// right away. Returns once the process has exited, with its output path.
     pub fn stop(mut self, handover: &Handover) -> Option<PathBuf> {
         if self.exited().is_none() {
             let asked = self.ask_to_stop(handover);
-            if !(asked && self.wait_for_exit(STOP_GRACE)) {
+            if !(asked && self.wait_for_exit(stop_grace())) {
                 let _ = self.child.kill();
             }
         }

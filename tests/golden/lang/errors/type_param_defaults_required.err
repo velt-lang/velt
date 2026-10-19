@@ -1,0 +1,2 @@
+type_param_defaults_required.vlt:2:24: error: type parameter `U` needs a default: it follows one that has a default
+  = note: move the parameters with defaults to the end

@@ -22,12 +22,12 @@ fn field_types_come_from_initializers() {
         tys,
         [
             "boolean",
-            "i64",
-            "f64",
+            "number",
+            "number",
             "string",
             "string",
             "Map<string, i64>",
-            "i64[]"
+            "number[]"
         ]
     );
     let e = errors("class P { x = f(); } function f(): i64 { return 1; }");
@@ -101,5 +101,70 @@ fn constructor_modifiers_and_protected_members_are_rejected() {
                 .any(|m| m.contains("Velt has no `protected` members")),
             "{src}: {e:?}"
         );
+    }
+}
+
+#[test]
+fn private_names_are_class_members() {
+    let m = parse_ok(
+        "class A { #x = 1; readonly #y: i64; #m(): i64 { return this.#x; } get #v(): i64 { return 1; } static #s(): void {} static readonly #K: i64 = 2; has(o: A): boolean { return #x in o && o.#y > 0; } }",
+    );
+    let c = class(&m);
+    let fields: Vec<(&str, bool)> = c
+        .fields
+        .iter()
+        .map(|f| (f.name.name.as_str(), f.is_private))
+        .collect();
+    assert_eq!(fields, [("#x", true), ("#y", true), ("#K", true)]);
+    let methods: Vec<(&str, bool)> = c
+        .methods
+        .iter()
+        .map(|m| (m.decl.sig.name.name.as_str(), m.is_private))
+        .collect();
+    assert_eq!(
+        methods,
+        [("#m", true), ("#v", true), ("#s", true), ("has", false)]
+    );
+    assert!(c.fields[0].name.is_private_name());
+}
+
+#[test]
+fn private_names_outside_class_bodies_are_errors() {
+    for (src, want) in [
+        (
+            "class A { private #x = 1; }",
+            "an accessibility modifier cannot be used with a private name",
+        ),
+        (
+            "interface I { #f: i64; }",
+            "private names are only allowed in class bodies",
+        ),
+        (
+            "type O = { #g: i64 };",
+            "private names are only allowed in class bodies",
+        ),
+        (
+            "struct S { #h: i64; }",
+            "private names are only allowed in class bodies",
+        ),
+        (
+            "const o = { #k: 1 };",
+            "private names are only allowed in class bodies",
+        ),
+        (
+            "class P { constructor(#q: i64) {} }",
+            "private names cannot be parameters",
+        ),
+        (
+            "class Q { #constructor(): void {} }",
+            "'#constructor' is a reserved word",
+        ),
+        (
+            "function f() { return #x; }",
+            "private names are only allowed in class bodies",
+        ),
+    ] {
+        let e = errors(src);
+        assert!(e.iter().any(|m| m.contains(want)), "{src}: {e:?}");
     }
 }

@@ -64,12 +64,14 @@ fn completion_and_hover_come_from_the_schema() {
     assert_eq!(
         labels,
         [
+            "velt",
             "description",
             "keywords",
             "entry",
             "registry",
             "paths",
             "jsx",
+            "define",
             "tsCompat"
         ]
     );

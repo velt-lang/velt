@@ -1,0 +1,8 @@
+async_closure_crosses_generic.vlt:53:5: error: this async closure modifies captured `d`, so it must stay on the task that created it
+async_closure_crosses_generic.vlt:52:9: but it is stored in a `Sent`, which is sent on a channel here
+async_closure_crosses_generic.vlt:58:5: error: this async closure modifies captured `e`, so it must stay on the task that created it
+async_closure_crosses_generic.vlt:27:11: but it is stored in a `Field`, which is sent on a channel here
+async_closure_crosses_generic.vlt:64:5: error: this async closure modifies captured `f`, so it must stay on the task that created it
+async_closure_crosses_generic.vlt:46:17: but it is stored in a `Wrapped`, which is put in a `Mutex` here, which other threads may lock
+async_closure_crosses_generic.vlt:70:5: error: this async closure modifies captured `g`, so it must stay on the task that created it
+async_closure_crosses_generic.vlt:69:3: but it is stored in a `Settled`, which settles a promise here, which another task may await

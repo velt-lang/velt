@@ -1,0 +1,1 @@
+namespace_import_conflict.vlt:5:13: error: import declaration conflicts with local declaration of `M`

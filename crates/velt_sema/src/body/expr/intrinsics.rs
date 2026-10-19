@@ -32,12 +32,18 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_set_len" => I::ArraySetLen,
         "hash" => I::Hash,
         "eq" => I::Eq,
+        "key_eq" => I::KeyEq,
+        "includes_eq" => I::IncludesEq,
         "same" => I::Same,
+        "same_value" => I::SameValue,
         "clone" => I::Clone,
         "share" => I::Share,
         "transfer" => I::Transfer,
         "needs_transfer" => I::NeedsTransfer,
         "needs_drop" => I::NeedsDrop,
+        "may_alias" => I::MayAlias,
+        "holds_null" => I::HoldsNull,
+        "null_as" => I::NullAs,
         "fn_captures_nothing" => I::FnCapturesNothing,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
@@ -58,10 +64,21 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "generator_resume" => I::GeneratorResume,
         "generator_value" => I::GeneratorValue,
         "generator_return" => I::GeneratorReturn,
+        "generator_resume_with" => I::GeneratorResumeWith,
+        "generator_throw" => I::GeneratorThrow,
         "async_generator_resume" => I::AsyncGeneratorResume,
         "async_generator_value" => I::AsyncGeneratorValue,
         "async_generator_return" => I::AsyncGeneratorReturn,
         "async_generator_dispose" => I::AsyncGeneratorDispose,
+        "weakmap_set" => I::WeakMapSet,
+        "weakmap_get" => I::WeakMapGet,
+        "weakmap_has" => I::WeakMapHas,
+        "weakmap_delete" => I::WeakMapDelete,
+        "weakmap_value" => I::WeakMapValue,
+        "weakref_new" => I::WeakRefNew,
+        "weakref_deref" => I::WeakRefDeref,
+        "symbol_static" => I::SymbolStatic,
+        "symbol_registry" => I::SymbolRegistry,
         _ => return None,
     })
 }
@@ -96,16 +113,22 @@ impl FnCx<'_, '_> {
                 | Intrinsic::PromiseAll
                 | Intrinsic::PromiseRace
                 | Intrinsic::PromiseAny
-                | Intrinsic::GeneratorResume
-                | Intrinsic::GeneratorValue
-                | Intrinsic::GeneratorReturn
                 | Intrinsic::AsyncGeneratorResume
                 | Intrinsic::AsyncGeneratorValue
                 | Intrinsic::AsyncGeneratorReturn
-                | Intrinsic::AsyncGeneratorDispose,
+                | Intrinsic::AsyncGeneratorDispose
+                | Intrinsic::WeakMapSet,
             ) => {
                 vec!["T".into(), "E".into()]
             }
+            (
+                true,
+                Intrinsic::GeneratorResume
+                | Intrinsic::GeneratorResumeWith
+                | Intrinsic::GeneratorThrow
+                | Intrinsic::GeneratorValue
+                | Intrinsic::GeneratorReturn,
+            ) => vec!["T".into(), "E".into(), "N".into()],
             (true, _) => vec!["T".into()],
         };
         Callable {
@@ -113,8 +136,11 @@ impl FnCx<'_, '_> {
             params: params.into_iter().map(|(t, m)| param(t, m, span)).collect(),
             ret,
             bounds: vec![vec![]; slot_names.len().max(1)],
+            constraints: vec![],
             slot_names,
             js_numbers: false,
+            positions: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         }
@@ -131,7 +157,11 @@ impl FnCx<'_, '_> {
             I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
             I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),
-            I::ArrayPop => (vec![(arr, M)], ty.option(t), true),
+            I::ArrayPop => (
+                vec![(arr, M)],
+                ty.option_of(t, crate::hir::Nothing::Undefined),
+                true,
+            ),
             I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),
@@ -141,10 +171,21 @@ impl FnCx<'_, '_> {
                 true,
             ),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
+            I::Eq | I::KeyEq | I::IncludesEq | I::Same | I::SameValue => {
+                (vec![(t, B), (t, B)], bool_, true)
+            }
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer | I::NeedsDrop | I::FnCapturesNothing => (vec![(t, B)], bool_, true),
+            I::NeedsTransfer
+            | I::NeedsDrop
+            | I::MayAlias
+            | I::HoldsNull
+            | I::FnCapturesNothing
+            | I::Truthy
+            | I::IsNull
+            | I::IsNullish
+            | I::MayHoldPrimitive => (vec![(t, B)], bool_, true),
+            I::NullAs => (vec![], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));
@@ -160,6 +201,24 @@ impl FnCx<'_, '_> {
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
             I::Print | I::PrintErr => (vec![], unit, false),
+            I::WeakMapSet => {
+                let (u32_, v) = (ty.intern(TyKind::Int(IntTy::U32)), ty.param(1));
+                (vec![(u32_, C), (t, B), (v, O)], u32_, true)
+            }
+            I::WeakMapGet => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C), (t, B)], ty.u64, true)
+            }
+            I::WeakMapHas | I::WeakMapDelete => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C), (t, B)], bool_, true)
+            }
+            I::WeakMapValue => (vec![(ty.u64, C)], t, true),
+            I::WeakRefNew => (vec![(t, B)], ty.intern(TyKind::Int(IntTy::U32)), true),
+            I::WeakRefDeref => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C)], ty.option(t), true)
+            }
             _ => return None,
         })
     }
@@ -170,9 +229,14 @@ impl FnCx<'_, '_> {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
-        let (t0, e0) = (self.cx.ty.param(0), self.cx.ty.param(1));
-        let gen = self.cx.generator_ty(t0, e0);
+        let (t0, e0, n0) = (
+            self.cx.ty.param(0),
+            self.cx.ty.param(1),
+            self.cx.ty.param(2),
+        );
+        let gen = self.cx.generator_ty_next(t0, e0, n0);
         let agen = self.cx.async_generator_ty(t0, e0);
+        let any_ty = self.any_ty().unwrap_or(self.cx.ty.error);
         let ty = &mut self.cx.ty;
         let (t, e) = (ty.param(0), ty.param(1));
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
@@ -196,6 +260,11 @@ impl FnCx<'_, '_> {
             I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
+            I::SymbolStatic => {
+                let sym = ty.intern(TyKind::Symbol);
+                (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)
+            }
+            I::SymbolRegistry => (vec![], ty.intern(TyKind::Symbol), false),
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),
@@ -213,6 +282,16 @@ impl FnCx<'_, '_> {
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
             }
             I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
+            // `(g, value: N)`: the value is borrowed; the resumed `yield` takes its own copy.
+            I::GeneratorResumeWith => {
+                let n = ty.param(2);
+                (vec![(gen, PassMode::BorrowMut), (n, B)], ty.bool_, true)
+            }
+            // `(g, error: any)`: the result code (0 done, 1 yielded, 3 not caught).
+            I::GeneratorThrow => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(gen, PassMode::BorrowMut), (any_ty, B)], u32_, true)
+            }
             I::GeneratorValue => (vec![(gen, PassMode::BorrowMut)], t, true),
             I::GeneratorReturn => (vec![(gen, PassMode::BorrowMut)], unit, true),
             I::AsyncGeneratorResume => {

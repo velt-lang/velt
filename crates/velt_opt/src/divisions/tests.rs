@@ -175,3 +175,16 @@ fn unknown_dividends_are_left_alone() {
     let (_, changed) = optimized(&pb.finish());
     assert!(!changed);
 }
+
+#[test]
+fn bitwise_or_of_non_negative_values_stays_below_the_next_power_of_two() {
+    let iv = |lo, hi| Interval { lo, hi };
+    let or = interval_binary(BinOp::BitOr, iv(0, 255), iv(0, 31), Ty::U64);
+    assert_eq!(or, Some(iv(0, 255)));
+    let xor = interval_binary(BinOp::BitXor, iv(3, 4), iv(0, 8), Ty::U64);
+    assert_eq!(xor, Some(iv(0, 15)));
+    assert_eq!(
+        interval_binary(BinOp::BitOr, iv(-1, 4), iv(0, 8), Ty::I64),
+        None
+    );
+}

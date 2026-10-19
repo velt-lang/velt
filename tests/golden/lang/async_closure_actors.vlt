@@ -1,0 +1,103 @@
+// check: no leaks
+// The virtual-actors pattern of @sigx/actors (#182, #208): an actor's methods are async
+// closures over a per-activation context, `methods: (ctx) => ({ async increment(by) { … } })`.
+// The closures modify the state they captured and call each other across awaits; the
+// activation keeps them in a Map and runs one call at a time, like the port's shards. Before
+// #208, Velt rejected these closures, so the port passed `ctx` to every method instead.
+
+class CounterState {
+  count: number = 0;
+  saves: number = 0;
+}
+
+class Ctx {
+  key: string;
+  state: CounterState = new CounterState();
+  saveRequested: boolean = false;
+  log: string[] = [];
+
+  constructor(key: string) {
+    this.key = key;
+  }
+
+  async save(): Promise<void> {
+    await sleep(1);
+    this.saveRequested = true;
+    this.state.saves += 1;
+  }
+}
+
+type Method = (arg: number) => Promise<number>;
+
+// Like sigx's `methods: (ctx) => ({ … })`: built once per activation.
+function counterMethods(ctx: Ctx): Map<string, Method> {
+  const methods = new Map<string, Method>();
+  const increment = async (by: number): Promise<number> => {
+    ctx.state.count += by;
+    ctx.log.push(`increment ${by}`);
+    await ctx.save();
+    return ctx.state.count;
+  };
+  methods.set("increment", increment);
+  methods.set("double", async (times: number): Promise<number> => {
+    // Calls a sibling method, as `this.increment(…)` would in sigx.
+    for (let i = 0; i < times; i++) {
+      await increment(ctx.state.count);
+    }
+    return ctx.state.count;
+  });
+  methods.set("current", async (unused: number): Promise<number> => ctx.state.count);
+  return methods;
+}
+
+class Activation {
+  ctx: Ctx;
+  methods: Map<string, Method>;
+  turns: number = 0;
+
+  constructor(key: string) {
+    this.ctx = new Ctx(key);
+    this.methods = counterMethods(this.ctx);
+  }
+
+  async invoke(name: string, arg: number): Promise<string> {
+    const m = this.methods.get(name);
+    if (m == null) {
+      return `${this.ctx.key}: no method ${name}`;
+    }
+    this.turns += 1;
+    const r = await m(arg);
+    const saved = this.ctx.saveRequested;
+    this.ctx.saveRequested = false;
+    return `${this.ctx.key}.${name}(${arg}) = ${r}${saved ? " (saved)" : ""}`;
+  }
+}
+
+async function main() {
+  const registry = new Map<string, Activation>();
+  const activate = (key: string): Activation => {
+    const found = registry.get(key);
+    if (found != null) {
+      return found;
+    }
+    const a = new Activation(key);
+    registry.set(key, a);
+    return a;
+  };
+  console.log(await activate("a").invoke("increment", 1));
+  console.log(await activate("a").invoke("increment", 2));
+  console.log(await activate("b").invoke("increment", 10));
+  console.log(await activate("a").invoke("double", 2));
+  console.log(await activate("b").invoke("current", 0));
+  console.log(await activate("a").invoke("missing", 0));
+  // Two activations' turns interleave at their awaits.
+  const both = await Promise.all([
+    activate("a").invoke("increment", 100),
+    activate("b").invoke("increment", 100),
+  ]);
+  console.log(both.join(" | "));
+  for (const key of ["a", "b"]) {
+    const a = activate(key);
+    console.log(key, a.turns, a.ctx.state.count, a.ctx.state.saves, a.ctx.log.join(","));
+  }
+}

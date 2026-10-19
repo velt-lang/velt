@@ -1,12 +1,16 @@
 // Regression (double free): a `Promise` param forwarded into `spawn(fire(ms, task))` used to be
 // copied (a shallow clone of the future); promises have no clone, so the param is owned and moved.
+// `say` reports on `said` once it printed, so `main` prints `done` after it.
+import { channel, Channel } from "velt:channel";
+
 async function fire(ms: i64, task: Promise<void>): Promise<void> {
   await sleep(ms);
   await task;
 }
 
-async function say(m: string): Promise<void> {
+async function say(m: string, said: Channel<bool>): Promise<void> {
   console.log(m);
+  said.trySend(true);
 }
 
 function setTimeout(task: Promise<void>, ms: i64) {
@@ -14,7 +18,8 @@ function setTimeout(task: Promise<void>, ms: i64) {
 }
 
 async function main() {
-  setTimeout(say(`heap ${1}`), 10);
-  await sleep(500);
+  const said = channel<bool>(1);
+  setTimeout(say(`heap ${1}`, said), 10);
+  await said.receive();
   console.log("done");
 }

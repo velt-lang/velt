@@ -35,11 +35,40 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn transfer_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            let at = place.clone();
+            self.proxy_glue_split(&place, done, |lw, up, pty| lw.transfer_proxy(&at, up, pty));
+            done
+        });
         self.transfer_expand(&place, ty);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
+    /// A typed proxy at `at` (its `Proxy` object, untagged, at `up`): the object transferred
+    /// as an `any` holding it is (a deep copy of it, its target and its handler when shared),
+    /// and stored back tagged.
+    fn transfer_proxy(&mut self, at: &Place, up: Place, pty: TyId) {
+        self.transfer_in_place(up.clone(), pty);
+        let t = self.proxy_tag(Operand::Copy(up));
+        self.assign(at.clone(), Rvalue::Use(t));
+    }
+
     fn transfer_expand(&mut self, place: &Place, ty: TyId) {
+        if let Some(name) = self.cx.weak_class(ty) {
+            // Its slot in the runtime's weak table belongs to the thread that made it, so
+            // neither a move nor a copy is safe. Sema rejects the visible cases (velt_sema
+            // weak_threads.rs); this is one in a function value's environment, or behind a type
+            // sema could not see into (docs/internals/design/weak-refs.md).
+            self.panic_msg(&format!(
+                "a `{name}` cannot go to another thread (`spawn`, a channel, a timer, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
+            ));
+            return;
+        }
         if self.cx.boxed(ty) {
             return self.transfer_boxed(place, ty);
         }
@@ -56,14 +85,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     }
                 }
             }
-            TyKind::Option(e) => self.transfer_option(place, ty, e),
+            TyKind::Option(e, _) => self.transfer_option(place, ty, e),
             TyKind::Array(e) => self.transfer_elems(place, e),
             TyKind::Promise(..) => self.transfer_promise(place, ty),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.transfer_closure(place),
             TyKind::Dyn(..) => {
                 let data = proj(place, Proj::Field(0));
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
-                self.via_vtable(&data, vt);
+                if !self.cx.has_proxies() {
+                    return self.via_vtable(&data, vt);
+                }
+                let at = data.clone();
+                self.proxy_dyn_data(
+                    &data,
+                    |lw, up, pty| lw.transfer_proxy(&at, up, pty),
+                    |lw| lw.via_vtable(&data, vt),
+                );
             }
             _ => {}
         }
@@ -237,12 +274,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.goto(now);
         }
         self.switch_to(now);
-        let c = self.count_place(v);
-        let n = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
-        );
-        self.assign(c, Rvalue::Use(n));
+        if self.cx.weak_capable(ty) {
+            // A weakly held object's count word is not its count (weak-refs.md): release it
+            // with the full sequence, which frees it if this was its last reference.
+            let p = self.operand_place(v, Ty::Ptr);
+            self.drop_glue(p, ty);
+        } else {
+            let c = self.count_place(v);
+            let n = self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
+            );
+            self.assign(c, Rvalue::Use(n));
+        }
         self.goto(done);
         self.switch_to(done);
         new

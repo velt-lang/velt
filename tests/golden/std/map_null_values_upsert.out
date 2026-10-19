@@ -1,0 +1,22 @@
+Map(2) { 'a' => 10, 'b' => 20 }
+true null
+false
+null null 4
+[ 'b', 'c', 'd', 'a' ] null true
+true Map(4) { 'b' => 20, 'c' => null, 'd' => null, 'a' => null }
+false
+false true
+true [
+  'k1',  'k2',  'k3',
+  'k5',  'k6',  'k7',
+  'k9',  'k10', 'k11',
+  'k13', 'k14', 'k15',
+  'k17', 'k18', 'k19'
+] [
+  1,  2,    null, 5,    null,
+  7,  null, 10,   11,   13,
+  14, null, 17,   null, 19
+]
+t false
+false
+1 [ [ [ 1, 9 ], null ] ] true false

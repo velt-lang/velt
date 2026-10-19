@@ -1,0 +1,30 @@
+// A number is a JavaScript number, exactly (#525): a local declared from an integer literal takes
+// fractions (#437), integer arithmetic gives `-0` (#508), values past 2^53 round, `/ 0` and `% 0`
+// follow IEEE, and `let` and `const` from a length are the same number (#468). Expected output
+// is Node's.
+function main() {
+  let t = 0;
+  t = 1.5;
+  let u = 0;
+  u += 0.5;
+  let x = 3;
+  x /= 2;
+  console.log(t, u, x);
+  for (let i = 0; i < 2; i++) {
+    console.log(-i * 2000, i * -1, -i);
+  }
+  console.log(-4 % 2, 0 * -1, [-0, 0], { z: -0 });
+  console.log(`${-0}`, JSON.stringify(-0), (-0).toFixed(1), (-0).toString(), 1 / -0);
+  let h = 0;
+  const s = "a long enough string to pass two to the fifty-third";
+  for (let k = 0; k < s.length; k++) {
+    h = h * 31 + s.charCodeAt(k);
+  }
+  console.log(h, 2 ** 53 + 1, 9007199254740993);
+  console.log(1 / 0, -1 / 0, 5 % 0, 2 ** 64, 1 << 32, (0x7fffffff * 0x2c1b3c6d) | 0);
+  const xs = [1, 2, 3];
+  let n = xs.length;
+  const m = xs.length;
+  n -= 5;
+  console.log(n, m, n + m, xs.length / 2, xs.indexOf(9) * 0);
+}

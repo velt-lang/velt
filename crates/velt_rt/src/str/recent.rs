@@ -15,7 +15,11 @@
 //!   buffer that has breadcrumbs bumps a global epoch first ([`buffer_gone`]), which invalidates
 //!   every heap entry of every thread: a new string that later gets the same address and `w1` is
 //!   not mistaken for the old one. A heap string is remembered only after its first translation
-//!   built its breadcrumbs, so every remembered buffer bumps the epoch when it goes. The epoch is
+//!   built its breadcrumbs, and a slice (which has none of its own) marks its buffer as
+//!   remembered (`heap::mark_remembered`) at its first translation, before it is remembered
+//!   (a translation that finds no entry), so every remembered buffer
+//!   bumps the epoch when it goes. A slice's `w0` and `w1` locate its bytes as a plain heap
+//!   string's do: two live strings with the same ones have the same bytes. The epoch is
 //!   bumped before the memory is released, and a string reaches another thread only through
 //!   synchronization, so that thread sees the bump.
 //! - static: a long non-ASCII static string points at a literal (or into one), whose bytes are
@@ -114,4 +118,10 @@ pub(super) fn remember(s: &VeltStr, unit: usize, pos: BytePos) {
 #[cold]
 pub(super) fn buffer_gone() {
     HEAP_EPOCH.fetch_add(1, Ordering::Release);
+}
+
+/// The heap epoch (tests: freeing a remembered buffer bumps it).
+#[cfg(test)]
+pub(super) fn epoch() -> u64 {
+    HEAP_EPOCH.load(Ordering::Relaxed)
 }

@@ -13,12 +13,22 @@ pub(crate) type Assigned<'a> = HashMap<&'a str, Span>;
 
 /// Names assigned anywhere in `s`.
 pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
-    Walk { out, direct: true }.stmt(s);
+    Walk {
+        out,
+        direct: true,
+        fields: false,
+    }
+    .stmt(s);
 }
 
 /// Names `e` assigns (also inside closures it creates).
 pub(crate) fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut Assigned<'a>) {
-    Walk { out, direct: true }.expr(e);
+    Walk {
+        out,
+        direct: true,
+        fields: false,
+    }
+    .expr(e);
 }
 
 /// Names that the closures (arrow functions, function expressions, object methods) created in
@@ -31,9 +41,23 @@ pub(crate) fn assigned_by_closures<'a>(
     let mut w = Walk {
         out: &mut out,
         direct: false,
+        fields: false,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     exprs.into_iter().for_each(|e| w.expr(e));
+    out
+}
+
+/// The fields of `this` that `stmts` assign (`this.x = …`) outside closures: a constructor's
+/// assignments (a closure cannot assign a `readonly` field).
+pub(crate) fn this_fields_assigned(stmts: &[ast::Stmt]) -> Assigned<'_> {
+    let mut out = Assigned::new();
+    let mut w = Walk {
+        out: &mut out,
+        direct: false,
+        fields: true,
+    };
+    stmts.iter().for_each(|s| w.stmt(s));
     out
 }
 
@@ -47,6 +71,8 @@ struct Walk<'a, 'o> {
     out: &'o mut Assigned<'a>,
     /// Record assignments outside closures too (not only those closures make).
     direct: bool,
+    /// Record the fields of `this` assigned outside closures, not variables.
+    fields: bool,
 }
 
 impl<'a> Walk<'a, '_> {
@@ -137,22 +163,33 @@ impl<'a> Walk<'a, '_> {
     fn expr(&mut self, e: &'a ast::Expr) {
         use ast::ExprKind as E;
         match &e.kind {
+            E::Arrow { .. } | E::Function(_) if self.fields => return,
+            E::Assign { target, .. } | E::Update { target, .. } if self.fields => {
+                if let E::Member { object, prop, .. } = &target.kind {
+                    if matches!(object.kind, E::This) {
+                        self.out.entry(prop.name.as_str()).or_insert(e.span);
+                    }
+                }
+            }
             E::Assign { target, .. } | E::Update { target, .. } => {
                 if let (true, E::Ident(id)) = (self.direct, &target.kind) {
                     self.out.entry(id.name.as_str()).or_insert(e.span);
                 }
             }
             E::Arrow { params, body, .. } => {
-                let names = params.iter().map(|p| p.name.name.as_str());
+                let mut names = vec![];
+                for p in params {
+                    param_names(&p.name, p.pattern.as_ref(), &mut names);
+                }
                 let defaults = params.iter().filter_map(|p| p.default.as_ref());
                 let body = match body {
                     ast::ArrowBody::Block(b) => Body::Block(b),
                     ast::ArrowBody::Expr(x) => Body::Expr(x),
                 };
-                return self.closure(names.collect(), defaults.collect(), body);
+                return self.closure(names, defaults.collect(), body);
             }
             E::Function(f) => return self.function(f),
-            E::Object(props) => {
+            E::Object(props) if !self.fields => {
                 for p in props {
                     if let ast::ObjectProp::Method(f) = p {
                         self.function(f);
@@ -166,7 +203,10 @@ impl<'a> Walk<'a, '_> {
 
     fn function(&mut self, f: &'a ast::FnDecl) {
         let params = &f.sig.params;
-        let names = params.iter().map(|p| p.name.name.as_str()).collect();
+        let mut names = vec![];
+        for p in params {
+            param_names(&p.name, p.pattern.as_ref(), &mut names);
+        }
         let defaults = params.iter().filter_map(|p| p.default.as_ref()).collect();
         self.closure(names, defaults, Body::Block(&f.body));
     }
@@ -204,6 +244,22 @@ impl<'a> Walk<'a, '_> {
 }
 
 /// The names a declaration pattern binds.
+/// The names a parameter binds: its own, or those of the pattern it destructures.
+fn param_names<'a>(
+    name: &'a ast::Ident,
+    pattern: Option<&'a ast::Pattern>,
+    out: &mut Vec<&'a str>,
+) {
+    match pattern {
+        Some(p) => {
+            let mut names = HashSet::new();
+            bound_names(p, &mut names);
+            out.extend(names);
+        }
+        None => out.push(name.name.as_str()),
+    }
+}
+
 fn bound_names<'a>(p: &'a ast::Pattern, out: &mut HashSet<&'a str>) {
     use ast::PatternKind as P;
     match &p.kind {

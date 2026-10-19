@@ -1,0 +1,7 @@
+// `Response.redirect(url, status)` with a status that is not a redirect stops the program with
+// Node's RangeError message.
+function main() {
+  console.log(Response.redirect("https://example.com/", 308).headers.get("location"));
+  const r = Response.redirect("https://example.com/", 200);
+  console.log("unreachable", r.status);
+}

@@ -1,0 +1,395 @@
+//! Intersection types (`A & B`, #384): each reduces to one anonymous object type with the
+//! parts' fields in TypeScript's order, shared fields intersected; unions distribute; parts
+//! that can't be combined, and combinations no value has, are errors with a fix. A primitive
+//! `&` an object type is a branded type, erased to the primitive before lowering.
+
+mod common;
+
+use common::hir_walk::func;
+use common::programs::{err_src, ok_src};
+use velt_sema::hir::{Def, Program, TyId, TyKind};
+
+/// `t` for assertions: primitives by name, `T | null`, literals and object types by fields.
+fn show(p: &Program, t: TyId) -> String {
+    match p.types.kind(t) {
+        TyKind::Str => "string".into(),
+        TyKind::Float(_) => "f64".into(),
+        TyKind::Int(_) => "int".into(),
+        TyKind::Bool => "boolean".into(),
+        TyKind::Option(x, _) => format!("{} | null", show(p, *x)),
+        TyKind::Literal(v) => format!("{v:?}"),
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Adt(a) => {
+                let fs: Vec<String> = a
+                    .fields
+                    .iter()
+                    .map(|f| format!("{}: {}", f.name, show(p, f.ty)))
+                    .collect();
+                format!("{{ {} }}", fs.join("; "))
+            }
+            other => format!("{other:?}"),
+        },
+        other => format!("{other:?}"),
+    }
+}
+
+/// The type of `f`'s first parameter in `src` (which declares `function f(x: …)`).
+fn param(src: &str) -> String {
+    let p = ok_src(&format!("{src}\nfunction main() {{}}"));
+    let f = func(&p, "f");
+    show(&p, f.params[0].ty)
+}
+
+#[test]
+fn fields_are_the_first_parts_then_the_new_ones() {
+    assert_eq!(
+        param("type A = { a: string; s: f64 }; type B = { b: boolean; s: f64 }; function f(x: A & B) {}"),
+        "{ a: string; s: f64; b: boolean }"
+    );
+    assert_eq!(
+        param("interface I { id: string } function f(x: { n: f64 } & I & { z: boolean }) {}"),
+        "{ n: f64; id: string; z: boolean }"
+    );
+}
+
+#[test]
+fn a_field_is_required_when_any_part_requires_it() {
+    assert_eq!(
+        param("function f(x: { a?: string; b?: f64 } & { a: string }) {}"),
+        "{ a: string; b: f64 | null }"
+    );
+    assert_eq!(
+        param("function f(x: { a?: string } & { a?: string }) {}"),
+        "{ a: string | null }"
+    );
+}
+
+#[test]
+fn shared_object_fields_merge_and_literals_meet_their_base() {
+    assert_eq!(
+        param("function f(x: { p: { x: f64 } } & { p: { y: f64 } }) {}"),
+        "{ p: { x: f64; y: f64 } }"
+    );
+    assert!(
+        param("function f(x: { k: string } & { k: \"on\" }) {}").contains("Str(\"on\")"),
+        "a literal & its base type is the literal"
+    );
+}
+
+#[test]
+fn unions_distribute_and_impossible_members_drop() {
+    let src = "type C = { kind: \"c\"; r: f64 }; type S = { kind: \"s\"; w: f64 };
+        function f(x: (C | S) & { kind: \"c\" }) {}";
+    assert!(param(src).contains("r: f64"), "{}", param(src));
+    // `null & B` has no value, so `(A | null) & B` is `A & B`.
+    assert_eq!(
+        param("function f(x: ({ a: f64 } | null) & { b: f64 }) {}"),
+        "{ a: f64; b: f64 }"
+    );
+}
+
+#[test]
+fn intersections_in_generic_aliases_are_resolved_per_use() {
+    assert_eq!(
+        param("type WithId<T> = T & { id: string }; function f(x: WithId<{ n: f64 }>) {}"),
+        "{ n: f64; id: string }"
+    );
+}
+
+#[test]
+fn readonly_stays_only_when_every_part_says_so() {
+    ok_src(
+        "type R = { readonly a: string } & { a: string };
+         function main() { const r: R = { a: \"x\" }; r.a = \"y\"; console.log(r.a); }",
+    );
+    let e = err_src(
+        "type R = { readonly a: string } & { readonly a: string; b: f64 };
+         function main() { const r: R = { a: \"x\", b: 1 }; r.a = \"y\"; }",
+    );
+    assert!(e.contains("readonly"), "{e}");
+}
+
+#[test]
+fn conflicting_fields_are_an_error_not_never() {
+    let e = err_src("type A = { k: string } & { k: f64 }; function main() {}");
+    assert!(
+        e.contains("no value has type")
+            && e.contains("field `k` is `string` in one part and `f64` in another"),
+        "{e}"
+    );
+    let e = err_src("type A = { kind: \"a\" } & { kind: \"b\" }; function main() {}");
+    assert!(e.contains("field `kind`"), "{e}");
+}
+
+#[test]
+fn parts_that_are_not_object_types_are_errors_with_a_fix() {
+    for (src, needle) in [
+        (
+            "class K { x = 1 } type A = K & { y: f64 };",
+            "`K` is a class",
+        ),
+        ("type A = f64[] & { y: f64 };", "is an array"),
+        (
+            "type A = (() => void) & (() => void);",
+            "function types (overloads)",
+        ),
+        (
+            "interface S { show(): string } type A = S & { y: f64 };",
+            "interface with methods",
+        ),
+        (
+            "class K { x = 1 } type W<T> = T & { y: f64 }; type A = W<K>;",
+            "`K` is a class",
+        ),
+    ] {
+        let e = err_src(&format!("{src} function main() {{}}"));
+        assert!(e.contains(needle), "{src}: {e}");
+    }
+}
+
+#[test]
+fn a_wider_object_converts_by_copying_its_fields() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64; c?: string };
+         type AC = { a: f64; c?: string };
+         function g(a: A): f64 { return a.a; }
+         function h(a: AC): f64 { return a.a; }";
+    ok_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; console.log(g(ab), h(ab), ab.b); }}"
+    ));
+    // An optional field of the expected type may be missing; a required one may not.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; console.log(h(a)); }}"
+    ));
+    let e = err_src(&format!(
+        "{src} function main() {{ const ac: AC = {{ a: 1 }}; const ab: AB = ac; }}"
+    ));
+    assert!(e.contains("mismatched types"), "{e}");
+    // An assignment to a copied field would tell the copy from the original.
+    let e = err_src(&format!(
+        "{src} function bump(a: A) {{ a.a += 1; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; bump(ab); }}"
+    ));
+    assert!(e.contains("assigns field `a`"), "{e}");
+    assert!(e.contains("`{ a: ab.a }`"), "{e}");
+}
+
+#[test]
+fn identity_through_a_union_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 }; type B = { b: f64 };";
+    for cmp in [
+        "const x: A | null = ab; const y: A | null = ab; console.log(x === y);",
+        "const x: A | null = ab; const y: A = ab; console.log(y === x);",
+        "const x: A | null = ab; console.log(x === ab);",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.includes(ab));",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.indexOf(ab));",
+        "const u: A | string = ab; const v: A | string = ab; console.log(u === v);",
+    ] {
+        let e = err_src(&format!(
+            "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; {cmp} }}"
+        ));
+        assert!(e.contains("values with `===`"), "{cmp}: {e}");
+    }
+    // `===` on unions with no conversion anywhere, or on a union of other object types only.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: A | null = a;
+           const y: A | null = null; const u = a as A | string; const v = \"s\" as A | string;
+           console.log(x === a, a === x, x === y, u === v, [x, y].includes(a), [x, y].indexOf(null)); }}"
+    ));
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const b: B = {{ b: 1 }};
+           const x: B | null = b; const xs: (B | null)[] = [b];
+           console.log(g(ab), x === b, xs.includes(b)); }}"
+    ));
+    // A fresh literal has no original to compare with.
+    ok_src(&format!(
+        "{src} function main() {{ const x: A | null = {{ a: 1 }}; const y = x; console.log(x === y); }}"
+    ));
+}
+
+#[test]
+fn a_write_to_an_absent_optional_field_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AC = { a: f64; c?: string };";
+    // In Node `a` gains `c`; in Velt only the copy would.
+    let e = err_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: AC = a; x.c = \"s\"; }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    let e = err_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ const a: A = {{ a: 1 }}; setC(a); }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    // A fresh source has no other name to see the write through.
+    ok_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ setC({{ a: 1 }}); }}"
+    ));
+}
+
+#[test]
+fn spreading_the_copy_tells_it_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 };";
+    let e = err_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
+           const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
+    ));
+    assert!(e.contains("spreads an `A`"), "{e}");
+    // Spreading the source keeps all its fields, as in Node.
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const y = {{ ...ab, c: 3 }};
+           console.log(g(ab), y.c); }}"
+    ));
+}
+
+#[test]
+fn literals_are_checked_against_the_alias_by_name() {
+    let e =
+        err_src("type AB = { a: f64 } & { b: f64 }; function main() { const x: AB = { a: 1 }; }");
+    assert!(e.contains("missing field `b` in `AB` literal"), "{e}");
+}
+
+#[test]
+fn indexed_access_reads_field_types() {
+    assert_eq!(
+        param("type P = { name: string; age: f64 }; function f(x: P[\"name\"]) {}"),
+        "string"
+    );
+    let e = err_src("type P = { name: string }; type X = P[\"nope\"]; function main() {}");
+    assert!(e.contains("has no field `nope`"), "{e}");
+}
+
+#[test]
+fn brands_are_their_primitive_after_checking() {
+    let p = ok_src(
+        "type UserId = string & { __brand: \"UserId\" };
+         function f(x: UserId): f64 { return x.length; }
+         function main() { console.log(f(\"u\" as UserId)); }",
+    );
+    assert_eq!(show(&p, func(&p, "f").params[0].ty), "string");
+}
+
+#[test]
+fn a_plain_primitive_or_another_brand_is_not_a_brand() {
+    let e = err_src(
+        "type UserId = string & { __brand: \"U\" }; function main() { const u: UserId = \"x\"; }",
+    );
+    assert!(e.contains("brand a value with `x as UserId`"), "{e}");
+    let e = err_src(
+        "type A = string & { __brand: \"A\" }; type B = string & { __brand: \"B\" };
+         function main() { const a = \"x\" as A; const b: B = a; }",
+    );
+    assert!(e.contains("`A`, another brand,"), "{e}");
+    let e =
+        err_src("type Id = string & { __brand: \"Id\" }; function main() { const i = 5 as Id; }");
+    assert!(e.contains("only a `string` can be branded"), "{e}");
+}
+
+#[test]
+fn an_interface_does_not_merge_with_a_class_and_the_note_says_so() {
+    // Either order: TypeScript merges an interface with a class of the same name.
+    for src in [
+        "interface X { a: f64 } class X { b = 1 } function main() {}",
+        "class X { b = 1 } interface X { a: f64 } function main() {}",
+    ] {
+        let e = err_src(src);
+        assert!(
+            e.contains("Velt merges an interface only with other interface declarations"),
+            "{e}"
+        );
+    }
+}
+
+#[test]
+fn reordered_parts_convert_by_copying_unless_printed() {
+    let src = "type Named = { name: string }; type Aged = { age: f64 };";
+    let show = "function show(p: Named & Aged): string { return p.name; }";
+    ok_src(&format!(
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; console.log(show(an)); }}"
+    ));
+    // Node prints the original object's keys in its order: printing the copy's type is an error.
+    let e = err_src(&format!(
+        "{src} function show(p: Named & Aged) {{ console.log(p); }}
+           function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
+    ));
+    assert!(e.contains("prints a `{ name: string; age: f64 }`"), "{e}");
+    let e = err_src(&format!(
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
+           const xs: (Named & Aged)[] = [an]; console.log(JSON.stringify(xs)); }}"
+    ));
+    assert!(e.contains("serializes a"), "{e}");
+}
+
+#[test]
+fn an_alias_may_refer_to_itself_through_written_object_types() {
+    let p = ok_src(
+        "type T = { kids: T[] } & { v: f64 }; function f(x: T): f64 { return x.kids.length + x.v; }
+         function main() { const t: T = { kids: [{ kids: [], v: 2 }], v: 1 }; console.log(f(t)); }",
+    );
+    assert_eq!(
+        show(&p, func(&p, "f").params[0].ty)
+            .matches("v: f64")
+            .count(),
+        1
+    );
+    // Parts that are not written out, or that share a field, still can't.
+    let e = err_src("type A = { v: f64 }; type T = A & { kids: T[] }; function main() {}");
+    assert!(e.contains("type alias `T` refers to itself"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
+    assert!(e.contains("an alias may refer to itself when"), "{e}");
+}
+
+#[test]
+fn a_type_parameter_part_is_reduced_where_its_argument_is_known() {
+    // #350: callers see the merged object type; the type argument is inferred from the fields
+    // the object part names, else from the whole argument.
+    ok_src(
+        "type Signal<T> = T & { $set: (v: T) => void };
+         function relay<T extends object>(s: Signal<T>): Signal<T> { return s; }
+         function stamp<T>(x: T & { id: string }): T & { id: string } { return x; }
+         function main() {
+           const s: Signal<{ n: number }> = { n: 1, $set: (v) => { console.log(v.n); } };
+           const r = relay(s);
+           r.$set({ n: r.n + 1 });
+           const t = stamp({ a: 1, id: \"x\" });
+           console.log(t.a, t.id);
+         }",
+    );
+    // `any`, `unknown` and `object` parts, as TypeScript intersects them.
+    let p = param("function f(x: unknown & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+    let p = param("function f(x: object & { a: f64 }) {}");
+    assert_eq!(p, "{ a: f64 }");
+}
+
+#[test]
+fn members_of_a_deferred_intersection_are_not_available_in_generic_code_yet() {
+    let e =
+        err_src("function f<T>(x: T & { id: string }): string { return x.id; } function main() {}");
+    assert!(e.contains("not available yet (#350)"), "{e}");
+}
+
+#[test]
+fn a_declared_intersection_infers_its_other_parts() {
+    // tsc: `T = A` for an argument declared `A & { id: string }` against `T & { id: string }`.
+    ok_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.a);
+         }",
+    );
+    let e = err_src(
+        "type A = { a: number };
+         function parseLike<T>(_: T & { id: string }, s: string): T { return JSON.parse(s); }
+         function main() {
+           const v: A & { id: string } = { a: 1, id: \"k\" };
+           const r = parseLike(v, \"{}\");
+           console.log(r.id);
+         }",
+    );
+    assert!(e.contains("no field `id`"), "{e}");
+}

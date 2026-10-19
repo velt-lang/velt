@@ -5,20 +5,27 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::is_null;
+use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
+use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
 
 /// What an assignment writes to.
 enum AssignTarget {
     /// A writable place (`BorrowMut` modes).
     Place(hir::Expr),
-    /// `obj.name` where `name` is a setter: the checked receiver.
+    /// `obj.name` where `name` is a setter, or a field written through an interface
+    /// (`iface_write`): the checked receiver.
     Setter(hir::Expr),
     /// `r[k]` / `r.name` of a `Record`: the checked record.
     Record(hir::Expr),
+    /// `xs[i]` of a std class with `__index` / `__setIndex` (`indexers`): the checked object.
+    Indexer(hir::Expr),
+    /// `x.f` / `x[k]` of an `any` (`dynamic_write`): the checked receiver.
+    Dynamic(hir::Expr),
 }
+
+use super::assign_paths::{is_plain_path, is_pure_place};
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -38,17 +45,21 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => return d.map(AssignTarget::Dynamic),
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
+                }
+                self.note_field_write(obj.ty, prop);
+                if let Some(ok) = self.iface_write_target(obj.ty, prop) {
+                    return ok.then_some(AssignTarget::Setter(obj));
                 }
                 if self.has_setter(obj.ty, &prop.name) {
                     return Some(AssignTarget::Setter(obj));
                 }
                 if self.reject_getter_assign(obj.ty, prop) {
-                    return None;
-                }
-                if prop.name == "length" && self.cx.ty.array_elem(obj.ty).is_some() {
-                    self.reject_length_assign(object, target.span);
                     return None;
                 }
                 let place = self.field_access(obj, prop, Want::BorrowMut, target.span)?;
@@ -62,8 +73,47 @@ impl FnCx<'_, '_> {
                 optional: false,
             } => {
                 let obj = self.expr(object, None, Want::Borrow);
+                let obj = match self.dynamic_write_receiver(obj) {
+                    Ok(d) => {
+                        if d.is_none() {
+                            self.expr(index, None, Want::Borrow);
+                        }
+                        return d.map(AssignTarget::Dynamic);
+                    }
+                    Err(obj) => obj,
+                };
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
+                }
+                if self.has_indexer(obj.ty)
+                    && super::member::literal_key(index).is_none()
+                    && self.symbol_key_of(index).is_none()
+                {
+                    return Some(AssignTarget::Indexer(obj));
+                }
+                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
+                // key the member it names: a setter or a getter-only accessor is handled the
+                // same way.
+                let key = match self.symbol_key_of(index) {
+                    Some(key) => Some(key),
+                    None => self.single_key(index),
+                };
+                if let Some(name) = key {
+                    let prop = ast::Ident {
+                        name,
+                        span: index.span,
+                    };
+                    // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
+                    self.note_field_write(obj.ty, &prop);
+                    if let Some(ok) = self.iface_write_target(obj.ty, &prop) {
+                        return ok.then_some(AssignTarget::Setter(obj));
+                    }
+                    if self.has_setter(obj.ty, &prop.name) {
+                        return Some(AssignTarget::Setter(obj));
+                    }
+                    if self.reject_getter_assign(obj.ty, &prop) {
+                        return None;
+                    }
                 }
                 let place = self.index_of(obj, index, Want::BorrowMut, target.span);
                 if self.cx.ty.is_bottom(place.ty) {
@@ -85,18 +135,15 @@ impl FnCx<'_, '_> {
         place.map(AssignTarget::Place)
     }
 
-    /// `xs.length = n`: arrays have no empty slots to grow into, so shortening is a method.
-    fn reject_length_assign(&mut self, object: &ast::Expr, span: Span) {
-        let xs = crate::body::switch::cases::source_text(object);
-        self.cx.error(
-            Diagnostic::error("the length of an array cannot be assigned", span)
-                .with_note(format!("to shorten it, write `{xs}.truncate(n)`")),
-        );
-    }
-
     fn assign_local(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {
+        if self.untyped_use(id, true) {
+            return None;
+        }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
-            if self.lookup_item(&id.name, id.span).is_some() {
+            let item = self.lookup_item(&id.name, id.span);
+            if let Some(place) = self.module_let_target(item, id) {
+                return place;
+            } else if item.is_some() {
                 self.cx.err(
                     format!("cannot assign to `{}`: it is not a variable", id.name),
                     span,
@@ -136,35 +183,7 @@ impl FnCx<'_, '_> {
         Some(self.mk(H::Local(l, UseMode::BorrowMut), ty, id.span))
     }
 
-    /// `Type.NAME = v` on a `static readonly` field (reported; statics are constants).
-    fn static_field_target(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
-        let ast::ExprKind::Ident(id) = &object.kind else {
-            return false;
-        };
-        if self.is_local_name(&id.name) {
-            return false;
-        }
-        let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
-            return false;
-        };
-        if !self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.statics.contains_key(&prop.name))
-        {
-            return false;
-        }
-        self.cx.err(
-            format!(
-                "cannot assign to `{}.{}`: static fields are readonly",
-                id.name, prop.name
-            ),
-            prop.span,
-        );
-        true
-    }
-
-    fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
+    pub(super) fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
         let H::Field { base, index, .. } = &place.kind else {
             return;
         };
@@ -176,6 +195,21 @@ impl FnCx<'_, '_> {
             .adt(d)
             .and_then(|a| a.fields.get(*index as usize))
             .is_some_and(|f| f.readonly);
+        if readonly && self.is_import_meta_type(base.ty) {
+            // `import.meta.url = …` is reported as a write to the module constant; a write
+            // through a copy (`const m = import.meta; m.url = …`) the same way, as in Node the
+            // copy is `import.meta` itself.
+            if !matches!(crate::body::places::root_expr(base).kind, H::Global(_)) {
+                self.cx.err(
+                    format!(
+                        "cannot assign to a field of module-level constant `{}`",
+                        ast::IMPORT_META
+                    ),
+                    place.span,
+                );
+            }
+            return;
+        }
         let in_ctor = self.f.kind == crate::defs::FnKind::Ctor
             && matches!(base.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This);
         if readonly && !in_ctor {
@@ -184,6 +218,19 @@ impl FnCx<'_, '_> {
                 prop.span,
             );
         }
+    }
+
+    /// Is `ty` the type of this module's `import.meta` (`ast::IMPORT_META`)?
+    fn is_import_meta_type(&mut self, ty: TyId) -> bool {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, ast::IMPORT_META)
+        else {
+            return false;
+        };
+        if !matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)) {
+            return false;
+        }
+        crate::body::driver::ensure_global(self.cx, d);
+        self.cx.global(d).is_some_and(|g| g.ty == ty)
     }
 
     /// A read of a place that was built for writing (compound assignment / `++` value).
@@ -251,10 +298,26 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        if let Some(h) = self.keyed_assign(op, target, value, span) {
+            return (h, false);
+        }
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
             let checked = self.assign_target(target, span);
             if let Some(AssignTarget::Setter(obj)) = checked {
                 let e = self.setter_assign(obj, Some(op), target, value, as_value, span);
+                return (e, as_value);
+            }
+            if let Some(AssignTarget::Indexer(obj)) = checked {
+                let e = self.indexer_assign(obj, Some(op), target, value, as_value, span);
+                return (e, as_value);
+            }
+            if let Some(AssignTarget::Dynamic(obj)) = checked {
+                return self.dynamic_assign(obj, Some(op), target, value, as_value, span);
+            }
+            // A record key has rules of its own (a key may be missing; `record_logical.rs`).
+            if let Some(AssignTarget::Record(obj)) = checked {
+                let (object, key) = super::record::record_parts(target);
+                let e = self.record_logical(obj, object, key, op, value, as_value, span);
                 return (e, as_value);
             }
             (self.logical_assign(op, checked, target, value, span), false)
@@ -263,7 +326,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `a ??= b` on a place or record key (`checked` is the target as resolved).
+    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     fn logical_assign(
         &mut self,
         op: ast::BinaryOp,
@@ -286,18 +349,19 @@ impl FnCx<'_, '_> {
             self.expr(value, None, Want::Borrow);
             return self.error_expr(span);
         }
-        // A record key has rules of its own (a key may be missing): the record path handles
-        // every compound form. A target in error is reported once, here.
+        // A target in error is reported once, here.
         match checked {
-            Some(AssignTarget::Record(obj)) => {
-                let (object, key) = super::record::record_parts(target);
-                return self.record_assign(obj, object, key, Some(op), target, value, span);
-            }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
-            Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+            Some(
+                AssignTarget::Place(_)
+                | AssignTarget::Record(_)
+                | AssignTarget::Setter(_)
+                | AssignTarget::Indexer(_)
+                | AssignTarget::Dynamic(_),
+            ) => {}
         }
         let rhs = ast::Expr {
             id: ast::NodeId(u32::MAX),
@@ -326,9 +390,16 @@ impl FnCx<'_, '_> {
                 let e = self.setter_assign(obj, op, target, value, as_value, span);
                 return (e, as_value);
             }
+            Some(AssignTarget::Indexer(obj)) => {
+                let e = self.indexer_assign(obj, op, target, value, as_value, span);
+                return (e, as_value);
+            }
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
                 self.record_assign(obj, object, key, op, target, value, span)
+            }
+            Some(AssignTarget::Dynamic(obj)) => {
+                return self.dynamic_assign(obj, op, target, value, as_value, span);
             }
             None => {
                 self.expr(value, None, Want::Borrow);
@@ -341,20 +412,37 @@ impl FnCx<'_, '_> {
     /// `place = value` / `place op= value` on a writable place.
     fn place_assign(
         &mut self,
-        place: hir::Expr,
+        mut place: hir::Expr,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
+        if op.is_some() && self.untyped_update(&place, span) {
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        let first = match op {
+            None => self.first_assign(&mut place, value),
+            Some(_) => None,
+        };
         let lty = place.ty;
         let Some(op) = op else {
-            let v = match self.value_hint(&place, value) {
-                Some(t) => self.expr_coerce(value, t, Want::Move),
+            let v = match first {
+                Some(v) => v,
                 None => {
-                    let v = self.expr(value, None, Want::Move);
-                    self.coerce(v, lty)
+                    let v = self.expr(value, Some(lty), Want::Move);
+                    // A local declared from a literal takes the type of what it is assigned
+                    // (`literal_locals`); other places are a typed position.
+                    if self.literal_assign(&place, &v) {
+                        self.try_coerce(v, lty).unwrap_or_else(|v| {
+                            self.report_mismatch(lty, &v);
+                            v
+                        })
+                    } else {
+                        self.coerce(v, lty)
+                    }
                 }
             };
             self.unnarrow_fields(target);
@@ -362,15 +450,15 @@ impl FnCx<'_, '_> {
                 self.check_capture_assign(l, target.span);
                 self.unnarrow(l);
             }
-            // Assigning a non-null value narrows the target like a check would (TS).
-            if matches!(v.kind, H::WrapSome(_)) {
-                let token = match place.kind {
-                    H::Local(l, _) => Some(l),
-                    _ => self.field_token(target),
-                };
-                if let Some(t) = token {
-                    self.narrow(&crate::body::narrow::Fact::NonNull(t));
-                }
+            // Assigning narrows the target like a check would (TS): to non-null, or to the
+            // union member assigned (`assign_narrow`).
+            let token = match place.kind {
+                H::Local(l, _) => Some(l),
+                _ if matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+                _ => None,
+            };
+            if let Some(t) = token.filter(|_| !crate::body::assign_narrow::is_cast(value)) {
+                self.narrow_to_assigned(t, lty, &v);
             }
             let kind = H::Assign {
                 place: Box::new(place),
@@ -384,8 +472,23 @@ impl FnCx<'_, '_> {
             let mut place = place;
             let mut stmts = Vec::new();
             self.hoist_indices(&mut place, &mut stmts);
-            let v = self.expr_coerce(value, lty, Want::Borrow);
-            let cur = self.place_read(&place, Want::Borrow);
+            // `s += n`: the number is appended as `String(n)` writes it (#740).
+            let v = self.expr(value, Some(lty), Want::Borrow);
+            // `s += a` with an `any` `a` appends `String(a)`, as `s + a` does (not a checked
+            // conversion to `string`).
+            let v = match self.any_to_source(v) {
+                Ok(a) => self.implicit_any_text(a, "a string concatenation"),
+                Err(v) => self.concat_operand(v),
+            };
+            let v = self.coerce(v, lty);
+            let mut cur = self.place_read(&place, Want::Borrow);
+            if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
+                // The right-hand side may change or move what holds the string (`rows[0].out +=
+                // grow(rows)`): take the current value first, as JS reads it before `v` (#580).
+                // A variable or field path is appended in place by lowering, which keeps its old
+                // value alive itself.
+                cur = self.hoist_value(cur, &mut stmts);
+            }
             let cat = self.concat(cur, v, span);
             let kind = H::Assign {
                 place: Box::new(place),
@@ -394,8 +497,9 @@ impl FnCx<'_, '_> {
             let assign = self.mk(kind, unit, span);
             return self.with_temps(stmts, assign);
         }
-        let hint = self.value_hint(&place, value);
-        let v = self.expr(value, hint, Want::Borrow);
+        let v = self.expr(value, Some(lty), Want::Borrow);
+        let v = self.unbrand(v);
+        self.literal_operands(op, &place, &v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
             Ok(v) => {
@@ -404,7 +508,7 @@ impl FnCx<'_, '_> {
                 let mut stmts = Vec::new();
                 self.hoist_indices(&mut place, &mut stmts);
                 let cur = self.place_read(&place, Want::Borrow);
-                let value = self.js_bitwise_assign(op, &place, cur, v, span);
+                let value = self.js_bitwise_assign(op, cur, v, span);
                 let kind = H::Assign {
                     place: Box::new(place),
                     value: Box::new(value),
@@ -417,9 +521,6 @@ impl FnCx<'_, '_> {
         let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);
-        }
-        if op == ast::BinaryOp::Div {
-            self.check_int_div_assign(&place, &v, span);
         }
         let bop = hir_binop(op).expect("ICE: logical compound op");
         let mut place = place;
@@ -445,6 +546,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.keyed_update(op, prefix, target, as_value, span) {
+            return h;
+        }
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
@@ -453,9 +557,20 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Record(obj)) => {
                 return self.record_update(obj, op, target, as_value, span)
             }
+            Some(AssignTarget::Indexer(obj)) => {
+                return self.indexer_update(obj, op, prefix, target, as_value, span)
+            }
+            Some(AssignTarget::Dynamic(_)) => {
+                self.dynamic_write_error(span);
+                return self.error_expr(span);
+            }
             None => return self.error_expr(span),
         };
+        if self.untyped_update(&place, span) {
+            return self.error_expr(span);
+        }
         let lty = place.ty;
+        self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
         if !self.cx.ty.is_numeric(lty) {
             if !self.cx.ty.is_bottom(lty) {
@@ -547,6 +662,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let (when_true, when_false) = self.narrowing(cond);
         let c = self.cond(cond);
+        let exp = exp.or_else(|| self.nothings_conditional_ty(then, els));
         let branch = |s: &mut Self,
                       e: &ast::Expr,
                       narrow: &[crate::body::narrow::Fact],
@@ -557,7 +673,7 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || is_null(e);
+        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);
@@ -599,13 +715,23 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if is_null(second) && self.cx.ty.opt_payload(first.ty).is_none() {
-            return Some(self.cx.ty.option(first.ty));
+        if let Some(n) = written_nothings(second) {
+            match self.cx.ty.nothing_of(first.ty) {
+                None => return Some(self.cx.ty.option_of(first.ty, n)),
+                // `c ? undefined : x` against a `T | null` (or the reverse): both nothings
+                // (#1218).
+                Some(m) if !n.within(m) => {
+                    let core = self.cx.ty.core(first.ty).unwrap_or(first.ty);
+                    return Some(self.cx.ty.option_of(core, m.join(n)));
+                }
+                Some(_) => {}
+            }
         }
         Some(first.ty)
     }
 
-    /// Common type of two branches (coercing one to the other, or both to `exp`).
+    /// Common type of two branches (coercing one to the other, or both to `exp`), else their
+    /// union, as in TypeScript (`qty ? qty : "none"` is a `number | string`).
     pub(crate) fn unify_branches(
         &mut self,
         t: hir::Expr,
@@ -643,49 +769,30 @@ impl FnCx<'_, '_> {
             let f = self.coerce(f, e);
             return (t, f, e);
         }
-        self.report_mismatch(tt, &f);
-        (t, f, tt)
+        let unit = self.cx.ty.unit;
+        if tt == unit || ft == unit {
+            self.report_mismatch(tt, &f);
+            return (t, f, tt);
+        }
+        let span = t.span.to(f.span);
+        self.union_join(t, f, span)
     }
 }
 
-/// `x`, `this.a`, `x.a.b`: re-reading it has no side effects.
-/// A place that reading again has no effect: names, `this`, member paths, and indexes by such
-/// values, literals and arithmetic on them (`xs[i + 1].count`).
-fn is_pure_place(e: &ast::Expr) -> bool {
+/// The `null` / `undefined` literals `e` may give: itself, or the arms of a conditional
+/// (`c ? null : undefined`), so the branch is checked against a type holding them.
+fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
-        ast::ExprKind::Index {
-            object,
-            index,
-            optional: false,
-        } => is_pure_place(object) && is_pure_value(index),
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => is_pure_place(object),
-        ast::ExprKind::Paren(inner) => is_pure_place(inner),
-        _ => is_plain_path(e),
-    }
-}
-
-fn is_pure_value(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Lit(_) => true,
-        ast::ExprKind::Unary { expr, .. } => is_pure_value(expr),
-        ast::ExprKind::Binary { lhs, rhs, .. } => is_pure_value(lhs) && is_pure_value(rhs),
-        _ => is_pure_place(e),
-    }
-}
-
-fn is_plain_path(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => is_plain_path(object),
-        ast::ExprKind::Paren(inner) => is_plain_path(inner),
-        _ => false,
+        ast::ExprKind::Paren(inner) => written_nothings(inner),
+        ast::ExprKind::Cond { then, els, .. } => {
+            match (written_nothings(then), written_nothings(els)) {
+                (Some(a), Some(b)) => Some(a.join(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        _ => nothing_word(e).map(|w| match w {
+            "null" => Nothing::Null,
+            _ => Nothing::Undefined,
+        }),
     }
 }

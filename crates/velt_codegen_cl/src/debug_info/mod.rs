@@ -5,25 +5,33 @@
 //! `SourceLoc` indexing a per-function table); after compilation, Cranelift reports which code
 //! ranges carry which location, and [`FunctionLines`] keeps them as rows. [`build_unit`] turns
 //! the functions into one DWARF 4 compile unit: a `DW_TAG_subprogram` per function (name,
-//! linkage name, code range, declaration line) and a line program. Line level only: no types
-//! or variables yet.
+//! linkage name, code range, declaration line) and a line program. Debug builds also describe
+//! source variables (`vir::LocalDecl::debug`): each has a stack slot keyed by its local
+//! (function/mod.rs; its storage, or for a scalar a shadow that every write updates), found in
+//! the compiled frame and located relative to the frame pointer, which Cranelift always keeps;
+//! `types` builds their DWARF types.
 //!
-//! - `object`: the sections of ELF and Mach-O objects, with relocations against the function
-//!   symbols (COFF would need CodeView; Windows debug builds keep function symbols only);
+//! - `object`: the sections of ELF, Mach-O and COFF objects, with relocations against the
+//!   function symbols;
 //! - `jit`: an in-memory ELF image with absolute addresses for `velt dev`'s JIT code, announced
 //!   to GDB and LLDB through the GDB JIT interface.
 
+use std::cmp::Reverse;
+
 use cranelift_codegen::gimli::write::{
-    Address, AttributeValue, DwarfUnit, LineProgram, LineString, Range, RangeList,
+    Address, AttributeValue, DwarfUnit, Expression, FileId, LineProgram, LineString, Range,
+    RangeList, UnitEntryId,
 };
 use cranelift_codegen::gimli::{self, Encoding, Format, LineEncoding};
 use cranelift_codegen::Context;
 use cranelift_module::FuncId;
+use cranelift_object::object::Architecture;
 use velt_vir::vir::{self, SrcLoc};
 
 #[cfg(unix)]
 pub(crate) mod jit;
 pub(crate) mod object;
+mod types;
 
 /// The line information of one compiled function.
 pub(crate) struct FunctionLines {
@@ -42,6 +50,18 @@ pub(crate) struct FunctionLines {
     pub rows: Vec<(u32, Option<SrcLoc>)>,
     /// Where the body starts (the end of the prologue).
     pub body: u32,
+    /// The source variables, by local index.
+    pub vars: Vec<Variable>,
+}
+
+/// A source variable of a compiled function: the stack slot of the local holding it.
+pub(crate) struct Variable {
+    pub name: String,
+    pub debug: vir::LocalDebug,
+    /// The local's VIR type (a scalar's encoding).
+    pub ty: vir::Ty,
+    /// The slot's offset from the frame pointer.
+    pub fp_offset: i64,
 }
 
 impl FunctionLines {
@@ -84,6 +104,28 @@ impl FunctionLines {
         if end > 0 && end < size {
             push_row(&mut rows, end, None);
         }
+        let mut vars: Vec<(u64, Variable)> = vec![];
+        if let Some(frame) = code.buffer.frame_layout() {
+            for slot in frame.stackslots.values() {
+                let Some(key) = slot.key.map(|k| k.bits()) else {
+                    continue;
+                };
+                let Some(local) = function.locals.get(key as usize) else {
+                    continue;
+                };
+                if let (Some(debug), Some(name)) = (&local.debug, &local.name) {
+                    let fp_offset = i64::from(slot.offset) - i64::from(frame.frame_to_fp_offset);
+                    let var = Variable {
+                        name: name.clone(),
+                        debug: debug.clone(),
+                        ty: local.ty,
+                        fp_offset,
+                    };
+                    vars.push((key, var));
+                }
+            }
+        }
+        vars.sort_by_key(|(k, _)| *k);
         Some(FunctionLines {
             id,
             symbol: function.symbol.clone(),
@@ -93,6 +135,7 @@ impl FunctionLines {
             decl,
             rows,
             body: body.unwrap_or(0),
+            vars: vars.into_iter().map(|(_, v)| v).collect(),
         })
     }
 }
@@ -113,17 +156,40 @@ pub(crate) const ENCODING: Encoding = Encoding {
     address_size: 8,
 };
 
-/// One compile unit describing `functions` of a program with source `files`; `address(i)` is
-/// the start of `functions[i]` (a symbol for objects, a constant for JIT code).
+/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF, Mach-O and
+/// COFF, `object::add_debug_info`) and its frame pointer has a DWARF number
+/// ([`frame_register`]). Only then do described locals need shadow slots.
+pub(crate) fn describes_variables(triple: &target_lexicon::Triple) -> bool {
+    use target_lexicon::{Architecture as A, BinaryFormat as F};
+    matches!(triple.binary_format, F::Elf | F::Macho | F::Coff)
+        && matches!(triple.architecture, A::X86_64 | A::Aarch64(_))
+}
+
+/// The DWARF number of the frame pointer register, which variables are located from; `None`
+/// for other architectures (no variables).
+pub(crate) fn frame_register(arch: Architecture) -> Option<gimli::Register> {
+    match arch {
+        Architecture::X86_64 => Some(gimli::X86_64::RBP),
+        Architecture::Aarch64 => Some(gimli::AArch64::X29),
+        _ => None,
+    }
+}
+
+/// One compile unit describing `functions` of `program`; `address(i)` is the start of
+/// `functions[i]` (a symbol for objects, a constant for JIT code), and `frame` the frame
+/// pointer register (variables are described only with one).
 pub(crate) fn build_unit(
-    files: &[String],
+    program: &vir::Program,
     functions: &[FunctionLines],
     address: impl Fn(usize) -> Address,
+    frame: Option<gimli::Register>,
 ) -> DwarfUnit {
+    let files = &program.files;
+    let mut types = types::Types::new(program);
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string().replace('\\', "/"))
         .unwrap_or_default();
-    let line_string = |s: &str| LineString::String(s.as_bytes().to_vec());
+    let line_string = |s: &str| LineString::String(dwarf_str(s).into_bytes());
     let (main_name, _) = file_and_directory(files.first().map_or("<velt>", |f| f), &cwd);
     let mut program = LineProgram::new(
         ENCODING,
@@ -181,8 +247,8 @@ pub(crate) fn build_unit(
     let producer = dwarf.strings.add("velt (cranelift)");
     let name = dwarf
         .strings
-        .add(files.first().map_or("<velt>", |f| f.as_str()));
-    let comp_dir = dwarf.strings.add(cwd.as_str());
+        .add(dwarf_str(files.first().map_or("<velt>", |f| f.as_str())));
+    let comp_dir = dwarf.strings.add(dwarf_str(&cwd));
     let root = dwarf.unit.root();
     let cu = dwarf.unit.get_mut(root);
     cu.set(gimli::DW_AT_producer, AttributeValue::StringRef(producer));
@@ -199,10 +265,10 @@ pub(crate) fn build_unit(
     cu.set(gimli::DW_AT_ranges, AttributeValue::RangeListRef(ranges));
 
     for (i, f) in functions.iter().enumerate() {
-        let name = dwarf.strings.add(f.name.as_str());
-        let linkage_name = dwarf.strings.add(f.symbol.as_str());
-        let sub = dwarf.unit.add(root, gimli::DW_TAG_subprogram);
-        let sub = dwarf.unit.get_mut(sub);
+        let name = dwarf.strings.add(dwarf_str(&f.name));
+        let linkage_name = dwarf.strings.add(dwarf_str(&f.symbol));
+        let sub_id = dwarf.unit.add(root, gimli::DW_TAG_subprogram);
+        let sub = dwarf.unit.get_mut(sub_id);
         sub.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
         sub.set(
             gimli::DW_AT_linkage_name,
@@ -228,8 +294,236 @@ pub(crate) fn build_unit(
                 );
             }
         }
+        if let (Some(frame), false) = (frame, f.vars.is_empty()) {
+            let mut base = Expression::new();
+            base.op_reg(frame);
+            sub.set(gimli::DW_AT_frame_base, AttributeValue::Exprloc(base));
+            // A variable is in scope from its declaration to the end of its block: source
+            // ranges that nest (blocks do), so each variable's lexical block goes inside the one
+            // of the innermost variable whose range holds its own. Debuggers expect sibling
+            // blocks not to overlap.
+            let mut vars: Vec<&Variable> = f.vars.iter().collect();
+            vars.sort_by_key(|v| {
+                (
+                    !v.debug.param,
+                    v.debug.decl.line,
+                    Reverse(end_key(&v.debug)),
+                )
+            });
+            let mut open: Vec<(&vir::LocalDebug, UnitEntryId)> = vec![];
+            let code = ScopeCode::new(f);
+            let mut budget = scope_range_budget(f);
+            for v in vars {
+                while open.last().is_some_and(|(o, _)| !holds(o, &v.debug)) {
+                    open.pop();
+                }
+                let parent = open.last().map_or(sub_id, |(_, e)| *e);
+                let ranges = scope_ranges(&code, &v.debug).filter(|r| r.len() <= budget);
+                let parent = match ranges {
+                    None => parent,
+                    Some(ranges) => {
+                        budget -= ranges.len();
+                        let ranges = ranges
+                            .into_iter()
+                            .map(|(begin, end)| Range::StartLength {
+                                begin: offset(address(i), begin),
+                                length: u64::from(end - begin),
+                            })
+                            .collect();
+                        let ranges = dwarf.unit.ranges.add(RangeList(ranges));
+                        let block = dwarf.unit.add(parent, gimli::DW_TAG_lexical_block);
+                        dwarf
+                            .unit
+                            .get_mut(block)
+                            .set(gimli::DW_AT_ranges, AttributeValue::RangeListRef(ranges));
+                        block
+                    }
+                };
+                if !v.debug.param {
+                    open.push((&v.debug, parent));
+                }
+                add_variable(&mut dwarf, &mut types, parent, v, file_of(v.debug.decl));
+            }
+        }
     }
     dwarf
+}
+
+/// The located code of a function, prepared for [`scope_ranges`].
+struct ScopeCode {
+    /// The code from the first located instruction to the function's end, cut where the source
+    /// position changes. Code without a location (the few bytes between two located
+    /// instructions) goes with the code before it: on its own it would cut the scope of every
+    /// variable declared above it in two, and a function of n declarations in a row would need
+    /// n² ranges.
+    pieces: Vec<Piece>,
+    /// Where the stretches of `pieces` start (and the end of the last): in a stretch, (file,
+    /// line) never goes back, so the pieces of a range of lines are found by bisection.
+    /// Statements in a row are one stretch; a loop's header after its body starts another.
+    stretches: Vec<usize>,
+    /// The function's size.
+    size: u32,
+}
+
+struct Piece {
+    start: u32,
+    /// (file, line).
+    at: (u32, u32),
+    col: u32,
+}
+
+impl ScopeCode {
+    fn new(f: &FunctionLines) -> ScopeCode {
+        let mut pieces: Vec<Piece> = vec![];
+        let mut stretches = vec![0];
+        for (k, &(start, loc)) in f.rows.iter().enumerate() {
+            let end = f.rows.get(k + 1).map_or(f.size, |r| r.0);
+            let Some(loc) = loc.filter(|_| start < end) else {
+                continue;
+            };
+            let at = (loc.file, loc.line);
+            match pieces.last() {
+                Some(last) if last.at == at && last.col == loc.col => continue,
+                Some(last) if at < last.at => stretches.push(pieces.len()),
+                _ => {}
+            }
+            let col = loc.col;
+            pieces.push(Piece { start, at, col });
+        }
+        stretches.push(pieces.len());
+        ScopeCode {
+            pieces,
+            stretches,
+            size: f.size,
+        }
+    }
+
+    /// Where piece `i` ends.
+    fn end(&self, i: usize) -> u32 {
+        self.pieces.get(i + 1).map_or(self.size, |p| p.start)
+    }
+}
+
+/// The code ranges (offsets in the function) where `var` is in scope: code located from its
+/// declaration line (a whole line in one block: debuggers make a breakpoint location per block
+/// a line's code is in) up to the end of its block. `None` when that is the whole function
+/// (params, variables of the function's own block declared at its start). The work is per
+/// stretch of `code`, not per row: a function of n declarations in a row has n variables and
+/// some 10 n rows.
+fn scope_ranges(code: &ScopeCode, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
+    if var.param {
+        return None;
+    }
+    let file = var.decl.file;
+    let mut ranges: Vec<(u32, u32)> = vec![];
+    // The pieces `from..to` are in scope.
+    let mut add = |from: usize, to: usize| {
+        if from >= to {
+            return;
+        }
+        let (start, end) = (code.pieces[from].start, code.end(to - 1));
+        match ranges.last_mut() {
+            Some(last) if last.1 == start => last.1 = end,
+            _ => ranges.push((start, end)),
+        }
+    };
+    for stretch in code.stretches.windows(2) {
+        let (first, pieces) = (stretch[0], &code.pieces[stretch[0]..stretch[1]]);
+        let before = |at: (u32, u32)| first + pieces.partition_point(|p| p.at < at);
+        let from = before((file, var.decl.line));
+        match var.end {
+            None => add(from, first + pieces.partition_point(|p| p.at.0 <= file)),
+            Some(end) => {
+                // The lines before the block's last, then the code of that line before its end.
+                let last_line = before((file, end.line));
+                add(from, last_line);
+                let after = first + pieces.partition_point(|p| p.at <= (file, end.line));
+                for i in last_line.max(from)..after {
+                    if code.pieces[i].col < end.col {
+                        add(i, i + 1);
+                    }
+                }
+            }
+        }
+    }
+    let whole = (ranges.is_empty() && code.size == 0) || ranges == [(0, code.size)];
+    (!whole).then_some(ranges)
+}
+
+/// How many scope ranges the variables of `f` may have together: in proportion to its code, so
+/// the debug info of a function stays linear in its size. Scopes are a few ranges each unless
+/// the code is laid out far from source order; a variable whose ranges no longer fit is shown
+/// in the scope around it instead (from before its declaration, as params are).
+fn scope_range_budget(f: &FunctionLines) -> usize {
+    64 + 4 * f.rows.len()
+}
+
+/// A source position, ordered.
+fn at(l: SrcLoc) -> (u32, u32) {
+    (l.line, l.col)
+}
+
+/// The end of a variable's scope, ordered (`None`, the function's end, is last).
+fn end_key(v: &vir::LocalDebug) -> (bool, (u32, u32)) {
+    (v.end.is_none(), v.end.map_or((0, 0), at))
+}
+
+/// Whether `outer`'s scope holds `inner`'s (both in one file).
+fn holds(outer: &vir::LocalDebug, inner: &vir::LocalDebug) -> bool {
+    outer.decl.file == inner.decl.file
+        && outer.decl.line <= inner.decl.line
+        && end_key(inner) <= end_key(outer)
+}
+
+/// `a` plus `by` bytes.
+fn offset(a: Address, by: u32) -> Address {
+    match a {
+        Address::Constant(c) => Address::Constant(c + u64::from(by)),
+        Address::Symbol { symbol, addend } => Address::Symbol {
+            symbol,
+            addend: addend + i64::from(by),
+        },
+    }
+}
+
+/// A `DW_TAG_variable` (or `DW_TAG_formal_parameter`) for `v` under `parent` (its subprogram or
+/// lexical block).
+fn add_variable(
+    dwarf: &mut DwarfUnit,
+    types: &mut types::Types<'_>,
+    parent: UnitEntryId,
+    v: &Variable,
+    file: Option<FileId>,
+) {
+    // A local holding the variable by reference holds a pointer: the value is the pointee, in
+    // its natural representation.
+    let held = (!v.debug.by_ref).then_some(v.ty);
+    let ty = types.ty(dwarf, v.debug.ty, held);
+    let tag = match v.debug.param {
+        true => gimli::DW_TAG_formal_parameter,
+        false => gimli::DW_TAG_variable,
+    };
+    let name = dwarf.strings.add(dwarf_str(&v.name));
+    let mut location = Expression::new();
+    location.op_fbreg(v.fp_offset);
+    if v.debug.by_ref {
+        location.op_deref();
+    }
+    let var = dwarf.unit.add(parent, tag);
+    let var = dwarf.unit.get_mut(var);
+    var.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
+    var.set(gimli::DW_AT_type, AttributeValue::UnitRef(ty));
+    var.set(gimli::DW_AT_location, AttributeValue::Exprloc(location));
+    if let Some(file) = file {
+        var.set(
+            gimli::DW_AT_decl_file,
+            AttributeValue::FileIndex(Some(file)),
+        );
+        var.set(
+            gimli::DW_AT_decl_line,
+            AttributeValue::Udata(u64::from(v.debug.decl.line)),
+        );
+    }
 }
 
 /// `(file name, directory)` of a source path: relative paths are relative to the current
@@ -262,5 +556,20 @@ mod tests {
             file_and_directory("examples/foo.vlt", "/w"),
             ("examples/foo.vlt".into(), "/w".into())
         );
+    }
+}
+
+/// `s` as a DWARF string, which is NUL-terminated: a NUL inside it (a quoted field name such as
+/// `"a\u0000b"` that ends up in a function's name) is written `\0`.
+fn dwarf_str(s: &str) -> String {
+    s.replace('\0', "\\0")
+}
+
+#[cfg(test)]
+mod dwarf_str_tests {
+    #[test]
+    fn a_nul_is_escaped() {
+        assert_eq!(super::dwarf_str("a\0b"), "a\\0b");
+        assert_eq!(super::dwarf_str("plain"), "plain");
     }
 }

@@ -1,0 +1,54 @@
+// `trySend` + `tryReceive` of 1M items on one task, twice: 8-byte numbers, then 96-byte structs
+// (#635: an item's bytes were moved through the queue one at a time). The difference between the
+// two shows what an item's size costs. `chan_item_size small|big <n>` runs one of them with n
+// items (instruction counts per item: the difference between two n under cachegrind).
+import { channel } from "velt:channel";
+import { args } from "velt:process";
+
+struct Big {
+  a: f64;
+  b: f64;
+  c: f64;
+  d: f64;
+  e: f64;
+  f: f64;
+  g: f64;
+  h: f64;
+  i: f64;
+  j: f64;
+  k: f64;
+  l: f64;
+}
+
+function small(n: i64): i64 {
+  const ch = channel<i64>();
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    ch.trySend(i);
+    sum += ch.tryReceive() ?? 0;
+  }
+  ch.close();
+  return sum;
+}
+
+function big(n: i64): f64 {
+  const ch = channel<Big>();
+  let sum = 0.0;
+  for (let i = 0; i < n; i++) {
+    const x = i as f64;
+    ch.trySend({ a: x, b: x, c: x, d: x, e: x, f: x, g: x, h: x, i: x, j: x, k: x, l: x });
+    sum += ch.tryReceive()?.l ?? 0.0;
+  }
+  ch.close();
+  return sum;
+}
+
+function main() {
+  const argv = args();
+  if (argv.length == 2) {
+    const n = parseInt(argv[1]) as i64;
+    console.log(argv[0] == "small" ? small(n) as f64 : big(n));
+    return;
+  }
+  console.log(small(1000000), big(1000000));
+}

@@ -231,10 +231,20 @@ impl DevSession {
                 self.slots.insert(func.symbol.clone(), (slot, *trampoline));
             }
         }
-        // Slots last: from here on, calls reach the new code.
-        for (i, func) in program.funcs.iter().enumerate() {
-            if let (Some(code), Some((slot, _))) = (version.code[i], self.slots.get(&func.symbol)) {
-                slot.set(code as *const u8);
+        // Slots last: from here on, calls reach the new code. The slots of new keys first: only
+        // new code calls them, and once an existing slot points to new code, running threads
+        // may call a new key through it at once (#880: a new function's empty slot crashed a
+        // request that ran its new caller). Each store releases the ones before it.
+        for new_keys in [true, false] {
+            for (i, func) in program.funcs.iter().enumerate() {
+                if version.trampolines[i].is_some() != new_keys {
+                    continue;
+                }
+                if let (Some(code), Some((slot, _))) =
+                    (version.code[i], self.slots.get(&func.symbol))
+                {
+                    slot.set(code as *const u8);
+                }
             }
         }
         let code = version.code.clone();

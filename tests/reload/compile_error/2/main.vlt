@@ -1,4 +1,4 @@
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {

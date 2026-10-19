@@ -1,0 +1,18 @@
+// The right operand of `#x in o` must not be null: TypeScript rejects a possibly-null one
+// (TS18047), and JavaScript throws a `TypeError` for `null`.
+class B {
+  y: number = 2;
+}
+class A {
+  #x: number = 1;
+  static has(o: A | null): boolean {
+    return #x in o;
+  }
+  static either(o: A | B | null): boolean {
+    return #x in o;
+  }
+  static first(os: (A | null)[]): boolean {
+    return #x in os[0];
+  }
+}
+console.log(A.has(null), A.either(new B()), A.first([null]));

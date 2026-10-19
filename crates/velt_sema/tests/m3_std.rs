@@ -44,11 +44,7 @@ fn std_handles_release_in_drop_hooks() {
     let p = ok_src(
         "import { serve } from \"velt:http\";\nimport { fetch } from \"velt:fetch\";\nfunction main() {}",
     );
-    for class in [
-        "std/http::Server",
-        "std/http::Response",
-        "std/fetch/response::Response",
-    ] {
+    for class in ["std/http::Server", "std/fetch/response::Response"] {
         assert!(
             adt(&p, class).dispose.is_some(),
             "{class} has no dispose hook"

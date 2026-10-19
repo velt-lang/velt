@@ -1,0 +1,12 @@
+class C {
+  one(x: number): number {
+    return x;
+  }
+}
+
+function main() {
+  const g = new C();
+  const h = new C();
+  const a = g.one.bind(h);
+  const b = g.one.bind(g, 1);
+}

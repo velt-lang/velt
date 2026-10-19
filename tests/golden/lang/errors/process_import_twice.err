@@ -1,0 +1,1 @@
+process_import_twice.vlt:4:15: error: the name `process` is defined multiple times

@@ -1,14 +1,19 @@
 //! Signature help: the parameter list of the call whose parentheses enclose the cursor, with the
 //! parameter being typed highlighted. The call is found in the text (while typing, the call usually
 //! does not parse yet): the innermost unclosed `(` that follows a callee name, and the commas
-//! before the cursor at its level. The callee is resolved through sema.
+//! before the cursor at its level. The callee is resolved through sema. Its doc comment documents
+//! the signature (the description, return value and exceptions) and each parameter (`@param`).
 
-use lsp_types::{ParameterInformation, ParameterLabel, SignatureHelp, SignatureInformation};
+use lsp_types::{
+    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, SignatureHelp,
+    SignatureInformation,
+};
+use velt_doc::comment::DocComment;
 use velt_sema::ide::DefRef;
 
 use crate::analysis::Analysis;
 use crate::text_scan::{self, Token, TokenKind};
-use crate::{callable, completion};
+use crate::{callable, completion, docs};
 
 /// Signature help at byte `offset` of the document.
 pub fn signature_help(analysis: &Analysis, offset: u32) -> Option<SignatureHelp> {
@@ -25,23 +30,50 @@ pub fn signature_help(analysis: &Analysis, offset: u32) -> Option<SignatureHelp>
     let sig = callable::signature_of(analysis, &def, is_new)?;
     let active = commas.min(sig.params.len().saturating_sub(1)) as u32;
     let utf16 = |i: usize| sig.label[..i].encode_utf16().count() as u32;
+    let doc = doc_of(analysis, &def, is_new).unwrap_or_default();
     let parameters = sig
         .params
         .iter()
         .map(|p| ParameterInformation {
             label: ParameterLabel::LabelOffsets([utf16(p.lo), utf16(p.hi)]),
-            documentation: None,
+            documentation: doc.param(&p.name).filter(|t| !t.is_empty()).map(markdown),
         })
         .collect();
+    // The parameters have their own documentation, and examples are too long here.
+    let summary = DocComment {
+        params: vec![],
+        examples: vec![],
+        see: vec![],
+        ..doc
+    }
+    .render_markdown();
     Some(SignatureHelp {
         signatures: vec![SignatureInformation {
             label: sig.label.clone(),
-            documentation: None,
+            documentation: (!summary.is_empty()).then(|| markdown(&summary)),
             parameters: Some(parameters),
             active_parameter: Some(active),
         }],
         active_signature: Some(0),
         active_parameter: Some(active),
+    })
+}
+
+/// The doc comment of the called definition: for `new C(` the constructor's, else the class's.
+fn doc_of(analysis: &Analysis, def: &DefRef, is_new: bool) -> Option<DocComment> {
+    if is_new && def.kind.is_type() {
+        let ctor = callable::constructor_of(analysis, def);
+        if let Some(doc) = ctor.and_then(|c| docs::doc_for(analysis, &c)) {
+            return Some(doc);
+        }
+    }
+    docs::doc_for(analysis, def)
+}
+
+fn markdown(text: &str) -> Documentation {
+    Documentation::MarkupContent(MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: text.to_string(),
     })
 }
 

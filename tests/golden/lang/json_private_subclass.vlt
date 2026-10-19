@@ -1,6 +1,5 @@
-// `JSON.stringify` of a class value writes the object's dynamic class, except a subclass with
-// private fields: it has no JSON form, so the value is written as its static class and the
-// private data stays out of the JSON.
+// `JSON.stringify` of a class value writes the object's dynamic class, as Node does: a
+// subclass's `private` fields too, and never its ES private fields (`#x`).
 class Shape {
   name: string;
 
@@ -14,11 +13,20 @@ class Circle extends Shape {
 }
 
 class Secret extends Shape {
-  private key: string = "do not write";
+  private key: string = "written";
+}
+
+class Hidden extends Shape {
+  #key: string = "never written";
 }
 
 function main() {
-  const shapes: Shape[] = [new Shape("plain"), new Circle("round"), new Secret("hidden")];
+  const shapes: Shape[] = [
+    new Shape("plain"),
+    new Circle("round"),
+    new Secret("secret"),
+    new Hidden("hidden"),
+  ];
   for (const s of shapes) {
     console.log(JSON.stringify(s));
   }

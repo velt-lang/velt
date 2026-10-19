@@ -1,19 +1,19 @@
 // Binary search tree with nullable children: insert, in-order traversal, height, contains.
 class TreeNode {
-  value: i64;
+  value: number;
   left: TreeNode | null = null;
   right: TreeNode | null = null;
-  constructor(value: i64) {
+  constructor(value: number) {
     this.value = value;
   }
-  add(v: i64) {
+  add(v: number) {
     insert(this, v);
   }
 }
 
 // Insertion as a method with `?.` calls: `node.left = insert(node.left, v)` would move a field
 // out of a borrowed node in Velt.
-function insert(node: TreeNode, v: i64) {
+function insert(node: TreeNode, v: number) {
   if (v < node.value) {
     if (node.left == null) {
       node.left = new TreeNode(v);
@@ -27,7 +27,7 @@ function insert(node: TreeNode, v: i64) {
   }
 }
 
-function inorder(node: TreeNode | null, out: i64[]) {
+function inorder(node: TreeNode | null, out: number[]) {
   if (node != null) {
     inorder(node.left, out);
     out.push(node.value);
@@ -35,7 +35,7 @@ function inorder(node: TreeNode | null, out: i64[]) {
   }
 }
 
-function height(node: TreeNode | null): i64 {
+function height(node: TreeNode | null): number {
   if (node == null) {
     return 0;
   }
@@ -44,7 +44,7 @@ function height(node: TreeNode | null): i64 {
   return 1 + (l > r ? l : r);
 }
 
-function contains(node: TreeNode | null, v: i64): bool {
+function contains(node: TreeNode | null, v: number): bool {
   if (node == null) {
     return false;
   }
@@ -59,7 +59,7 @@ function main() {
   for (const v of [30, 70, 20, 40, 60, 80, 35, 45, 65]) {
     insert(root, v);
   }
-  const out: i64[] = [];
+  const out: number[] = [];
   inorder(root, out);
   console.log(JSON.stringify(out), height(root));
   console.log(contains(root, 45), contains(root, 55));

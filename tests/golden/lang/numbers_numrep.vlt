@@ -1,0 +1,91 @@
+// `number` (double) loops and arithmetic that the optimizer stores as integers where that gives
+// exactly the double's results (velt_opt `numrep`), next to the cases where it must not: -0,
+// NaN, values at 2^53, fractions, remainders of negative numbers. Expected output: Node's.
+
+// Counters with float literals; the index is a whole number.
+function counters(xs: number[]): number {
+  let s = 0.0;
+  for (let k = 0.0; k < xs.length; k++) {
+    s += xs[k];
+  }
+  for (let k = xs.length - 1.0; k >= 0.0; k -= 1.0) {
+    s = s * 0.5 + xs[k];
+  }
+  return s;
+}
+
+// A remainder of a negative number is -0 when it divides evenly: 1 / -0 is -Infinity.
+function negativeZeros(): string {
+  let out = "";
+  for (let a = -6.0; a <= 6.0; a += 3.0) {
+    const r = a % 3.0;
+    out += `${1 / r} `;
+  }
+  const z = -1.0 * 0.0;
+  out += `${1 / z} ${1 / (z + 0.0)} ${1 / (z - 0.0)} ${1 / -(0.0 * 5.0)}`;
+  return out;
+}
+
+// Remainders that compare or index see no sign: (y + dy + n) % n wraps a grid coordinate.
+function wraps(n: number): number {
+  let c = 0.0;
+  for (let y = 0.0; y < n; y++) {
+    for (let dy = -1.0; dy <= 1.0; dy++) {
+      const yy = (y + dy + n) % n;
+      if (yy === 0.0) {
+        c += 1.0;
+      }
+      c += yy;
+    }
+  }
+  return c;
+}
+
+// At 2^53 a double stops counting: k + 1 rounds back to k.
+function at2pow53(): string {
+  const big = 9007199254740992.0;
+  let k = big - 3.0;
+  let steps = 0;
+  while (k < big + 2.0 && steps < 10) {
+    k = k + 1.0;
+    steps++;
+  }
+  const odd = big - 1.0;
+  return `${k} ${steps} ${odd + 2.0} ${(odd + 2.0) - big} ${big * 3.0 + 1.0}`;
+}
+
+// NaN and fractions stay doubles.
+function nans(d: number): string {
+  let out = "";
+  for (let i = 0.0; i < 3.0; i++) {
+    const r = i % d;
+    out += `${r} ${r === r} `;
+  }
+  let f = 0.0;
+  for (let i = 0.0; i < 4.0; i++) {
+    f += 0.25;
+  }
+  return `${out}${f} ${f === 1.0}`;
+}
+
+// Rounding whole numbers is the identity; ToInt32 of narrowed sums wraps.
+function rounding(): string {
+  let t = 0.0;
+  let h = 0;
+  for (let i = -3.0; i < 4.0; i++) {
+    t += Math.trunc(i) + Math.floor(i * 2.0) + Math.round(i) + Math.abs(i);
+    h = (h * 31 + (i + 2147483647.0)) | 0;
+  }
+  return `${t} ${h} ${(2147483647.0 + 1.0) | 0} ${(-2147483648.0 - 1.0) | 0}`;
+}
+
+function main() {
+  const xs: number[] = [1.5, -2.0, 3.25, 0.0, 7.0];
+  console.log(counters(xs));
+  console.log(negativeZeros());
+  console.log(wraps(5.0), wraps(1.0));
+  console.log(at2pow53());
+  console.log(nans(2.0));
+  console.log(nans(0.0));
+  console.log(rounding());
+}

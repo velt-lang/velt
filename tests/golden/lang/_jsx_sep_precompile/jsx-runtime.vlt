@@ -1,0 +1,24 @@
+// The precompiling text separator test runtime: the generic one plus the precompile exports and
+// `jsxTextSeparator`, so the compiler writes the separators between adjacent text parts of a
+// template string. It renders exactly like the generic runtime.
+
+import { AttrValue, Element, Template, Text, attr, textOf } from "../_jsx_sep_provider/render";
+
+export * from "../_jsx_sep_provider/jsx-runtime";
+export { Text } from "../_jsx_sep_provider/render";
+
+export const jsxTextSeparator = "<!--t-->";
+
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  const el = new Element();
+  el.parts.push(new Template(strings, slots));
+  return el;
+}
+
+export function jsxEscape(value: Text): string {
+  return textOf(value);
+}
+
+export function jsxAttr(name: string, value: AttrValue): string {
+  return attr(name, value);
+}

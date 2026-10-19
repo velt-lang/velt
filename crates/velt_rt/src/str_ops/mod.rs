@@ -22,8 +22,10 @@
 
 pub mod case;
 pub mod collate;
+pub mod exponential;
 pub mod fixed;
 pub mod number;
+pub mod radix;
 pub mod replace;
 pub mod search;
 pub mod slice;
@@ -60,8 +62,9 @@ unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
     (*s).as_bytes()
 }
 
-/// `s[start..end]` as a result string: borrowed if `s` is static/borrowed, shared if it is all
-/// of `s`, else an owned copy (see `VeltStr::substring`).
+/// `s[start..end]` as a result string: borrowed if `s` is static, the same string (count +1) if
+/// it is all of `s`, a slice sharing `s`'s buffer if it is large enough, else a copy (inline when
+/// short); see `VeltStr::substring`.
 unsafe fn sub_string(s: *const VeltStr, start: usize, end: usize) -> VeltStr {
     (*s).substring(start, end)
 }
@@ -98,15 +101,6 @@ fn floor_boundary(s: &[u8], i: usize) -> usize {
     let mut i = i.min(s.len());
     while !is_boundary(s, i) {
         i -= 1;
-    }
-    i
-}
-
-/// Smallest code point boundary `>= i` (and `<= s.len()`).
-fn ceil_boundary(s: &[u8], i: usize) -> usize {
-    let mut i = i.min(s.len());
-    while !is_boundary(s, i) {
-        i += 1;
     }
     i
 }

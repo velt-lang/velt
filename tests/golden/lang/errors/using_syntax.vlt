@@ -1,8 +1,8 @@
-// `using` at module level, without an initializer, and unsupported symbol keys.
+// `using` at module level, without an initializer, and a symbol key that names no well-known symbol.
 export using top = 1;
 
 class Iter {
-  [Symbol.species]() {}
+  [Symbol.foo]() {}
 }
 
 function main() {

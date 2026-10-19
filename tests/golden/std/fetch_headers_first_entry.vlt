@@ -1,0 +1,62 @@
+// A `Headers` keeps its first entry as it was given until something needs more (std/fetch/
+// headers.vlt); reading, changing, copying and iterating it behaves as in Node either way, and
+// a server sends it lowercased and trimmed, before the headers that follow it.
+import { serve } from "velt:http";
+
+function entries(h: Headers): string {
+  const parts: string[] = [];
+  for (const [name, value] of h) {
+    parts.push(`${name}=${value}`);
+  }
+  return parts.join(" ");
+}
+
+async function main() {
+  const h = new Headers();
+  h.set("X-One", "  a \t");
+  console.log(h.get("x-one"), h.has("X-ONE"), h.get("x-two"), h.has("x-two"), entries(h));
+  h.set("x-ONE", "b");
+  console.log(entries(h));
+  h.append("X-One", "c");
+  console.log(h.get("x-one"), entries(h));
+  const one = new Headers();
+  one.append("Z-Last", "z");
+  one.append("a-first", "a");
+  console.log(entries(one), entries(new Headers(one)));
+  const gone = new Headers({ "X-Gone": "1" });
+  gone.delete("x-gone");
+  console.log(gone.has("x-gone"), entries(gone));
+  const copy = new Headers({ Accept: "text/html" });
+  console.log(entries(new Headers(copy)), copy.get("accept"));
+
+  // The type a body implies stays first; setting `content-type` replaces it.
+  const typed = new Response("hi");
+  typed.headers.set("Content-Type", "text/html");
+  console.log(typed.headers.get("content-type"), entries(typed.headers));
+  const both = new Response("hi");
+  both.headers.set("X-A", "1");
+  both.headers.append("x-a", "2");
+  console.log(both.headers.get("X-A"), entries(both.headers));
+
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const res = new Response("ok");
+    if (req.url.endsWith("/one")) {
+      res.headers.set("X-Mixed", " v ");
+    } else if (req.url.endsWith("/more")) {
+      res.headers.set("Server", "velt");
+      res.headers.append("set-cookie", "a=1");
+      res.headers.append("Set-Cookie", "b=2");
+    } else if (req.url.endsWith("/bad")) {
+      res.headers.set("bad name", "x");
+    }
+    return res;
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const one1 = await fetch(`${base}/one`);
+  console.log(one1.status, one1.headers.get("x-mixed"), await one1.text());
+  const more = await fetch(`${base}/more`);
+  console.log(more.headers.get("server"), more.headers.getSetCookie().join(" | "));
+  const bad = await fetch(`${base}/bad`);
+  console.log(bad.status);
+  server.close();
+}

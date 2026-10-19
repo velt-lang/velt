@@ -1,5 +1,7 @@
+blocked command failed
 killed: 1
 after the kill: before
 new connection: true
+blocked command failed
 incr after a second kill: 3 3
 cleaned: 2

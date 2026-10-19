@@ -1,0 +1,28 @@
+// check: no leaks
+// `super.m()` inside an override called through a typed proxy (#823): JavaScript reads `m`
+// through the `get` trap for `d.m()`, but `super.m()` calls the base method directly, without
+// reading it from the proxy; inside it, `this` is still the proxy.
+class C {
+  n = 1;
+  helper(): number {
+    return this.n + 1;
+  }
+  m(): number {
+    return this.helper() * 10;
+  }
+}
+class D extends C {
+  override m(): number {
+    return super.m() + 1;
+  }
+}
+function wrap(o: any): any {
+  return new Proxy(o, {
+    get(t: any, k: string | symbol, r: any): any {
+      console.log("get", String(k));
+      return Reflect.get(t, k, r);
+    },
+  });
+}
+const d: C = wrap(new D()) as D;
+console.log(d.m());

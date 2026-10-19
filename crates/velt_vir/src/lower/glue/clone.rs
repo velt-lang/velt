@@ -16,8 +16,28 @@ impl FnLower<'_, '_> {
     pub(super) fn clone_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
         let s = self.deref_param(src, ty);
         let d = self.deref_param(dst, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            let at = d.clone();
+            self.proxy_glue_split(&s, done, |lw, up, pty| lw.clone_proxy(up, &at, pty));
+            done
+        });
         self.clone_expand(&s, &d, ty);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// A deep copy of the typed proxy whose `Proxy` object (untagged) is at `up`, stored
+    /// tagged at `d`: a copy of the object, its target and its handler, as for an `any`
+    /// holding it.
+    fn clone_proxy(&mut self, up: Place, d: &Place, pty: TyId) {
+        let out = Place::local(self.temp(Ty::Ptr));
+        self.clone_into(up, out.clone(), pty);
+        let t = self.proxy_tag(Operand::Copy(out));
+        self.assign(d.clone(), Rvalue::Use(t));
     }
 
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
@@ -71,7 +91,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.clone_option(s, d, ty, e),
+            TyKind::Option(e, _) => self.clone_option(s, d, ty, e),
             TyKind::Array(e) => self.clone_array(s, d, e),
             TyKind::Shared(_) => {
                 self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
@@ -172,6 +192,20 @@ impl FnLower<'_, '_> {
 
     fn clone_dyn(&mut self, s: &Place, d: &Place) {
         self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
+        if self.cx.has_proxies() {
+            let (sd, dd) = (proj(s, Proj::Field(0)), proj(d, Proj::Field(0)));
+            return self.proxy_dyn_data(
+                &sd,
+                |lw, up, pty| lw.clone_proxy(up, &dd, pty),
+                |lw| lw.clone_dyn_data(s, d),
+            );
+        }
+        self.clone_dyn_data(s, d);
+    }
+
+    /// The data of the interface value `s` (already copied bitwise into `d`), deep-copied by
+    /// its table's `SLOT_CLONE` entry.
+    fn clone_dyn_data(&mut self, s: &Place, d: &Place) {
         let vt = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
         let done = self.new_block();
         let nn = self.non_null(vt.clone());

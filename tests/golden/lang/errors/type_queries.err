@@ -1,0 +1,24 @@
+type_queries.vlt:31:27: error: `z` is referenced in its own type
+  = note: the signature of `me` needs its own type
+type_queries.vlt:37:29: error: `y` is referenced in its own type
+  = note: the signatures of `ping` and `pong` need each other's types
+type_queries.vlt:46:27: error: `w` is referenced in its own type
+  = note: the signatures of `n1`, `n2` and `n3` need each other's types
+type_queries.vlt:49:32: error: `selfRet` is referenced in its own type
+  = note: the signature of `selfRet` needs its own type
+type_queries.vlt:56:10: error: the result of `viaBody` is needed to resolve its own signature
+  = note: the type of `x` needs it, and `viaBody` takes its result from its body; write the return type of `viaBody`
+type_queries.vlt:74:21: error: no field `y` on type `Point`
+type_queries.vlt:22:10: error: `typeof id` of a generic function is not supported yet (#936)
+  = note: Velt's function types have no type parameters
+type_queries.vlt:23:10: error: `typeof load` of an async function is not supported yet (#936)
+type_queries.vlt:24:10: error: `typeof Point` (the type of `Point` itself, not of its values) is not supported yet (#936)
+  = note: the type of its instances is `Point`
+type_queries.vlt:25:10: error: `Shape` is a type, not a value: `typeof` needs a value
+type_queries.vlt:26:10: error: cannot find `missing` in this scope
+type_queries.vlt:27:10: error: `keyof Point` is not supported yet (#936): `keyof` works on object types
+type_queries.vlt:28:10: error: `keyof Record<string, f64>` (`string | number` in TypeScript) is not supported yet (#936)
+type_queries.vlt:29:10: error: `ReturnType` needs a function type; found `f64`
+type_queries.vlt:68:21: error: `typeof restf` of a function with a rest parameter is not supported yet (#936)
+type_queries.vlt:69:21: error: `typeof opt` of a function with an optional parameter is not supported yet (#936)
+type_queries.vlt:70:10: error: `typeof dflt` of a function with a parameter with a default is not supported yet (#936)

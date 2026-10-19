@@ -2,19 +2,23 @@
 //! `T` → `T | null` (`WrapSome`), member → union, union → wider union and union → a type every
 //! member converts to (`union_coerce`), literal type → its base (`literal_types`), string enum
 //! → `string`, subclass → base class (`Upcast`), concrete type → interface value (`ToDyn`,
-//! moves the value), inferred integer → float (`expr::numbers`), `never` → anything, and
-//! `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1` (`never` included:
-//! `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` → `U | null` when `T`
-//! converts to `U`, and a fresh array or object to a wider one (`widen_fresh`).
+//! moves the value), `i8`..`i32`, `u8`..`u32` and `f32` → `number` (`expr::numbers`), `never`
+//! → anything, and `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1`
+//! (`never` included: `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` →
+//! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
+//! an object type to one with some of its fields, or the same ones in another order
+//! (`object_copy`), and a generic interface value to the same interface with `unknown` or `any`
+//! type arguments (`iface_adapt`).
 
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Nothing, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
     pub fn coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        self.literal_use_as(&h, exp);
         match self.try_coerce(h, exp) {
             Ok(h) => h,
             Err(h) => {
@@ -26,12 +30,63 @@ impl FnCx<'_, '_> {
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
     pub fn try_coerce(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.brand_base(h.ty).is_none() {
+            return self.try_coerce_value(h, exp);
+        }
+        // A branded value converts as itself (`UserId` to `UserId | null`), else like its
+        // primitive (a primitive never converts to a brand).
+        match self.try_coerce_value(h, exp) {
+            Ok(h) => Ok(h),
+            Err(h) => {
+                let brand = h.ty;
+                let h = self.unbrand(h);
+                self.try_coerce(h, exp).map_err(|mut h| {
+                    h.ty = brand;
+                    h
+                })
+            }
+        }
+    }
+
+    fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
             || exp == t.error
             || (t.has_error(exp) && self.loosely_equal(exp, h.ty))
         {
+            return Ok(h);
+        }
+        if self.cx.unfreezes(h.ty, exp) {
+            return Err(h);
+        }
+        // A function with properties as its plain function type: its function (#921).
+        if self.cx.is_callable_object(h.ty) && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
+        {
+            let f = self.callable_as_fn(h);
+            return self.try_coerce(f, exp);
+        }
+        if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
+            return self.coerce_dynamic(h, exp, self.adapting);
+        }
+        // Two forms of one anonymous object type (a generic shape at concrete arguments and the
+        // written shape, crate::anon): the same values, so only the type changes.
+        if self.cx.canon(h.ty) == self.cx.canon(exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
+        // `T & object` and `T` at a `T extends object` (crate::intersections).
+        if self.same_under_bounds(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
+        // `Generator<T, E, N>` to `Generator<T, E>` or back: `N` only types `next(value)`,
+        // and one side takes no value (the other never reads one).
+        if self.cx.generator_next_differs(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
             return Ok(h);
         }
         if self.widens_promise(h.ty, exp) {
@@ -41,6 +96,59 @@ impl FnCx<'_, '_> {
                 args: vec![h],
             };
             return Ok(self.mk(call, exp, span));
+        }
+        if self.converts_by_state(h.ty, exp) {
+            return self.coerce_hidden_nothings(h, exp);
+        }
+        // `T | undefined` to `T | null` (or the reverse): TS2322, as in TypeScript; converting
+        // would turn one nothing into the other (issue #930).
+        if let (Some(found), Some(want)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp))
+        {
+            if !found.within(want) {
+                return Err(h);
+            }
+        }
+        // `undefined` alone (an option of `never`): always its nothing, which is `exp`'s.
+        if let (Some(n), Some(_)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp)) {
+            if self.cx.ty.core(h.ty) == Some(self.cx.ty.never) {
+                let span = h.span;
+                let value = self.nothing_value(n, exp, span);
+                if matches!(h.kind, H::Lit(_)) {
+                    return Ok(value);
+                }
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(h),
+                        span,
+                    }],
+                    value: Some(Box::new(value)),
+                    span,
+                };
+                return Ok(self.mk(H::Block(block), exp, span));
+            }
+        }
+        // Into a `T | null | undefined` (an option of a `T | null`): a `T | null` is its
+        // payload, a `T | undefined` moves its nothing (hir_encodings.md "Undefined").
+        if self.is_three_state(exp) && !self.is_three_state(h.ty) {
+            match self.cx.ty.nothing_of(h.ty) {
+                Some(Nothing::Undefined) => {
+                    let core = self.cx.ty.core(exp).expect("ICE: option without a payload");
+                    let undef = self.cx.ty.option_of(core, Nothing::Undefined);
+                    let h = self.try_coerce(h, undef)?;
+                    return Ok(self.undefined_to_three_state(h, exp));
+                }
+                Some(_) => {
+                    let mid = self
+                        .cx
+                        .ty
+                        .opt_payload(exp)
+                        .expect("ICE: option without a payload");
+                    let span = h.span;
+                    let h = self.try_coerce(h, mid)?;
+                    return Ok(self.mk(H::WrapSome(Box::new(h)), exp, span));
+                }
+                None => {}
+            }
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
             if self.cx.ty.opt_payload(h.ty).is_some()
@@ -87,15 +195,20 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }
-        if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
+        // `i8`..`i32`, `u8`..`u32` and `f32` are numbers too (exactly).
+        if exp == self.cx.ty.f64 && self.exact_in_number(h.ty) {
             return Ok(self.int_to_float(h, exp));
         }
-        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
-        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
-        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
-        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
-            return Ok(self.int_as(h, exp));
+        if self.adapting
+            && matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. })
+            && matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. })
+        {
+            return self.adapt_fn(h, exp);
         }
+        let h = match self.copy_object(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         self.widen_fresh(h, exp)
     }
 
@@ -104,7 +217,7 @@ impl FnCx<'_, '_> {
         let (a, b) = (self.cx.ty.kind(exp).clone(), self.cx.ty.kind(found).clone());
         match (a, b) {
             (TyKind::Error, _) => true,
-            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x), TyKind::Option(y)) => {
+            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x, _), TyKind::Option(y, _)) => {
                 self.loosely_equal(x, y)
             }
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {
@@ -170,11 +283,23 @@ impl FnCx<'_, '_> {
         iface: hir::DefId,
         args: &[TyId],
     ) -> Result<hir::Expr, hir::Expr> {
+        // `I<A>` where `I<unknown>` is expected: wrapped (`iface_adapt`).
+        if let TyKind::Dyn(have, from) = self.cx.ty.kind(h.ty).clone() {
+            if have == iface && self.cx.dynamic(h.ty).is_none() {
+                return self.adapt_iface(h, exp, iface, &from, args);
+            }
+        }
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
             return Err(h);
         };
         if iargs != args {
-            return Err(h);
+            // A value implementing `I<A>`: an `I<A>` first, then adapted.
+            if !self.iface_adapts(iface, &iargs, args) {
+                return Err(h);
+            }
+            let mid = self.cx.ty.intern(TyKind::Dyn(iface, iargs.clone()));
+            let h = self.dyn_value(h, mid, iface, &iargs)?;
+            return self.adapt_iface(h, exp, iface, &iargs, args);
         }
         let mut h = if imp_ty != h.ty {
             self.upcast(h, imp_ty)?
@@ -193,12 +318,68 @@ impl FnCx<'_, '_> {
         ))
     }
 
+    /// Is `h` the result of a standard library function or method (`Channel.receive`)?
+    pub(crate) fn std_result(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self
+                .cx
+                .try_fn(*d)
+                .is_some_and(|fi| self.cx.scopes[fi.module].is_std),
+            H::Call {
+                callee: Callee::Intrinsic(_),
+                ..
+            } => true,
+            H::Block(b) => b.value.as_deref().is_some_and(|v| self.std_result(v)),
+            H::Await(x) => self.std_result(x),
+            _ => false,
+        }
+    }
+
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
+            return self.unknown_use_error(found.span);
+        }
         if self.shared_widening_error(expected, found) {
+            return;
+        }
+        let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
+        {
             return;
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.cx.unfreezes(found.ty, expected) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
+                    found.span,
+                )
+                .with_note("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling: pass it where a `Readonly<T>` is expected"),
+            );
+            return;
+        }
+        if let (Some(have), Some(want)) = (
+            self.cx.ty.nothing_of(found.ty),
+            self.cx.ty.nothing_of(expected),
+        ) {
+            if !have.within(want) {
+                let (x, y) = (have.word(), want.word());
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),
+                        found.span,
+                    )
+                    .with_note(format!(
+                        "`{x}` is not `{y}`; convert it with `?? {y}`, or change the type"
+                    )),
+                );
+                return;
+            }
+        }
         let mut d = Diagnostic::error("mismatched types", found.span)
             .with_note(format!("expected {e}, found {f}"));
         if self.cx.ty.is_float(expected) && matches!(found.kind, H::Lit(hir::Lit::Int(_))) {
@@ -206,32 +387,59 @@ impl FnCx<'_, '_> {
                 "integer literals are not floats; write it with a decimal point, e.g. `1.0`",
             );
         }
-        if self.cx.ty.is_int(expected) {
-            if let Some(note) = self.float_division_note(found) {
-                d = d.with_note(note);
+        match self
+            .float_division_note(found)
+            .filter(|_| self.cx.ty.is_int(expected))
+        {
+            Some(note) => d = d.with_note(note),
+            None => {
+                if let Some(note) = self.number_note(expected, found.ty) {
+                    d = d.with_note(note);
+                }
             }
         }
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
         }
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
-            d = match self.extends_note(expected, found.ty) {
-                Some(note) => d.with_note(note),
-                None => d.with_note(format!("`{f}` does not declare `implements {e}`")),
+            d = match (
+                self.adapt_refusal(expected, found.ty),
+                self.extends_note(expected, found.ty),
+            ) {
+                (Some(why), _) => d.with_note(format!(
+                    "`{f}` converts to `{e}` through a wrapper that checks each call's arguments, but {why}"
+                )),
+                (None, Some(note)) => d.with_note(note),
+                (None, None) => d.with_note(format!("`{f}` does not declare `implements {e}`")),
             };
             if let Some(note) = self.other_args_note(expected, found.ty) {
                 d = d.with_note(note);
             }
         }
+        if let Some(base) = self.cx.brand_base(expected) {
+            let b = self.cx.display(base);
+            let from = match self.cx.brand_base(found.ty) {
+                Some(_) => format!("`{}`, another brand,", self.cx.display(found.ty)),
+                None => format!("a plain `{b}`"),
+            };
+            d = d.with_note(format!(
+                "`{e}` is a branded `{b}`: {from} does not convert to it; brand a value with `x as {e}`"
+            ));
+        }
         if let Some(note) = self.class_to_data_note(expected, found) {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
         }
-        if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
-            // An instance of a generic alias (`Box<number>`) and the object type it spells out
-            // (`{ v: number }`) are separate types today.
+        if self.only_optional_differs(expected, found.ty) {
             d = d.with_note(
-                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+                "an optional field (`a?: T`) may be absent, so it is not a `T | undefined` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
+            );
+        } else if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
+            // Instances are canonical (crate::anon), except a generic union whose members are
+            // themselves unions or nullable: `U | string` at `U = i64 | bool` keeps its own
+            // variants (#350).
+            d = d.with_note(
+                "the two object types look the same but a field's union type was built differently (a generic union instantiated with a union or nullable member is not the written union yet); write the union type the same way in both",
             );
         }
         self.cx.error(d);
@@ -312,5 +520,29 @@ impl FnCx<'_, '_> {
     /// Is `found` acceptable where `expected` is required (without conversion)?
     pub fn compatible(&self, expected: TyId, found: TyId) -> bool {
         expected == found || self.cx.ty.is_bottom(found) || expected == self.cx.ty.error
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `a` and `b` are anonymous object types with the same field names and read types that
+    /// differ only in which fields are optional (`{ a?: T }` and `{ a: T | null }`).
+    fn only_optional_differs(&mut self, a: TyId, b: TyId) -> bool {
+        let (TyKind::Adt(da, aa), TyKind::Adt(db, ab)) =
+            (self.cx.ty.kind(a).clone(), self.cx.ty.kind(b).clone())
+        else {
+            return false;
+        };
+        if !self.cx.same_anon_shape(da, db) {
+            return false;
+        }
+        let fa: Vec<TyId> = self.cx.anon_field_tys(da);
+        let fb: Vec<TyId> = self.cx.anon_field_tys(db);
+        let fa: Vec<TyId> = fa.iter().map(|t| self.cx.subst(*t, &aa)).collect();
+        let fb: Vec<TyId> = fb.iter().map(|t| self.cx.subst(*t, &ab)).collect();
+        let opt = |cx: &crate::ctx::Ctx, d| {
+            cx.adt(d)
+                .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
+        };
+        fa == fb && opt(self.cx, da) != opt(self.cx, db)
     }
 }

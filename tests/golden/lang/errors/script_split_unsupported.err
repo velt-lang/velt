@@ -1,0 +1,2 @@
+_script_split_lib.vlt:2:7: error: this variable is used by top-level statements after a module-level variable, which is not supported yet for a variable declared without an initializer or by destructuring
+_script_split_lib.vlt:3:5: error: this variable is used by top-level statements after a module-level variable, which is not supported yet for a variable declared without an initializer or by destructuring

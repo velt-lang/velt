@@ -51,7 +51,7 @@ pub fn signature_of(analysis: &Analysis, def: &DefRef, is_new: bool) -> Option<S
 
 /// The constructor of class/struct `def`: sema's definition at the `constructor` of the type's
 /// declaration.
-fn constructor_of(analysis: &Analysis, def: &DefRef) -> Option<DefRef> {
+pub fn constructor_of(analysis: &Analysis, def: &DefRef) -> Option<DefRef> {
     let ide = analysis.ide.as_ref()?;
     let module = analysis.modules.get(def.module)?;
     let ctor = module.ast.items.iter().find_map(|item| match &item.kind {

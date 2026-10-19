@@ -171,13 +171,14 @@ of doing things, even when ported code must change (with a precise error and a f
 - **Modules** (implemented). `import * as ns`, `export { x } from`, `export * from`, folders
   through `index.vlt`, `paths` aliases in `package.vlt`, `import type`. Named exports only (no
   `export default`).
-- **One "nothing": `null` only** (implemented). `undefined` is not part of the language: using
-  it is a compile error with the fix "use `null`". Code ported from TypeScript changes
-  `undefined` to `null` (one way of doing things; the `null`-vs-`undefined` bug class can't
-  exist). Optional fields and parameters (`a?: T`) are `T | null`. JSON's "absent vs explicit
-  null" is visible only through `JsonValue` (`has(key)` vs `isNull()`).
-- **Safe truthiness** (implemented). Conditions and `!`, `||`, `&&` accept `bool` and nullable
-  values (`if (!user) return;` is a null check; `a || b` and `a && b` return values on nullable
-  objects). Numbers and strings are rejected in conditions and in `||`/`&&`, with fixes
-  (`count !== 0`, `name !== ""`, `??` for defaults). This removes JavaScript's `0`/`""`/`NaN`
-  falsiness bugs.
+- **`null` and `undefined`, as in Node** (owner decision on #930; phases 1 and 2 implemented).
+  `T | undefined` is its own type with the same layout as `T | null` (hir_encodings.md
+  "Undefined"); `typeof`, comparisons, printing and JSON follow Node. Optional fields and
+  parameters (`a?: T`) are `T | undefined` (phase 2), and the standard library gives `undefined`
+  for a missing value where lib.d.ts does (`Map.get`, `find`, `pop`, phase 3). JSON's "absent vs explicit null" is visible through
+  `JsonValue` (`has(key)` vs `isNull()`) and through an `a?: T | null` field.
+- **Truthiness** (implemented, #758). Conditions and `!`, `||`, `&&` test values of any type
+  with JavaScript's rules (`0`, `-0`, `NaN`, `""`, `null` and `undefined` are falsy; objects always truthy),
+  and `||` / `&&` return an operand typed like TypeScript (`n || 5` is a `number`). Valid
+  TypeScript depends on it everywhere, so compatibility wins over the stricter rule Velt had
+  before. Each test compiles to one comparison (`body/expr/truthiness.rs`).

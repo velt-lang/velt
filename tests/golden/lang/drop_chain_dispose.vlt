@@ -1,0 +1,109 @@
+// check: no leaks
+// `[Symbol.dispose]()` hooks of long chains (#543): dropping a chain runs every hook once, a
+// node's before its fields' (so a chain is disposed from its head on), whether the chain runs
+// through a field of the class itself (dropped in a loop) or through arrays (nested drops; the
+// runtime queues the ones past its depth limit and drops them after the outer ones).
+
+class Log {
+  count: number = 0;
+  order: string = "";
+
+  note(s: string) {
+    this.count++;
+    if (this.order.length < 40) {
+      this.order += `${s} `;
+    }
+  }
+}
+
+class Res {
+  name: string;
+  log: Log;
+
+  constructor(name: string, log: Log) {
+    this.name = name;
+    this.log = log;
+  }
+
+  [Symbol.dispose]() {
+    this.log.note(this.name);
+  }
+}
+
+// The link is the last field: each cell is disposed, then its resource, then the next cell.
+class Cell {
+  id: number;
+  log: Log;
+  res: Res;
+  next: Cell | null = null;
+
+  constructor(id: number, log: Log) {
+    this.id = id;
+    this.log = log;
+    this.res = new Res(`r${id}`, log);
+  }
+
+  [Symbol.dispose]() {
+    this.log.note(`c${this.id}`);
+  }
+}
+
+class Branch {
+  id: number;
+  log: Log;
+  kids: Branch[] = [];
+
+  constructor(id: number, log: Log) {
+    this.id = id;
+    this.log = log;
+  }
+
+  [Symbol.dispose]() {
+    this.log.note(`b${this.id}`);
+  }
+}
+
+function cells(n: number, log: Log): Cell | null {
+  let head: Cell | null = null;
+  for (let i = 0; i < n; i++) {
+    const c = new Cell(i, log);
+    c.next = head;
+    head = c;
+  }
+  return head;
+}
+
+function main() {
+  // Through the class's own field, dropped at the end of a scope.
+  const a = new Log();
+  {
+    const head = cells(500000, a);
+    console.log("cells", head!.id);
+  }
+  console.log(a.count, a.order);
+
+  // Through arrays, dropped on reassignment.
+  const b = new Log();
+  let chain = new Branch(0, b);
+  for (let i = 1; i < 300000; i++) {
+    const n = new Branch(i, b);
+    n.kids.push(chain);
+    chain = n;
+  }
+  chain = new Branch(-1, b);
+  console.log(b.count, b.order);
+
+  // A small tree drops as nested calls would: a node, then each child with its subtree.
+  const c = new Log();
+  {
+    const root = new Branch(0, c);
+    for (let i = 1; i <= 2; i++) {
+      const kid = new Branch(i, c);
+      kid.kids.push(new Branch(i * 10, c));
+      kid.kids.push(new Branch(i * 10 + 1, c));
+      root.kids.push(kid);
+    }
+  }
+  console.log(c.count, c.order);
+  console.log("end", chain.id);
+}

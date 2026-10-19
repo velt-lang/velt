@@ -4,7 +4,6 @@
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
-use super::expr::may_write;
 use super::rt::Rt;
 use super::{cint, unit, FnLower};
 use crate::vir::{Operand, Ty, STR_AGG};
@@ -25,13 +24,8 @@ impl FnLower<'_, '_> {
     pub(super) fn print(&mut self, stream: i128, args: &[hir::Expr]) -> Operand {
         let stream = cint(stream, Ty::U32);
         let mut vals = vec![];
-        for (k, a) in args.iter().enumerate() {
-            let v = self.expr(a);
-            let v = if args[k + 1..].iter().any(may_write) {
-                self.freeze(v, a.ty)
-            } else {
-                v
-            };
+        for (a, later) in args.iter().zip(self.later_each(args)) {
+            let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
             vals.push((v, t));
         }
@@ -88,11 +82,16 @@ impl FnLower<'_, '_> {
             if k > 0 {
                 self.push_text(&bp, " ");
             }
-            if matches!(self.cx.kind(t), TyKind::Never) {
-                continue;
+            match self.cx.kind(t) {
+                TyKind::Never => continue,
+                TyKind::Float(_) => {
+                    self.push_inspect_float(&bp, v, t);
+                    continue;
+                }
+                _ => {}
             }
             let p = self.place_of(v, t);
-            self.format_top(&bp, &p, t);
+            self.log_top(&bp, &p, t);
         }
         self.push_text(&bp, "\n");
         self.call_rt(Rt::WriteStr, vec![stream, bp.clone()], None);

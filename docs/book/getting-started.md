@@ -2,13 +2,11 @@
 
 ## Install
 
-You need:
+A released toolchain brings its own linker, so you need nothing else: no Visual Studio Build
+Tools, Xcode or C compiler. Optionally, **LLVM/clang 16 or newer** makes `--release` builds
+faster programs.
 
-- a **system linker**: the *Build Tools for Visual Studio* ("Desktop development with C++") on
-  Windows, `build-essential` (or `gcc`) on Linux, the Xcode command line tools on macOS;
-- optionally **LLVM/clang 16 or newer**, for optimized `--release` builds.
-
-Then install the latest release. On Linux and macOS:
+Install the latest release. On Linux and macOS:
 
 ```sh
 curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
@@ -20,8 +18,12 @@ On Windows, in PowerShell:
 irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 ```
 
-The installer puts the toolchain in `~/.velt/toolchain` (`%LOCALAPPDATA%\velt` on Windows) and
-adds its `bin` directory to your `PATH`. Open a new terminal and check the installation:
+The installer puts the toolchain in `~/.velt/toolchains/<version>` and the `velt` launcher in
+`~/.velt/bin`, which it adds to your `PATH` (on Windows `%LOCALAPPDATA%\velt\toolchains\<version>`
+and `%LOCALAPPDATA%\velt\bin`, added to your user `Path`). Several versions can be installed side
+by side; each package runs the one its manifest names (below). To uninstall, delete `~/.velt`
+(`%LOCALAPPDATA%\velt`) and remove its `bin` directory from your `PATH`. Open a new terminal and
+check the installation:
 
 ```sh
 velt doctor
@@ -32,7 +34,10 @@ other platforms: [Platforms and installation](../tooling/platforms.md).
 
 ### From source
 
-Building Velt yourself also needs **Rust** (stable), from [rustup.rs](https://rustup.rs):
+Building Velt yourself needs **Rust** (stable), from [rustup.rs](https://rustup.rs), and a
+system linker, which a build from source uses: the *Build Tools for Visual Studio* ("Desktop
+development with C++") on Windows, `build-essential` (or `gcc`) on Linux, the Xcode command line
+tools on macOS.
 
 ```sh
 git clone https://github.com/velt-lang/velt
@@ -41,8 +46,9 @@ cargo build --release -p veltc -p velt_rt
 ./target/release/velt doctor
 ```
 
-Put `target/release` on your `PATH`, or build a self-contained toolchain directory with `scripts/package.sh` (Linux,
-macOS) or `scripts/package.ps1` (Windows) and install it with the matching `install` script
+Put `target/release` on your `PATH`, or build a self-contained toolchain directory with
+`scripts/package.sh` (Linux, macOS) or `scripts/package.ps1` (Windows) and install it with the
+matching `install` script, beside released versions
 ([Platforms and installation](../tooling/platforms.md)).
 
 ## Your first program
@@ -81,22 +87,25 @@ Hello, world!
 
 ```
 hello/
-  package.vlt           the manifest: name, version, dependencies
+  package.vlt           the manifest: name, version, the velt version, dependencies
   src/main.vlt          the entry point: `velt run` builds and runs it
   src/greet.vlt         a module, imported by main and by the tests
   tests/greet.test.vlt  tests: every exported `test_*` function
   README.md
   .gitignore            ignores target/, where builds go
+  .gitattributes        makes GitHub highlight .vlt files (as TypeScript)
 ```
 
 ```ts ignore
 import type { Package } from "velt:package";
 
-export const pkg: Package = { name: "hello", version: "0.1.0" };
+export const pkg: Package = { name: "hello", version: "0.1.0", velt: "0.1" };
 ```
 
 The manifest is written in Velt but holds only data: `velt` reads it without running it
-([`package.vlt`](../tooling/manifest.md)). In an editor, the language server completes its
+([`package.vlt`](../tooling/manifest.md)). `velt: "0.1"` records the velt version the package
+was made with: the `velt` command runs that version, so installing a newer velt doesn't change
+how the package builds ([`velt toolchain`](../tooling/cli.md#velt-toolchain)). In an editor, the language server completes its
 fields, explains them on hover and reports the same errors `velt` would.
 
 `src/main.vlt` imports the greeting from its own module and the program arguments from the
@@ -129,9 +138,12 @@ client), `--template lib` (a library to publish).
 
 ## Editor setup
 
-Install the VS Code extension from `editors/vscode` for highlighting, diagnostics as you type,
+Install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt) for VS Code (`code --install-extension andtii.velt`) for highlighting, diagnostics as you type,
 go-to-definition, completion and quick fixes, or point any LSP client at `velt lsp`
-([Editors](../tooling/editors.md)).
+([Editors](../tooling/editors.md)). With a debugger extension such as CodeLLDB installed too,
+F5 builds the package and stops on breakpoints (on Linux and macOS; on Windows see
+[Debugging](../tooling/debugging.md#vs-code)): `velt new` writes the `.vscode/launch.json` for
+it, and `velt init --editor vscode` adds one to an existing package.
 
 ## Next steps
 

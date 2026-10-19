@@ -5,14 +5,22 @@
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
+mod ambient;
 mod arrow;
+mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
 mod members;
+mod namespaces;
+mod optional_types;
+mod param_patterns;
 mod param_props;
 mod paren_match;
 mod patterns;
@@ -24,12 +32,16 @@ mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod tuple_types;
 mod type_assertion;
 mod type_decls;
+mod type_level;
+mod type_members;
 mod types;
 mod undefined;
+mod var_decls;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::*;
 use crate::lexer::{Kw, Lexer, Payload, Tok, Token};
@@ -76,6 +88,39 @@ pub(crate) struct Parser<'a> {
     /// A plain `.ts` file: `<T>x` there is TypeScript's type assertion, not JSX
     /// (`type_assertion`).
     pub(crate) plain_ts: bool,
+    /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
+    /// statement or item list to add after the first one.
+    more_vars: Vec<VarDecl>,
+    /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
+    /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
+    computed_keys: BTreeSet<String>,
+    /// In the head of a `for` loop before its first `;`, outside the places `allow_in` covers:
+    /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
+    /// JavaScript's grammar (`[~In]`).
+    no_in: bool,
+    /// Ambient declarations read so far, when the caller asked for them (`ambient`).
+    pub(crate) ambient: Option<Vec<crate::Ambient>>,
+    /// Build-time constants: the identifier expression (or shorthand property) starting at
+    /// one of these offsets is the literal (`crate::ParseOptions::defines`).
+    pub(crate) define_at: Option<&'a HashMap<u32, Lit>>,
+    /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
+    pub(crate) saw_module_syntax: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and `T`.
+    this_param: Option<(Span, TypeExpr)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (`velt fmt` refuses files with them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
+    /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
+    /// directly in it.
+    fn_body_next: bool,
+    /// The statement parsed next is directly in a function body or at the top level, where
+    /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
+    var_ok: bool,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -119,6 +164,18 @@ impl<'a> Parser<'a> {
             speculating: 0,
             paren_matches: ParenMatches::default(),
             plain_ts: false,
+            more_vars: Vec::new(),
+            this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
+            fn_body_next: false,
+            var_ok: false,
+            computed_keys: BTreeSet::new(),
+            no_in: false,
+            ambient: None,
+            define_at: None,
+            saw_module_syntax: false,
+            import_meta: None,
         }
     }
 
@@ -256,6 +313,25 @@ impl<'a> Parser<'a> {
         self.expect(Tok::Semi)
     }
 
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace)
+            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
+    }
+
     /// The literal payload of a token.
     fn payload(&self, idx: u32) -> Option<&Payload> {
         self.lx.payloads.get(idx as usize)
@@ -386,6 +462,16 @@ impl<'a> Parser<'a> {
         r
     }
 
+    /// Runs `f` where `in` is the operator again (`[+In]` in JavaScript's grammar: inside
+    /// parentheses, brackets, braces, call arguments, template substitutions and a
+    /// conditional's consequent), also within a `for` head's initializer.
+    pub(super) fn allow_in<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let no_in = std::mem::replace(&mut self.no_in, false);
+        let r = f(self);
+        self.no_in = no_in;
+        r
+    }
+
     // ───────────────────────────── identifiers ─────────────────────────────
 
     fn text(&self, lo: u32, hi: u32) -> &'a str {
@@ -428,8 +514,62 @@ impl<'a> Parser<'a> {
         if Self::is_name(self.peek()) {
             return Ok(self.take_ident());
         }
+        if self.at(Tok::PrivateName) {
+            // TS18016; taken, so the rest of the declaration parses.
+            let span = self.cur_span();
+            self.error("private names are only allowed in class bodies", span);
+            return Ok(self.take_ident());
+        }
         self.error_expected("identifier");
         Err(Fail)
+    }
+
+    /// A property name that may be quoted, as in TypeScript: `name`, a keyword, or a string
+    /// literal (`"content-type"`, `"client:load"`) whose text becomes the name. Used where a
+    /// field is named (object types, interface fields, destructuring); object literals take
+    /// quoted keys themselves (`parse_object_prop`).
+    fn parse_prop_key(&mut self) -> PResult<Ident> {
+        if self.at_symbol_key() {
+            return self.parse_symbol_key();
+        }
+        if let Tok::Str(idx) = self.peek() {
+            let key = Ident {
+                name: self.payload_text(idx),
+                span: self.cur_span(),
+            };
+            self.bump();
+            self.check_quoted_key(&key);
+            return Ok(key);
+        }
+        self.parse_prop_name()
+    }
+
+    /// A quoted property name whose text Velt uses for something else: `"#x"` reads as an ES
+    /// private name, `"[Symbol.iterator]"` and names starting with the noncharacter U+FFFF as
+    /// symbol keys internally, so they are rejected rather than silently taking that meaning;
+    /// `"__proto__"` names the prototype in JS.
+    fn check_quoted_key(&mut self, key: &Ident) {
+        if key.name == "__proto__" {
+            self.error(
+                "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property",
+                key.span,
+            );
+        } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX)
+            || key.name.starts_with("[Symbol.")
+            || key.name.starts_with('\u{FFFF}')
+        {
+            self.error(
+                format!(
+                    "the property name {:?} is not supported: Velt uses names starting with {} for private names and symbol keys",
+                    key.name,
+                    match key.name.starts_with('\u{FFFF}') {
+                        true => "`#`, `[Symbol.` and U+FFFF",
+                        false => "`#` and `[Symbol.`",
+                    }
+                ),
+                key.span,
+            );
+        }
     }
 
     /// Consumes the current token as an identifier (the caller checked its kind).

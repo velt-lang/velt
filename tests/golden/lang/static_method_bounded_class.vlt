@@ -1,0 +1,12 @@
+// A static method of a class with a bounded type parameter is called and used as a value
+// without type arguments: the signature doesn't use the parameter, so nothing is inferred.
+interface Named { name: string; }
+class Box<T extends Named> {
+  item: T;
+  constructor(item: T) { this.item = item; }
+  static wrap(n: number): number[] { return [n]; }
+}
+console.log(Box.wrap(4));
+const w = Box.wrap;
+console.log(w(2));
+console.log(new Box({ name: "x" }).item.name);

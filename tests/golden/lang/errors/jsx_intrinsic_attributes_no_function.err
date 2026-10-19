@@ -1,0 +1,1 @@
+jsx_intrinsic_attributes_no_function.vlt:7:10: error: the JSX provider '_jsx_attrs_no_fn' declares `IntrinsicAttributes` but has no `jsxComponentAttributes`

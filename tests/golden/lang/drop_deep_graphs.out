@@ -1,0 +1,10 @@
+scope 1000000 199998 999998 1
+tree 199999
+composed 10 true
+scope dropped
+reassigned -1 -1 -1 -1
+doubly linked 1000000 999999
+doubly linked arrays 1000000 999999
+doubly linked dropped -1 -1
+kept 400000 400001 -1
+done 0

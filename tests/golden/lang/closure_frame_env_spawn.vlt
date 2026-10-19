@@ -1,0 +1,41 @@
+// check: no leaks
+// A plain closure whose calls `spawn` starts keeps a heap environment: the task gets the
+// function value itself or a copy of it, which a frame environment cannot give (#34,
+// frame_envs.rs). `main` is async, so its closures always have heap environments; the plain
+// functions below give frame environments to closures that are only called.
+async function len(s: string): Promise<number> {
+  return s.length;
+}
+function both(t: string): Promise<number>[] {
+  const g = () => len(t);
+  return [spawn(g()), spawn(g())];
+}
+function either(c: boolean, t: string): Promise<number>[] {
+  const g = () => len(t);
+  return [spawn(c ? g() : g()), spawn(g())];
+}
+function pick(c: boolean, t: string): Promise<number> {
+  const g = () => len(t);
+  return spawn(c ? g() : g());
+}
+function many(t: string): Promise<number>[] {
+  const g = () => len(t);
+  const ps: Promise<number>[] = [];
+  for (let i = 0; i < 2; i++) {
+    ps.push(spawn(g()));
+  }
+  return ps;
+}
+async function main(): Promise<void> {
+  const s = "ab".repeat(3);
+  const f = async () => s.length;
+  console.log(await spawn(f()));
+  const t = "xyz".repeat(2);
+  const g = () => len(t);
+  console.log(await spawn(g()));
+  console.log(await spawn(g()));
+  console.log((await Promise.all(both("pq".repeat(3)))).join(" "));
+  console.log((await Promise.all(either(true, "uvw".repeat(2)))).join(" "));
+  console.log(await pick(true, "ab".repeat(3)), await pick(false, "cd".repeat(3)));
+  console.log((await Promise.all(many("mn".repeat(3)))).join(" "));
+}

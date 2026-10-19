@@ -1,5 +1,5 @@
 // Trial-division factorization of numbers up to ~1e12.
-function factors(n: i64): string {
+function factors(n: number): string {
   const out: string[] = [];
   let d = 2;
   while (d * d <= n) {

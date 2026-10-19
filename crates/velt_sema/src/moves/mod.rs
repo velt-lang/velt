@@ -9,6 +9,7 @@
 //! overlapping a moved path is an error. Escaping closures move the variables they capture by
 //! value. A `using` local is never moved: it is disposed at the end of its block.
 
+mod elements;
 mod expr;
 mod loops;
 mod state;
@@ -21,7 +22,8 @@ use velt_common::{Diagnostic, Span};
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Capture, Def, DefId, LocalDef, LocalId, Pat, PatKind, Stmt, StmtKind, TyId, UseMode,
+    Block, Capture, Def, DefId, LocalDef, LocalId, Pat, PatKind, Stmt, StmtKind, TyId, TyKind,
+    UseMode,
 };
 use loops::LoopFlow;
 use state::{join, Flow, MoveKind, State};
@@ -33,6 +35,9 @@ struct Moves<'a> {
     captures: &'a HashMap<DefId, Vec<Capture>>,
     /// Closures that are stored or returned (they capture by value).
     escaping: &'a HashSet<DefId>,
+    /// Non-escaping closures held in a local, by local (`crate::ownership::held_closures`):
+    /// each call through the local uses what the closure borrows.
+    held: HashMap<LocalId, DefId>,
     /// The local a `let` being checked binds (the holder of a closure literal initializer).
     holder: Option<LocalId>,
     /// The `let` locals of each block being checked (innermost last).
@@ -44,6 +49,8 @@ struct Moves<'a> {
     /// Per local of the function: is its value shared (`Ctx::is_shared_value`) rather than
     /// moved when an escaping closure captures it and it is used again?
     shared: Vec<bool>,
+    /// Per local of the function: does it hold a promise (one consumer: a note on its moves)?
+    promise: Vec<bool>,
     report: bool,
     errors: Vec<Diagnostic>,
     loops: Vec<LoopFlow>,
@@ -53,14 +60,31 @@ struct Moves<'a> {
     reused: HashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a HashMap<DefId, HashSet<LocalId>>,
-    /// Generator closures (`function*` expressions).
-    generators: &'a HashSet<DefId>,
+    /// Closures each call of which has a state of its own that shares the captured variables:
+    /// generator closures (`function*` expressions) and local async closures
+    /// (`FnDef::shares_captures`); true for generators.
+    generators: &'a HashMap<DefId, bool>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
+    /// Per local: an async closure that may run on another thread captures it.
+    threaded: Vec<bool>,
+    /// The variables reported as assigned by a closure created in this one, with where
+    /// ([`Moves::nested_writes`]).
+    nested: Vec<(String, Span)>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
+    /// The capture locals of this function (when it is a closure that shares them with its
+    /// creator: not an async closure that may run on another thread, which copies them).
+    own_captures: HashSet<LocalId>,
     /// The open `try` bodies and handlers (innermost last), see [`tries`].
     tries: Vec<tries::TryFrame>,
+    /// Per local: a `const` that closures in its initializer capture before it is assigned
+    /// (`body::late_consts`; they check that it is assigned when they read it).
+    late: Vec<bool>,
+    /// The use being checked is a closure's capture.
+    capturing: bool,
+    /// Late `const`s reported as not shareable.
+    late_reported: HashSet<LocalId>,
 }
 
 /// What the move dataflow found besides errors.
@@ -71,6 +95,10 @@ pub(crate) struct Outcome {
     pub reused: HashMap<DefId, HashSet<(Span, LocalId)>>,
     /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
     pub boxed: HashMap<DefId, HashSet<LocalId>>,
+    /// The `for (let …)` variables the loop's update assigns: JS gives each iteration its own,
+    /// which the update copies into the next one, so none of them may be one cell for all
+    /// iterations (`crate::ownership::cells`).
+    pub per_iteration: HashSet<(DefId, LocalId)>,
 }
 
 /// Check every function body.
@@ -99,19 +127,40 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .iter()
         .map(|tys| tys.iter().map(|&t| cx.is_copy(t)).collect())
         .collect();
+    let promise: Vec<Vec<bool>> = local_tys
+        .iter()
+        .map(|tys| {
+            tys.iter()
+                .map(|&t| matches!(cx.ty.kind(t), TyKind::Promise(..)))
+                .collect()
+        })
+        .collect();
     let shared: Vec<Vec<bool>> = local_tys
         .into_iter()
         .map(|tys| tys.into_iter().map(|t| cx.is_shared_value(t)).collect())
         .collect();
-    let writers = writers(cx, &escaping);
-    let async_captured = async_captured(cx);
-    let generators: HashSet<DefId> = escaping
+    let (writers, own_writers) = writers(cx, &escaping);
+    // The variables only a closure created inside an escaping closure assigns: a cell the
+    // enclosing function makes for them is checked below (`unshareable`).
+    let nested_only: HashSet<LocalId> = writers
         .iter()
-        .copied()
-        .filter(|&d| matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if f.is_generator))
+        .flat_map(|(c, a)| a.difference(&own_writers[c]).copied())
+        .collect();
+    let async_captured = async_captured(cx);
+    let generators: HashMap<DefId, bool> = escaping
+        .iter()
+        .filter_map(|&d| match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(f)) if f.is_generator || f.shares_captures => Some((d, f.is_generator)),
+            _ => None,
+        })
         .collect();
     let mut all = vec![];
-    let mut out = Outcome::default();
+    let mut nested = vec![];
+    let mut out = Outcome {
+        per_iteration: per_iteration(cx),
+        ..Outcome::default()
+    };
+    let mut unshared = vec![];
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
@@ -131,6 +180,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             using,
             captures: &captures,
             escaping: &escaping,
+            held: crate::ownership::held_closures(cx, &f.body.block),
             in_step: false,
             holder: None,
             open: vec![],
@@ -143,11 +193,25 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                     (*s || *c) && !async_captured.contains(&(def, LocalId(l as u32)))
                 })
                 .collect(),
+            threaded: (0..f.body.locals.len())
+                .map(|l| async_captured.contains(&(def, LocalId(l as u32))))
+                .collect(),
+            nested: vec![],
             shared: shared[i].clone(),
+            promise: promise[i].clone(),
             writers: &writers,
             generators: &generators,
             boxed: HashSet::new(),
+            own_captures: match f.is_async && !f.is_generator && !f.shares_captures {
+                true => HashSet::new(),
+                false => f.captures.iter().map(|c| c.inner).collect(),
+            },
             tries: vec![],
+            late: (f.body.locals.iter())
+                .map(|l| cx.late_consts.contains(&l.span))
+                .collect(),
+            capturing: false,
+            late_reported: HashSet::new(),
             report: false,
             errors: vec![],
             loops: vec![],
@@ -162,7 +226,36 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
         m.report = true;
         m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+        // A `for (let …)` variable cannot be one cell (each iteration has its own, copied into
+        // the next one): when it needs one only because a closure created inside an escaping
+        // closure assigns it, and not anyway, it is an error.
+        let cannot: Vec<LocalId> = m
+            .boxed
+            .iter()
+            .copied()
+            .filter(|l| nested_only.contains(l) && out.per_iteration.contains(&(def, *l)))
+            .collect();
+        if !cannot.is_empty() {
+            let (boxed, errors, reused) = (m.boxed.clone(), m.errors.len(), m.reused.clone());
+            m.writers = &own_writers;
+            m.report = false;
+            m.boxed.clear();
+            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+            let anyway = std::mem::replace(&mut m.boxed, boxed);
+            m.errors.truncate(errors);
+            m.reused = reused;
+            m.writers = &writers;
+            for l in cannot.into_iter().filter(|l| !anyway.contains(l)) {
+                m.boxed.remove(&l);
+                unshared.push((def, l));
+            }
+        }
         all.extend(m.errors);
+        // The closure that captured the variable is reported for it: its creator's use of the
+        // variable after moving it into the closure is no second error.
+        let closure = cx.def_spans.get(i).copied();
+        nested.extend(m.nested.into_iter().map(|(name, at)| (name, at, closure)));
         if !m.reused.is_empty() {
             out.reused.insert(def, m.reused);
         }
@@ -170,6 +263,23 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             out.boxed.insert(def, m.boxed);
         }
     }
+    // A closure, stored or called on the spot, that assigns a variable bound by reference
+    // into an element: the variable lives in a cell (`elements`, #799).
+    elements::box_element_writes(cx, (&shared, &copy), &async_captured, &mut out, &mut all);
+    for (name, at, closure) in nested {
+        // Nor is moving the promise out of the closure that captured it (`ownership::validate`).
+        let moved_out = format!("cannot move captured variable `{name}` out of the closure");
+        cx.diags.retain(|d| {
+            !(d.message == moved_out && d.labels.first().is_some_and(|l| l.span == at))
+        });
+        if let Some(span) = closure {
+            cx.reported_captures.push((name, span));
+        }
+    }
+    if !unshared.is_empty() {
+        crate::ownership::unshareable_nested(cx, &unshared, &writers, &own_writers);
+    }
+    all.retain(|d| !follows_capture_error(cx, d));
     let mut seen = HashSet::new();
     for d in all {
         let key = (d.labels[0].span.lo, d.labels[0].span.hi, d.message.clone());
@@ -180,39 +290,127 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     out
 }
 
-/// Per escaping closure: the enclosing variables it captures by value and assigns.
-fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<LocalId>> {
-    let mut out = HashMap::new();
+/// Per escaping closure: the enclosing variables it captures by value and assigns, itself or
+/// through a closure created in it (#904: `() => { const g = () => { last = v; }; g(); }`
+/// assigns `last` too). The second map holds those the closure assigns itself.
+type Writers = HashMap<DefId, HashSet<LocalId>>;
+fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> (Writers, Writers) {
+    let mut assigned = HashMap::new();
+    let mut direct = HashMap::new();
+    let (mut all, mut own) = (HashMap::new(), HashMap::new());
     for &c in escaping {
-        let Some(Def::Fn(mut f)) = cx.defs[c.0 as usize].take() else {
-            continue;
-        };
-        let mut assigned = HashSet::new();
-        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
-            use crate::hir::ExprKind as E;
-            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+        let mine = assigned_locals(cx, c, &mut assigned, &mut direct);
+        let itself = direct.get(&c).cloned().unwrap_or_default();
+        let (mut a, mut o) = (HashSet::new(), HashSet::new());
+        if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
+            for cap in f.captures.iter().filter(|cap| mine.contains(&cap.inner)) {
+                a.insert(cap.outer);
+                if itself.contains(&cap.inner) {
+                    o.insert(cap.outer);
+                }
+            }
+        }
+        all.insert(c, a);
+        own.insert(c, o);
+    }
+    (all, own)
+}
+
+/// The locals of function `d` it assigns, itself or through the closures created in it (which
+/// assign their captures of them), memoized in `memo`; those it assigns itself go to `direct`.
+fn assigned_locals(
+    cx: &mut Ctx,
+    d: DefId,
+    memo: &mut HashMap<DefId, HashSet<LocalId>>,
+    direct: &mut HashMap<DefId, HashSet<LocalId>>,
+) -> HashSet<LocalId> {
+    if let Some(s) = memo.get(&d) {
+        return s.clone();
+    }
+    // A closure is created once, inside its enclosing function: no cycle (the empty entry
+    // guards against a malformed one).
+    memo.insert(d, HashSet::new());
+    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+        return HashSet::new();
+    };
+    let mut assigned = HashSet::new();
+    let mut closures = vec![];
+    crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+        use crate::hir::ExprKind as E;
+        match &e.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
                 if let E::Local(l, _) = place.kind {
                     assigned.insert(l);
                 }
             }
-        });
-        let outer: HashSet<LocalId> = f
-            .captures
-            .iter()
-            .filter(|cap| assigned.contains(&cap.inner))
-            .map(|cap| cap.outer)
-            .collect();
-        cx.defs[c.0 as usize] = Some(Def::Fn(f));
-        out.insert(c, outer);
+            E::Closure(c) => closures.push(*c),
+            _ => {}
+        }
+    });
+    cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    direct.insert(d, assigned.clone());
+    for c in closures {
+        let inner = assigned_locals(cx, c, memo, direct);
+        if inner.is_empty() {
+            continue;
+        }
+        if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
+            assigned.extend(
+                cf.captures
+                    .iter()
+                    .filter(|cap| inner.contains(&cap.inner))
+                    .map(|cap| cap.outer),
+            );
+        }
+    }
+    memo.insert(d, assigned.clone());
+    assigned
+}
+
+/// The `for (let …)` variables of each function ([`Outcome::per_iteration`]): JS copies every
+/// variable the head declares into each iteration, whether the update assigns it or not. A
+/// `for` loop with a `let` head is a block of the `let`s and a `while` with the update as its
+/// step, both spanning the whole loop (`crate::body::loops`); a block written as such ends
+/// with its closing brace, so it never spans the same code as the `while` it holds.
+fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+    use crate::visit::VisitMut;
+    struct ForHeads(Vec<LocalId>);
+    impl VisitMut for ForHeads {
+        fn stmt(&mut self, s: &mut Stmt) {
+            let StmtKind::Block(b) = &s.kind else {
+                return;
+            };
+            let Some((last, head)) = b.stmts.split_last() else {
+                return;
+            };
+            if !matches!(last.kind, StmtKind::While { .. }) || last.span != b.span {
+                return;
+            }
+            for s in head {
+                if let StmtKind::Let { local, .. } = s.kind {
+                    self.0.push(local);
+                }
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+            continue;
+        };
+        let mut heads = ForHeads(vec![]);
+        crate::visit::block(&mut f.body.block, &mut heads);
+        cx.defs[i] = Some(Def::Fn(f));
+        out.extend(heads.0.into_iter().map(|l| (DefId(i as u32), l)));
     }
     out
 }
 
-/// `(function, local)` pairs captured by an async closure: such a variable keeps its own
-/// value per closure (async closures may run on other threads, and cells are not atomic). A
-/// generator closure's generators stay on the thread that creates them, so its captures may
-/// live in cells.
-fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+/// `(function, local)` pairs captured by an async closure that may run on another thread: such
+/// a variable keeps its own value per closure (cells are not atomic). A local async closure
+/// (`FnDef::shares_captures`, `crate::ownership::local_async`) and a generator closure's
+/// generators stay on the task that creates them, so their captures may live in cells.
+pub(crate) fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
     let mut out = HashSet::new();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
@@ -227,7 +425,7 @@ fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
         cx.defs[i] = Some(Def::Fn(f));
         for c in closures {
             if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
-                if cf.is_async && !cf.is_generator {
+                if cf.is_async && !cf.is_generator && !cf.shares_captures {
                     let d = DefId(i as u32);
                     out.extend(cf.captures.iter().map(|cap| (d, cap.outer)));
                 }
@@ -270,6 +468,10 @@ impl Moves<'_> {
                 }
             }
             s.clear(i);
+        } else if s.uninit[i] && self.capturing && self.late[i] {
+            // Captured before it is assigned (`body::late_consts`): the closure and this
+            // function share the variable, which this function assigns afterwards.
+            self.late_capture(l, span);
         } else if s.uninit[i] {
             if self.report {
                 let name = &self.locals[i].name;
@@ -314,8 +516,8 @@ impl Moves<'_> {
             s.captured[i] = Some((at, holder, writes));
             return;
         }
-        if !self.report {
-            return;
+        if !self.report || self.late[i] {
+            return; // a late `const`: reported where it is captured (`late_capture`)
         }
         let name = &self.locals[i].name;
         self.errors.push(
@@ -330,6 +532,33 @@ impl Moves<'_> {
         );
     }
 
+    /// An escaping closure created here assigns `l`, a variable this closure captured (#904):
+    /// it lives in a cell, or, when it cannot, that is an error.
+    fn nested_writes(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        if !self.report {
+            return;
+        }
+        use crate::ownership::Unshareable;
+        let name = self.locals[i].name.clone();
+        let why = match self.threaded[i] {
+            true => Unshareable::Threaded,
+            false => Unshareable::Promise,
+        };
+        self.errors.push(
+            Diagnostic::error(
+                format!("`{name}` {}", crate::ownership::NESTED_ASSIGN),
+                span,
+            )
+            .with_note(crate::ownership::unshareable_note(&name, why)),
+        );
+        self.nested.push((name, span));
+    }
+
     /// A use of local `i` (by this function, or a capture by a closure: `closure`) while an
     /// escaping closure that assigns it holds it: the variable needs a shared cell. Returns
     /// whether it is (now) boxed, so a move into that closure is no move.
@@ -341,9 +570,10 @@ impl Moves<'_> {
         self.boxed.contains(&l)
     }
 
-    /// A generator closure created here assigns enclosing variable `l` (module docs of
-    /// `crate::ownership::cells`): it lives in a cell, or, when it cannot, that is an error.
-    fn generator_writes(&mut self, l: LocalId, span: Span) {
+    /// A generator closure (`generator`) or a local async closure created here assigns
+    /// enclosing variable `l` (module docs of `crate::ownership::cells`): it lives in a cell,
+    /// or, when it cannot, that is an error.
+    fn generator_writes(&mut self, l: LocalId, span: Span, generator: bool) {
         let i = l.0 as usize;
         if self.boxable[i] {
             self.boxed.insert(l);
@@ -353,20 +583,31 @@ impl Moves<'_> {
             return;
         }
         let name = &self.locals[i].name;
+        let (what, calls) = match generator {
+            true => ("a generator function expression", "the generators"),
+            false => ("an async closure", "the closure's calls"),
+        };
         self.errors.push(
-            Diagnostic::error(
-                format!("a generator function expression cannot change `{name}` here"),
-                span,
-            )
-            .with_note(format!(
-                "TypeScript allows this; Velt doesn't because `{name}` is also captured by an async closure (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
-            )),
+            Diagnostic::error(format!("{what} cannot change `{name}` here"), span).with_note(
+                format!(
+                    "TypeScript allows this; Velt doesn't because `{name}` is also captured by an async closure that may run on another thread (or holds a promise), so it cannot be shared with {calls}; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
+                ),
+            ),
         );
     }
 
     fn moved_error(&self, i: usize, moved_at: Option<(Span, MoveKind)>, span: Span) -> Diagnostic {
         let name = &self.locals[i].name;
         let d = Diagnostic::error(format!("use of moved value `{name}`"), span);
+        if self.promise.get(i).copied().unwrap_or(false) {
+            let d = match moved_at {
+                Some((at, _)) => d.with_label(at, "the promise was taken here"),
+                None => d,
+            };
+            return d.with_note(format!(
+                "a promise has one consumer in Velt: `then`, `catch`, `finally`, `await` and the combinators each take it, while TypeScript lets several share one promise; chain the calls (`{name}.then(f).then(g)`), or keep the promise `then` returns and use that"
+            ));
+        }
         match moved_at {
             Some((at, MoveKind::Closure)) => d.with_label(at, "value moved into closure here").with_note(format!(
                 "`{name}` was moved into a closure that is stored or returned; use `shared({name})` to share it, or `{name}.clone()` to give the closure its own copy"
@@ -507,4 +748,21 @@ fn creates_escaping(b: &crate::hir::Block, escaping: &HashSet<DefId>) -> bool {
         }
     });
     found
+}
+
+/// A "use of moved value `x`" whose move is into a closure already reported for modifying the
+/// captured `x` (`ownership::local_async`): the first error says it all.
+fn follows_capture_error(cx: &Ctx, d: &Diagnostic) -> bool {
+    let Some(name) = d
+        .message
+        .strip_prefix("use of moved value `")
+        .and_then(|r| r.strip_suffix('`'))
+    else {
+        return false;
+    };
+    d.labels.iter().skip(1).any(|l| {
+        cx.reported_captures.iter().any(|(n, span)| {
+            n == name && l.span.file == span.file && span.lo <= l.span.lo && l.span.lo < span.hi
+        })
+    })
 }

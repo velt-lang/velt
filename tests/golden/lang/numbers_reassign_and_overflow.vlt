@@ -1,0 +1,15 @@
+// A number holds any value JS gives it (#525): a local declared from an integer literal takes a
+// fraction later, and a product of integer literals past 2^63 is the double JS computes, not a
+// wrapped 64-bit integer.
+let x = 1;
+x = 2.5;
+console.log(x);
+console.log(3000000000 * 4000000000);
+const a = 3000000000;
+const b = 4000000000;
+console.log(a * b);
+let n = 1;
+for (let i = 0; i < 70; i++) {
+  n = n * 2;
+}
+console.log(n);

@@ -1,40 +1,11 @@
 // std/jsx/attrs/links: attribute types of hyperlinks, document metadata and scripts
-// (internal; the global attributes are repeated from attrs/global.vlt, see there).
+// (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
+// `velt:jsx/attrs`).
 
-// `<a>`.
-export type AnchorAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+import type { HtmlAttrs } from "velt:jsx/attrs/global";
+
+/** `<a>`. */
+export type AnchorAttrs = HtmlAttrs & {
   href?: string;
   target?: string;
   download?: bool | string;
@@ -45,40 +16,8 @@ export type AnchorAttrs = {
   referrerpolicy?: string;
 };
 
-// `<area>`.
-export type AreaAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+/** `<area>`. */
+export type AreaAttrs = HtmlAttrs & {
   alt?: string;
   coords?: string;
   shape?: string;
@@ -90,78 +29,11 @@ export type AreaAttrs = {
   referrerpolicy?: string;
 };
 
-// `<base>`.
-export type BaseAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  href?: string;
-  target?: string;
-};
+/** `<base>`. */
+export type BaseAttrs = HtmlAttrs & { href?: string; target?: string };
 
-// `<link>`.
-export type LinkAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+/** `<link>`. */
+export type LinkAttrs = HtmlAttrs & {
   href?: string;
   crossorigin?: string;
   rel?: string;
@@ -180,80 +52,16 @@ export type LinkAttrs = {
   fetchpriority?: string;
 };
 
-// `<meta>` (`http-equiv` is written as is: hyphenated names are not checked).
-export type MetaAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+/** `<meta>` (`http-equiv` is written as is: hyphenated names are not checked). */
+export type MetaAttrs = HtmlAttrs & {
   name?: string;
   content?: string;
   charset?: string;
   media?: string;
 };
 
-// `<script>`.
-export type ScriptAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+/** `<script>`. */
+export type ScriptAttrs = HtmlAttrs & {
   src?: string;
   type?: string;
   nomodule?: bool;
@@ -266,40 +74,5 @@ export type ScriptAttrs = {
   fetchpriority?: string;
 };
 
-// `<style>`.
-export type StyleAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  media?: string;
-  blocking?: string;
-};
+/** `<style>`. */
+export type StyleAttrs = HtmlAttrs & { media?: string; blocking?: string; type?: string };

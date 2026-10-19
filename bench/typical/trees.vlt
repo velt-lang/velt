@@ -1,0 +1,36 @@
+// Trees whose children are kept in arrays (the shape of a DOM or a syntax tree), built,
+// summed and dropped over and over: every node is released through its parent's array.
+class TreeNode {
+  value: number;
+  children: TreeNode[] = [];
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+
+function build(depth: number, width: number, seed: number): TreeNode {
+  const node = new TreeNode(seed);
+  if (depth > 0) {
+    for (let i = 0; i < width; i++) {
+      node.children.push(build(depth - 1, width, seed * width + i));
+    }
+  }
+  return node;
+}
+
+function sum(node: TreeNode): number {
+  let s = node.value % 7;
+  for (const c of node.children) {
+    s += sum(c);
+  }
+  return s;
+}
+
+function main() {
+  let total: number = 0;
+  for (let round = 0; round < 60; round++) {
+    const tree = build(7, 4, round);
+    total += sum(tree);
+  }
+  console.log(total);
+}

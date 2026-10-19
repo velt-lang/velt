@@ -1,0 +1,1 @@
+jsx_intrinsic_attributes_arity.vlt:6:13: error: `jsxComponentAttributes` of the JSX provider '_jsx_attrs_arity' must take 6 parameters (component, props, key, name, names, values), not 2

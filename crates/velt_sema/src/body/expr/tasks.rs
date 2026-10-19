@@ -11,7 +11,7 @@ use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
 use crate::defs::{FnKind, ThrowSrc};
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, PassMode, TyId, TyKind};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 impl FnCx<'_, '_> {
@@ -38,6 +38,10 @@ impl FnCx<'_, '_> {
         let h = self.expr(inner, hint, Want::Move);
         self.direct_await = None;
         self.awaited_using_shares(&h);
+        let h = match self.await_union(h, span) {
+            Ok(done) => return done,
+            Err(h) => h,
+        };
         self.await_throws(&h);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,
@@ -73,9 +77,145 @@ impl FnCx<'_, '_> {
         self.coerce(h, t)
     }
 
+    /// The value `e` returned from an async function whose result type is `ret` (not itself a
+    /// promise): a promise (`return Promise.resolve(x)`, `return fetchIt()`) or a union holding
+    /// one (`return fn()` with `fn: () => T | Promise<T>`) is adopted, as in JS (issue #1148).
+    /// JS settles the function's promise as the returned one only after every enclosing scope
+    /// is left (`finally` blocks, `using` disposal, closing the iterator of a `for…of`), and
+    /// one microtask later than `return await` would. So the promise is stored and the scopes
+    /// are left (a `break` out of the loop `wrap_adopted` puts around the body); after it the
+    /// function takes one step and returns the awaited promise. A plain value of a union is
+    /// returned at once, as `return 5` adds no steps in JS.
+    pub(crate) fn async_returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        let h = self.expr(e, Some(ret), Want::Move);
+        if self.in_place_misuse(e, &h, ret) {
+            return self.error_expr(e.span);
+        }
+        let span = h.span;
+        // The promise is awaited after the enclosing `try` statements are left: what it
+        // rejects with is thrown from the function, not into their `catch` blocks.
+        let tries = std::mem::take(&mut self.f.tries);
+        let h = match self.cx.ty.kind(h.ty) {
+            TyKind::Promise(..) => {
+                self.await_throws(&h);
+                self.f.adopt_stmt = true;
+                Ok(self.adopt(h, ret, span))
+            }
+            _ => self.await_union_with(h, span, &mut |s, read, _| s.adopt(read, ret, span)),
+        };
+        self.f.tries = tries;
+        match h {
+            Ok(h) if h.ty == self.cx.ty.never => h,
+            Ok(h) | Err(h) => self.coerce(h, ret),
+        }
+    }
+
+    /// `{ <adopted> = p; break <adopt>; }`: stores the returned promise `p` for the function to
+    /// await once its scopes are left (`async_returned`); records how it is returned then.
+    pub(crate) fn adopt(&mut self, p: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
+        let (pty, unit, never) = (p.ty, self.cx.ty.unit, self.cx.ty.never);
+        let payload = self.cx.ty.promise_payload(pty).unwrap_or(self.cx.ty.error);
+        let slot_ty = self.cx.ty.option(pty);
+        let slot = self.new_local("<adopted>", slot_ty, true, span, LocalKind::Temp);
+        let bind = self.new_local("<adopted>", pty, false, span, LocalKind::Bind);
+        // After the scopes: one step (`await Promise.resolve()`), then `await p`.
+        let hop = match self.cx.prelude.get("promiseResolveVoid").cloned() {
+            Some(Item::Def(d)) => {
+                let mut report = |s: &mut Self, _: &str, expected: TyId, found: &hir::Expr| {
+                    s.report_mismatch(expected, found);
+                };
+                let call = self.call_checked(d, vec![], span, &mut report);
+                Some(self.mk(H::Await(Box::new(call)), unit, span))
+            }
+            _ => None,
+        };
+        let read = self.mk(H::Local(bind, hir::UseMode::Move), pty, span);
+        let awaited = self.mk(H::Await(Box::new(read)), payload, span);
+        let awaited = self.coerce(awaited, ret);
+        let stmts = hop
+            .into_iter()
+            .map(|h| hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            })
+            .collect();
+        let value = self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: Some(Box::new(awaited)),
+                span,
+            }),
+            ret,
+            span,
+        );
+        self.f
+            .adopted
+            .push(crate::body::Adopted { slot, bind, value });
+        let which = self.adopt_which(span);
+        let i32_ = self.cx.ty.i32;
+        let site = self.mk(
+            H::Lit(hir::Lit::Int(self.f.adopted.len() as u128)),
+            i32_,
+            span,
+        );
+        let which = self.mk(H::Local(which, hir::UseMode::BorrowMut), i32_, span);
+        let mark = self.mk(
+            H::Assign {
+                place: Box::new(which),
+                value: Box::new(site),
+            },
+            unit,
+            span,
+        );
+        let place = self.mk(H::Local(slot, hir::UseMode::BorrowMut), slot_ty, span);
+        let some = self.mk(H::WrapSome(Box::new(p)), slot_ty, span);
+        let store = self.mk(
+            H::Assign {
+                place: Box::new(place),
+                value: Box::new(some),
+            },
+            unit,
+            span,
+        );
+        let stmts = vec![
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(store),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(mark),
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Break(Some(crate::body::ADOPT_LABEL.to_string())),
+                span,
+            },
+        ];
+        self.mk(
+            H::Block(hir::Block {
+                stmts,
+                value: None,
+                span,
+            }),
+            never,
+            span,
+        )
+    }
+
+    /// The function's `<adopt_which>` local: which stored promise is adopted (`Frame::adopt_which`).
+    pub(crate) fn adopt_which(&mut self, span: Span) -> LocalId {
+        if let Some(w) = self.f.adopt_which {
+            return w;
+        }
+        let i32_ = self.cx.ty.i32;
+        let w = self.new_local("<adopt_which>", i32_, true, span, LocalKind::Temp);
+        self.f.adopt_which = Some(w);
+        w
+    }
+
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
-    fn await_throws(&mut self, h: &hir::Expr) {
+    pub(crate) fn await_throws(&mut self, h: &hir::Expr) {
         if let H::Call {
             callee: Callee::Def(d, targs),
             ..
@@ -142,7 +282,7 @@ impl FnCx<'_, '_> {
                 ..
             }
         );
-        if !promise || spawned {
+        if !promise || spawned || self.is_promise_callback_call(e, h) {
             return;
         }
         let mut d = Diagnostic::error(
@@ -278,6 +418,27 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if args.len() > 2 {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`spawn` takes 1 or 2 arguments, found {}", args.len()),
+                    span,
+                )
+                .with_note("write `spawn(f())` or `spawn(f(), { worker: i })`"),
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
+        // `spawn(p, { worker })` (#211): the task pinned to a worker; the index is checked
+        // after `p`, as its second argument, and passed to the runtime right before the spawn.
+        if let [p, opts] = args {
+            let worker = self.spawn_worker(p, opts);
+            let mut e = self.spawn_call(std::slice::from_ref(p), exp, span);
+            if let (Some(w), H::Call { args, .. }) = (worker, &mut e.kind) {
+                args.push(w);
+            }
+            return e;
+        }
         let [arg] = args else {
             return self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
         };
@@ -320,6 +481,98 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
+    /// The worker index of `spawn(p, opts)`: `opts` is an object literal with an optional
+    /// `worker: i64` (`{}` pins nothing). `p` must be a call or a task body: a promise that
+    /// already started stays on its task.
+    fn spawn_worker(&mut self, p: &ast::Expr, opts: &ast::Expr) -> Option<hir::Expr> {
+        if !not_started(p) {
+            self.cx.error(
+                Diagnostic::error(
+                    "a started promise stays on its task; pass the call: `spawn(f(), { worker })`",
+                    p.span,
+                )
+                .with_note("only a call or an async task body can be placed on a worker"),
+            );
+        }
+        let mut o = opts;
+        while let ast::ExprKind::Paren(x) = &o.kind {
+            o = x;
+        }
+        let ast::ExprKind::Object(props) = &o.kind else {
+            self.cx.error(
+                Diagnostic::error("`spawn`'s options must be an object literal", opts.span)
+                    .with_note("write `spawn(f(), { worker: i })`"),
+            );
+            return None;
+        };
+        let i64_ty = self.cx.ty.i64;
+        let mut worker = None;
+        for prop in props {
+            let (name, value) = match prop {
+                ast::ObjectProp::KeyValue(k, v) => (k, Some(v)),
+                ast::ObjectProp::Shorthand(k) => (k, None),
+                ast::ObjectProp::Spread(e) => {
+                    self.cx.error(
+                        Diagnostic::error("`spawn`'s options can't be spread", e.span)
+                            .with_note("write `spawn(f(), { worker: i })`"),
+                    );
+                    continue;
+                }
+                ast::ObjectProp::Method(m) => {
+                    self.cx.err(
+                        "`spawn`'s options take no methods".to_string(),
+                        m.sig.name.span,
+                    );
+                    continue;
+                }
+            };
+            if name.name == "worker" && worker.is_some() {
+                self.cx.error(
+                    Diagnostic::error("`worker` is given twice", name.span)
+                        .with_note("give `worker` once"),
+                );
+                continue;
+            }
+            if name.name != "worker" {
+                self.cx.error(
+                    Diagnostic::error(format!("unknown `spawn` option `{}`", name.name), name.span)
+                        .with_note("the only option is `worker`"),
+                );
+                continue;
+            }
+            let ident;
+            let v = match value {
+                Some(v) => v,
+                None => {
+                    ident = ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Ident(name.clone()),
+                        span: name.span,
+                    };
+                    &ident
+                }
+            };
+            let h = self.expr(v, Some(i64_ty), Want::Move);
+            worker = Some(self.coerce(h, i64_ty));
+        }
+        worker
+    }
+}
+
+/// `spawn(p, { worker })`'s `p`: a call (of a function, a method or a function value), an async
+/// task body, or a conditional choosing between them; not a promise already started.
+fn not_started(p: &ast::Expr) -> bool {
+    match &p.kind {
+        ast::ExprKind::Paren(x) => not_started(x),
+        ast::ExprKind::Call { .. } | ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => {
+            true
+        }
+        ast::ExprKind::Cond { then, els, .. } => not_started(then) && not_started(els),
+        _ => false,
+    }
+}
+
+impl FnCx<'_, '_> {
     /// `spawn(g())` through a function value `g` (also in either branch of a conditional): the
     /// task needs `g`'s captures of its own. `g` is taken (a soft move): moved to the task when
     /// this is its last use, so a capture nothing else uses moves with it, and shared, then
@@ -352,14 +605,12 @@ impl FnCx<'_, '_> {
         let H::Call { args, .. } = &h.kind else {
             return;
         };
-        let Some(H::Call {
-            args: call_args, ..
-        }) = args.first().map(|a| &a.kind)
-        else {
-            return;
-        };
+        let mut calls = vec![];
+        if let Some(p) = args.first() {
+            spawned_calls(p, &mut calls);
+        }
         let mut checks = vec![];
-        for a in call_args {
+        for a in calls.into_iter().flatten() {
             let (place, coerced) = arg_place(a);
             let using = match place.kind {
                 H::Local(l, _) => self.local_kind(l) == LocalKind::Using,
@@ -409,7 +660,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `await call(...)`: the `using` variables passed to the call itself may be shared.
-    fn awaited_using_shares(&mut self, h: &hir::Expr) {
+    pub(super) fn awaited_using_shares(&mut self, h: &hir::Expr) {
         let H::Call { args, .. } = &h.kind else {
             return;
         };
@@ -447,6 +698,25 @@ impl FnCx<'_, '_> {
 
 /// The place an argument passes (under re-wrapping: `Some`, an up- or downcast, a union member), and
 /// the interface value coercion it went through, if any.
+/// The argument lists of the calls `spawn(p)` starts: `p`'s, or each branch's of a conditional
+/// (`spawn(c ? f(x) : g(y))`, docs/reference/async.md) and of a block's value (also
+/// `crate::weak_threads`).
+pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>) {
+    match &p.kind {
+        H::Call { args, .. } => out.push(args),
+        H::If { then, els, .. } => {
+            spawned_calls(then, out);
+            spawned_calls(els, out);
+        }
+        H::Block(b) => {
+            if let Some(v) = &b.value {
+                spawned_calls(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;

@@ -1,27 +1,26 @@
 # A tour of Velt
 
 Velt reads like TypeScript and runs like Rust: it compiles to native code, has no garbage
-collector, and runs async code on a multi-core runtime. This tour shows the language in one
+collector, and runs your async code on every core of the machine. This tour shows the language in one
 sitting. Every example compiles; the full rules are in [the Reference](../reference/README.md).
 
 ## Values and types
 
 ```ts
-const a = 7;             // an integer (stored as i64) that behaves like a JS number
+const a = 7;             // a number, exactly as in JS (stored as an integer where that's exact)
 const x: f64 = 1.5;      // number is f64
 console.log(a / 2, a + x);  // 3.5 8.5, like JS
-const n: i64 = 7;        // a declared integer type: integer math, opt-in for speed
+const n: i64 = 7;        // a declared integer type: integer math, opt-in
 console.log(n / 2, Math.trunc(a / 2));   // 3 3: integer division
 let small: u8 = 250;
 small += 10;             // 4: integer math wraps
-console.log(n as f64 / 2.0, 300 as u8);  // 3.5 44: declared types convert only with `as`
-const s = `a=${a} x=${x}`;               // template literals; "a=" + a is a compile error
+console.log(n as number / 2, 300 as u8); // 3.5 44: 64-bit integers convert only with `as`
+const s = `a=${a} x=${x}`;               // template literals; "a=" + a is "a=7", like JS
 ```
 
-Types are required on function signatures and inferred everywhere else. Conditions take `bool`
-and nullable values (`if (!user) return;` is a null check), never numbers or strings (write
-`if (count !== 0)`, not `if (count)`), and `null` is the only "nothing": there is no
-`undefined`. See [Types](../reference/types.md) and
+Types are required on function signatures and inferred everywhere else. Conditions work as in
+JavaScript (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `if (!user) return;` is a null
+check that narrows `user`), and `null` and `undefined` are two values, as in Node. See [Types](../reference/types.md) and
 [Variables and conditions](../reference/variables.md).
 
 ## Functions and errors
@@ -151,8 +150,8 @@ console.log(total, squares, first + second, merged);
 
 There is no garbage collector. Numbers and strings are values you can copy freely. Other
 objects (arrays, class instances, maps) are references, as in JS, and are freed the moment
-their last reference goes; calls borrow them, so passing an object to a function costs
-nothing:
+their last reference goes. Passing an object to a function passes the same object, as in JS,
+and costs nothing:
 
 ```ts
 class User {
@@ -163,12 +162,12 @@ function log(u: User) { console.log(u.name); }
 function save(u: User) { console.log("saved", u.name); }
 
 const user = new User();
-log(user);            // calls borrow: `user` stays usable
+log(user);            // the same object: `user` stays usable
 save(user);
 ```
 
-There is no `mut`: the compiler infers which functions modify their arguments. Assigning an
-object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
+You never annotate memory: the compiler works out which functions modify their arguments and
+when each object can be freed. Assigning an object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
 [Memory without a garbage collector](memory.md) explains the model.
 
 ## Async and I/O
@@ -207,13 +206,13 @@ they can't modify captured variables, so they share state through `shared(...)` 
 ## An HTTP server
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const hits = shared(0);
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     hits.add(1);
-    return Response.json({ path: req.path, hits: hits.get() });
+    return Response.json({ path: new URL(req.url).pathname, hits: hits.get() });
   });
 }   // like Node, a listening server keeps the program running (until `server.close()`)
 ```

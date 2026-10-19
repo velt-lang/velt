@@ -1,0 +1,132 @@
+// The shop's JSON documents: what the API returns, what it accepts, and its errors. Field order
+// is the JSON order (node/server.mjs builds its objects in the same order).
+
+export type Price = { amount: i64; currency: string }; // amount in cents
+
+export type Variant = { sku: string; color: string; size: string; stock: i64; price: Price };
+
+export type Rating = { average: f64; count: i64 };
+
+export type Product = {
+  id: i64;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  brand: string;
+  tags: string[];
+  attributes: Record<string, string>;
+  variants: Variant[];
+  rating: Rating;
+  active: bool;
+  createdAt: string;
+};
+
+export type Customer = { id: i64; name: string; email: string };
+
+export type Address = { line1: string; city: string; postalCode: string; country: string };
+
+export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
+
+export type OrderItem = {
+  productId: i64;
+  sku: string;
+  name: string;
+  quantity: i64;
+  unitPrice: i64;
+  lineTotal: i64;
+};
+
+export type Order = {
+  id: i64;
+  status: OrderStatus;
+  customer: Customer;
+  items: OrderItem[];
+  shipping: Address;
+  currency: string;
+  subtotal: i64;
+  discount: i64;
+  tax: i64;
+  shippingCost: i64;
+  total: i64;
+  createdAt: string;
+};
+
+// Request bodies. Optional fields may be missing or null.
+
+export type NewVariant = { sku: string; color: string; size: string; stock: i64; price: Price };
+
+export type NewProduct = {
+  name: string;
+  description?: string;
+  category: string;
+  brand: string;
+  tags?: string[];
+  attributes?: Record<string, string>;
+  variants: NewVariant[];
+};
+
+export type ProductPatch = {
+  name?: string;
+  description?: string;
+  tags?: string[];
+  attributes?: Record<string, string>;
+  active?: bool;
+};
+
+export type OrderLine = { sku: string; quantity: i64 };
+
+export type NewOrder = { customer: Customer; items: OrderLine[]; shipping: Address };
+
+export type StatusChange = { status: OrderStatus };
+
+// Responses that aren't documents.
+
+export type Page<T> = { items: T[]; page: i64; limit: i64; total: i64; pages: i64 };
+
+export type BulkResult = { created: i64; ids: i64[]; errors: BulkError[] };
+
+export type BulkError = { index: i64; code: string; message: string };
+
+export type CategoryStats = { category: string; orders: i64; units: i64; revenue: i64 };
+
+export type ProductStats = { productId: i64; name: string; units: i64; revenue: i64 };
+
+export type StatusCounts = { pending: i64; paid: i64; shipped: i64; cancelled: i64 };
+
+export type Stats = {
+  products: i64;
+  activeProducts: i64;
+  variants: i64;
+  unitsInStock: i64;
+  orders: i64;
+  ordersByStatus: StatusCounts;
+  revenue: i64;
+  averageOrderValue: i64;
+  categories: CategoryStats[];
+  topProducts: ProductStats[];
+};
+
+/// A request the API refuses: `status` and a machine-readable `code` (`invalid`, `bad_json`,
+/// `not_found`, `conflict`, `method_not_allowed`).
+export class ApiError extends Error {
+  status: i64;
+  code: string;
+
+  constructor(status: i64, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function invalid(message: string): ApiError {
+  return new ApiError(400, "invalid", message);
+}
+
+/// The categories a product may have (a function: module-level array constants are #60).
+export function categories(): string[] {
+  return ["audio", "books", "camping", "coffee", "garden", "kitchen", "running", "toys"];
+}
+
+export const CURRENCY = "EUR";

@@ -11,7 +11,7 @@ names keep the system zone. Node differs there: it understands region names like
   - `DateTime.now()`, `fromEpochMs(ms)`
   - `utc(year, month, day = 1, hour = 0, minute = 0, second = 0, ms = 0)`: fields roll over
     like `Date.UTC`
-  - `parse(iso)`: ISO 8601 / RFC 3339; see the notes for what it accepts
+  - `parse(s)`: ISO 8601 / RFC 3339; see the notes for what it accepts
   - `parseHttpDate(s)`: accepts all three RFC 7231 formats
   - `parse` and `parseHttpDate` throw `DateTimeError`.
 - UTC getters: `year month day hour minute second millisecond dayOfWeek (0 = Sunday) dayOfYear`.

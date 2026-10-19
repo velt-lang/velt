@@ -16,6 +16,16 @@ pub(crate) fn is_place(e: &hir::Expr) -> bool {
     ) || matches!(&e.kind, H::Downcast(x) if is_place(x))
 }
 
+/// A variable, constant or field path of one: reading it again has no effect (unlike a getter,
+/// which is a call).
+pub(crate) fn is_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) | H::Global(_) => true,
+        H::Field { base, .. } => is_path(base),
+        _ => false,
+    }
+}
+
 /// The local a place is rooted at (through projections), if any.
 pub(crate) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
@@ -67,6 +77,20 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
+        // table can't be taken over, like `const v = K`.
+        if let H::Global(d) = e.kind {
+            if crate::body::pure_init::is_table(self.cx, d) {
+                let name = self
+                    .cx
+                    .global(d)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                let msg = format!("cannot move out of module constant `{name}`");
+                let err = crate::body::pure_init::table_escapes(&name, msg, e.span);
+                self.cx.error(err);
+            }
+        }
     }
 
     /// Use place `e` mutably (receiver of a method or argument of an intrinsic known to modify it,
@@ -82,12 +106,36 @@ impl FnCx<'_, '_> {
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        self.readonly_element_write(e);
         if let H::Global(d) = root_expr(e).kind {
-            let name = self
+            let (name, stored, mutable, module) = self
                 .cx
                 .global(d)
-                .map(|g| g.name.clone())
+                .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
+            if stored {
+                if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
+                    self.cx.err(
+                        format!("cannot assign to `{name}`, a module `const`"),
+                        e.span,
+                    );
+                    return false;
+                }
+                // An imported binding is read-only, as in ES modules: its contents are not.
+                if matches!(e.kind, H::Global(_)) && module != self.module && what == "assign to" {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            format!("cannot assign to imported binding `{name}`"),
+                            e.span,
+                        )
+                        .with_note(
+                            "an imported `let` is read-only where it is imported, as in JavaScript: export a function that assigns it",
+                        ),
+                    );
+                    return false;
+                }
+                return true;
+            }
             self.cx.err(
                 format!("cannot {what} module-level constant `{name}`"),
                 e.span,
@@ -107,7 +155,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn root_expr(e: &hir::Expr) -> &hir::Expr {
+pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         H::Field { base, .. }
         | H::Index { base, .. }

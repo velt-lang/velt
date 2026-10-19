@@ -1,0 +1,28 @@
+// Call signatures in interfaces and object types: one signature alone is a function type.
+interface Formatter {
+  (value: number, unit: string): string;
+}
+type Predicate = {
+  (x: number): boolean
+};
+interface Handler<T> {
+  (event: T): void
+}
+
+const fmt: Formatter = (value, unit) => `${value} ${unit}`;
+function isEven(x: number): boolean {
+  return x % 2 === 0;
+}
+const even: Predicate = isEven;
+const log: Handler<string> = (event) => {
+  console.log("event:", event);
+};
+
+function apply(f: Formatter, v: number): string {
+  return f(v, "kg");
+}
+
+console.log(fmt(3, "m"), apply(fmt, 5));
+console.log(even(4), even(7), [1, 2, 3, 4].filter(even).length);
+log("click");
+console.log(typeof fmt, typeof even);

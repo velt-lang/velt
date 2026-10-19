@@ -1,0 +1,21 @@
+// A library module whose object literals implement an interface of another module (see
+// object_literal_interfaces_import_order.vlt).
+import type { Source } from "./_object_literal_catcher";
+import { depth } from "./_object_literal_catcher";
+
+export function failing(): Source {
+  return {
+    read(n: number): number {
+      throw new RangeError("from maker " + n);
+    },
+  };
+}
+
+export function recursive(): Source {
+  return {
+    read(n: number): number {
+      if (n <= 0) throw new RangeError("bottom");
+      return depth(recursive(), n - 1) + 1;
+    },
+  };
+}

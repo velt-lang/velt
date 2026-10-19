@@ -6,11 +6,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use velt_common::Diagnostic;
+use velt_syntax::ast;
 
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
 use crate::ctx::Ctx;
-use crate::defs::{member_key, MethodRef};
+use crate::defs::{MethodRef, RetSource};
 use crate::hir::{AdtKind, DefId, TyId};
 
 pub(super) fn check_classes(cx: &mut Ctx) {
@@ -51,9 +52,18 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     let mut out = BTreeSet::new();
     for &d in adts {
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
-        for m in decl.methods.iter().filter(|m| m.is_override) {
+        // `override #m` is reported by `own_methods`: private names are never inherited.
+        for m in decl
+            .methods
+            .iter()
+            .filter(|m| !m.decl.sig.name.is_private_name())
+        {
             let name = &m.decl.sig.name;
-            let key = member_key(&name.name, m.is_setter);
+            let module = cx.adt(d).expect("ICE: adt").module;
+            let key = cx.method_key(module, name, m.is_setter);
+            if !m.is_override && (m.is_static || !std_override(cx, d, &key)) {
+                continue;
+            }
             match introducer(cx, d, &key) {
                 // Generic methods get no vtable slot: calls through a base class are rejected
                 // (`body::expr::method_call`), calls on the concrete class are direct.
@@ -76,8 +86,16 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     out
 }
 
-/// The ancestor of `d` (excluding `d`) that first declares `name` without `override`, or
-/// that gets it as the default method of an interface it implements.
+/// Does `d`'s method `key` redefine one a std class declares (`Error.toString`)? TypeScript
+/// code redefines its lib's methods without `override`, so such a redefinition overrides
+/// without it.
+fn std_override(cx: &Ctx, d: DefId, key: &str) -> bool {
+    introducer(cx, d, key).is_some_and(|o| cx.declared_in_std(o))
+}
+
+/// The ancestor of `d` (excluding `d`) that first declares the instance method `name` without
+/// `override`, or that gets it as the default method of an interface it implements (static
+/// methods of the name are skipped).
 fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
     let mut cur = base_of_def(cx, d);
     let mut found = None;
@@ -88,13 +106,12 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
             break;
         }
         let a = cx.adt(c)?;
-        if let Some(m) = a.methods.get(name) {
-            if m.is_static {
-                return None;
-            }
+        // A static of the name is another namespace: look past it, as method lookup does.
+        let instance = a.methods.get(name).filter(|m| !m.is_static);
+        if instance.is_some() {
             let is_override = a.decl.is_some_and(|t| {
                 t.methods.iter().any(|x| {
-                    x.is_override && member_key(&x.decl.sig.name.name, x.is_setter) == name
+                    x.is_override && cx.method_key(a.module, &x.decl.sig.name, x.is_setter) == name
                 })
             });
             found = Some(c);
@@ -177,18 +194,34 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
 /// `override` rules for `d`'s own methods; overrides replace slots, overridden ones get one.
 fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable) {
     let a = cx.adt(d).expect("ICE: adt");
-    let (decl, base_ty) = (a.decl.expect("ICE: adt decl"), a.base);
+    let (decl, base_ty, module) = (a.decl.expect("ICE: adt decl"), a.base, a.module);
     for m in decl.methods.iter().filter(|m| !m.is_static) {
         let name = &m.decl.sig.name;
-        let key = member_key(&name.name, m.is_setter);
+        let key = cx.method_key(module, name, m.is_setter);
         let Some(mref) = cx.adt(d).and_then(|a| a.methods.get(&key)).copied() else {
             continue;
         };
+        if name.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            // `#m` is never inherited, so it overrides nothing and has no vtable slot.
+            if m.is_override {
+                cx.error(
+                    Diagnostic::error(
+                        format!(
+                            "`override` on `{}`: private names are never inherited",
+                            name.name
+                        ),
+                        name.span,
+                    )
+                    .with_note("remove `override`"),
+                );
+            }
+            continue;
+        }
         let inherited = base_ty
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
             .filter(|f| !f.is_static());
-        if m.is_override {
+        if m.is_override || (inherited.is_some() && std_override(cx, d, &key)) {
             if let Some(f) = inherited {
                 check_override_sig(cx, mref, &f, name);
             }
@@ -239,11 +272,11 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
         .iter()
         .map(|p| {
             let mut p = p.clone();
-            p.ty = cx.ty.subst(p.ty, &iface_args);
+            p.ty = cx.subst(p.ty, &iface_args);
             p
         })
         .collect();
-    let ret = cx.ty.subst(m.ret, &iface_args);
+    let ret = cx.subst(m.ret, &iface_args);
     let mut targs = iface_args;
     targs.push(implementor);
     let qual = cx.adt(d)?.qual_name.clone();
@@ -265,6 +298,19 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
     };
     cx.adt_mut(d).methods.insert(name.to_string(), r);
     Some(fwd)
+}
+
+/// May an override returning `this` (the class `own`) give the base method's result `base`:
+/// is `base` a class that `own` extends?
+fn this_result_ok(cx: &mut Ctx, own: TyId, base: TyId) -> bool {
+    let mut cur = own;
+    while let Some(next) = cx.base_of(cur) {
+        if next == base {
+            return true;
+        }
+        cur = next;
+    }
+    false
 }
 
 fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_syntax::ast::Ident) {
@@ -294,13 +340,36 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     }
     let nd = cx.fn_info(m.def).generics.len() - own_m;
     args.extend((0..own_m as u32).map(|k| cx.ty.param(nd as u32 + k)));
-    let bp: Vec<TyId> = bp.into_iter().map(|t| cx.ty.subst(t, &args)).collect();
-    let br = cx.ty.subst(br, &args);
+    let bp: Vec<TyId> = bp.into_iter().map(|t| cx.subst(t, &args)).collect();
+    let br = cx.subst(br, &args);
     let message = format!(
         "method `{}` does not have the same signature as the base class method it overrides",
         name.name
     );
+    // A call through the base's type converts the result of a `this`-returning method to the
+    // receiver's class (`body::expr::this_type`), so its overrides must return `this` too.
+    if cx.fn_info(base.def()).returns_this() && !cx.fn_info(m.def).returns_this() {
+        if cx.fn_info(m.def).ret_source == RetSource::Body {
+            cx.fn_info_mut(m.def).inherits_this = true;
+        } else {
+            cx.error(
+                Diagnostic::error(message, name.span).with_note(
+                    "TypeScript's TS2416: the base class method returns `this`, the class of the object it is called on; declare the override's result as `this` and return `this`",
+                ),
+            );
+            return;
+        }
+    }
     let at = (name.span, message.clone());
+    // `override m(): this`: the override returns its receiver, typed as the base method's
+    // result, which a call converts to the receiver's class (`body::expr::this_type`).
+    let mr = match cx.fn_info(m.def).returns_this() && mr != br && this_result_ok(cx, mr, br) {
+        true => {
+            cx.fn_info_mut(m.def).ret = br;
+            br
+        }
+        false => mr,
+    };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if mp != bp || !ret_ok || mg != bg {
         cx.err(message, name.span);

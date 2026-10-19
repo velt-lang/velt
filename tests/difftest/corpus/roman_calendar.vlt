@@ -1,9 +1,9 @@
 // Day of week (Zeller), leap years and days between dates.
-function isLeap(y: i64): bool {
+function isLeap(y: number): bool {
   return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }
 
-function dayOfWeek(y: i64, m: i64, d: i64): string {
+function dayOfWeek(y: number, m: number, d: number): string {
   let mm = m;
   let yy = y;
   if (mm < 3) {
@@ -26,7 +26,7 @@ function dayOfWeek(y: i64, m: i64, d: i64): string {
   return `${names[h as usize]}`;
 }
 
-function dayOfYear(y: i64, m: i64, d: i64): i64 {
+function dayOfYear(y: number, m: number, d: number): number {
   const days = [31, isLeap(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   let n = d;
   for (let i = 0; i < m - 1; i++) {

@@ -191,13 +191,13 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
         return false;
     }
     let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         TyKind::Tuple(ts) => ts,
         TyKind::Adt(d, args) => {
             let fields: Vec<TyId> = cx
                 .adt(d)
                 .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
-            fields.into_iter().map(|f| cx.ty.subst(f, &args)).collect()
+            fields.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Promise(..) => return false,
         // Type parameters, interface and function values may hold anything.

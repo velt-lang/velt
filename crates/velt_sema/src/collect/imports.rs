@@ -13,12 +13,15 @@ use std::collections::HashSet;
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
-use super::exports::{all_exports, bound_name, export_of, import_target, imports_of, local_of};
+use super::exports::{
+    all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
+};
 use crate::ctx::Ctx;
 
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
     let modules = cx.modules;
+    let mut process_imported = false;
     for item in &modules[m].ast.items {
         let ast::ItemKind::Import(imp) = &item.kind else {
             continue;
@@ -36,13 +39,17 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
         };
         if item.exported {
             for n in &imp.names {
-                exported_item(cx, t, imp, n);
+                exported_item(cx, m, t, imp, n);
             }
         } else if let Some(ns) = &imp.namespace {
             bind_namespace(cx, m, t, ns);
         } else {
             for n in &imp.names {
-                import_name(cx, m, t, imp, n);
+                if imp.from == "velt:process" && n.name.name == BUILTIN_PROCESS {
+                    import_builtin_process(cx, m, n, &mut process_imported);
+                } else {
+                    import_name(cx, m, t, imp, n);
+                }
             }
         }
     }
@@ -52,6 +59,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
 /// `n` of `import { n } from` / `export { n } from` module `t`: its item, or an error.
 fn exported_item(
     cx: &mut Ctx,
+    m: usize,
     t: usize,
     imp: &ast::Import,
     n: &ast::ImportName,
@@ -60,7 +68,16 @@ fn exported_item(
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
     }
+    if !namespace_exports(cx, t, &n.name.name).is_empty() {
+        return None; // a namespace: its members are bound by `import_name`
+    }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
+        if super::exports::maybe_dropped(cx, t, &n.name.name) {
+            // The parser may have dropped its declaration: that error is reported already.
+            let file = cx.modules[m].file;
+            cx.poisoned.insert((file, bound_name(n).name.clone()));
+            return None;
+        }
         let mut d = Diagnostic::error(
             format!("module `{}` has no member `{}`", imp.from, n.name.name),
             n.name.span,
@@ -93,7 +110,17 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
         ),
         ("velt:http", "fetch" | "Headers") => Some(
             "`fetch`, `Request`, `Response` and `Headers` are global, as in Node: use them without \
-             an import (`velt:http`'s own `Request` and `Response` are the server's)",
+             an import",
+        ),
+        ("velt:http", "Request" | "Response") => Some(
+            "`velt:http` handlers take and return the global `Request` and `Response`, as in Deno \
+             and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, \
+             `Response.text(body, status)` is `new Response(body, { status })`; the migration \
+             table is in docs/std/http.md)",
+        ),
+        ("velt:http", "ResponseWriter") => Some(
+            "a streamed body is a `BodyStream` from `velt:fetch`: `new \
+             Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`",
         ),
         ("velt:http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
             "`fetch` is global now and returns the standard `Response` (`res.headers` is a \
@@ -104,7 +131,30 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
-    let Some(it) = exported_item(cx, t, imp, n) else {
+    // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
+    // a type or interface of the same name is imported with it.
+    let members = namespace_exports(cx, t, &n.name.name);
+    if !members.is_empty() {
+        let local = bound_name(n).clone();
+        // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
+        // local namespace instead).
+        let prefix = format!("{}.", local.name);
+        if cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix)) {
+            cx.error(crate::namespaces::conflict(&local, None));
+            return;
+        }
+        for (x, it) in members {
+            let key = format!("{}.{x}", local.name);
+            cx.scopes[m].items.insert(key.clone(), it);
+            if n.type_only {
+                cx.scopes[m].type_only.insert(key);
+            }
+        }
+        if export_of(cx, t, &n.name.name).is_none() {
+            return;
+        }
+    }
+    let Some(it) = exported_item(cx, m, t, imp, n) else {
         return;
     };
     let local = bound_name(n);
@@ -115,6 +165,39 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     if n.type_only {
         cx.scopes[m].type_only.insert(local.name.clone());
     }
+}
+
+/// The builtin `process` namespace, which `velt:process` also exports (as `node:process` does).
+const BUILTIN_PROCESS: &str = "process";
+
+/// `import { process } from "velt:process"`: the builtin `process`, which every module already
+/// sees, so the import binds nothing and `process.argv` reads the builtin as without it. The
+/// builtin is resolved by its name, so it can't be renamed. `imported`: an earlier import of it
+/// in this module (a second one is a duplicate, as in TypeScript).
+fn import_builtin_process(cx: &mut Ctx, m: usize, n: &ast::ImportName, imported: &mut bool) {
+    let local = bound_name(n);
+    if local.name != BUILTIN_PROCESS {
+        cx.error(
+            Diagnostic::error(
+                format!("`process` cannot be imported as `{}`", local.name),
+                local.span,
+            )
+            .with_note(
+                "TypeScript allows renaming it, but Velt's `process` is a builtin namespace \
+                 that is only known by its name: write `import { process } from \
+                 \"velt:process\"` (or leave the import out) and use `process`",
+            ),
+        );
+        return;
+    }
+    if *imported {
+        cx.err(
+            format!("the name `{}` is defined multiple times", local.name),
+            local.span,
+        );
+        return;
+    }
+    *imported = define(cx, m, local);
 }
 
 /// `import * as ns from` module `t`: every export `x` becomes the item `ns.x`.
@@ -169,7 +252,10 @@ fn define(cx: &mut Ctx, m: usize, local: &ast::Ident) -> bool {
 fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
     for n in &imp.names {
         let item = local_of(cx, m, &n.name.name);
-        if item.is_some() {
+        let prefix = format!("{}.", n.name.name);
+        let namespace = cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix))
+            && !cx.scopes[m].namespaces.contains_key(&n.name.name);
+        if item.is_some() || namespace {
             cx.rec_item(n.name.span, item);
             continue;
         }

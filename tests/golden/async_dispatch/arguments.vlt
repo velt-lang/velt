@@ -18,7 +18,7 @@ interface Filler {
 class Apples implements Filler {
   async fill(bag: Bag): Promise<usize> {
     bag.items.push("apple");
-    return bag.items.length;
+    return bag.items.length as usize;
   }
 
   async fillAll(bags: Bag[]): Promise<usize> throws Full {
@@ -28,14 +28,14 @@ class Apples implements Filler {
       }
       b.items.push("apple");
     }
-    return bags.length;
+    return bags.length as usize;
   }
 }
 
 class Packer {
   async pack(bag: Bag): Promise<usize> {
     bag.items.push("box");
-    return bag.items.length;
+    return bag.items.length as usize;
   }
 }
 

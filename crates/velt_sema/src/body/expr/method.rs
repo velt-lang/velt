@@ -58,12 +58,36 @@ pub(crate) enum Resolved {
 impl FnCx<'_, '_> {
     pub(crate) fn resolve_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         if let Some(r) = self.own_method(recv, name) {
+            // A subclass's static of the name doesn't hide an inherited `extend` instance
+            // method, as it doesn't hide an inherited instance method.
+            if matches!(
+                r,
+                Resolved::Def {
+                    is_static: true,
+                    ..
+                }
+            ) {
+                if let Some(e) = self.inherited_extension_method(recv, name) {
+                    if !matches!(
+                        e,
+                        Resolved::Def {
+                            is_static: true,
+                            ..
+                        }
+                    ) {
+                        return Some(e);
+                    }
+                }
+            }
             return Some(r);
         }
         if let Some(r) = self.iface_method(recv, name) {
             return Some(r);
         }
         if let Some(r) = self.extension_method(recv, name) {
+            return Some(r);
+        }
+        if let Some(r) = self.inherited_extension_method(recv, name) {
             return Some(r);
         }
         self.builtin_method(recv, name).map(Resolved::Builtin)
@@ -84,6 +108,12 @@ impl FnCx<'_, '_> {
     /// interfaces they implement. A class receiver whose static class has a vtable slot for the
     /// method dispatches virtually.
     fn own_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        // `o.#m()` in the body of class `C` is `C`'s `#m`, also on a subclass instance that
+        // declares a `#m` of its own (never virtual).
+        let recv = match (self.name_owner(name), crate::defs::is_private_key(name)) {
+            (Some(owner), true) => self.ancestor(recv, owner),
+            _ => recv,
+        };
         let (d, args) = self.adt_of(recv)?;
         let found = lookup_method(self.cx, d, &args, name)?;
         let slots = self.own_generic_slots(found.def(), &found.owner_args());
@@ -156,18 +186,35 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// An error if `r` (the resolved method `name` of `recv`) comes from an `extend` block and
-    /// several equally specific blocks give `recv` a method `name`.
-    pub(crate) fn check_extension_ambiguity(
-        &mut self,
-        r: &Resolved,
-        recv: TyId,
-        name: &str,
-        span: Span,
-    ) {
-        let Resolved::Def { def, .. } = r else {
+    /// The method `name` of an `extend` block of a base class of class `recv`, nearest base
+    /// first: a subclass has its bases' extension methods as it has their own methods
+    /// (`class MyRes extends Response {}` has `Response`'s `bytes()`, std/fetch/typed.vlt).
+    fn inherited_extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        let base = self.cx.base_of(recv)?;
+        self.base_extension_method(base, name)
+    }
+
+    /// The method `name` of an `extend` block of class `t` or of one of its base classes,
+    /// nearest first (`super.m()` too).
+    pub(super) fn base_extension_method(&mut self, t: TyId, name: &str) -> Option<Resolved> {
+        let mut t = t;
+        for _ in 0..64 {
+            if let Some(r) = self.extension_method(t, name) {
+                return Some(r);
+            }
+            t = self.cx.base_of(t)?;
+        }
+        None
+    }
+
+    /// An error if `r` (a resolved method `name`) comes from an `extend` block and several
+    /// equally specific blocks give the type it was found on a method `name`.
+    pub(crate) fn check_extension_ambiguity(&mut self, r: &Resolved, name: &str, span: Span) {
+        let Resolved::Def { def, recv_ty, .. } = r else {
             return;
         };
+        // The type the method was found on (a base class's, for an inherited `extend` method).
+        let recv = *recv_ty;
         let from_extension = self
             .cx
             .extensions
@@ -221,8 +268,8 @@ impl FnCx<'_, '_> {
     fn instance_args(&mut self, pattern: TyId, t: TyId) -> Option<Vec<Option<TyId>>> {
         let n = self.max_param(pattern).map_or(0, |p| p + 1);
         let mut slots = vec![None; n];
-        let ok = self.cx.match_ty(pattern, t, &mut slots)
-            && self.cx.ty.subst_known(pattern, &slots) == t;
+        let ok =
+            self.cx.match_ty(pattern, t, &mut slots) && self.cx.subst_known(pattern, &slots) == t;
         ok.then_some(slots)
     }
 
@@ -273,7 +320,7 @@ impl FnCx<'_, '_> {
             bs.iter().all(|b| {
                 let b = Bound {
                     iface: b.iface,
-                    args: b.args.iter().map(|a| self.cx.ty.subst(*a, owner)).collect(),
+                    args: b.args.iter().map(|a| self.cx.subst(*a, owner)).collect(),
                 };
                 self.cx.satisfies(t, &b, &self.bounds)
             })

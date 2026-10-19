@@ -28,7 +28,7 @@ function main() {
     }
     total += s.length as i64;
     for (let i: i64 = 0; i < (s.length as i64); i += 97) {
-      h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+      h = (h * 31 + (s.charCodeAt(i) as i64)) % 1000000007;
     }
   }
   console.log(`total=${total} length=${s.length} hash=${h} tail=${s.slice((s.length as i64) - 6)}`);

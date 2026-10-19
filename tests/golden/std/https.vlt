@@ -1,16 +1,17 @@
 // check: no leaks
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
 async function main() {
   const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
     req: Request,
   ): Promise<Response> => {
-    if (req.path == "/page") {
-      return Response.html("<h1>hi</h1>");
+    const url = new URL(req.url);
+    if (url.pathname == "/page") {
+      return new Response("<h1>hi</h1>", { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-    const r = Response.text(`secure ${req.method} ${req.path} ${req.body}`);
-    r.setHeader("content-type", "text/plain");
+    const r = new Response(`secure ${req.method} ${url.protocol} ${url.pathname} ${await req.text()}`);
+    r.headers.set("content-type", "text/plain");
     return r;
   });
   const base = `https://localhost:${server.port}`;
@@ -40,7 +41,7 @@ async function main() {
   try {
     const bad = await serve(
       { port: 0, tls: { cert: TEST_CERT, key: "nope" } },
-      async (req: Request): Promise<Response> => Response.text("x"),
+      async (req: Request): Promise<Response> => new Response("x"),
     );
     console.log(bad.port);
   } catch (e) {

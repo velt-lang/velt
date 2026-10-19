@@ -6,7 +6,7 @@ use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
     /// Skips a `{ ... }` group (current token is `{`), including nested braces.
-    fn skip_balanced_braces(&mut self) {
+    pub(super) fn skip_balanced_braces(&mut self) {
         let mut depth = 0usize;
         loop {
             match self.peek() {
@@ -125,7 +125,14 @@ impl<'a> Parser<'a> {
     ) -> Option<T> {
         let start = self.pos;
         match f(self) {
-            Ok(v) => Some(v),
+            Ok(v) => {
+                // A member ends at a line break, so one that consumed nothing could return
+                // `Ok` forever: always move on.
+                if self.pos == start {
+                    self.bump();
+                }
+                Some(v)
+            }
             Err(_) => {
                 self.sync_member();
                 if self.pos == start {

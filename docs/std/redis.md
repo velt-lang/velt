@@ -12,9 +12,9 @@ it in order, so it already works as a connection pool (there is no separate `cre
 - `connect(url, opts: RedisConnectOptions { ca? } = {}): Promise<RedisClient>`: URL
   `redis://[[user]:password@]host[:port][/db]` (`AUTH` and `SELECT` are sent for you);
   `rediss://` uses TLS, also trusting the PEM CAs in `ca`.
-- `RedisClient` (a handle, many tasks may use it at once; `close()` once when done):
-  - Commands that take several keys or values take a `string[]` (there are no rest
-    parameters): `del(["a", "b"])`.
+- `RedisClient` (a handle, many tasks may use it at once; `close()` when done; closing
+  again does nothing):
+  - Commands that take several keys or values take a `string[]`: `del(["a", "b"])`.
   - Keys and strings: `get(key): string | null`, `set(key, value, opts: SetOptions { ex?, px?, nx?,
     xx? } = {}): bool` (false when `nx`/`xx` prevented it), `del(keys): i64`,
     `exists(keys): i64`, `expire(key, seconds): bool`, `pexpire(key, ms): bool`, `ttl(key)`,
@@ -50,9 +50,9 @@ it in order, so it already works as a connection pool (there is no separate `cre
   URL, or to the server and database a client uses) and resolve once the server confirmed.
 - `RedisSubscriber` (a handle): `next(): Promise<RedisMessage | null>` (null after
   `close()`), `subscribe(channels)`, `unsubscribe(channels)`, `psubscribe(patterns)`,
-  `punsubscribe(patterns)`, `close()` (call once, from any task). A subscriber is an
-  `AsyncIterable<RedisMessage, RedisError>`: `for await (const m of sub)` receives messages
-  until `close()`; leaving the loop early keeps the subscription.
+  `punsubscribe(patterns)`, `close()` (from any task; closing again does nothing). A
+  subscriber is an `AsyncIterable<RedisMessage, RedisError>`: `for await (const m of sub)`
+  receives messages until `close()`; leaving the loop early keeps the subscription.
 - `RedisMessage { channel; message; pattern: string | null }`.
 - `RedisError { code, message }`: `code` is the server's error code for error replies
   (`"WRONGTYPE"`, `"ERR"`, `"NOAUTH"`, `"WRONGPASS"`, `"EXECABORT"`, …) or an I/O code

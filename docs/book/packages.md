@@ -31,8 +31,8 @@ function main() {
 - `import * as ns` binds a namespace; `import type` imports names for type positions only.
 - `export default` and default imports don't exist: the compiler's error suggests the named
   form.
-- Modules hold declarations only. State that changes lives in values created by `main` and
-  passed where they're needed ([why](../reference/variables.md#no-mutable-module-state)).
+- A module-level `let` is module state, one per process as in Node; importers see its current
+  value ([module state](../reference/variables.md#module-state)).
 - Standard library modules use the `velt:` prefix: `"velt:fs"`, `"velt:collections/set"`.
 
 All rules are in [Modules and packages](../reference/modules.md) in the Reference.
@@ -60,7 +60,7 @@ packages import.
 velt new textkit --template lib     # a library: src/lib.vlt, tests, doc comments
 cd textkit
 velt test
-velt doc                            # HTML docs in target/doc from the /// comments
+velt doc                            # HTML docs in target/doc from the doc comments
 velt publish                        # to the local registry, or the one in package.vlt
 ```
 
@@ -83,16 +83,27 @@ the lockfile, for reproducible builds. Commit `velt.lock.json` for applications.
 
 ## Documenting a library
 
-`velt doc` documents exported items from the `///` comments right above them:
+`velt doc` documents exported items from the doc comments right above them: JSDoc `/** … */`
+comments, as in TypeScript, or `///` lines. The text is Markdown; tags describe the parameters,
+the result, errors and examples. Plain `//` comments are not documentation.
 
-```ts ignore
-/// A URL-friendly form of `text`: lower case, ASCII letters and digits, words joined by `-`.
-///
-/// `slugify("Hello, World!")` is `"hello-world"`.
+```ts
+/**
+ * A URL-friendly form of `text`: lower case, words joined by `-`.
+ *
+ * @param text - the text to turn into a slug
+ * @returns `""` when `text` has no words
+ * @example
+ * slugify("Hello World"); // "hello-world"
+ */
 export function slugify(text: string): string {
-  // …
+  return text.toLowerCase().split(" ").filter((w) => w !== "").join("-");
 }
 ```
+
+The comment block at the top of a file, followed by a blank line, documents the module. The
+tags are `@param`, `@returns`, `@throws`, `@example`, `@deprecated`, `@see` and `{@link name}`
+([`velt doc`](../tooling/cli.md#velt-doc)).
 
 ## Registries
 

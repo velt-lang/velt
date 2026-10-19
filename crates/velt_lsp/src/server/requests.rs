@@ -5,14 +5,16 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use lsp_server::{ErrorCode, Request, Response};
 use lsp_types::request::{
-    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
-    GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request as LspRequest,
-    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
-    SignatureHelpRequest, WorkspaceSymbolRequest,
+    CodeActionRequest, CodeLensRequest, Completion, DocumentHighlightRequest,
+    DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest, References,
+    Rename, Request as LspRequest, ResolveCompletionItem, SemanticTokensFullDeltaRequest,
+    SemanticTokensFullRequest, SemanticTokensRangeRequest, SignatureHelpRequest,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionOptions,
-    GotoDefinitionResponse, HoverProviderCapability, Location, OneOf, SemanticTokensFullOptions,
+    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CodeLensOptions,
+    CompletionItem, CompletionOptions, Documentation, GotoDefinitionResponse,
+    HoverProviderCapability, Location, MarkupContent, MarkupKind, OneOf, SemanticTokensFullOptions,
     SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities,
     SignatureHelpOptions, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
@@ -26,12 +28,12 @@ use super::Server;
 use crate::index::scope;
 use crate::line_index::LineIndex;
 use crate::{
-    definition, highlight, hover, inlay_hints, manifest, references, sema_query, semantic_tokens,
-    signature_help, symbols,
+    code_lens, definition, highlight, hover, inlay_hints, manifest, references, sema_query,
+    semantic_tokens, signature_help, symbols,
 };
 
-/// What the server supports.
-pub fn capabilities() -> ServerCapabilities {
+/// What the server supports; code lenses only for a client that runs their commands.
+pub fn capabilities(run_lenses: bool) -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
@@ -47,6 +49,7 @@ pub fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into(), "<".into(), "\"".into(), "/".into()]),
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         references_provider: Some(OneOf::Left(true)),
@@ -59,6 +62,9 @@ pub fn capabilities() -> ServerCapabilities {
             ..Default::default()
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        code_lens_provider: run_lenses.then_some(CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             retrigger_characters: None,
@@ -159,6 +165,10 @@ impl Server<'_> {
                 }
                 Ok(json(self.completion(pos, trigger)))
             }
+            ResolveCompletionItem::METHOD => {
+                let item: lsp_types::CompletionItem = parse(params)?;
+                Ok(json(self.resolve_completion(item)))
+            }
             References::METHOD => {
                 let p: lsp_types::ReferenceParams = parse(params)?;
                 Ok(json(self.references(&p)))
@@ -171,13 +181,19 @@ impl Server<'_> {
         }
     }
 
-    /// Editing aids: code actions, inlay hints, signature help, semantic tokens, highlights and
-    /// workspace symbols.
+    /// Editing aids: code actions, code lenses, inlay hints, signature help, semantic tokens,
+    /// highlights and workspace symbols.
     fn dispatch_more(&mut self, method: &str, params: Value) -> Result<Value, RequestError> {
         match method {
             CodeActionRequest::METHOD => {
                 let p: lsp_types::CodeActionParams = parse(params)?;
                 Ok(json(self.code_actions(&p)))
+            }
+            CodeLensRequest::METHOD if self.run_lenses => {
+                let p: lsp_types::CodeLensParams = parse(params)?;
+                let uri = p.text_document.uri;
+                let lenses = self.analysis(&uri).map(|a| code_lens::code_lenses(a, &uri));
+                Ok(json(lenses))
             }
             InlayHintRequest::METHOD => {
                 let p: lsp_types::InlayHintParams = parse(params)?;
@@ -219,6 +235,27 @@ impl Server<'_> {
             }
             _ => Err(RequestError::MethodNotFound),
         }
+    }
+
+    /// `completionItem/resolve`: the doc comment of the item's definition (see
+    /// [`crate::docs::attach`] and [`with_document`]).
+    fn resolve_completion(&mut self, mut item: CompletionItem) -> CompletionItem {
+        let Some(data) = item.data.as_ref() else {
+            return item;
+        };
+        let Some(uri) = data["uri"].as_str().and_then(|u| Url::parse(u).ok()) else {
+            return item;
+        };
+        let doc = self
+            .analysis(&uri)
+            .and_then(|a| crate::docs::resolve(a, data));
+        if let Some(value) = doc {
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            }));
+        }
+        item
     }
 
     /// The editor location of `span` (in any loaded file).

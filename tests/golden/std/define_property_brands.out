@@ -1,0 +1,5 @@
+true false [ 'state', 'value' ] {"state":"live","value":1}
+{ state: 'live', value: 1 } { state: 'plain', value: 2 }
+{ state: 'live', value: 1 } false
+{ name: 'main', [Symbol(tag)]: 'slot' } true
+9

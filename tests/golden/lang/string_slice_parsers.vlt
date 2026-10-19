@@ -1,0 +1,125 @@
+// check: heap strings at most 200
+// check: no leaks
+// Parsers that consume their input from the front (`rest = rest.slice(n)`) run in linear time:
+// a large slice shares its parent's buffer instead of copying the rest (#402). Copying would
+// allocate one heap string per step here (about 60,000). A slice is an ordinary string: it
+// compares, hashes, appends, sorts and prints like any other.
+
+function words(text: string): number {
+  let rest = text;
+  let n = 0;
+  while (rest.length > 0) {
+    const sp = rest.indexOf(" ");
+    if (sp < 0) {
+      break;
+    }
+    n++;
+    rest = rest.slice(sp + 1);
+  }
+  return n;
+}
+
+function tokens(src: string): string[] {
+  const out: string[] = [];
+  let rest = src;
+  while (rest.length > 0) {
+    if (rest.startsWith(" ") || rest.startsWith("\n")) {
+      rest = rest.slice(1);
+    } else if (rest.startsWith("let")) {
+      out.push("kw");
+      rest = rest.substring(3);
+    } else if (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57) {
+      let i = 0;
+      while (i < rest.length && rest.charCodeAt(i) >= 48 && rest.charCodeAt(i) <= 57) {
+        i++;
+      }
+      out.push(rest.slice(0, i));
+      rest = rest.slice(i);
+    } else {
+      out.push(rest[0]);
+      rest = rest.slice(1);
+    }
+  }
+  return out;
+}
+
+function main() {
+  let text = "";
+  for (let i = 0; i < 20000; i++) {
+    text += "word" + `${i % 10}` + " ";
+  }
+  console.log(words(text));
+
+  let wide = "";
+  for (let i = 0; i < 5000; i++) {
+    wide += "wörd 日本 😀 ";
+  }
+  console.log(words(wide), wide.length);
+
+  let src = "";
+  for (let i = 0; i < 2000; i++) {
+    src += `let x = ${i} + y;\n`;
+  }
+  const toks = tokens(src);
+  console.log(toks.length, toks.slice(0, 8).join(","), toks[toks.length - 2]);
+
+  // Slices of slices, and the original afterwards.
+  const base = "0123456789".repeat(10) + "é".repeat(20);
+  const a = base.slice(5);
+  const b = a.slice(10, 90);
+  const c = b.substring(1);
+  console.log(a.length, b.length, c.length, b === base.slice(15, 95), c.charCodeAt(0));
+  console.log(base.slice(100).length, base.slice(95, 105), base.length);
+
+  // Appending to a slice copies it; the parent and the other slices keep their text.
+  let grown = a.slice(0, 50);
+  const before = grown;
+  grown += "!";
+  console.log(grown.length, before.length, grown.endsWith("!"), before.endsWith("4"));
+  console.log(a.slice(0, 50) === before, base.startsWith("01234"));
+
+  // Slices as Map keys and in sorts.
+  const counts = new Map<string, number>();
+  let line = "alpha beta gamma alpha delta beta alpha ".repeat(4);
+  while (line.length > 0) {
+    const sp = line.indexOf(" ");
+    const w = line.slice(0, sp);
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+    line = line.slice(sp + 1);
+  }
+  const keys = [...counts.keys()];
+  keys.sort();
+  console.log(keys.join(" "), counts.get("alpha"), counts.get("beta"));
+  const tails: string[] = [];
+  const long = "the quick brown fox jumps over the lazy dog and keeps running";
+  for (let i = 0; i < 6; i++) {
+    tails.push(long.slice(i * 3));
+  }
+  tails.sort();
+  console.log(tails[0].slice(0, 12), "|", tails[5].slice(0, 12));
+
+  // A slice that outlives the string it came from.
+  let keep = "";
+  {
+    let tmp = "";
+    for (let i = 0; i < 100; i++) {
+      tmp += `${i},`;
+    }
+    keep = tmp.slice(10);
+  }
+  console.log(keep.length, keep.slice(0, 12), JSON.stringify(keep.slice(-8)));
+
+  // Halves of a surrogate pair at the slice's ends.
+  const emoji = "x".repeat(30) + "😀".repeat(30);
+  const half = emoji.slice(31);
+  console.log(
+    half.length,
+    half.charCodeAt(0),
+    half.charCodeAt(1),
+    JSON.stringify(half.slice(0, 2)),
+  );
+  const rejoined = emoji.slice(0, 31) + half;
+  console.log(rejoined === emoji, rejoined.length, rejoined.charCodeAt(31));
+  const trimmed = ("   " + "padded text ".repeat(5) + "   ").trim();
+  console.log(trimmed.length, trimmed.split(" ").length);
+}

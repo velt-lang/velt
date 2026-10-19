@@ -1,0 +1,10 @@
+// The precompiling test JSX runtime plus the optional `jsxEscapeString`, which the compiler
+// calls for a `string` child (docs/internals/contracts/jsx.md "SSR precompile").
+
+import { escapeHtml } from "velt:html";
+
+export * from "../_jsx_test_precompile/jsx-runtime";
+
+export function jsxEscapeString(value: string): string {
+  return escapeHtml(value);
+}

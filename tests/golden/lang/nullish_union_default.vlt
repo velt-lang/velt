@@ -1,0 +1,29 @@
+// `??` with a default of another type than the left side's non-null type infers their union, as
+// TypeScript does (#749). Expected output: Node's.
+function pick(n: number | null): number | string {
+  return n ?? "none";
+}
+
+function describe(v: number | string): string {
+  return typeof v === "number" ? `num ${v * 2}` : `str ${v.toUpperCase()}`;
+}
+
+function main() {
+  const n: number | null = null;
+  const r = n ?? "none";
+  console.log(r, typeof r);
+  const m: number | null = 5;
+  const q = m ?? "none";
+  console.log(q, typeof q, describe(q), describe(r));
+  const s: string | null = null;
+  const t = s ?? 0;
+  console.log(t, typeof t);
+  const u: number | string = m ?? "x";
+  console.log(u, pick(null), pick(7));
+  const b: boolean | null = null;
+  const w = b ?? (s ?? 3);
+  console.log(w);
+  const k: "a" | "b" | null = null;
+  const kk = k ?? "zz";
+  console.log(kk.length);
+}

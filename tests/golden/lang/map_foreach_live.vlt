@@ -1,0 +1,146 @@
+// `Map.forEach` visits the entries present when it reaches them, in insertion order, also when
+// its callback renumbers the map through another reference: a compaction, the pop of the newest
+// entry, clearing, deleting every entry (#590).
+function compaction() {
+  const big = new Map<string, number>();
+  for (let i = 0; i < 100; i++) {
+    big.set(`k${i}`, i);
+  }
+  const alias = big;
+  let visited = 0;
+  let sum: number = 0;
+  big.forEach((v) => {
+    if (v === 50) {
+      for (let i = 0; i < 51; i++) {
+        alias.delete(`k${i}`);
+      }
+    }
+    visited++;
+    sum += v;
+  });
+  console.log("compaction", visited, sum, big.size);
+}
+
+function popAndAdd() {
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+  ]);
+  const alias = m;
+  const seen: string[] = [];
+  m.forEach((v, k) => {
+    seen.push(k);
+    if (k === "c") {
+      alias.delete("c");
+      alias.set("d", 4);
+    }
+    if (k === "d") {
+      alias.delete("d");
+      alias.delete("b");
+      alias.set("e", 5);
+    }
+  });
+  console.log("pop", seen.join(","), [...m.keys()].join(","));
+}
+
+function clearAndSet() {
+  const m = new Map<number, number>([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+  ]);
+  const alias = m;
+  const seen: number[] = [];
+  m.forEach((v, k) => {
+    seen.push(k);
+    if (k === 2) {
+      alias.clear();
+      alias.set(10, 10);
+      alias.set(11, 11);
+    }
+  });
+  console.log("clear", seen.join(","), m.size);
+}
+
+function deleteAll() {
+  const m = new Map<number, number>([
+    [1, 1],
+    [2, 2],
+  ]);
+  const alias = m;
+  const seen: number[] = [];
+  m.forEach((v, k) => {
+    seen.push(k);
+    if (k === 1) {
+      alias.delete(1);
+      alias.delete(2);
+      alias.set(3, 3);
+    }
+  });
+  console.log("all", seen.join(","), m.size);
+}
+
+function nested() {
+  const m = new Map<number, number>();
+  for (let i = 0; i < 40; i++) {
+    m.set(i, i);
+  }
+  const alias = m;
+  const alias2 = m;
+  let outer = 0;
+  let inner = 0;
+  m.forEach((v) => {
+    outer++;
+    if (v === 5) {
+      alias.forEach((w) => {
+        inner++;
+        if (w < 30 && w !== 5) {
+          alias2.delete(w);
+        }
+      });
+      alias.set(100, 100);
+    }
+  });
+  console.log("nested", outer, inner, m.size);
+}
+
+// Deletes and inserts while iterating, many compactions in one run: the visited keys match JS.
+function churn() {
+  const m = new Map<number, number>();
+  for (let i: number = 0; i < 300; i++) {
+    m.set(i, i);
+  }
+  const alias = m;
+  let x: number = 12345;
+  let next: number = 300;
+  let visits = 0;
+  let digest: number = 0;
+  m.forEach((v, k) => {
+    visits++;
+    digest = (digest * 31 + k) % 1000000007;
+    for (let j = 0; j < 4; j++) {
+      x = (x * 1103515245 + 12345) % 2147483648;
+      const op = x % 7;
+      const key = x % (next + 1);
+      if (op < 4) {
+        alias.delete(key);
+      } else if (op < 6 && next < 3000) {
+        alias.set(next, next);
+        next++;
+      } else {
+        alias.set(key, key);
+      }
+    }
+  });
+  console.log("churn", visits, digest, m.size);
+}
+
+function main() {
+  compaction();
+  popAndAdd();
+  clearAndSet();
+  deleteAll();
+  nested();
+  churn();
+}

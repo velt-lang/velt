@@ -3,29 +3,28 @@
 // while the body is received (`fetch` resolves once the headers are in, as in JS). A timeout
 // signal rejects with `TimeoutError`. Events are ordered by signals, not by sleeps: the server
 // reports each request's arrival and holds it until the client is done.
-import {
-  serve,
-  Request as ServerRequest,
-  Response as ServerResponse,
-  ResponseWriter,
-} from "velt:http";
-import { AbortError, TimeoutError } from "velt:task";
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
+import { AbortError, AbortSignal, TimeoutError } from "velt:task";
+
+// The body of `/stream`: a first part, then nothing until `release` is aborted.
+async function* parts(release: AbortSignal): AsyncGenerator<u8[]> {
+  yield utf8Encode("first part ");
+  await release.whenAborted();
+  yield utf8Encode("never read");
+}
 
 async function main() {
   const arrived = new AbortController();
   const release = new AbortController();
-  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
-    if (req.path == "/stream") {
-      return ServerResponse.stream(async (w: ResponseWriter) => {
-        w.write("first part ");
-        await w.flush();
-        await release.signal.whenAborted();
-        w.write("never read");
-      });
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (new URL(req.url).pathname == "/stream") {
+      return new Response(BodyStream.from(parts(release.signal)));
     }
     arrived.abort("arrived");
     await release.signal.whenAborted();
-    return ServerResponse.text("late");
+    return new Response("late");
   });
   const base = `http://127.0.0.1:${server.port}`;
 

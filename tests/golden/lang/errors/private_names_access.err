@@ -1,0 +1,13 @@
+private_names_access.vlt:10:3: error: field `#x` is declared more than once
+private_names_access.vlt:22:12: error: `override` on `#m`: private names are never inherited
+remove `override`
+private_names_access.vlt:27:12: error: property `#x` is not accessible outside class `A` because it has a private name
+declare it `private x` or add a public getter to use it elsewhere
+private_names_access.vlt:30:10: error: private names are only allowed in class bodies
+private_names_access.vlt:12:12: error: property `#y` does not exist on class `A`
+private_names_access.vlt:15:18: error: the right operand of `in` must be an object: a class instance, an interface value or a union with class members, found `string`
+private_names_access.vlt:20:17: error: property `#x` is not accessible outside class `A` because it has a private name
+declare it `private x` or add a public getter to use it elsewhere
+private_names_access.vlt:33:13: error: cannot convert to or from JSON: `A` has a private field `#x`, which decoding cannot set
+private_names_access.vlt:6:3: private field
+decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that

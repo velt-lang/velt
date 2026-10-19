@@ -61,6 +61,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
     let files = (0..cx.modules.len()).map(|m| (file_of(m), m)).collect();
     let def_types = def_types(&cx, &rec, no_generics);
     let jsx_tags = jsx_tags(&cx, &names, &mut resolve);
+    let jsx_common = jsx_common(&cx, &names, &mut resolve);
     let members = raw_members.finish(&b);
     let effects = effects::capture(&cx, &names, &rec.closures);
     let Recorder { types, params, .. } = rec;
@@ -76,6 +77,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         files,
         def_types,
         jsx_tags,
+        jsx_common,
         effects,
         names,
         members,
@@ -115,6 +117,42 @@ fn jsx_tags(
             tags.into()
         });
         out.insert(cx.modules[m].file, tags.clone());
+    }
+    out
+}
+
+/// Per file with a JSX runtime that has `JSX.IntrinsicAttributes`: its fields besides `key`
+/// (name, definition, type), sorted by name.
+fn jsx_common(
+    cx: &Ctx,
+    names: &Names,
+    resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
+) -> HashMap<FileId, JsxTags> {
+    let mut out = HashMap::new();
+    for (&m, provider) in &cx.jsx_providers {
+        let Some(attrs) = provider.as_ref().and_then(|p| p.component_attrs.as_ref()) else {
+            continue;
+        };
+        let TyKind::Adt(d, _) = cx.ty.kind(attrs.ty) else {
+            continue;
+        };
+        let Some(adt) = cx.adt(*d) else { continue };
+        let mut fields: Vec<(String, DefRef, String)> = adt
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.name != "key")
+            .filter_map(|(i, f)| {
+                let def = resolve(&Target::Field(*d, i as u32))?;
+                Some((
+                    f.name.clone(),
+                    def,
+                    names.show_in(f.ty, &adt.generics.names),
+                ))
+            })
+            .collect();
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        out.insert(cx.modules[m].file, fields.into());
     }
     out
 }

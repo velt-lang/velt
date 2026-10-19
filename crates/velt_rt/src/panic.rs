@@ -27,7 +27,15 @@ pub const PANIC_EXIT_CODE: i32 = 101;
 pub fn panic_message(msg: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(msg.len() + 8);
     out.extend_from_slice(b"panic: ");
-    out.extend_from_slice(msg);
+    // A member key naming a symbol the program made is U+FFFF and `Symbol(desc)` (the
+    // compiler's spelling, UTF-8 `EF BF BF` first): the message shows `Symbol(desc)`, as
+    // Node's does.
+    let mut rest = msg;
+    while let Some(i) = rest.windows(3).position(|w| w == [0xef, 0xbf, 0xbf]) {
+        out.extend_from_slice(&rest[..i]);
+        rest = &rest[i + 3..];
+    }
+    out.extend_from_slice(rest);
     out.push(b'\n');
     out
 }
@@ -128,6 +136,8 @@ pub extern "C" fn velt_rt_exit(code: i32) -> ! {
     io::flush_stdout();
     crate::str::stats::report();
     io::stats::report();
+    #[cfg(all(debug_assertions, not(velt_rt_host)))]
+    crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     std::process::exit(code)
 }
 

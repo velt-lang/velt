@@ -50,7 +50,7 @@ impl ImportHelp {
                 let spec = c.spec(loader, doc)?;
                 let (span, text) =
                     edit::import_edit(analysis, &spec, &c.export.name, c.export.is_type);
-                Some(CompletionItem {
+                let mut item = CompletionItem {
                     label: c.export.name.clone(),
                     kind: Some(c.export.kind),
                     label_details: Some(CompletionItemLabelDetails {
@@ -69,7 +69,9 @@ impl ImportHelp {
                         text,
                     )]),
                     ..Default::default()
-                })
+                };
+                c.export.document(&mut item);
+                Some(item)
             })
             .collect();
         (items, capped)

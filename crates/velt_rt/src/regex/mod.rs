@@ -20,11 +20,16 @@ use crate::result::{code, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use regex::bytes::{Regex, RegexBuilder};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// A compiled pattern plus its capture-group names.
+/// A compiled pattern, and JavaScript's `lastIndex` of the `RegExp` that owns the handle.
 pub struct RegexObj {
     re: Regex,
+    /// `lastIndex` (an `f64`'s bits). Kept here, not in a field of the std class, so that the
+    /// methods that update it (`exec`, `s.replace(re, …)`) read their receiver as JS code
+    /// expects, without a mutable borrow. Atomic because a handle may be shared between tasks.
+    last_index: AtomicU64,
 }
 
 /// Opaque handle (`Arc<RegexObj>`).
@@ -52,7 +57,10 @@ fn compile(pattern: &str, flags: &str) -> Result<RegexObj, String> {
         .crlf(multi_line)
         .size_limit(1 << 24)
         .build()
-        .map(|re| RegexObj { re })
+        .map(|re| RegexObj {
+            re,
+            last_index: AtomicU64::new(0),
+        })
         .map_err(|e| format!("Invalid regular expression: /{pattern}/{flags}: {e}"))
 }
 
@@ -168,6 +176,20 @@ pub unsafe extern "C" fn velt_rt_regex_new(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_free(re: RegexHandle) {
     re.release();
+}
+
+/// The regex's `lastIndex` (0 for a new one).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_regex_last_index(re: RegexHandle) -> f64 {
+    f64::from_bits(re.obj().last_index.load(Ordering::Relaxed))
+}
+
+/// Sets the regex's `lastIndex`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_regex_set_last_index(re: RegexHandle, value: f64) {
+    re.obj()
+        .last_index
+        .store(value.to_bits(), Ordering::Relaxed);
 }
 
 /// Number of capture groups, including group 0 (the whole match).

@@ -71,7 +71,7 @@ fn inlay_hints_show_inferred_types_and_parameter_names() {
     };
     has("total = area", 5, ": f64");
     has("radius = 3.0", 6, ": f64");
-    has("x of", 1, ": i64");
+    has("x of", 1, ": f64");
     has("1.5, 2.0", 0, "r:");
     has("2.0);\n  const radius", 0, "scale:");
     has("1.0, 0.5", 0, "factor:");

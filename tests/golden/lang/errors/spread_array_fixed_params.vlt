@@ -1,0 +1,10 @@
+// An array spread into fixed parameters: its length is only known at run time, and JS would
+// pass `undefined` for parameters it does not fill. TypeScript rejects it too (TS2556).
+function add3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+
+function main() {
+  const xs = [1, 2, 3];
+  console.log(add3(...xs));
+}

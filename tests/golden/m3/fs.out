@@ -1,6 +1,6 @@
 hello 5
 world!
 a.txt,b.txt
-6 true false
+6 true false false
 error: ENOENT
 false

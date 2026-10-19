@@ -1,7 +1,11 @@
-//! Debugger support: the VS Code templates in `editors/vscode/templates` are consistent (every
-//! `preLaunchTask` exists, programs match the builds the tasks make), and with clang and LLDB
-//! installed a `velt build --backend llvm` executable resolves breakpoints on `.vlt` lines
-//! (checked without running the program, so no debugger permission is needed).
+//! Debugger support: the VS Code templates in `editors/vscode/templates` use the extension's
+//! `velt` debug type and existing tasks, and with LLDB installed an executable of the default
+//! (Cranelift) build, and with clang one of `--backend llvm`, resolves breakpoints on `.vlt` lines
+//! in the right functions (checked without running the program, so no debugger permission is
+//! needed). On macOS the debug info stays in the object, which the executable's debug map names.
+//! Where LLDB may run programs, a default build also shows local variables with their source
+//! types, and with the formatters of `editors/lldb/velt_lldb.py` strings, arrays, unions and
+//! options as Velt prints them (skipped where it may not).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -13,11 +17,14 @@ mod no_window;
 mod runtime_support;
 mod work_dir;
 
+// Not `canonicalize()`: on Windows that yields a verbatim `\\?\C:\…` path, which LLDB rejects
+// in `command script import` (`invalid pathname`), so the formatter tests skipped there.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
+        .ancestors()
+        .nth(2)
         .expect("repo root")
+        .to_path_buf()
 }
 
 fn template(name: &str) -> Value {
@@ -27,7 +34,7 @@ fn template(name: &str) -> Value {
 }
 
 #[test]
-fn launch_configs_use_existing_tasks() {
+fn launch_configs_use_the_velt_debug_type() {
     let tasks = template("tasks.json");
     let labels: Vec<&str> = tasks["tasks"]
         .as_array()
@@ -37,23 +44,20 @@ fn launch_configs_use_existing_tasks() {
         .collect();
     let launch = template("launch.json");
     let configs = launch["configurations"].as_array().expect("configurations");
-    for kind in ["lldb", "cppvsdbg"] {
+    for request in ["launch", "attach"] {
         assert!(
-            configs.iter().any(|c| c["type"] == kind),
-            "no {kind} config"
+            configs.iter().any(|c| c["request"] == request),
+            "no {request} config"
         );
     }
     for c in configs {
+        // The extension builds and picks the debugger; nothing names a build or a debugger.
+        assert_eq!(c["type"], "velt", "{c}");
         if let Some(task) = c["preLaunchTask"].as_str() {
             assert!(labels.contains(&task), "unknown task `{task}`");
-            let program = c["program"].as_str().expect("program");
-            assert!(
-                program.starts_with("${workspaceFolder}/target/velt/"),
-                "{program}"
-            );
         }
     }
-    // Line-level debugging needs the LLVM backend (Cranelift emits symbols only).
+    // No build needs clang: debugging uses the default (Cranelift) build.
     for t in tasks["tasks"].as_array().unwrap() {
         let args: Vec<&str> = t["args"]
             .as_array()
@@ -61,12 +65,7 @@ fn launch_configs_use_existing_tasks() {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        if args.first() == Some(&"build") {
-            assert!(
-                args.windows(2).any(|w| w == ["--backend", "llvm"]),
-                "{args:?}"
-            );
-        }
+        assert!(!args.contains(&"--backend"), "{args:?}");
     }
 }
 
@@ -91,47 +90,478 @@ fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
     Some(out)
 }
 
+const PROGRAM: &str = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";
+
+fn lldb_runs() -> bool {
+    let runs = crate::no_window::command("lldb")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !runs {
+        eprintln!("note: lldb not installed; skipping");
+    }
+    runs
+}
+
+/// Build `source` as `app.vlt` with `args` in a fresh work dir: the dir, the executable, and
+/// whether the build reports line information (`velt build --json`'s
+/// `debugInfo`: false on Windows for a Cranelift build that MSVC's `link.exe` links).
+fn build_reporting(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, PathBuf, bool) {
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = work_dir::work_dir(&root, work_name);
+    std::fs::create_dir_all(&work).expect("work dir");
+    std::fs::write(work.join("app.vlt"), source).expect("write source");
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "app.vlt"])
+        .args(args)
+        .arg("--json")
+        .current_dir(&work)
+        .output()
+        .expect("velt build");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let built: Value = serde_json::from_slice(&o.stdout).expect("build --json");
+    let exe = work.join(if cfg!(windows) {
+        "target/velt/app.exe"
+    } else {
+        "target/velt/app"
+    });
+    (work, exe, built["debugInfo"] != false)
+}
+
+/// [`build_reporting`] for a test that debugs the program: `None` (the test skips) for a Windows build
+/// without line information (MSVC's `link.exe` links it), which never happens elsewhere.
+fn build_debuggable(work_name: &str, source: &str, args: &[&str]) -> Option<(PathBuf, PathBuf)> {
+    let (work, exe, line_info) = build_reporting(work_name, source, args);
+    if line_info {
+        return Some((work, exe));
+    }
+    if !cfg!(windows) {
+        panic!("a debug build without line information");
+    }
+    eprintln!("note: Windows builds keep DWARF only with the bundled linker; skipping");
+    let _ = std::fs::remove_dir_all(&work);
+    None
+}
+
+/// LLDB in batch mode running `commands` on `exe`; its output.
+fn lldb(exe: &Path, commands: &[&str]) -> String {
+    let mut cmd = crate::no_window::command("lldb");
+    cmd.arg("-b");
+    for c in commands {
+        cmd.args(["-o", c]);
+    }
+    output_within(cmd.arg(exe), Duration::from_secs(60)).expect("lldb finished")
+}
+
+/// Build `PROGRAM` as `app.vlt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
+/// (in `main`) with LLDB; its output. `None` when the build reports no line information (on
+/// Windows, a Cranelift build that MSVC's `link.exe` links).
+fn breakpoints(work_name: &str, args: &[&str]) -> Option<String> {
+    let (work, exe, line_info) = build_reporting(work_name, PROGRAM, args);
+    if !line_info {
+        let _ = std::fs::remove_dir_all(&work);
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        // The debug info stays in the object; the debug map must name it by its absolute path.
+        let map = crate::no_window::command("nm")
+            .args(["-ap"])
+            .arg(&exe)
+            .output()
+            .expect("nm");
+        let map = String::from_utf8_lossy(&map.stdout);
+        let object = work.join("target/velt/app.o");
+        assert!(
+            map.lines().any(|l| l.contains(" OSO ")
+                && l.split(" OSO ").nth(1).is_some_and(|p| {
+                    Path::new(p.trim()).canonicalize().ok() == object.canonicalize().ok()
+                })),
+            "no debug map entry for {}:\n{map}",
+            object.display()
+        );
+    }
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 2",
+            "breakpoint set -f app.vlt -l 7",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    Some(out)
+}
+
+const LOCALS: &str = r#"class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+enum Color {
+  Red,
+  Green = 5,
+}
+
+function area(w: number, h: number): number {
+  const a = w * h;
+  return a;
+}
+
+function main() {
+  const xs: number[] = [1, 2, 3];
+  const p = new Point(1, 2);
+  const maybe: Point | null = null;
+  const c = Color.Green;
+  let count: i64 = 0;
+  for (const x of xs) {
+    count += 1;
+  }
+  console.log(xs.length, p.x, maybe == null, c, count, area(2, 3));
+}
+"#;
+
+/// Variables with their source types, values and fields, in the default build (the program
+/// runs under LLDB, which needs permission to debug on some systems).
 #[test]
-fn lldb_resolves_breakpoints_on_velt_lines() {
+fn lldb_shows_locals_in_the_default_build() {
+    if !lldb_runs() {
+        return;
+    }
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-locals", LOCALS, &[]) else {
+        return;
+    };
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 29",
+            "breakpoint set -f app.vlt -l 17",
+            "run",
+            "frame variable",
+            "frame variable -P 1 p",
+            "frame variable xs.data[2]",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number[]) xs = {",
+        "len = 3",
+        "(i64) count = 3",
+        "(Color) c = Green",
+        "(Point | null) maybe = NULL",
+        "y = 2",
+        "(number) xs.data[2] = 3",
+        "(number) w = 2",
+        "(number) h = 3",
+        "(number) a = 6",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+}
+
+/// What F5 in VS Code debugs: the default build, which needs no clang.
+#[test]
+fn lldb_resolves_breakpoints_in_the_default_build() {
+    if !lldb_runs() {
+        return;
+    }
+    // On Windows the DWARF reaches the executable only through the bundled lld-link.
+    let Some(out) = breakpoints("golden-work-debugger-cl", &[]) else {
+        if !cfg!(windows) {
+            panic!("a default build without line information");
+        }
+        eprintln!("note: Windows builds keep DWARF only with the bundled linker; skipping");
+        return;
+    };
+    // Each in its own function (regression: on macOS line 2 resolved to `add` at line 7, the
+    // rows of `main`).
+    let first = out.lines().find(|l| l.starts_with("Breakpoint 1:"));
+    assert!(
+        first.is_some_and(|l| l.contains("add") && l.contains("at app.vlt:2")),
+        "{out}"
+    );
+    assert!(out.contains("at app.vlt:7"), "{out}");
+}
+
+#[test]
+fn lldb_resolves_breakpoints_in_llvm_builds() {
     if cfg!(windows) || !velt_codegen_llvm::available() {
         eprintln!("note: needs clang and LLDB on macOS/Linux; skipping");
         return;
     }
-    let lldb_runs = crate::no_window::command("lldb")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
-    if !lldb_runs {
-        eprintln!("note: lldb not installed; skipping");
+    if !lldb_runs() {
         return;
     }
-    let root = root();
-    runtime_support::build_native_runtime(&root);
-    let work = work_dir::work_dir(&root, "golden-work-debugger");
-    std::fs::create_dir_all(&work).expect("work dir");
-    let src = work.join("app.vlt");
-    let program = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";
-    std::fs::write(&src, program).expect("write source");
-    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "app.vlt", "--backend", "llvm"])
-        .current_dir(&work)
-        .output()
-        .expect("velt build");
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let out = output_within(
-        crate::no_window::command("lldb")
-            .args([
-                "-b",
-                "-o",
-                "breakpoint set -f app.vlt -l 2",
-                "-o",
-                "breakpoint set -f app.vlt -l 7",
-            ])
-            .arg(work.join("target/velt/app")),
-        Duration::from_secs(60),
-    )
-    .expect("lldb finished");
-    let _ = std::fs::remove_dir_all(&work);
+    let out = breakpoints("golden-work-debugger", &["--backend", "llvm"]).expect("line info");
     assert!(out.contains("at app.vlt:2"), "{out}");
     assert!(out.contains("at app.vlt:7"), "{out}");
+}
+
+const VALUES: &str = r#"type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+type Pair = { x: number; y: number };
+
+function show(s: Shape, v: string | number, n: number | null, words: string[]): void {
+  const lit = "hello";
+  const short = "abc" + "def";
+  const long = "a fairly long string that lives on the heap " + "!";
+  const uni = "héllo" + "✓";
+  const none: number | null = null;
+  const q: Pair | null = { x: 1, y: 2 };
+  const lone = "a" + String.fromCharCode(0xd800) + "b";
+  console.log(s.kind, v, n, none, words.length, lit, short, long, uni, q == null, lone.length);
+}
+
+function points(): number {
+  const ps: Pair[] = [{ x: 1, y: 2 }];
+  return ps.length;
+}
+
+function main() {
+  show({ kind: "circle", r: 2 }, "x", 4, ["one", "two"]);
+  console.log(points());
+}
+"#;
+
+/// The formatters the VS Code extension loads: every string form as its text, array elements,
+/// the active member of a union, options as `null` or their value.
+#[test]
+fn lldb_formats_velt_values() {
+    if !lldb_runs() {
+        return;
+    }
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-values", VALUES, &[]) else {
+        return;
+    };
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -f app.vlt -l 12",
+            // At the entry of `points`, `ps` is not initialized: whatever its words hold, the
+            // formatters must neither hang nor read a huge array.
+            "breakpoint set -n _V6points",
+            "run",
+            "frame variable",
+            "frame variable words[1]",
+            "frame variable q.x",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        r#"(string) lit = "hello""#,
+        r#"(string) short = "abcdef""#,
+        r#"(string) long = "a fairly long string that lives on the heap !""#,
+        r#"(string) uni = "héllo✓""#,
+        r#"(string | number) v = "x""#,
+        "(number | null) n = 4",
+        "(number | null) none = null",
+        "(string[]) words = len=2",
+        r#"[0] = "one""#,
+        r#"(string) words[1] = "two""#,
+        "r = 2",
+        "(number) q.x = 1",
+        // A lone surrogate is one replacement character.
+        "(string) lone = \"a\u{fffd}b\"",
+        // Stopped at the entry of `points`: an array, valid or not, and no hang.
+        "({ x: number; y: number }[]) ps = ",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+    // Strings show no raw words, and unions of scalars or strings no raw `value` child.
+    assert!(!out.contains("w0 ="), "{out}");
+    assert!(!out.contains("value ="), "{out}");
+}
+
+const ENTRY: &str = "function area(w: number, h: number): number {
+  const a = w * h;
+  return a;
+}
+
+function main() {
+  const base = 10;
+  let hits = 0;
+  const step = (x: number): number => {
+    hits += 1;
+    return base + x;
+  };
+  console.log(area(2, 3), step(2), hits);
+}
+";
+
+/// Stopped at a function's entry (a breakpoint on its name, or stepping into it), its params
+/// and a closure's captures already hold their values (regression: the prologue that stores
+/// them was part of the body, so they were garbage there).
+#[test]
+fn lldb_shows_params_at_function_entry() {
+    if !lldb_runs() {
+        return;
+    }
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-entry", ENTRY, &[]) else {
+        return;
+    };
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -n _V4area",
+            if cfg!(windows) {
+                "breakpoint set -s app.exe -r closure"
+            } else {
+                "breakpoint set -s app -r closure"
+            },
+            "run",
+            "frame variable",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number) w = 2",
+        "(number) h = 3",
+        "(number) x = 2",
+        "(number) base = 10",
+        "(number) hits = 0",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+}
+
+const SCOPES: &str = "function main() {
+  const before = 1;
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 3; i++) {
+    const inner: i64 = i * 10;
+    total += inner;
+  }
+  const after = total + before;
+  console.log(after);
+}
+";
+
+/// A variable is shown from its declaration's line to the end of its block: not before it is
+/// declared (`after`, the loop's), and not after its loop.
+#[test]
+fn lldb_shows_variables_in_their_scope() {
+    if !lldb_runs() {
+        return;
+    }
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-scopes", SCOPES, &[]) else {
+        return;
+    };
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 3",
+            "breakpoint set -f app.vlt -l 6",
+            "breakpoint set -f app.vlt -l 9",
+            "run",
+            "frame variable",
+            "continue",
+            "frame variable",
+            "breakpoint disable 2",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    // The variables shown at each stop, in order.
+    let stops: Vec<Vec<&str>> = out
+        .split("(lldb) frame variable")
+        .skip(1)
+        .map(|s| {
+            s.lines()
+                .filter(|l| !l.starts_with("(lldb)"))
+                .filter_map(|l| l.strip_prefix('('))
+                .filter_map(|l| l.split(") ").nth(1)?.split(" = ").next())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        stops,
+        [
+            vec!["before", "total"],
+            vec!["before", "total", "i", "inner"],
+            vec!["before", "total", "after"],
+        ],
+        "{out}"
+    );
+}
+
+const CLOSURE: &str = r#"function main() {
+  const base = 10;
+  let hits = 0;
+  const names = ["a", "b"];
+  const add = (x: number): number => {
+    hits += 1;
+    return base + x + names.length;
+  };
+  console.log(add(1), add(2), hits);
+}
+"#;
+
+/// Inside a closure, its captures show like its own variables: by value (`base`), through the
+/// shared cell of a variable it assigns (`hits`), and borrowed (`names`). On its first line,
+/// before any of them is used (regression: a capture was in scope only from its first use).
+#[test]
+fn lldb_shows_closure_captures() {
+    if !lldb_runs() {
+        return;
+    }
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-closure", CLOSURE, &[]) else {
+        return;
+    };
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -f app.vlt -l 6",
+            "run",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number) x = 1",
+        "(number) hits = 0",
+        "(number) base = 10",
+        "(string[]) names = len=2",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
 }

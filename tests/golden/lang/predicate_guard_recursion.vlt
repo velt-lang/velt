@@ -1,0 +1,66 @@
+// check: no leaks
+// A generic function that calls itself with a growing type argument in a branch that a type
+// predicate rules out for objects (issue #1251, the shape of sigx's `signal`): the instance for
+// the grown argument, an object type, does not have that branch, so there are finitely many
+// instantiations. The predicate is still called there. Expected output from `node`.
+type Primitive = string | number | boolean | symbol | bigint | null | undefined;
+
+let checks = 0;
+function isPrimitive(value: unknown): value is Primitive {
+  checks++;
+  return value === null || (typeof value !== "object" && typeof value !== "function");
+}
+
+interface Box<T> {
+  value: T;
+}
+
+// The issue's `depth`, bounded by the predicate instead of a counter.
+function depth<T>(target: T, n: number): number {
+  if (isPrimitive(target)) return depth({ value: target } as Box<T>, n + 1);
+  return n;
+}
+
+// sigx's `signal`: a primitive is wrapped in `{ value }` and made a signal in turn.
+interface Signal<T> {
+  get(): T;
+  label: string;
+}
+function signal<T>(target: T): Signal<T> {
+  if (isPrimitive(target)) {
+    const inner = signal({ value: target });
+    return { get: () => inner.get().value, label: "primitive(" + inner.label + ")" };
+  }
+  return { get: () => target, label: "object" };
+}
+
+// A value whose type may be a primitive at run time keeps the branch: a union, `unknown`.
+function describe<T>(x: T): string {
+  if (isPrimitive(x)) {
+    return "boxed " + describe({ value: x });
+  }
+  return "object";
+}
+
+console.log(depth(3, 0), depth("s", 0), depth({ value: 1 }, 0), depth([1, 2], 0));
+const s = signal(5);
+console.log(s.label, s.get());
+const t = signal("text");
+console.log(t.label, t.get());
+const o = signal({ name: "Alice" });
+console.log(o.label, o.get().name);
+const xs = signal([1, 2, 3]);
+console.log(xs.label, xs.get().length);
+const f = signal((a: number): number => a * 2);
+console.log(f.label, f.get()(4));
+const choices: (number | { a: number })[] = [1, { a: 2 }];
+for (const c of choices) {
+  console.log(describe(c));
+}
+const u: unknown = 7;
+console.log(describe(u));
+const v: unknown = { k: 1 };
+console.log(describe(v));
+const n: number | null = null;
+console.log(describe(n));
+console.log("checks", checks);

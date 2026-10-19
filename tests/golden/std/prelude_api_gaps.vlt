@@ -1,8 +1,8 @@
 // Prelude APIs TypeScript code reaches for (expected output checked against Node): `splice`,
 // `truncate` (JS `length = n`), `flat`, `join` on nested arrays and nullable elements,
 // `localeCompare`, the static members of `Number`, and `assertThrows`. The line after the
-// nullable `join`s shows where Velt differs: an array nested two levels deep, `null` inside an
-// inner array and an array inside a nullable element print like `${x}` (JS: `1,2,3 1, 1,2,`).
+// nullable `join`s: an array nested two levels deep, `null` inside an inner array and an array
+// inside a nullable element join as in JS too (#757).
 class ParseError extends Error {}
 
 function parse(s: string): i64 {

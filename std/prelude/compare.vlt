@@ -7,71 +7,91 @@
 // Comparable, and classes and structs can declare `implements Comparable<X>`. Floats order NaN
 // after every other value (and equal to itself), the total order `sort()` uses.
 
+/**
+ * A type with an order: `T extends Comparable<T>` lets generic code use `<`, `<=`, `>` and `>=`,
+ * which call `compareTo`. Every number type, `string` and `bool` implement it; an `extend`
+ * block or a class with `compareTo(other: X): i64` makes `X` one.
+ */
 export interface Comparable<T> {
+  /** Negative when `this` sorts before `other`, positive when after, 0 when equivalent. */
   compareTo(other: T): i64;
 }
 
 extend i8 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: i8): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend i16 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: i16): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend i32 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: i32): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend i64 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: i64): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend isize {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: isize): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend u8 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: u8): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend u16 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: u16): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend u32 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: u32): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend u64 {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: u64): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend usize {
+  /** -1, 0 or 1: whether `this` is less than, equal to or greater than `other`. */
   compareTo(other: usize): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend f32 {
+  /**
+   * -1, 0 or 1: whether `this` is less than, equal to or greater than `other`, with NaN after
+   * every other value and equal to itself (the total order `sort()` uses).
+   */
   compareTo(other: f32): i64 {
     if (this < other) {
       return -1;
@@ -87,6 +107,10 @@ extend f32 {
 }
 
 extend f64 {
+  /**
+   * -1, 0 or 1: whether `this` is less than, equal to or greater than `other`, with NaN after
+   * every other value and equal to itself (the total order `sort()` uses).
+   */
   compareTo(other: f64): i64 {
     if (this < other) {
       return -1;
@@ -102,12 +126,17 @@ extend f64 {
 }
 
 extend string {
+  /**
+   * -1, 0 or 1: the order of `this` and `other` by UTF-16 code units, as JS's `<` compares strings
+   * (not locale-aware; see `localeCompare`).
+   */
   compareTo(other: string): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }
 }
 
 extend bool {
+  /** -1, 0 or 1: the order of `this` and `other`, `false` first. */
   compareTo(other: bool): i64 {
     return this == other ? 0 : this ? 1 : -1;
   }

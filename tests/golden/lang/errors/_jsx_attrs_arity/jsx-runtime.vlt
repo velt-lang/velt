@@ -1,0 +1,11 @@
+// A JSX runtime whose `jsxComponentAttributes` takes the wrong number of parameters.
+
+import { Element } from "velt:jsx/node";
+
+export * from "velt:jsx/jsx-runtime";
+
+export type IntrinsicAttributes = { "client:load"?: boolean };
+
+export function jsxComponentAttributes<P>(component: (props: P) => Element, props: P): Element {
+  return component(props);
+}

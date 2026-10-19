@@ -25,7 +25,23 @@ impl FnLower<'_, '_> {
             return self.array_move(args);
         }
         let aty = self.sub(args[0].ty);
-        let av = self.expr(&args[0]);
+        if i == I::ArrayLen {
+            if let Some(arr) = self.table_read(&args[0]) {
+                return self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1)));
+            }
+        }
+        // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
+        // runs after the array's address is taken: borrow the array as a call borrows its
+        // receiver, so that address stays valid.
+        let av = match args[1..].iter().any(|a| self.may_write(a)) {
+            true => {
+                let outer = self.start_borrows();
+                let v = self.stable_borrow(&args[0], &args[1..]);
+                self.finish_borrows(outer);
+                v
+            }
+            false => self.expr(&args[0]),
+        };
         let arr = self.place_of(av, aty);
         let arr = self.content(&arr, aty);
         let elem = self.elem_ty(aty);
@@ -40,6 +56,10 @@ impl FnLower<'_, '_> {
                 let pa = self.elem_place_checked(&arr, aty, ia, ta);
                 let pb = self.elem_place_checked(&arr, aty, ib, tb);
                 let vt = self.cx.ty(elem);
+                if vt == Ty::Unit {
+                    // Zero-sized elements (a single literal type): nothing to exchange.
+                    return unit();
+                }
                 let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
                 self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
                 self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));
@@ -241,7 +261,13 @@ impl FnLower<'_, '_> {
         let n = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, len, cint(1, Ty::U64)));
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n.clone()));
         let p = self.elem_place(arr, n, elem);
-        self.set_some(Place::local(res), ot, Operand::Copy(p));
+        if self.sub(elem) == opt {
+            // Nullable elements: `(T | null)[]`'s pop is `T | null` (TyTable::intern), the
+            // element itself.
+            self.assign(Place::local(res), Rvalue::Use(Operand::Copy(p)));
+        } else {
+            self.set_some(Place::local(res), ot, Operand::Copy(p));
+        }
         self.goto(join);
         self.switch_to(join);
         self.owned_result(Some(res), opt)

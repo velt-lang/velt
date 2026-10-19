@@ -9,9 +9,13 @@
 pub mod cycle;
 pub mod error;
 pub mod escape;
+pub mod layout;
+pub mod node_syntax;
 pub mod object;
 pub mod reader;
 pub mod reader_abi;
+pub mod rows_bin;
+pub mod rows_reader;
 pub mod scan;
 pub mod text;
 pub mod value;

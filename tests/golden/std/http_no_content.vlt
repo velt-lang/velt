@@ -1,37 +1,29 @@
-// A 204 or 304 response has no body, so no body headers: the body argument (a streamed one
-// too) is dropped and no default `content-type` is added (Node and the Fetch API do the same).
-// Other statuses keep them.
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+// A 204 or 304 response has no body, so no body headers: no default `content-type` is added
+// (Node and the Fetch API do the same), also when a handler passes on a fetched one. Other
+// statuses keep them.
+import { serve } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    if (req.path == "/text") {
-      return Response.text("", 204);
+    const url = new URL(req.url);
+    if (url.pathname == "/none") {
+      return new Response(null, { status: 204 });
     }
-    if (req.path == "/json") {
-      return Response.json({ ok: true }, 204);
+    if (url.pathname == "/cached") {
+      return new Response(null, { status: 304, headers: { etag: "\"v1\"" } });
     }
-    if (req.path == "/html") {
-      return Response.html("<p>cached</p>", 304);
+    if (url.pathname == "/proxied") {
+      return await fetch(`${url.origin}/none`);
     }
-    if (req.path == "/stream") {
-      // The writer's output is discarded: its writes report the body as gone.
-      return Response.stream(
-        async (w: ResponseWriter) => {
-          w.write("dropped");
-          await w.close();
-        },
-        204,
-      );
-    }
-    return Response.text("hello", 200);
+    return new Response("hello");
   });
   const base = `http://127.0.0.1:${server.port}`;
-  for (const path of ["/text", "/json", "/html", "/stream", "/ok"]) {
+  for (const path of ["/none", "/cached", "/proxied", "/ok"]) {
     const r = await fetch(`${base}${path}`);
     const type = r.headers.get("content-type") ?? "none";
     const length = r.headers.get("content-length") ?? "none";
-    console.log(path, r.status, type, length, `[${await r.text()}]`);
+    const tag = r.headers.get("etag") ?? "-";
+    console.log(path, r.status, type, length, tag, `[${await r.text()}]`);
   }
   server.close();
 }

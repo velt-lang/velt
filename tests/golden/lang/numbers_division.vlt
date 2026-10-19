@@ -1,5 +1,6 @@
-// `/` is JS division unless both operands are declared integers (docs/reference/types.md "Numbers").
-// Lengths and other integers from the standard library are JS numbers.
+// `/` is JS division on numbers and integer division on declared integers
+// (docs/reference/types.md "Numbers"). Lengths and other integers from the standard library are
+// numbers.
 function half(n: i64): i64 {
   return n / 2;
 }
@@ -7,7 +8,7 @@ function half(n: i64): i64 {
 function mean(xs: i64[]): f64 {
   let sum = 0;
   for (const x of xs) {
-    sum += x;
+    sum += x as number;
   }
   return sum / xs.length;
 }

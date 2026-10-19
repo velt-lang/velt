@@ -1,0 +1,16 @@
+// check: no leaks
+// A `using` declaration disposes its value at the end of its block.
+// The method on a module `let` runs code only through the dispose hook that drop runs, and
+// the hook reassigns the `let`: the receiver stays alive for the method (#1188). Node does
+// not dispose dropped values (docs/reference/memory.md), so this output is Velt's.
+class State {
+  n: number = 1;
+  label: string = "lbl" + String(1);
+  held: D | null = null;
+  f(): string { { using d = new D(); } return this.label + "#" + String(this.n); }
+}
+class D { [Symbol.dispose](): void { reset(); console.log("disposed"); } }
+let cur = new State();
+function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
+
+function main(): void { console.log(cur.f()); console.log(cur.label); }

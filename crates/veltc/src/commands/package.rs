@@ -57,6 +57,7 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
 pub fn manifest(json: bool) -> Result<(), String> {
     let root = Project::current_root()?;
     let manifest = vpm::Manifest::from_dir(&root)?;
+    super::project::warn_toolchain_mismatch(&manifest);
     if json {
         let json = serde_json::to_string_pretty(&manifest.to_json())
             .expect("ICE: a manifest serializes to JSON");

@@ -1,0 +1,4 @@
+// A module imported as a namespace by callback_adapters.vlt.
+export function greet(s: string, p: string = "lib>") {
+  console.log(p, s);
+}

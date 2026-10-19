@@ -10,11 +10,23 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
     match &t.kind {
         T::Named { args, .. } => args.iter().for_each(|a| walk_type(a, v)),
         T::Array(elem) => walk_type(elem, v),
-        T::Tuple(items) | T::Union(items) => items.iter().for_each(|i| walk_type(i, v)),
+        T::Tuple(items) | T::Union(items) | T::Intersection(items) => {
+            items.iter().for_each(|i| walk_type(i, v))
+        }
+        T::Indexed { object, key } => {
+            walk_type(object, v);
+            walk_type(key, v);
+        }
+        T::GenericFunction { type_params, ty } => {
+            walk_generics(type_params, v);
+            walk_type(ty, v);
+        }
+        T::Construct(ty) | T::TupleRest(ty) | T::TupleOptional(ty) => walk_type(ty, v),
         T::Function {
             params,
             ret,
             throws,
+            ..
         } => {
             params.iter().for_each(|p| walk_type(p, v));
             walk_type(ret, v);
@@ -23,7 +35,39 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             }
         }
         T::Object(fields) => fields.iter().for_each(|f| walk_type(&f.ty, v)),
-        T::Literal(_) | T::Null | T::Void => {}
+        T::IndexSig {
+            fields, key, value, ..
+        } => {
+            fields.iter().for_each(|f| walk_type(&f.ty, v));
+            walk_type(&key.ty, v);
+            walk_type(value, v);
+        }
+        T::Callable { sigs, members } => {
+            sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
+            walk_type(members, v);
+        }
+        T::KeyOf(inner) => walk_type(inner, v),
+        T::Conditional(c) => {
+            walk_type(&c.check, v);
+            walk_type(&c.extends, v);
+            walk_type(&c.then, v);
+            walk_type(&c.else_, v);
+        }
+        T::Mapped(m) => {
+            walk_type(&m.source, v);
+            if let Some(n) = &m.name {
+                walk_type(n, v);
+            }
+            walk_type(&m.value, v);
+        }
+        T::TemplateLiteral { types, .. } => types.iter().for_each(|t| walk_type(t, v)),
+        T::Infer(_) => {}
+        T::Predicate { ty, .. } => {
+            if let Some(t) = ty {
+                walk_type(t, v);
+            }
+        }
+        T::Literal(_) | T::Null | T::Undefined | T::Void | T::Query(_) => {}
     }
 }
 

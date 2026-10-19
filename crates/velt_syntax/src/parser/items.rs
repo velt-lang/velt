@@ -2,6 +2,7 @@
 //! `declare function`, type aliases and top-level variables. Struct/class/interface/enum bodies
 //! are in `type_decls`; imports and re-exports in `imports`.
 
+use super::param_patterns::ParamDefault;
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -14,6 +15,9 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !self.at(Tok::Eof) {
             let start = self.pos;
+            if self.at_module_syntax() {
+                self.saw_module_syntax = true;
+            }
             match self.peek() {
                 Tok::Semi => self.bump(),
                 Tok::RBrace => {
@@ -21,10 +25,28 @@ impl<'a> Parser<'a> {
                     self.error("unexpected `}`", span);
                     self.bump();
                 }
+                _ if self.at_ambient() => {
+                    if self.parse_ambient().is_err() {
+                        self.sync_item(start);
+                    }
+                }
                 _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {
-                    Ok(item) => items.push(item),
-                    Err(Fail) => self.sync_item(start),
+                    Ok(item) => {
+                        let exported = item.exported;
+                        items.push(item);
+                        for v in std::mem::take(&mut self.more_vars) {
+                            items.push(Item {
+                                span: v.span,
+                                kind: ItemKind::Var(v),
+                                exported,
+                            });
+                        }
+                    }
+                    Err(Fail) => {
+                        self.more_vars.clear();
+                        self.sync_item(start);
+                    }
                 },
             }
             if self.pos == start {
@@ -33,6 +55,9 @@ impl<'a> Parser<'a> {
         }
         if !stmts.is_empty() {
             self.finish_script(&mut items, stmts);
+        }
+        if let Some(span) = self.import_meta {
+            items.push(self.import_meta_item(span));
         }
         Module {
             items,
@@ -79,7 +104,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
+    pub(super) fn parse_item_kind(&mut self, lo: u32, import_ok: bool) -> PResult<ItemKind> {
         let kind = match self.cur_kw() {
             Some(Kw::Import) => {
                 if !import_ok {
@@ -95,17 +120,30 @@ impl<'a> Parser<'a> {
             }
             Some(Kw::Struct) => ItemKind::Struct(self.parse_type_decl(false)?),
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
-            Some(Kw::Interface) => ItemKind::Interface(self.parse_interface()?),
+            Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
             Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => {
                 ItemKind::TypeAlias(self.parse_type_alias()?)
+            }
+            Some(Kw::Const | Kw::Let) if self.at_class_binding() => {
+                ItemKind::Class(self.parse_class_binding()?)
             }
             Some(Kw::Const | Kw::Let) => {
                 let var = self.parse_var_decl()?;
                 self.expect_semi()?;
                 ItemKind::Var(var)
             }
+            Some(Kw::Declare) if self.at_augment() => ItemKind::Augment(self.parse_augment()?),
+            Some(Kw::Declare) if self.at_namespace(1) => {
+                ItemKind::Namespace(self.parse_namespace()?)
+            }
+            None if self.at_namespace(0) => ItemKind::Namespace(self.parse_namespace()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
+            _ if self.at_var_decl() => {
+                let var = self.parse_var_decl()?;
+                self.expect_semi()?;
+                ItemKind::Var(var)
+            }
             _ if self.at_using_decl() => {
                 let span = self.cur_span();
                 self.error(
@@ -131,33 +169,143 @@ impl<'a> Parser<'a> {
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
-        self.expect_semi()?;
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
         Ok(sig)
     }
 
-    /// At `function`. `lo` is the start of the item (may include `export`/`async`).
+    /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
+    /// signature ending in `;` (or a line break: automatic semicolon insertion) is a
+    /// TypeScript-form overload: the declarations of the same name that follow it, up to the one
+    /// with a body, are parsed with it (`FnDecl::overloads`).
     fn parse_fn_decl(&mut self, lo: u32, is_async: bool) -> PResult<FnDecl> {
-        let sig = self.parse_fn_sig(lo, is_async)?;
-        let body = self.parse_block()?;
-        Ok(FnDecl { sig, body })
+        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
+        let mut sigs: Vec<(FnSig, bool)> = vec![];
+        while self.eat_signature_end() {
+            self.signature_defaults(&sig);
+            let (next_exported, next_async) = match self.at_function_after(&sig.name.name) {
+                Some(Ok(next)) => next,
+                Some(Err(other)) if self.next_fn_has_body() => {
+                    self.wrong_implementation_name(&sig.name, other);
+                    return Err(Fail);
+                }
+                Some(Err(_)) | None => {
+                    self.missing_implementation(&sig.name);
+                    return Err(Fail);
+                }
+            };
+            let next_lo = self.cur_lo();
+            if next_exported {
+                self.bump();
+            }
+            if next_async {
+                self.bump();
+            }
+            sigs.push((sig, exported));
+            exported = next_exported;
+            sig = self.parse_fn_sig(next_lo, next_async)?;
+        }
+        let this_param = self.this_param.take();
+        let body = self.parse_fn_body()?;
+        // `this` in a function declaration is sema's to report, but for `this: void`. A
+        // function whose body doesn't use `this` (or with overloads or a generator, not
+        // supported yet) is called without it.
+        if !sigs.is_empty() || sig.is_generator || super::fn_exprs::own_this(&body).is_none() {
+            sig.this_param = None;
+        }
+        if this_param.is_some() && sig.this_param.is_none() {
+            self.check_fn_this(this_param, &body, false);
+        }
+        // TypeScript's TS2383, at each signature exported differently from the implementation.
+        for (s, e) in &sigs {
+            if *e != exported {
+                self.error(
+                    "overload signatures must all be exported or non-exported (TypeScript's TS2383)",
+                    s.name.span,
+                );
+            }
+        }
+        Ok(FnDecl {
+            sig,
+            body,
+            overloads: sigs.into_iter().map(|(s, _)| s).collect(),
+        })
     }
 
-    /// A function expression at `function` (after `async`, with `is_async`): `function*
-    /// [name](...)[: R] { ... }`; the name may be left out (empty). Sema allows only generators.
-    pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
-        self.expect_kw(Kw::Function, "function")?;
-        let is_generator = self.eat(Tok::Star);
-        let name = match Self::is_ident_like(self.peek()) {
-            true => self.parse_binding_ident()?,
-            false => Ident {
-                name: String::new(),
-                span: self.span_from(lo),
-            },
-        };
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
-        let body = self.parse_block()?;
-        Ok(ExprKind::Function(Box::new(FnDecl { sig, body })))
+    /// After an overload signature of `name`: is the next item `[export] [async] function`,
+    /// `Ok` with whether it is exported and `async` when it is named `name`, `Err` with its name
+    /// when it has another?
+    fn at_function_after(&mut self, name: &str) -> Option<Result<(bool, bool), Span>> {
+        let mut k = 0;
+        let exported = self.nth(k) == Tok::Kw(Kw::Export);
+        k += usize::from(exported);
+        let is_async = self.nth(k) == Tok::Kw(Kw::Async);
+        k += usize::from(is_async);
+        if self.nth(k) != Tok::Kw(Kw::Function) {
+            return None;
+        }
+        k += 1;
+        if self.nth(k) == Tok::Star {
+            k += 1;
+        }
+        if !Self::is_ident_like(self.nth(k)) {
+            return None;
+        }
+        let t = self.tok(self.pos + k);
+        match self.text(t.lo, t.hi) == name {
+            true => Some(Ok((exported, is_async))),
+            false => Some(Err(Span::new(self.file, t.lo, t.hi))),
+        }
+    }
+
+    /// At `[export] [async] function`: does the function have a body (rather than being a
+    /// signature)? Looks ahead without consuming anything.
+    fn next_fn_has_body(&mut self) -> bool {
+        let snap = self.snapshot();
+        self.speculating += 1;
+        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) {
+            self.bump();
+        }
+        let lo = self.cur_lo();
+        let body = self.parse_fn_sig(lo, false).is_ok() && self.at(Tok::LBrace);
+        self.speculating -= 1;
+        self.restore(snap);
+        body
+    }
+
+    /// TS2391 for an overload signature that no implementation follows.
+    pub(super) fn missing_implementation(&mut self, name: &Ident) {
+        self.error(
+            format!("function implementation is missing or not immediately following the declaration of `{}`", name.name),
+            name.span,
+        );
+    }
+
+    /// TS2389: the declaration after overload signatures of `name` is named otherwise (at
+    /// `other`, its name).
+    pub(super) fn wrong_implementation_name(&mut self, name: &Ident, other: Span) {
+        self.error(
+            format!(
+                "function implementation name must be `{}` (TypeScript's TS2389)",
+                name.name
+            ),
+            other,
+        );
+    }
+
+    /// TS2371: a default value in an overload signature (an optional parameter `p?: T` is
+    /// fine).
+    pub(super) fn signature_defaults(&mut self, sig: &FnSig) {
+        for p in &sig.params {
+            if p.default.is_some() && !p.optional && !p.rest {
+                self.error(
+                    "a parameter default is only allowed in a function or method implementation, not in an overload signature (TypeScript's TS2371)",
+                    p.name.span,
+                );
+            }
+        }
     }
 
     /// `function name(...)` or `function* name(...)` (a generator).
@@ -180,8 +328,9 @@ impl<'a> Parser<'a> {
     ) -> PResult<FnSig> {
         let generics = self.parse_generic_params()?;
         let params = self.parse_params()?;
+        let this_param = self.this_type();
         let ret = if self.eat(Tok::Colon) {
-            Some(self.parse_type()?)
+            Some(self.parse_ret_type()?)
         } else {
             None
         };
@@ -194,43 +343,54 @@ impl<'a> Parser<'a> {
             throws,
             is_async,
             is_generator: false,
+            this_param,
             span: self.span_from(lo),
         })
     }
 
-    /// `<T, U extends A & B>` (empty when there is no `<`) of a function, method or arrow:
-    /// type parameter defaults are reported.
+    /// `<T, U extends A & B = U>` (empty when there is no `<`) of a function, method, arrow,
+    /// class, struct, interface or type alias: parameters may have defaults (`T = Default`), and
+    /// a parameter without one may not follow one.
     pub(super) fn parse_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
-        self.generic_params(false)
-    }
-
-    /// `<T, E = never>` of a class, struct, interface or type alias: parameters may have
-    /// defaults (`T = Default`), and a parameter without one may not follow one.
-    pub(super) fn parse_type_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
-        self.generic_params(true)
-    }
-
-    fn generic_params(&mut self, defaults: bool) -> PResult<Vec<GenericParam>> {
         let mut out: Vec<GenericParam> = Vec::new();
         if !self.eat(Tok::Lt) {
             return Ok(out);
         }
         while !self.at(Tok::Gt) {
+            // `const T` (TypeScript 5.0): infers literal types for `T`'s arguments. Velt infers
+            // literal types where a type parameter is matched against a literal anyway.
+            if self.at_kw(Kw::Const) && Self::is_ident_like(self.nth(1)) {
+                self.bump();
+            }
             let name = self.parse_ident()?;
             let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
+                let lo = self.cur_lo();
+                self.eat(Tok::Pipe);
                 bounds.push(self.parse_type_no_union()?);
                 while self.eat(Tok::Amp) {
                     bounds.push(self.parse_type_no_union()?);
                 }
-            }
-            let default = match defaults {
-                true => self.type_param_default(&out, &name)?,
-                false => {
-                    self.reject_type_param_default()?;
-                    None
+                // `T extends A | B`: one bound, a union type (`A & B | C` is `(A & B) | C`).
+                if self.at(Tok::Pipe) {
+                    let first = match bounds.len() {
+                        1 => bounds.remove(0),
+                        _ => TypeExpr {
+                            kind: TypeExprKind::Intersection(std::mem::take(&mut bounds)),
+                            span: self.span_from(lo),
+                        },
+                    };
+                    let mut members = vec![first];
+                    while self.eat(Tok::Pipe) {
+                        members.push(self.parse_intersection()?);
+                    }
+                    bounds = vec![TypeExpr {
+                        kind: TypeExprKind::Union(members),
+                        span: self.span_from(lo),
+                    }];
                 }
-            };
+            }
+            let default = self.type_param_default(&out, &name)?;
             out.push(GenericParam {
                 name,
                 bounds,
@@ -268,7 +428,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `= Default` after a type parameter of a type declaration (`prev`: the parameters before).
+    /// `= Default` after a type parameter (`prev`: the parameters before).
     fn type_param_default(
         &mut self,
         prev: &[GenericParam],
@@ -292,28 +452,13 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// `<T = Default>` on a function, method or arrow: not supported. Reported (even while
-    /// speculating: a failed attempt rewinds it) and the default type skipped.
-    fn reject_type_param_default(&mut self) -> PResult<()> {
-        if !self.at(Tok::Eq) {
-            return Ok(());
-        }
-        let span = self.cur_span();
-        self.diags.push(
-            velt_common::Diagnostic::error("type parameter defaults are not supported", span)
-                .with_note("remove the default and pass the type argument explicitly"),
-        );
-        self.bump();
-        self.parse_type()?;
-        Ok(())
-    }
-
     /// `( name: Type [= default], ... )`
     pub(super) fn parse_params(&mut self) -> PResult<Vec<Param>> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
+        self.parse_this_param()?;
         while !self.at(Tok::RParen) {
-            let p = self.parse_param()?;
+            let p = self.parse_param(params.len())?;
             if params.last().is_some_and(|q: &Param| q.rest) {
                 self.error("a rest parameter must be the last parameter", p.span);
             }
@@ -323,29 +468,48 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
+        self.check_param_defaults(&checked);
         Ok(params)
     }
 
-    pub(super) fn parse_param(&mut self) -> PResult<Param> {
+    /// One parameter, the `index`-th: `name: T`, `name?: T`, `name: T = e`, `name = e` (the type
+    /// stated by the default, as for class fields), `...name: T[]` (or another array type), or a destructuring pattern
+    /// `[a, b]: T` / `{ a, b }: T = e`.
+    pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
         self.reject_mut_modifier();
         let rest = self.eat(Tok::DotDotDot);
-        let name = self.parse_binding_ident()?;
-        let optional = self.eat(Tok::Question);
-        if !self.eat(Tok::Colon) {
-            let msg = format!(
-                "expected `:`, found {} (parameter types are required)",
-                self.found()
-            );
+        if self.at(Tok::PrivateName) {
             let span = self.cur_span();
-            self.error(msg, span);
+            self.error("private names cannot be parameters", span);
+            self.bump();
             return Err(Fail);
         }
-        let mut ty = self.parse_type()?;
+        let (name, pattern) = self.parse_param_binding(index, rest)?;
+        let optional = self.eat(Tok::Question);
+        let written = if self.eat(Tok::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         let mut default = if self.eat(Tok::Eq) {
             Some(self.parse_assign()?)
         } else {
             None
+        };
+        let mut ty = match (written, &default) {
+            (Some(t), _) => t,
+            (None, Some(d)) if !optional && !rest => self.param_type_of(&name, d)?,
+            (None, _) => {
+                let msg = format!(
+                    "expected `:`, found {} (parameter types are required)",
+                    self.found()
+                );
+                let span = self.cur_span();
+                self.error(msg, span);
+                return Err(Fail);
+            }
         };
         if optional {
             if let Some(d) = &default {
@@ -355,18 +519,14 @@ impl<'a> Parser<'a> {
                 );
                 self.error(msg, d.span);
             }
-            // `name?: T` is `name: T | null = null`.
+            // `name?: T` is `name: T | undefined = undefined`, as in TypeScript.
             let span = Span::new(self.file, ty.span.hi, ty.span.hi);
-            default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-            ty = super::types::or_null(ty);
+            default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
+            ty = super::types::optional_param(ty);
         }
         if rest {
-            if !matches!(ty.kind, TypeExprKind::Array(_)) {
-                self.error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    ty.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
             if let Some(d) = &default {
                 self.error("a rest parameter cannot have a default value", d.span);
             }
@@ -376,6 +536,7 @@ impl<'a> Parser<'a> {
         }
         Ok(Param {
             name,
+            pattern,
             ty,
             default,
             optional,
@@ -384,13 +545,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
+    /// `type Name<T> = T;` (the `;` may be left out before the `}` of a block, namespace or
+    /// `declare global` and at the end of the file, as everywhere in TypeScript).
+    pub(super) fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
-        let generics = self.parse_type_generic_params()?;
+        let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
-        self.expect_semi()?;
+        if !self.at(Tok::RBrace) && !self.at(Tok::Eof) {
+            self.expect_semi()?;
+        }
         Ok(TypeAlias { name, generics, ty })
     }
 
@@ -399,12 +564,30 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let kind = if self.eat_kw(Kw::Const) {
             VarKind::Const
+        } else if self.at_var_decl() {
+            self.bump(); // var
+            VarKind::Let
         } else {
             self.expect_kw(Kw::Let, "let")?;
             VarKind::Let
         };
         let pattern = self.parse_binding_pattern()?;
-        self.finish_var_decl(lo, kind, pattern)
+        let first = self.finish_var_decl(lo, kind, pattern)?;
+        // `let a = 1, b: T;`: the further declarators wait in `more_vars` for the caller. They
+        // are collected here first: a later initializer can hold a block whose own declarations
+        // go through `more_vars` too (`const a = 1, c = () => { const p = 1, q = 2; ... }`).
+        let mut more = Vec::new();
+        while self.eat(Tok::Comma) {
+            let lo = self.cur_lo();
+            let pattern = self.parse_binding_pattern()?;
+            more.push(self.finish_var_decl(lo, kind, pattern)?);
+        }
+        debug_assert!(
+            self.more_vars.is_empty(),
+            "ICE: declarators of an inner declaration were left behind"
+        );
+        self.more_vars = more;
+        Ok(first)
     }
 
     /// Is the cursor at `using x` or `await using x` (a declaration, not an expression that
@@ -443,6 +626,11 @@ impl<'a> Parser<'a> {
         kind: VarKind,
         pattern: Pattern,
     ) -> PResult<VarDecl> {
+        // `let x!: T`: TypeScript's definite assignment assertion (`x` is assigned before it
+        // is read, in a way its checks cannot see); Velt checks the reads where it can.
+        if self.at(Tok::Bang) && self.nth(1) == Tok::Colon {
+            self.bump();
+        }
         let ty = if self.eat(Tok::Colon) {
             Some(self.parse_type()?)
         } else {

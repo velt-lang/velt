@@ -1,0 +1,32 @@
+// #1112: a field written through an interface value must be writable, and an object literal
+// implementing that interface with a getter for it needs a setter too.
+interface Hook {
+  readonly id: number;
+  owner: number;
+  next(): number;
+}
+
+class H implements Hook {
+  readonly id: number = 1;
+  owner: number = 0;
+  next(): number {
+    return this.id + 1;
+  }
+}
+
+function clear(h: Hook): void {
+  h.owner = 0;
+  h.id = 2;
+}
+
+function main() {
+  const lit: Hook = {
+    id: 3,
+    get owner(): number {
+      return 4;
+    },
+    next: () => 5,
+  };
+  clear(new H());
+  clear(lit);
+}

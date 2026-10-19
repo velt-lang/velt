@@ -31,7 +31,7 @@ function complementTable(): u8[] {
 function main() {
   const table = complementTable();
   const input = readAllBytesSync();
-  const n = input.length;
+  const n = input.length as usize;
   // The output has as many bytes as the input, plus a final newline the input may lack.
   const out = Buffer.alloc(n + 1);
   let o: usize = 0;

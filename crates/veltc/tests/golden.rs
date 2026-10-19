@@ -16,11 +16,18 @@
 //!
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
+//! - A golden whose first lines contain `// requires: symlinks` is skipped where this process
+//!   cannot create symbolic links (Windows without Developer Mode or administrator rights).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
-//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run.
+//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
+//!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
+//!   the count is taken at a moment when every block was freed, or once no task is left.
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).
+//! - A golden whose first lines contain `// check: heap blocks at most N` allocates at most N
+//!   heap blocks in its debug run (`blocks=A/F` of the same report, A <= N): for programs that
+//!   must not allocate per step (e.g. a callback per call).
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
 //! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
@@ -113,9 +120,10 @@ fn golden() {
     let mut runnable = vec![];
     for f in &files {
         let rel = f.strip_prefix(&root).unwrap().display().to_string();
-        match missing_required_env(f) {
-            Some(missing) => skipped.push(format!("{rel} (needs ${missing})")),
-            None => runnable.push((f.clone(), rel)),
+        match (missing_required_env(f), missing_capability(f, &work)) {
+            (Some(missing), _) => skipped.push(format!("{rel} (needs ${missing})")),
+            (None, Some(missing)) => skipped.push(format!("{rel} (needs {missing})")),
+            (None, None) => runnable.push((f.clone(), rel)),
         }
     }
     let results = run_parallel(velt, &runnable, &work);
@@ -258,7 +266,8 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             }
             let leak_check = mode.is_none() && checks_leaks(f);
             let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
-            if leak_check || str_limit.is_some() {
+            let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
+            if leak_check || str_limit.is_some() || block_limit.is_some() {
                 cmd.env("VELT_RC_STATS", "1");
             }
             let o = run_with_timeout(cmd);
@@ -270,6 +279,11 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             }
             if let Some(limit) = str_limit {
                 if let Some(e) = too_many_strings(&String::from_utf8_lossy(&o.stderr), limit) {
+                    failures.push(format!("{rel} [debug]: {e}"));
+                }
+            }
+            if let Some(limit) = block_limit {
+                if let Some(e) = too_many_blocks(&String::from_utf8_lossy(&o.stderr), limit) {
                     failures.push(format!("{rel} [debug]: {e}"));
                 }
             }
@@ -324,6 +338,40 @@ fn heap_string_limit(file: &Path) -> Option<u64> {
             .parse()
             .expect("a number after `heap strings at most`"),
     )
+}
+
+/// The N of a `// check: heap blocks at most N` line among the golden's first lines.
+fn heap_block_limit(file: &Path) -> Option<u64> {
+    let src = std::fs::read_to_string(file).ok()?;
+    let limit = src
+        .lines()
+        .take(10)
+        .find_map(|l| l.trim().strip_prefix("// check: heap blocks at most "))?;
+    Some(
+        limit
+            .trim()
+            .parse()
+            .expect("a number after `heap blocks at most`"),
+    )
+}
+
+/// More heap blocks allocated than `limit` in a `rc stats: ... blocks=A/F` report, or no
+/// report.
+fn too_many_blocks(stderr: &str, limit: u64) -> Option<String> {
+    let allocs = stderr
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("rc stats:"))
+        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+        .and_then(|b| b.split_once('/'))
+        .and_then(|(a, _)| a.parse::<u64>().ok());
+    match allocs {
+        Some(n) if n <= limit => None,
+        Some(n) => Some(format!(
+            "{n} heap blocks allocated, at most {limit} expected"
+        )),
+        None => Some("heap block check: no `rc stats` report on stderr".into()),
+    }
 }
 
 /// More heap string buffers allocated than `limit` in a `rc stats: ... alloc=N` report, or no
@@ -422,6 +470,44 @@ fn missing_required_env(file: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// A golden that needs something of the machine declares it on one of its first lines:
+/// `// requires: symlinks`. Returns what is missing, if anything.
+fn missing_capability(file: &Path, work: &Path) -> Option<&'static str> {
+    let src = std::fs::read_to_string(file).ok()?;
+    let wants = |what: &str| {
+        src.lines()
+            .take(10)
+            .filter_map(|l| l.trim().strip_prefix("// requires:"))
+            .any(|names| names.split_whitespace().any(|n| n == what))
+    };
+    if wants("symlinks") && !can_symlink(work) {
+        return Some("symlinks: on Windows, Developer Mode or administrator rights");
+    }
+    None
+}
+
+/// Can this process create symbolic links? Always on Unix; on Windows only with Developer Mode
+/// or the symlink privilege, so try once.
+fn can_symlink(work: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CAN.get_or_init(|| {
+            let link = work.join(format!("symlink-probe-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(work);
+            let _ = std::fs::remove_file(&link);
+            let ok = std::os::windows::fs::symlink_file("target", &link).is_ok();
+            let _ = std::fs::remove_file(&link);
+            ok
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = work;
+        true
+    }
 }
 
 /// `velt run` output, killing it and the program it started after `VELT_GOLDEN_TIMEOUT` seconds

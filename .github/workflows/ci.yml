@@ -1,12 +1,18 @@
 # Pull requests run the checks their changes need (`cargo xtask check`, rules in
 # crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
-# unit and integration tests) and golden (end-to-end, debug mode). The label `ci:full` makes them
-# check everything (add it before pushing, or close and reopen the pull request).
+# unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
+# (crates/xtask/src/os.rs) is also linted on Windows and macOS, where `cfg(windows)` and
+# `cfg(unix)` code compiles differently: clippy's findings there otherwise surface only in the
+# merge queue. The label `ci:full` makes them check everything, the parser's robustness test
+# cutting every golden at every character too (add it before pushing, or close and reopen the
+# pull request). The WebAssembly goldens run only when the change touches WebAssembly code, in
+# pull requests and in the queue; the nightly gate and the checks after merging run them.
 #
 # The merge queue checks everything against the pull request merged with the latest main, as two
 # jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
 # when the change touches OS-specific code (crates/xtask/src/os.rs). The single required check is
-# `ci`, which summarizes whichever jobs ran.
+# `ci`, which summarizes whichever jobs ran. The pull request's text and commits are checked by
+# the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
 # Each push to main checks everything on Windows and macOS (opening an issue when that fails),
 # which covers the changes the queue checked on Linux only, and refreshes the build cache every
@@ -48,8 +54,58 @@ jobs:
         with:
           tools: ${{ matrix.part != 'lint' }}
       - name: cargo xtask check --part ${{ matrix.part }}
+        env:
+          # `--full` knows no changes, so it leaves the robustness sweep to the environment.
+          VELT_ROBUSTNESS: >-
+            ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
         run: >-
           cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
+          ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
+
+  # Whether the change touches OS-specific code, so the pull request is linted on Windows and
+  # macOS too (xtask builds with the runner's stable Rust in seconds, as for queue-plan).
+  pr-plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      other_os: ${{ steps.plan.outputs.other_os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: plan
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          if ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}; then
+            cargo xtask affected --full --github
+          else
+            cargo xtask affected --base HEAD^1 --github
+          fi
+
+  pr-lint-os:
+    needs: pr-plan
+    if: needs.pr-plan.outputs.other_os != '[]' && needs.pr-plan.outputs.other_os != ''
+    name: lint (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.pr-plan.outputs.other_os) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: cargo xtask check --part lint
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: >-
+          cargo xtask check --part lint --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
 
   # Which OSes the queue checks. xtask has no dependencies, so the runner's stable Rust builds
@@ -60,6 +116,11 @@ jobs:
     timeout-minutes: 10
     outputs:
       os: ${{ steps.live.outputs.os || steps.plan.outputs.os }}
+      # How the parser's robustness test cuts the goldens (`--full` below knows no changes).
+      robustness: ${{ steps.plan.outputs.robustness }}
+      robustness_files: ${{ steps.plan.outputs.robustness_files }}
+      # `skip` unless the change touches WebAssembly code.
+      wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
     steps:
       # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
       # the queue test the entries behind it again, under new branches, and deletes the old
@@ -110,6 +171,10 @@ jobs:
           - part: golden
             args: --part golden
     runs-on: ${{ matrix.os }}
+    env:
+      VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
+      VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
+      VELT_WASM_GOLDENS: ${{ needs.queue-plan.outputs.wasm_goldens }}
     # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
     # entry within the hour instead of holding the queue for two.
     timeout-minutes: 45
@@ -176,11 +241,12 @@ jobs:
 
   ci:
     if: always()
-    needs: [pr, queue-plan, queue]
+    needs: [pr, pr-plan, pr-lint-os, queue-plan, queue]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
-          for r in "${{ needs.pr.result }}" "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}"; do
+          for r in "${{ needs.pr.result }}" "${{ needs.pr-plan.result }}" "${{ needs.pr-lint-os.result }}" \
+            "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done

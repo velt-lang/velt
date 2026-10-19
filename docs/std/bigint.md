@@ -1,7 +1,7 @@
 # velt:bigint
 
 `import { BigInt, BigIntError } from "velt:bigint"`. Arbitrary-precision integers, like JS
-`BigInt`, backed by the runtime (num-bigint). Velt has no operator overloading and no `10n`
+`BigInt`, backed by the runtime (dashu-int). Velt has no operator overloading and no `10n`
 literals, so arithmetic is methods.
 
 - `new BigInt(value: i64 = 0)`, `BigInt.fromNumber(x: f64)` (the integer part; panics on `NaN`
@@ -13,8 +13,8 @@ literals, so arithmetic is methods.
 - In place, like `a += b`, reusing the buffer (use these in hot loops): `addAssign subAssign
   mulAssign divAssign remAssign`, `addIntAssign subIntAssign mulIntAssign divIntAssign`,
   `shlAssign`, `shrAssign`, and `set(other)`.
-- Comparison: `compareTo(other)` (it implements `Comparable`), `compareToInt(k)`,
-  `equals(other)`.
+- Comparison: `compareTo(other)`, `compareToInt(k)`, `equals(other)`. `BigInt` does not
+  declare `implements Comparable`, so `<` and `>` don't apply to it.
 - Conversion: `toString(radix = 10)`, `toNumber(): f64`, `toI64()`.
 - `clone()` copies the number. A `BigInt` owns a runtime handle that is freed when the value is
   dropped.

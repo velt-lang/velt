@@ -42,7 +42,7 @@ class Holder {
 }
 
 function main() {
-  const xs: Base<i64>[] = [new Base(1), new Mid(2), new Leaf(), new Fn()];
+  const xs: Base<i64>[] = [new Base(1), new Mid<i64>(2), new Leaf(), new Fn()];
   console.log(JSON.stringify(xs));
   const ys: Base<string>[] = [new Mid("s")];
   console.log(JSON.stringify(ys));

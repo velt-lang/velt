@@ -1,0 +1,33 @@
+// A tuple read through a getter, spread into fixed parameters after an argument with effects:
+// JS evaluates that argument first, then reads the tuple once. Velt reads such a tuple into a
+// hidden temporary before the call, which would change that order, so it asks to store it in a
+// variable first.
+class Cnt {
+  n: number = 0;
+}
+
+class G {
+  c: Cnt;
+  constructor(c: Cnt) {
+    this.c = c;
+  }
+  get pair(): [number, number] {
+    this.c.n += 1;
+    return [this.c.n, this.c.n * 10];
+  }
+}
+
+function f(a: number, b: number, c: number): string {
+  return `${a},${b},${c}`;
+}
+
+function bump(c: Cnt): number {
+  c.n += 5;
+  return c.n;
+}
+
+function main() {
+  const cnt = new Cnt();
+  const g = new G(cnt);
+  console.log(f(bump(cnt), ...g.pair), cnt.n);
+}

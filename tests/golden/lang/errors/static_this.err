@@ -1,0 +1,10 @@
+static_this.vlt:13:11: error: `A.hello` uses `this` or `super`, so it cannot be used as a value
+a static method taken as a value has no `this` (JavaScript calls it with `this` undefined)
+call it as `A.hello()`, or wrap the call: `() => A.hello()`
+static_this.vlt:14:11: error: `B.hello` uses `this` or `super`, so it cannot be used as a value
+a static method taken as a value has no `this` (JavaScript calls it with `this` undefined)
+call it as `B.hello()`, or wrap the call: `() => B.hello()`
+static_this.vlt:7:37: error: `this` in a static method can only be used to call or read its class's static members
+`this` is the class the method was called on: use `this.f()` or `this.NAME`
+static_this.vlt:8:42: error: `A.nope` is not a static method
+static_this.vlt:11:37: error: `A.nothing` is not a static method

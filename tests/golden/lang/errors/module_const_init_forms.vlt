@@ -1,0 +1,37 @@
+// A module constant whose initializer depends on itself through a function is an error. (A
+// call through a function value or an object result makes the constant module state.)
+
+class Cache {
+  size: number = 0;
+}
+
+function cache(): Cache {
+  return new Cache();
+}
+
+function names(): string[] {
+  return ["a"];
+}
+
+function getOne(): number {
+  return 1;
+}
+
+function id(n: number): number {
+  return n;
+}
+
+function readA(): number {
+  return A + 1;
+}
+
+const ONE = getOne;
+const B = ONE();
+const C = cache();
+const N = names();
+const A: number = readA();
+
+function main() {
+  const x = 1;
+  console.log(B, C.size, N.length, A, id(x));
+}

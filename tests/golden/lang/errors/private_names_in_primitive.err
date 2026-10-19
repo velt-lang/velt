@@ -1,0 +1,3 @@
+private_names_in_primitive.vlt:6:18: error: the right operand of `in` may be a primitive: its type is `string | A`
+`in` needs an object; JavaScript throws a `TypeError` for a `string`: narrow it to an object first
+private_names_in_primitive.vlt:9:18: error: the right operand of `in` may be a primitive

@@ -1,0 +1,9 @@
+// `Object.assign` of an optional field holding `undefined` into a place that can't hold it: Node
+// copies the `undefined`, which the target's type can't represent, so it is a `TypeError` (#925).
+const recs: Record<string, string> = {};
+const absent: { name: string; color?: string } = { name: "y" };
+Object.assign(recs, absent);
+console.log(recs);
+const p: { name: string; color?: string } = { name: "x", color: undefined };
+Object.assign(recs, p);
+console.log(recs);

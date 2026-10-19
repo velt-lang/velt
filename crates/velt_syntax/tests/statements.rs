@@ -213,3 +213,57 @@ fn for_comma_lists() {
     assert!(matches!(b.stmts[0].kind, StmtKind::Expr(_)));
     assert!(matches!(b.stmts[2].kind, StmtKind::For { init: None, .. }));
 }
+
+/// `for (const k in o)` is a loop over `Object.keys(o)`, whose callee has an empty span.
+#[test]
+fn for_in_is_a_loop_over_object_keys() {
+    let m = parse_ok("function f() { for (const k in o) { g(k); } for (let k in a.b) {} }");
+    let s = body(&m);
+    let StmtKind::ForOf {
+        kind: VarKind::Const,
+        pattern,
+        iter,
+        is_await: false,
+        ..
+    } = &s[0].kind
+    else {
+        panic!()
+    };
+    assert_eq!(pat(pattern), "k");
+    assert_eq!(sx(iter), "(call (. Object keys) [o])");
+    let ExprKind::Call { callee, args, .. } = &iter.kind else {
+        panic!()
+    };
+    assert_eq!(callee.span.lo, callee.span.hi);
+    assert_eq!(iter.span, args[0].span);
+    assert!(matches!(
+        s[1].kind,
+        StmtKind::ForOf {
+            kind: VarKind::Let,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn for_in_needs_a_declared_name() {
+    let errs = errors("function f() { for (k in o) {} }");
+    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
+    let errs = errors("function f() { for (const [a, b] in o) {} }");
+    assert!(errs[0].contains("a single name"), "{errs:?}");
+    let errs = errors("async function f() { for await (const k in o) {} }");
+    assert!(errs[0].contains("needs `of`"), "{errs:?}");
+}
+
+/// `"k" in o` is a relational operator anywhere, also in a `for (…;…;…)` condition and inside
+/// the places JavaScript's grammar allows it in the loop's head (parentheses, call arguments,
+/// template substitutions, array and object literals, index brackets, a conditional's
+/// consequent, function bodies); `for (k in o)` stays the loop's `in`.
+#[test]
+fn in_operator_with_string_keys() {
+    parse_ok(
+        r#"function f() { const t = "a" in o && !("b" in o); const u = "c" in o ? 1 : 2; for (let i = 0; "a" in o; i++) {} for (x = ("a" in o); ;) {} for (g = () => { return "a" in o; }; ;) {} for (x = id("a" in o); x; x = false) {} for (s = `${"a" in o}`; ;) {} for (y = true ? "a" in o ? 1 : 2 : 3; ;) {} for (z = ["a" in o, { b: "a" in o }][r["a" in o ? 0 : 1]]; ;) {} }"#,
+    );
+    let errs = errors("function f() { for (x.y in o) {} }");
+    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
+}

@@ -1,0 +1,17 @@
+// Errors TypeScript reports too (tsc --strict): the receiver of a function with a `this`
+// parameter (#942).
+interface Counter {
+  n: number;
+}
+function bump(this: Counter, by: number): number {
+  this.n += by;
+  return this.n;
+}
+bump(2);
+bump.call(null, 2);
+bump.apply("x", [2]);
+bump.call({ n: 1 }, "two");
+function label(this: Counter | undefined): string {
+  return this === undefined ? "none" : `${this.n}`;
+}
+label();

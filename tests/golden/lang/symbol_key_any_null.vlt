@@ -1,0 +1,10 @@
+// Reading a symbol-keyed member of `null` through `any` stops with Node's TypeError, which
+// names the key as `Symbol(desc)` (#923). Expected output from node.
+const VNODE: unique symbol = Symbol("sigx:vnode");
+function brand(x: unknown): unknown {
+  return (x as any)[VNODE];
+}
+function main() {
+  console.log(brand("s"));
+  console.log(brand(null));
+}

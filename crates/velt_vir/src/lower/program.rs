@@ -22,6 +22,9 @@ impl<'h> Cx<'h> {
         Cx {
             hir,
             native_inits: vec![],
+            uses_placement: false,
+            cell_checks: false,
+            no_await_steps: false,
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),
@@ -32,7 +35,11 @@ impl<'h> Cx<'h> {
             externs: vec![],
             extern_map: HashMap::new(),
             statics: vec![],
+            module_desc: None,
+            reassigned_slots: None,
+            prelude_error: None,
             static_map: HashMap::new(),
+            tables: HashMap::new(),
             funcs: vec![],
             work_map: HashMap::new(),
             queue: VecDeque::new(),
@@ -42,28 +49,60 @@ impl<'h> Cx<'h> {
             shared_envs: HashMap::new(),
             lay: Layouts::default(),
             locs: None,
+            debug: None,
             tracked: HashMap::new(),
             str_objects: HashMap::new(),
+            symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
             own_clones: None,
             honoured_clones: HashMap::new(),
             dyn_modes_memo: HashMap::new(),
+            json_key_memo: None,
+            anon: Default::default(),
+            cur_def: None,
+            nothing_clashes: vec![],
         }
     }
 
-    /// Queue the user entry and `velt_main`. Everything else (callees, generic instances, glue,
-    /// thunks, vtables) is queued on demand by `func`, so unused functions are never lowered.
+    /// Errors for `nothing_clashes`, one per function.
+    pub(super) fn nothing_clash_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut seen = HashSet::new();
+        let mut out = vec![];
+        for d in &self.nothing_clashes {
+            if !seen.insert(*d) {
+                continue;
+            }
+            let (name, span) = match d.map(|d| self.hir.def(d)) {
+                Some(hir::Def::Fn(f)) => (f.name.rsplit("::").next().unwrap_or(&f.name), f.span),
+                _ => ("the program", velt_common::Span::DUMMY),
+            };
+            out.push(
+                velt_common::Diagnostic::error(
+                    format!("an instance of `{name}` would hold both `null` and `undefined` in one value, which is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("a type argument with one nothing (`T | undefined`) meets an option with the other (`T | null`) in this code"),
+            );
+        }
+        out
+    }
+
+    /// Queue the user entry (`velt_main` is queued once everything it reaches is lowered:
+    /// `lower_program`). Everything else (callees, generic instances, glue, thunks, vtables) is
+    /// queued on demand by `func`, so unused functions are never lowered.
     pub(super) fn seed_functions(&mut self) {
         // An async main is reached through its poll function (entry.rs), not its constructor.
-        if let Some(e) = self.hir.entry.filter(|&e| !self.is_async_fn(e)) {
-            self.func(Work::Fn(e, vec![]));
-        }
-        self.func(Work::Main);
+        match self.hir.entry {
+            Some(e) if self.is_async_fn(e) => self.func(Work::Poll(e, vec![])),
+            Some(e) => self.func(Work::Fn(e, vec![])),
+            None => return,
+        };
     }
 
-    pub(super) fn finish(self) -> vir::Program {
+    pub(super) fn finish(mut self) -> vir::Program {
+        self.fill_registry();
         let mut funcs: Vec<Function> = self
             .funcs
             .into_iter()
@@ -76,6 +115,7 @@ impl<'h> Cx<'h> {
             externs: self.externs,
             statics: self.statics,
             files: self.locs.map(|m| m.files).unwrap_or_default(),
+            debug_types: self.debug.map(|d| d.types).unwrap_or_default(),
         }
     }
 
@@ -97,7 +137,10 @@ impl<'h> Cx<'h> {
         if self.funcs[fid.0 as usize].is_some() || !self.building.insert(fid) {
             return;
         }
+        let outer = self.cur_def;
+        self.cur_def = work_def(work).or(outer);
         let func = super::FnLower::build(self, work);
+        self.cur_def = outer;
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }
@@ -120,6 +163,11 @@ impl<'h> Cx<'h> {
         ret: Ty,
         noreturn: bool,
     ) -> ExternId {
+        // Only pinning selects the per-core scheduler: `workerCount()` sizes pools of unpinned
+        // tasks, which run faster on the stealing one.
+        if symbol == "velt_rt_spawn_target" {
+            self.uses_placement = true;
+        }
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret {
@@ -176,5 +224,28 @@ impl<'h> Cx<'h> {
         });
         self.str_objects.insert(s.to_string(), id);
         id
+    }
+}
+
+/// The function `work` builds an instance (or a part) of.
+fn work_def(work: &Work) -> Option<DefId> {
+    match work {
+        Work::Fn(d, _)
+        | Work::Thunk(_, d, _)
+        | Work::EnvDrop(d, _)
+        | Work::EnvDropFrame(d, _)
+        | Work::EnvClone(d, _)
+        | Work::EnvTransfer(d, _)
+        | Work::Tracked(d, _, _)
+        | Work::Poll(d, _)
+        | Work::AsyncDrop(d, _)
+        | Work::AsyncCloseStart(d, _)
+        | Work::GenThrow(d, _)
+        | Work::ValuePoll(d, _)
+        | Work::ValueDrop(d, _)
+        | Work::HandlerInit(d, _)
+        | Work::GenNew(d, _)
+        | Work::GenFree(d, _) => Some(*d),
+        _ => None,
     }
 }

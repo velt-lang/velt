@@ -14,7 +14,9 @@ go through [SECURITY.md](SECURITY.md), not public issues.
 
 You need Rust (stable) and a system linker: the Visual Studio Build Tools ("Desktop development
 with C++") on Windows, `build-essential` on Linux, the Xcode command line tools on macOS. clang
-16 or newer enables the LLVM backend and the release-mode tests.
+16 or newer enables the LLVM backend and the release-mode tests. Programs built in a checkout
+link with the system linker; to try the bundled linker released toolchains use, see
+[Linking](docs/internals/linking.md).
 
 ```sh
 cargo build --workspace
@@ -24,40 +26,95 @@ cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt
 Builds are large. Point `CARGO_TARGET_DIR` at a disk with room if needed; `VELT_GOLDEN_WORK`
 moves the end-to-end tests' build directories the same way (the goldens build in it, and the
 LLVM, wasm, playground, panic, debugger and debug-info tests in subdirectories of it).
+Debug builds of the compiler carry line tables only (file and line in backtraces and panics);
+set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a debugger
+(dependencies stay without debug info).
 
 ## Testing
 
 | Command | What it runs |
 |---|---|
 | `cargo test -p <crate>` | one crate's unit and integration tests |
-| `cargo test -p veltc --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
+| `cargo test --workspace --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
+| `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
+| `cargo xtask precheck` | the fast mechanical checks on the changed files only (below) |
+
+Run the end-to-end tests with `--workspace`, not `-p veltc`: `-p` resolves the crates' features
+differently from the gate's `--workspace` build (`velt_opt` loses `interp`), so switching between
+the two rebuilds `velt_opt` and everything above it. (`--workspace --test golden` also runs
+`velt_syntax`'s parser goldens, which take a second.)
+
+The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substrings),
+`VELT_GOLDEN_MODES=debug` or `release` (one build mode only), `VELT_GOLDEN_JOBS=<n>` (default
+half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
+(the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
+directory fail the run too). The debug runs use the runtime's checking allocator
+(`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free (a read through a dangling
+pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`, and a captured
+variable's cell used by two tasks (a closure assigning it reached another task or HTTP request
+without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects").
+
+velt_syntax's robustness test (`prefixes_never_panic_*`) cuts the goldens and parses what comes
+before and after each cut, which must never panic. It cuts the kitchen sink and the goldens in
+`VELT_ROBUSTNESS_FILES` at every character (comma-separated paths such as
+`tests/golden/lang/foo.vlt`; `cargo xtask check` sets it to the goldens you changed), and the
+other goldens where each token starts or ends plus a fixed sample of characters.
+`VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
+nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
+when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
+or when the changes can't be told.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
-- **The checks your changes need**, while iterating and before you push: `scripts/check.sh`
-  (macOS, Linux) or `pwsh scripts/check.ps1` (Windows). The files changed since the merge base
-  with `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and
-  those of the crates depending on it, the end-to-end tests when a change can affect compiled
-  programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
-  changes, and `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
-  workspace) when it changes. A Rust file where only comments changed runs the tests and doctests
-  of its crate (and of the crates compiling its sources), clippy, `veltc`'s unit tests and the
-  file-size test (`standards`), nothing else. Changes to the build, the toolchain, CI or the
-  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
-  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
-  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+- **The checks your changes need**, while iterating and before you push: `scripts/check.sh` (macOS,
+  Linux) or `pwsh scripts/check.ps1` (Windows). The files changed since the merge base with
+  `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and those
+  of the crates depending on it, the end-to-end tests when a change can affect compiled programs
+  (or only the goldens you touched), the documentation tests for docs, clippy for Rust changes,
+  `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the workspace) when
+  it changes, and `npm ci` plus `npm test` (tsc and the unit tests) of the VS Code extension when
+  `editors/vscode/` changes (skipped without npm, except in CI). A Rust file where only comments
+  changed runs the tests and doctests of its crate (and of the crates compiling its sources),
+  clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. The WebAssembly
+  goldens (`wasm_goldens`, about half of the test time) run only for changes to WebAssembly code
+  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly gate and
+  the checks after merging run them all. Changes to the
+  build, the toolchain, CI or the scripts select everything. `cargo xtask affected` prints the plan
+  and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes
+  release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
-  goldens in debug mode only). The merge queue and `main` run it on Linux, Windows and macOS,
-  so you need it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
-  the gate in WSL; `scripts/linux-check.sh` runs it in Docker from macOS or Linux (`--services`
-  starts PostgreSQL and Redis so the database tests run).
+  goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
+  OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
+  only when you want that certainty before queueing. The queue skips the WebAssembly goldens
+  when the change doesn't touch WebAssembly code (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests
+  the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
+  script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
+  `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
+  PostgreSQL and Redis so the database tests run).
 
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
-binary at a time. Local runs keep incremental compilation on (CI turns it off).
+binary at a time (over ten minutes; the gate prints a warning). Local runs keep incremental
+compilation on (CI turns it off).
+
+**Before pushing**, `cargo xtask precheck` runs the checks behind most avoidable CI failures, on the
+files changed since the merge base with `origin/main` (plus uncommitted and untracked ones) only:
+`cargo fmt --check` of the changed crates, the gate's `velt fmt --check std examples` when
+anything under `std/` or `examples/` changed or the formatter (`velt_fmt`) or a crate it depends on
+did, the file-size rule (below) on the changed Rust files, and clippy with
+`-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
+it changed). It runs every check and then lists what failed with how to fix it; warm, it takes
+well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
+before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
+replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as
+`pre-push.orig`), and `git push --no-verify` skips it. The hook checks the **working tree**, not
+the commits being pushed: uncommitted and untracked files count, so commit or stash your work in
+progress first, or a scratch file can block an unrelated push and an uncommitted fix can hide a
+bad commit. (With a relative `core.hooksPath`, git looks for hooks in each worktree, so install
+them in each.)
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
@@ -130,6 +187,10 @@ proposal for a Velt-only feature is welcome when it shows the speed it buys.
    users will see, including fixes for code that breaks.
 3. **Show the performance impact** on `bench/` for anything that touches code generation or the
    runtime: the gate for semantic changes is every benchmark within 3% of the previous compiler.
+   `bench/nightly.sh` counts instructions with cachegrind; for a runtime change,
+   `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours; for
+   a compiler or std change, `bench/compiler_ab.sh BASE HEAD` builds them with each commit's
+   toolchain.
 4. Once the design is accepted, the implementation lands with end-to-end tests, documentation
    updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
    breaks.
@@ -152,11 +213,14 @@ velt/
 ```sh
 cd velt/main && git pull
 git worktree add ../branches/<task> -b <task> origin/main   # start a task
+cargo xtask install-hooks                                   # once per clone: precheck before each push
 # ... work, commit, push, open a pull request ...
 git worktree remove ../branches/<task> && git branch -d <task>   # after it merged
 ```
 
-Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout.
+Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout,
+and the `pre-push` hook from `cargo xtask install-hooks` covers all of them: each push runs
+`cargo xtask precheck` in the worktree it comes from.
 Never edit `main/` itself; it only ever fast-forwards. Give each worktree its own build
 directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLDEN_WORK` on a
 bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
@@ -179,8 +243,10 @@ Work on a branch and open a pull request against `main`; nothing is pushed to `m
 Reference the issue it resolves (`Closes #123`) and say which gate you ran.
 
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
-  them) on Linux, as three parallel jobs: lint, test and golden. The label `ci:full` makes them
-  check everything (add it before pushing, or close and reopen the pull request). When a pull
+  them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
+  (below) is also linted (fmt, clippy) on Windows and macOS, so `cfg(windows)`-only findings
+  show before the queue. The label `ci:full` makes them check everything (add it before
+  pushing, or close and reopen the pull request). When a pull
   request is ready, add it to the **merge queue**: the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
@@ -192,6 +258,20 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
   links or co-author trailers, in the description or in your commits.
+- The required check **`hygiene`** (`cargo xtask pr-lint`, `.github/workflows/hygiene.yml`)
+  enforces that on the title, the description and every commit. It fails on tool footers
+  (`Generated with …`) and trailers (`Co-authored-by:`), links to chat or agent sessions,
+  absolute machine paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`,
+  `/private/tmp/…`), review-process wording ("review round", "addressed the review", "Stacked on
+  #N": say these in a comment), and commits not by the pull request's author: GitHub must
+  attribute each commit to the author's account (any email verified there; the GitHub noreply
+  address `<id>+<login>@users.noreply.github.com` keeps it private), or its email must be in the
+  repository variable `PR_LINT_AUTHORS`. Merge commits, such as "Update branch", are not checked
+  for authorship. Text in code spans and blocks is exempt from the wording rules, but not from
+  the path rule or from whole session URLs.
+  Editing the description re-runs it. Before opening a pull request, check the description
+  locally: `cargo xtask pr-lint --title "<title>" --body-file <file>` (commits since
+  `origin/main` and `git config user.email` by default).
 - **Dependent changes** go in a stack of pull requests (the
   [gh-stack](https://github.com/github/gh-stack) extension: `gh extension install
   github/gh-stack`). Start one with `gh stack init`, `gh stack add` and `gh stack submit`, or join
@@ -213,14 +293,105 @@ A release is a tag `v<version>` on `main`, where `<version>` is the workspace ve
 
 The tag starts the `release` workflow (`.github/workflows/release.yml`). It builds the toolchain
 for Linux x86_64 and arm64 (in Debian 11, so it runs on glibc 2.31 and newer), macOS arm64 and
-x86_64 and Windows x64 with `scripts/package.*`, installs every archive with
-`scripts/get-velt.*` and smoke-tests it, publishes a GitHub release with the archives,
-`SHA256SUMS` and the two installers, and finally installs the published release on every platform
-the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
+x86_64 and Windows x64 with `scripts/package.*`, bundling the lld that `lld.yml` builds (from
+source, kept in the Actions cache; a cold build takes up to an hour), installs every archive with
+`scripts/get-velt.*` and smoke-tests it through the launcher, also on machines without a C
+toolchain (`scripts/smoke-clean.*` in Debian slim and Windows Server Core containers), publishes
+a GitHub release with the archives, `SHA256SUMS`, its signature `SHA256SUMS.sig` and the two
+installers, rewrites the signed index of releases (`releases.json` on the `index` release,
+`.github/workflows/release-index.yml`), and finally installs the published release on every
+platform the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
 built. Versions with a suffix (`0.2.0-rc.1`) become pre-releases; they are not "latest", so the
 `releases/latest/download/...` install commands keep pointing at the last full release. To test
 the pipeline without publishing, run the workflow by hand (Actions → release → Run workflow): it
-builds and smoke-tests the archives and keeps them as workflow artifacts.
+builds and smoke-tests the archives and keeps them as workflow artifacts, and checks that the
+signing key matches the key velt is built with.
+
+**Signing.** `scripts/release-sign.sh` signs `SHA256SUMS` and `releases.json` with the release
+key, the secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM) of the GitHub
+environment `release` (Settings → Environments), which allows only `main` and tags `v*` to use
+it, so a workflow run from another branch, with changed scripts, can't read the key. The jobs that
+sign (`signing-key` and `publish` in `release.yml`, `index` in `release-index.yml`) run in that
+environment. The script checks each signature against the public keys velt is built with
+(`velt_toolchain::signature::RELEASE_PUBLIC_KEYS`, also embedded in `scripts/get-velt.sh`; a
+test keeps them in line): the **signing key**, and a **backup key** whose private half is kept
+offline, never in GitHub. The launcher, `velt target add` and `get-velt.sh` accept a signature
+by either and refuse anything else. Keep an offline copy of both private keys: without one of
+them, no release can be signed in a way installed launchers trust.
+
+**Replacing the signing key** (it leaked or was lost):
+
+1. Make a new backup key pair offline (`openssl genpkey -algorithm ed25519`), and get its public
+   key in hex: `openssl pkey -in <file> -pubout -outform DER | tail -c 32 | xxd -p -c 64`.
+2. In a pull request, make the old backup key the first entry of `RELEASE_PUBLIC_KEYS`, add the
+   new backup key as the second, and drop the old signing key. Update the two lines of
+   `release_keys` in `scripts/get-velt.sh` (the base64 that `scripts/release-sign.sh
+   --public-key` prints; a test checks they match), and the backup's proof signature
+   (`BACKUP_KEY_PROOF` in `velt_toolchain::signature`), made with the new backup key:
+   `printf 'velt backup release key <new backup hex>' | openssl pkeyutl -sign -rawin -inkey
+   <new backup>.pem -in /dev/stdin | xxd -p -c 128`.
+3. **Re-sign the earlier releases.** The new launcher no longer trusts the old signing key, so
+   it would refuse every earlier `SHA256SUMS.sig` (and `velt toolchain install 0.2.x`, and
+   packages pinned to them). For each earlier release, check its `SHA256SUMS` against a record
+   the old key never controlled (a copy kept when it was published, or the hashes of the
+   archives you can rebuild), then sign it with the old backup and replace the signature:
+   `VELT_RELEASE_SIGNING_KEY="$(cat old-backup.pem)" scripts/release-sign.sh --backup SHA256SUMS`
+   and `gh release upload v<x> SHA256SUMS.sig --clobber`.
+4. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
+   (from then on it is the signing key) and release. Launchers that carry the old backup key
+   accept the release; the launcher it brings trusts only the new pair.
+5. **If the old signing key leaked, revoke it:** add its public key (hex) to
+   `.github/release-revoked-keys.json` in the same pull request. The index of releases that
+   release writes, signed by the old backup, names it in `revoked_keys`; every launcher that
+   reads that index refuses the old signing key from then on, for good (`<root>/revoked-keys`),
+   because the backup comes after it in their trust list. (A key never revokes one after it: a
+   leaked signing key can't revoke the backup.)
+
+**If the backup key leaks** (the signing key is fine): release a launcher that drops it, signed
+with the signing key as usual, with a new backup key in its place (steps 1 and 2 without
+dropping the signing key, and without step 3: earlier releases are signed with the signing key).
+
+**What this can't do.**
+
+- Revoking reaches a launcher only when it reads the index of releases (installing a version
+  or `velt toolchain list --available`), and only launchers from the release after 0.2.1 on
+  know `revoked_keys`. Until then, and in every `get-velt.sh` from the releases that embed the
+  leaked key, what it signs is accepted. The holder of the leaked key can serve those launchers
+  an older, unrevoking index, but not one older than the newest they have seen.
+- The backup key can't be revoked through the index (only a key after it could): release a
+  launcher without it instead (above).
+- The backup only helps launchers that carry it: those from the first release after 0.2.0
+  on. 0.2.0's launcher and installer know only the signing key.
+- The freshness check of the index of releases is one series for the official releases
+  (`<root>/index-seen/official`) whichever key signs, so it continues across a rotation. A
+  launcher applies an index's revocations before that check, and refuses (and never remembers)
+  an index written more than a day ahead of its clock, so the leaked key can't block the
+  revoking index by serving one dated far ahead.
+- `get-velt.sh` doesn't read stored revocations: it trusts every key it embeds, on a fresh
+  install and when it installs into a root that has `revoked-keys` (it leaves that file there,
+  so the launcher it installs still refuses those keys). A fresh install trusts a leaked key
+  until its launcher reads an index that revokes it.
+- Tampering with `<root>/revoked-keys` or `<root>/index-seen/` on the user's machine is outside
+  what this protects against: whoever can write the root can replace `bin/velt` itself.
+- Only the official keys revoke. Another build's keys (`$VELT_INSTALL_PUBLIC_KEY`) can't
+  withdraw them. A launcher that sees an index revoke a key after its signer ignores it and
+  warns, because no release does that: it means a misconfigured release or a leaked signing key.
+
+**Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
+(`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the
+`release-index` workflow (Actions → release-index → Run workflow). Launchers then skip the
+version when they choose the newest a requirement accepts (an exact `=0.1.2` still installs
+it), and `velt toolchain list --available` shows why. Remove the entry and run the workflow
+again to unyank it. The release itself stays.
+
+**Advisories.** To tell users of a release about a problem without withdrawing it, give the
+version an object in `.github/release-yanks.json`: `{"0.2.0": {"advisory": "TLS certificates
+are not checked", "security": true}}` (an object may also say `"yanked"`), then run the
+`release-index` workflow. A launcher running that version says so on stderr once a day, from the
+last index it read (no network), and names the newest release of the same minor without a
+problem. `scripts/release-index.sh` checks the file (a string, or an object with only `yanked`
+and `advisory` strings and a `security` boolean) and fails the workflow on anything else, so a
+typo never reaches the launchers.
 
 Never commit secrets, tokens or personal data.
 

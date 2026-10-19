@@ -8,14 +8,17 @@ edition.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+brotli-decompressor = "6.0.1"
 bytes = "1.12.1"
 dashu-int = "0.6.1"
+flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "http2", "server", "client"] }
 hyper-rustls = { version = "0.27.10", default-features = false, features = ["http1", "http2", "ring", "tls12"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-auto", "client-legacy", "http1", "http2", "server-graceful"] }
+tower-service = "0.3.3"
 itoa = "1.0.18"
 libm = "0.2.16"
 # The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.
@@ -33,7 +36,8 @@ socket2 = "0.6.5"
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
 tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
-tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+base64 = "0.22.1"
+sha1 = "0.11.0"
 url = "2.5.8"
 webpki-roots = "1.0.9"
 

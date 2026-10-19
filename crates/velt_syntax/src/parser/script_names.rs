@@ -36,12 +36,33 @@ pub(super) fn free_names(item: &Item) -> HashSet<String> {
             n.finish(&mut out);
         }
         ItemKind::Import(_)
+        | ItemKind::Augment(_)
+        | ItemKind::Namespace(_)
         | ItemKind::Interface(_)
         | ItemKind::Enum(_)
         | ItemKind::TypeAlias(_)
         | ItemKind::ExternFn(_) => {}
     }
+    // `typeof x` in any type the item writes refers to `x` too.
+    out.extend(query_heads(item));
     out
+}
+
+/// The first names of the type queries (`typeof x.y`) written anywhere in `item`.
+fn query_heads(item: &Item) -> Vec<String> {
+    struct Heads(Vec<String>);
+    impl<'a> crate::visit::Visit<'a> for Heads {
+        fn ty(&mut self, t: &'a TypeExpr) {
+            if let TypeExprKind::Query(path) = &t.kind {
+                if let Some(h) = path.first() {
+                    self.0.push(h.name.clone());
+                }
+            }
+        }
+    }
+    let mut heads = Heads(vec![]);
+    crate::visit::walk_item(item, &mut heads);
+    heads.0
 }
 
 fn function(f: &FnDecl, out: &mut HashSet<String>) {

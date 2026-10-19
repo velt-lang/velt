@@ -1,0 +1,47 @@
+// Object types with the same fields in another order convert to each other (#651): `Aged & Named`
+// where `Named & Aged` is expected, and a written object type in another order. The value is a
+// new object with the same field values (object types have fixed layouts), so the program never
+// assigns those fields or prints the converted-to types (`crate::object_copies`).
+
+type Named = { name: string };
+type Aged = { age: number };
+type Tagged = { tags: string[] };
+
+function describe(p: Named & Aged): string {
+  return `${p.name} (${p.age})`;
+}
+
+function tagCount(t: Tagged & Named): number {
+  return t.tags.length;
+}
+
+type Point = { x: number; y: number };
+type Line = { from: Point; to: Point };
+
+function length(l: Line): number {
+  return Math.abs(l.to.x - l.from.x) + Math.abs(l.to.y - l.from.y);
+}
+
+function main() {
+  const ada: Aged & Named = { age: 36, name: "Ada" };
+  console.log(describe(ada));
+  const people: (Named & Aged)[] = [];
+  people.push(ada);
+  const grace: Named & Aged = { name: "Grace", age: 45 };
+  people.push(grace);
+  console.log(people.map((p) => describe(p)).join(", "));
+
+  // A nested array is shared, not copied: a push through the original shows in the copy.
+  const ken: Named & Tagged = { name: "Ken", tags: ["unix"] };
+  const t: Tagged & Named = ken;
+  ken.tags.push("c");
+  console.log(tagCount(ken), t.tags.join("+"));
+
+  // Written object types, nested ones too.
+  const p: { y: number; x: number } = { y: 2, x: 1 };
+  const q: Point = p;
+  const l: { to: { y: number; x: number }; from: Point } = { to: { y: 5, x: 4 }, from: q };
+  console.log(q.x + q.y, length(l));
+  const maybe: Point | null = p;
+  console.log(maybe?.y ?? 0);
+}

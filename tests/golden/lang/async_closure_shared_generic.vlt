@@ -1,0 +1,25 @@
+// check: no leaks
+// An async closure that only reads what it captured, put in `shared(...)` through a generic
+// wrapper: it is not local (its calls may run on several threads), so each call copies its
+// captures, and nothing panics (#208).
+class Tag {
+  name: string = "tag";
+}
+
+class Job {
+  run: () => Promise<string>;
+  constructor(run: () => Promise<string>) {
+    this.run = run;
+  }
+}
+
+function wrap<T>(x: T): shared<Mutex<T>> {
+  return shared(new Mutex<T>(x));
+}
+
+async function main() {
+  const tag = new Tag();
+  const w = wrap<Job>(new Job(async (): Promise<string> => tag.name));
+  const p = w.with((j) => j.run());
+  console.log(await p, tag.name);
+}

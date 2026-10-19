@@ -1,0 +1,81 @@
+// Spread arguments into fixed parameters: tuples in variables and fields, and array literals,
+// for functions, methods, constructors and rest parameters (#54). Expected output: Node's.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  moved(dx: number, dy: number): Point {
+    return new Point(this.x + dx, this.y + dy);
+  }
+}
+
+class Holder {
+  pair: [string, number];
+  constructor() {
+    this.pair = ["n", 2];
+  }
+  show(): string {
+    return label(...this.pair);
+  }
+}
+
+class Cnt {
+  n: number = 0;
+}
+
+// A tuple read through a getter is stored first (spreading `g.pair` itself is an error: JS reads
+// it once), then spread.
+class G {
+  c: Cnt;
+  constructor(c: Cnt) {
+    this.c = c;
+  }
+  get pair(): [number, number] {
+    this.c.n += 1;
+    return [this.c.n, this.c.n * 10];
+  }
+}
+
+function join3(a: number, b: number, c: number): string {
+  return `${a},${b},${c}`;
+}
+
+function add3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+
+function label(name: string, n: number, suffix?: string): string {
+  return `${name}=${n}${suffix ?? ""}`;
+}
+
+function sum(first: number, ...rest: number[]): number {
+  let s = first;
+  for (const r of rest) {
+    s += r;
+  }
+  return s;
+}
+
+function main() {
+  const t: [number, number, number] = [1, 2, 3];
+  console.log(add3(...t));
+  const p: [string, number] = ["x", 4];
+  console.log(label(...p), label(...p, "!"));
+  console.log(add3(1, ...([2, 3] as [number, number])));
+  console.log(add3(...[4, 5, 6]));
+  const xy: [number, number] = [10, 20];
+  const pt = new Point(...xy);
+  const d: [number, number] = [1, -1];
+  const q = pt.moved(...d);
+  console.log(pt.x, pt.y, q.x, q.y);
+  console.log(new Holder().show());
+  console.log(sum(...t), sum(0, ...t), Math.max(...t), Math.min(...[7, 3, 9]));
+  console.log(label(...(["s", 1] as [string, number])));
+  const cnt = new Cnt();
+  const g = new G(cnt);
+  const t2 = g.pair;
+  console.log(join3(0, ...t2), cnt.n);
+}

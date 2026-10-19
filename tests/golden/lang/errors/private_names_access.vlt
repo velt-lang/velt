@@ -1,0 +1,34 @@
+// `#x` is usable only in the body of the class declaring it (TS18013), not in subclasses or
+// elsewhere; `#y in o` needs a `#y` of this class and an object operand; private methods are
+// never inherited, so `override #m` is an error (TS4113); `JSON.parse` cannot build a class
+// with a `#` field.
+class A {
+  #x: number = 1;
+  #m(): number {
+    return 1;
+  }
+  #x: string = "dup";
+  probe(o: A): boolean {
+    return #y in o;
+  }
+  check(s: string): boolean {
+    return #x in s;
+  }
+}
+class B extends A {
+  read(): number {
+    return this.#x;
+  }
+  override #m(): number {
+    return 2;
+  }
+}
+function outside(a: A): number {
+  return a.#x;
+}
+function brand(a: A): boolean {
+  return #x in a;
+}
+function main() {
+  const a = JSON.parse<A>("{}");
+}

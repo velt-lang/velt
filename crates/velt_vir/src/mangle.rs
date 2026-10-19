@@ -171,6 +171,32 @@ mod tests {
     }
 
     #[test]
+    fn symbol_keyed_members_mangle_to_linker_safe_names() {
+        // Methods and accessors named by symbols (velt_sema's `property_order::symbol_key_name`,
+        // `[Symbol.iterator]`): their names reach symbols only escaped.
+        let names = [
+            "Box.\u{FFFF}Symbol(k)",
+            "Box.\u{FFFF}Symbol(k) #2",
+            "Box.set \u{FFFF}Symbol(a.b)",
+            "Box.[Symbol.iterator]",
+            "Box.\u{FFFF}Symbol()::{closure#0}",
+        ];
+        let mut syms = vec![];
+        for name in names {
+            let s = mangle(name);
+            assert!(
+                s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                "{s}"
+            );
+            assert_eq!(demangle(&s), name);
+            syms.push(s);
+        }
+        syms.sort();
+        syms.dedup();
+        assert_eq!(syms.len(), names.len());
+    }
+
+    #[test]
     fn distinct() {
         let names = [
             "a.b", "a::b", "a/b", "a_b", "a__b", "ab", "a_2eb", "a.b.c", "a.bc", "ab.c",

@@ -1,0 +1,6 @@
+[ 'a', 'b', 'c' ]
+all rejected with B
+a
+b
+[ 'rejected', 'fulfilled' ]
+[ 'a', 'c' ]

@@ -17,11 +17,11 @@ use velt_common::Span;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, Generics, ParamSig, ThisSig, ThrowSrc};
 use crate::hir::{
-    self, Callee, Def, DefId, ExprKind as H, LocalDef, LocalId, PassMode, TyId, UseMode,
+    self, Callee, Def, DefId, ExprKind as H, LocalDef, LocalId, PassMode, TyId, TyKind, UseMode,
 };
 
 /// What a synthesized method calls.
-pub(super) enum Target {
+pub(crate) enum Target {
     /// Interface default `def` with these type args (`iface args ++ [Self]`).
     Default(DefId, Vec<TyId>),
     /// Vtable slot of the receiver's class.
@@ -34,10 +34,14 @@ pub(super) enum Target {
         gen: TyId,
         impl_index: u32,
     },
+    /// The function value in field `index` of the receiver (of function type `fn_ty`), called
+    /// with the parameters (not `this`): an object literal implementing an interface
+    /// (`body/expr/iface_object.rs`).
+    Field { index: u32, fn_ty: TyId },
 }
 
 /// The type a synthesized method belongs to.
-pub(super) struct Host {
+pub(crate) struct Host {
     /// The class / struct / interface (`None`: an `extend` block's target).
     pub d: Option<DefId>,
     pub generics: Generics,
@@ -60,7 +64,7 @@ impl Host {
 
 /// A method of `host` (self type `self_ty`) with the given signature that calls `target`.
 #[allow(clippy::too_many_arguments)] // the signature parts of the synthesized method
-pub(super) fn synth_method(
+pub(crate) fn synth_method(
     cx: &mut Ctx,
     host: &Host,
     self_ty: TyId,
@@ -117,6 +121,27 @@ pub(super) fn synth_method(
             wrap = Some((gen, impl_index));
             Callee::Def(g, targs)
         }
+        Target::Field { index, fn_ty } => {
+            if let TyKind::FnPtr { throws, .. } = cx.ty.kind(fn_ty) {
+                if *throws != cx.ty.never {
+                    cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Direct(*throws, span)];
+                }
+            }
+            let this = hir::Expr {
+                kind: H::Local(LocalId(0), UseMode::Borrow),
+                ty: self_ty,
+                span,
+            };
+            Callee::Indirect(Box::new(hir::Expr {
+                kind: H::Field {
+                    base: Box::new(this),
+                    index,
+                    mode: UseMode::Borrow,
+                },
+                ty: fn_ty,
+                span,
+            }))
+        }
     };
     let call = (callee, wrap);
     let body = forward_body(cx, self_ty, this_mode, &params, ret, call, span);
@@ -139,6 +164,7 @@ pub(super) fn synth_method(
         is_generator: false,
         self_ty: Some(self_ty),
         captures: vec![],
+        shares_captures: false,
         body,
         throws: None,
         span,
@@ -171,11 +197,14 @@ fn forward_body(
     } else {
         UseMode::Borrow
     };
-    let mut args = vec![hir::Expr {
-        kind: H::Local(LocalId(0), this_use),
-        ty: self_ty,
-        span,
-    }];
+    let mut args = vec![];
+    if !matches!(callee, Callee::Indirect(_)) {
+        args.push(hir::Expr {
+            kind: H::Local(LocalId(0), this_use),
+            ty: self_ty,
+            span,
+        });
+    }
     for (i, p) in params.iter().enumerate() {
         locals.push(local(&p.name, p.ty));
         let mode = if cx.is_copy(p.ty) {

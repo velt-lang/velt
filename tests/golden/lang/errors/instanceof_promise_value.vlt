@@ -1,0 +1,5 @@
+// `x instanceof Promise` on a value that is not a promise is always false.
+function main() {
+  const x = 5;
+  console.log(x instanceof Promise);
+}

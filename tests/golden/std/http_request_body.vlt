@@ -1,0 +1,55 @@
+// check: no leaks
+// A handler receives the request body while it reads it: chunk by chunk from `req.body` (a large
+// upload is never held whole), or whole with `req.json<T>()`; a GET has no body. It may return a
+// response `fetch` gave it (a proxy: the body is passed on as it arrives). A response with an
+// invalid header name gets a 500, and the error is printed to stderr.
+import { serve } from "velt:http";
+
+type Item = { name: string; count: i64 };
+
+async function handle(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.pathname == "/upload") {
+    let chunks = 0;
+    let bytes = 0;
+    const body = req.body;
+    if (body != null) {
+      for await (const chunk of body) {
+        chunks++;
+        bytes += chunk.length as i64;
+      }
+    }
+    return new Response(`${bytes} bytes in ${chunks > 1 ? "several chunks" : "one chunk"}`);
+  }
+  if (url.pathname == "/item") {
+    const item = await req.json<Item>();
+    return Response.json({ name: item.name.toUpperCase(), twice: item.count * 2 });
+  }
+  if (url.pathname == "/none") {
+    return new Response(`body null: ${req.body == null}, used: ${req.bodyUsed}`);
+  }
+  if (url.pathname == "/proxy") {
+    return await fetch(`${url.origin}/item`, { method: "POST", body: `{"name":"p","count":4}` });
+  }
+  const bad = new Response("x");
+  bad.headers.set("bad name", "1");
+  return bad;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, handle);
+  const base = `http://127.0.0.1:${server.port}`;
+  const big: u8[] = [];
+  for (let i = 0; i < 300000; i++) {
+    big.push(97);
+  }
+  console.log(await (await fetch(`${base}/upload`, { method: "POST", body: big })).text());
+  const item = await fetch(`${base}/item`, { method: "POST", body: `{"name":"ab","count":21}` });
+  console.log(item.headers.get("content-type"), await item.text());
+  console.log(await (await fetch(`${base}/none`)).text());
+  const proxied = await fetch(`${base}/proxy`);
+  console.log(proxied.status, proxied.headers.get("content-type"), await proxied.text());
+  const bad = await fetch(`${base}/bad`);
+  console.log(bad.status, await bad.text());
+  await server.shutdown();
+}

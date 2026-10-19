@@ -1,0 +1,46 @@
+// A function (or class) declared in a method is inside the class body: it may use the class's
+// `#x` names and `private` members on any instance, as an arrow can (TypeScript).
+class Counter {
+  #count: number = 0;
+  private step: number = 2;
+  #bump(): void { this.#count += this.step; }
+  get #doubled(): number { return this.#count * 2; }
+
+  run(other: Counter): number {
+    function poke(c: Counter): void {
+      c.#bump();
+      c.#count += 1;
+      c.step = 5;
+    }
+    function read(c: Counter): number {
+      function inner(d: Counter): number { return d.#doubled; }
+      if (#count in c) return inner(c) + 1;
+      return 0;
+    }
+    poke(other);
+    poke(other);
+    poke(this);
+    return read(other) * 1000 + read(this);
+  }
+
+  static make(): Counter {
+    class Builder {
+      #seed: number = 100;
+      build(): Counter {
+        const c = new Counter();
+        // Both classes' private names are in scope here.
+        function fill(b: Builder, into: Counter): void { into.#count = b.#seed + 1; }
+        fill(this, c);
+        return c;
+      }
+    }
+    return new Builder().build();
+  }
+
+  value(): number { return this.#count; }
+}
+
+const a = new Counter();
+const b = new Counter();
+console.log(a.run(b));
+console.log(Counter.make().value());

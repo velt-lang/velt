@@ -34,7 +34,22 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_int32_call(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.dynamic_is_array_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
+            return h;
+        }
+        if let Some(h) = self.object_builtin_call(callee, type_args, args, exp, span) {
+            return h;
+        }
+        if let Some(h) = self.call_apply(callee, type_args, args, exp, span) {
+            return h;
+        }
+        if let Some(h) = self.json_stringify_layout(callee, type_args, args, span) {
+            return h;
+        }
+        if let Some(h) = self.bound_method_call(callee, args, exp, span) {
             return h;
         }
         match &callee.kind {
@@ -43,13 +58,39 @@ impl FnCx<'_, '_> {
             }
             ast::ExprKind::Super => self.super_ctor_call(args, span),
             ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => {
+                if self.cx.has_overloads {
+                    if let Some(h) = self.overloaded_call(id, type_args, args, exp, span) {
+                        return h;
+                    }
+                }
                 self.named_call(id, type_args, args, exp, span)
+            }
+            // `it.return(undefined)`: TypeScript's `return(value)` takes the generator's return
+            // value; Velt's `return()` has none, and `undefined` is what leaving it out passes.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional,
+            } if self.iteration_return_undefined(object, prop, args) => {
+                self.member_call(object, prop, *optional, type_args, &[], exp, span)
             }
             ast::ExprKind::Member {
                 object,
                 prop,
                 optional,
             } => self.member_call(object, prop, *optional, type_args, args, exp, span),
+            // `o[KEY]()` with a symbol key: the method (or function field) the symbol names.
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional,
+            } if self.symbol_key_of(index).is_some() => {
+                let prop = ast::Ident {
+                    name: self.symbol_key_of(index).unwrap_or_default(),
+                    span: index.span,
+                };
+                self.member_call(object, &prop, *optional, type_args, args, exp, span)
+            }
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
@@ -60,12 +101,55 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is this `it.return(undefined)` on a generator or an iterator of the prelude (issue
+    /// #1144)?
+    fn iteration_return_undefined(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> bool {
+        let [arg] = args else {
+            return false;
+        };
+        if prop.name != "return" || crate::body::narrow::nothing_word(arg) != Some("undefined") {
+            return false;
+        }
+        let Some(t) = self.peek_ty(object) else {
+            return false;
+        };
+        let d = match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => *d,
+            _ => return false,
+        };
+        const PROTOCOL: [&str; 7] = [
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "IteratorObject",
+        ];
+        PROTOCOL
+            .iter()
+            .any(|n| matches!(self.cx.prelude.get(*n), Some(Item::Def(p)) if *p == d))
+    }
+
     fn immediate_closure(&mut self, e: &ast::Expr) -> hir::Expr {
-        self.closure(e, None, false)
+        // The arrow an adapter calls in place (`callback::immediate_wrapper`), typed by it.
+        let exp = match self.immediate_hint {
+            Some((span, t)) if span == e.span => {
+                self.immediate_hint = None;
+                Some(t)
+            }
+            _ => None,
+        };
+        self.closure(e, exp, false)
     }
 
     /// `name(args)` where `name` is not a local.
-    fn named_call(
+    pub(super) fn named_call(
         &mut self,
         id: &ast::Ident,
         type_args: &[ast::TypeExpr],
@@ -75,7 +159,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Fn(_) if self.cx.prelude_fn("Number") == Some(d) => {
+                    self.number_call(d, args, span)
+                }
                 DefInfo::Fn(_) => self.fn_call(d, &id.name, type_args, args, exp, span),
+                DefInfo::Adt(_) if self.cx.prelude_adt("String") == Some(d) => {
+                    self.string_call(args, span)
+                }
                 DefInfo::Adt(_) if self.is_class_def(d) => {
                     self.cx.error(
                         Diagnostic::error(format!("`{}` is a class", id.name), id.span)
@@ -100,6 +190,8 @@ impl FnCx<'_, '_> {
         let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
+        let js_api = self.is_js_api(d);
+        let positions = js_numbers && super::numbers::is_simd_method(&f.name);
         let rest = f.source.is_some_and(|s| {
             crate::body::defaults::fn_sig_ast(s)
                 .params
@@ -112,9 +204,12 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
+            constraints: f.generics.constraints.clone(),
             js_numbers,
+            positions,
+            js_api,
             rest,
-            defaults: vec![],
+            defaults: f.generics.defaults.clone(),
         };
         if async_call {
             c.ret = self.async_call_ret(d, c.ret);
@@ -126,27 +221,49 @@ impl FnCx<'_, '_> {
         c
     }
 
-    /// Explicit `<T, U>` type args fill the trailing `own` slots.
+    /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take
+    /// their `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not
+    /// inferred.
     pub(super) fn explicit_type_args(
         &mut self,
         slots: &mut [Option<TyId>],
         own: usize,
         type_args: &[ast::TypeExpr],
+        defaults: &[Option<TyId>],
         span: Span,
     ) {
         if type_args.is_empty() {
             return;
         }
-        if type_args.len() != own {
+        let start = slots.len() - own;
+        let required = (start..slots.len())
+            .rposition(|k| defaults.get(k).is_none_or(|d| d.is_none()))
+            .map_or(0, |i| i + 1);
+        if type_args.len() < required || type_args.len() > own {
+            let expected = match required == own {
+                true => format!("{own}"),
+                false => format!("{required} to {own}"),
+            };
             self.cx.err(
-                format!("expected {own} type argument(s), found {}", type_args.len()),
+                format!(
+                    "expected {expected} type argument(s), found {}",
+                    type_args.len()
+                ),
                 span,
             );
             return;
         }
-        let start = slots.len() - own;
         for (i, t) in type_args.iter().enumerate() {
             slots[start + i] = Some(self.resolve(t));
+        }
+        for k in start + type_args.len()..slots.len() {
+            let Some(Some(d)) = defaults.get(k) else {
+                break;
+            };
+            let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
+                break;
+            };
+            slots[k] = Some(self.cx.subst(*d, &before));
         }
     }
 
@@ -159,11 +276,24 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.takes_this(d) {
+            return self.this_fn_call(d, name, None, type_args, args, exp, span);
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, span);
+        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        self.std_callback_arg(d, args);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.void_task = None;
+        self.task_callback = None;
+        self.thread_task = None;
+        self.thread_callback = None;
+        if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
+            if let Some(a) = ck.args.first() {
+                self.check_structured_clone(a.ty, a.span);
+            }
+        }
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {
@@ -175,6 +305,17 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let f = match self.dynamic_apply(f, args, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
+        // A function with properties (#921): a call of the function it holds.
+        if self.cx.is_callable_object(f.ty) {
+            return match self.call_of_callable(f, span) {
+                Some(f) => self.call_value(f, args, span),
+                None => self.error_expr(span),
+            };
+        }
         let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,
@@ -186,6 +327,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
             _ => {
+                let f = match self.call_fn_union(f, args, span) {
+                    Ok(h) => return h,
+                    Err(f) => f,
+                };
                 let tn = self.cx.display(f.ty);
                 self.cx.err(
                     format!("this expression is not callable (it has type `{tn}`)"),
@@ -226,7 +371,10 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: vec![],
             bounds: vec![],
+            constraints: vec![],
             js_numbers: false,
+            positions: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };
@@ -244,7 +392,7 @@ impl FnCx<'_, '_> {
     }
 
     #[allow(clippy::too_many_arguments)] // mirrors `obj.prop<T>(args)` plus the checking context
-    fn member_call(
+    pub(super) fn member_call(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
@@ -284,7 +432,14 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
-        self.method_call_on(recv, prop, type_args, args, exp, span)
+        let recv = match self.optional_fn_member_call(object, recv, prop, args, span) {
+            Ok(call) => return call,
+            Err(recv) => recv,
+        };
+        let recv = self.nullable_helper_receiver(recv, &prop.name);
+        let r = self.in_place_receiver(object, recv);
+        let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
+        self.after_receiver(r.before, call)
     }
 
     /// Method `name` that an `extend` block of class/struct `d` adds (a static one is called as
@@ -307,13 +462,21 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
+            // `this.f()` in a static method: the class it was called on.
+            return Some(self.this_static_call(this, declaring, prop, type_args, args, exp, span));
+        }
         let ast::ExprKind::Ident(id) = &object.kind else {
             return None;
         };
         if self.is_local_name(&id.name) {
             return None;
         }
-        match self.lookup_item(&id.name, id.span) {
+        let item = self.lookup_item(&id.name, id.span);
+        if let Some(simd) = self.simd_type_named(&id.name, item) {
+            return self.simd_static_call(simd, id, prop, type_args, args, exp, span);
+        }
+        match item {
             Some(Item::Def(d)) if self.cx.enum_info(d).is_some() => {
                 Some(self.variant_value(d, prop, args, exp, span))
             }
@@ -327,8 +490,81 @@ impl FnCx<'_, '_> {
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))
             }
+            None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
+                Some(self.promise_settled(&prop.name, type_args, args, exp, span))
+            }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
+    }
+
+    /// The SIMD type `name` names in this module, where `item` is what it binds: the built-in
+    /// type in std, elsewhere the `export type u8x16 = u8x16` of `velt:simd` it imports.
+    fn simd_type_named(&self, name: &str, item: Option<Item>) -> Option<hir::SimdTy> {
+        match item {
+            Some(Item::Alias(a)) => {
+                let info = &self.cx.aliases[a as usize];
+                let exported = self.cx.scopes[info.module].is_std && info.decl.generics.is_empty();
+                exported
+                    .then(|| hir::SimdTy::named(&info.decl.name.name))
+                    .flatten()
+            }
+            None if self.cx.scopes[self.module].is_std => hir::SimdTy::named(name),
+            _ => None,
+        }
+    }
+
+    /// `u8x16.splat(x)`: a static method that an `extend` block of SIMD type `simd` declares.
+    /// The SIMD types are primitives with constructors of their own, which `static_call` does
+    /// not see.
+    #[allow(clippy::too_many_arguments)]
+    fn simd_static_call(
+        &mut self,
+        simd: hir::SimdTy,
+        id: &ast::Ident,
+        prop: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if let Some(first) = type_args.first() {
+            let message = format!("`{}.{}` takes no type arguments", id.name, prop.name);
+            self.cx.err(message, first.span);
+        }
+        let target = self.cx.ty.intern(TyKind::Simd(simd));
+        let found = self.cx.extensions.iter().find_map(|x| {
+            let m = x.methods.get(prop.name.as_str())?;
+            (x.target == target).then_some(*m)
+        });
+        let Some(m) = found.filter(|m| m.is_static) else {
+            let what = match found {
+                Some(_) => "an instance method",
+                None => "not a static method",
+            };
+            let mut d =
+                Diagnostic::error(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
+            // No extension of the type at all: its API (`velt:simd`) is not loaded, which a std
+            // module that uses the built-in name without importing it gets.
+            if !self.cx.extensions.iter().any(|x| x.target == target) {
+                let name = simd.name();
+                d = d.with_note(format!(
+                    "the methods are loaded by importing the type: `import {{ {name} }} from \"velt:simd\";`"
+                ));
+            }
+            self.cx.error(d);
+            self.check_args_loose(args);
+            return Some(self.error_expr(span));
+        };
+        self.cx
+            .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
+        let c = self.fn_callable(m.def, format!("`{}.{}`", id.name, prop.name), span);
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        let kind = H::Call {
+            callee: Callee::Def(m.def, ck.type_args),
+            args: ck.args,
+        };
+        Some(self.mk(kind, ck.ret, span))
     }
 
     fn static_call(
@@ -340,46 +576,214 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let a = self.cx.adt(d).expect("ICE: adt");
-        let cname = a.name.clone();
-        let mut owner_generics = a.generics.len();
-        let mut m = a
-            .methods
-            .get(&crate::defs::static_key(&prop.name))
-            .or_else(|| a.methods.get(&prop.name))
-            .copied();
-        if m.is_none() {
-            if let Some((em, n)) = self.extension_static(d, &prop.name) {
-                (m, owner_generics) = (Some(em), n);
+        self.static_call_as(d, d, prop, type_args, args, exp, span)
+    }
+
+    /// `C.f(args)`, the static method `f` that class `d` declares or inherits, run with `this`
+    /// being class `this_class` (`d` or a subclass of it: `this.f()` and `super.f()` in a static
+    /// method keep the class the outer call was made on).
+    #[allow(clippy::too_many_arguments)] // `static_call` plus the class `this` is
+    pub(super) fn static_call_as(
+        &mut self,
+        d: DefId,
+        this_class: DefId,
+        prop: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        if self.cx.has_overloads {
+            let h = self.overloaded_static_call(d, this_class, prop, type_args, args, exp, span);
+            if let Some(h) = h {
+                return h;
             }
         }
-        let Some(m) = m.filter(|m| m.is_static) else {
-            let what = if m.is_some() {
-                "an instance method"
-            } else {
-                "not a static method"
-            };
-            self.cx
-                .err(format!("`{cname}.{}` is {what}", prop.name), prop.span);
-            self.check_args_loose(args);
-            return self.error_expr(span);
+        self.note_reflect_call(d, &prop.name, span);
+        let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
+        // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
+        // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (std's
+        // `JSON.__parseFromContext`).
+        let from_context = type_args.is_empty()
+            && prop.name == "parse"
+            && cname == "JSON"
+            && self.cx.declared_in_std(d);
+        let lookup = match from_context {
+            true => "__parseFromContext",
+            false => prop.name.as_str(),
+        };
+        let (m, owner_generics, owner_args) = match self.find_static(d, lookup) {
+            Ok(found) => found,
+            Err(instance) => {
+                let what = match instance {
+                    true => "an instance method",
+                    false => "not a static method",
+                };
+                self.cx
+                    .err(format!("`{cname}.{}` is {what}", prop.name), prop.span);
+                self.check_args_loose(args);
+                return self.error_expr(span);
+            }
         };
         self.cx
             .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
         let private_to = self.fn_private_to(m.def);
         self.check_private(private_to, &prop.name, prop.span);
-        let c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name), span);
+        let def = self.static_def_for(m.def, this_class);
+        let mut c = self.fn_callable(def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;
+        if self.declares_static(d, &prop.name, m.def) {
+            self.owner_defaults(&mut c, d, owner_generics);
+        }
+        self.default_unused_owner_slots(&mut c, owner_generics);
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, own, type_args, span);
+        for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
+            *slot = Some(a);
+        }
+        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let ck = self.check_call(&c, slots, args, exp, span);
-        self.note_async_args(m.def, &ck.args);
-        self.call_throws(m.def, &ck.type_args, ck.ret, span);
+        self.note_async_args(def, &ck.args);
+        self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {
-            callee: Callee::Def(m.def, ck.type_args),
+            callee: Callee::Def(def, ck.type_args),
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// A static method of class `d` (whose `owner` first slots are `d`'s type parameters) called
+    /// with slots nothing infers: they take `d`'s defaults, as a `new` does.
+    fn owner_defaults(&mut self, c: &mut Callable, d: DefId, owner: usize) {
+        let defaults = self.cx.adt_param_defaults(d);
+        if defaults.len() != owner || defaults.iter().all(Option::is_none) {
+            return;
+        }
+        c.defaults.resize(c.slot_names.len(), None);
+        c.defaults[..owner].copy_from_slice(&defaults);
+    }
+
+    /// Does class `d` itself declare the static method `name` as `m` (not inherit it or take it
+    /// from an `extend` block)?
+    fn declares_static(&self, d: DefId, name: &str, m: DefId) -> bool {
+        let a = self.cx.adt(d).expect("ICE: adt");
+        a.methods
+            .get(&crate::defs::static_key(name))
+            .or_else(|| a.methods.get(name))
+            .is_some_and(|x| x.is_static && x.def == m)
+    }
+
+    /// The static method `name` of class `d`: its own (in the class, then in an `extend`
+    /// block), else the nearest base class's. With the number of generics of the class (or
+    /// block) declaring it and, when known, their type arguments. `Err(true)`: `name` is an
+    /// instance method.
+    pub(super) fn find_static(
+        &mut self,
+        d: DefId,
+        name: &str,
+    ) -> Result<(crate::defs::MethodRef, usize, Option<Vec<TyId>>), bool> {
+        let a = self.cx.adt(d).expect("ICE: adt");
+        let mut owner_generics = a.generics.len();
+        let mut m = a
+            .methods
+            .get(&crate::defs::static_key(name))
+            .or_else(|| a.methods.get(name))
+            .copied();
+        let mut owner_args = None;
+        if m.is_none() {
+            if let Some((em, n)) = self.extension_static(d, name) {
+                (m, owner_generics) = (Some(em), n);
+            }
+        }
+        if !m.is_some_and(|m| m.is_static) {
+            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`,
+            // unless `B` has its own `static f` (in the class or an `extend B` block).
+            if let Some((im, n, args)) = self.inherited_static(d, name) {
+                (m, owner_generics, owner_args) = (Some(im), n, args);
+            }
+        }
+        match m {
+            Some(m) if m.is_static => Ok((m, owner_generics, owner_args)),
+            found => Err(found.is_some()),
+        }
+    }
+
+    /// The function running static method `m` with `this` being class `this_class`: `m`, or its
+    /// copy for that subclass when `m` uses `this` (`collect::static_this`).
+    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+        match self.cx.static_this.get(&m) {
+            Some(&declaring) if declaring != this_class => self
+                .cx
+                .static_copies
+                .get(&(m, this_class))
+                .copied()
+                .unwrap_or(m),
+            _ => m,
+        }
+    }
+
+    /// The class's type parameters that a static method's signature doesn't use (always the
+    /// case in TypeScript, where statics can't use them) default to `void`, so `Box.wrap(4)`
+    /// needs no type arguments, bounded (`class Box<T extends Named>`) or not: nothing of the
+    /// call depends on it, so its bound isn't checked.
+    fn default_unused_owner_slots(&mut self, c: &mut Callable, owner_generics: usize) {
+        let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).chain([c.ret]).collect();
+        let unused = self.unused_owner_slots(&tys, owner_generics);
+        let n = c.slot_names.len();
+        for i in unused {
+            c.defaults.resize(n, None);
+            c.defaults[i].get_or_insert(self.cx.ty.unit);
+            if let Some(b) = c.bounds.get_mut(i) {
+                b.clear();
+            }
+        }
+    }
+
+    /// The slots below `owner_generics` that no type of `tys` uses.
+    pub(super) fn unused_owner_slots(&self, tys: &[TyId], owner_generics: usize) -> Vec<usize> {
+        let mut used = vec![];
+        for &t in tys {
+            crate::types::collect_params(&self.cx.ty, t, &mut used);
+        }
+        (0..owner_generics)
+            .filter(|&i| !used.contains(&(i as u32)))
+            .collect()
+    }
+
+    /// The nearest base class of class `d` declaring a static method `name`: that method, the
+    /// number of generics of the class declaring it, and that class's type arguments in the
+    /// `extends` chain from `d` (when `d` is not generic, so they are known).
+    fn inherited_static(
+        &mut self,
+        d: DefId,
+        name: &str,
+    ) -> Option<(crate::defs::MethodRef, usize, Option<Vec<TyId>>)> {
+        let key = crate::defs::static_key(name);
+        let mut cur = d;
+        let mut args = (self.cx.adt(d)?.generics.len() == 0).then(Vec::new);
+        for _ in 0..64 {
+            let base = self.cx.adt(cur)?.base?;
+            let base = match &args {
+                Some(a) => self.cx.subst(base, a),
+                None => base,
+            };
+            let (c, base_args) = self.cx.class_of(base)?;
+            cur = c;
+            args = args.map(|_| base_args);
+            let a = self.cx.adt(cur)?;
+            let m = a.methods.get(&key).or_else(|| a.methods.get(name));
+            if let Some(m) = m.filter(|m| m.is_static) {
+                return Some((*m, a.generics.len(), args));
+            }
+            // Then the statics an `extend` block of that base adds.
+            let n = a.generics.len();
+            if let Some((m, k)) = self
+                .extension_static(cur, name)
+                .filter(|(m, _)| m.is_static)
+            {
+                return Some((m, k, args.filter(|_| k == n)));
+            }
+        }
+        None
     }
 }

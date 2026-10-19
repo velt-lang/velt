@@ -132,7 +132,7 @@ class IsoFields {
   }
 }
 
-// Epoch ms of an ISO 8601 / RFC 3339 date or date-time (see `DateTime.parse`), or null.
+/** Epoch ms of an ISO 8601 / RFC 3339 date or date-time (see `DateTime.parse`), or null. */
 export function parseIso(s: string): i64 | null {
   const f = new IsoFields();
   if (!f.date(s)) {
@@ -151,9 +151,11 @@ export function parseIso(s: string): i64 | null {
   return local - f.offset * MS_PER_MINUTE;
 }
 
-// Epoch ms of an HTTP date in any of RFC 7231's three formats (IMF-fixdate
-// `Sun, 06 Nov 1994 08:49:37 GMT`, RFC 850 `Sunday, 06-Nov-94 08:49:37 GMT`, asctime
-// `Sun Nov  6 08:49:37 1994`), or null. The weekday name is not checked.
+/**
+ * Epoch ms of an HTTP date in any of RFC 7231's three formats (IMF-fixdate
+ * `Sun, 06 Nov 1994 08:49:37 GMT`, RFC 850 `Sunday, 06-Nov-94 08:49:37 GMT`, asctime
+ * `Sun Nov  6 08:49:37 1994`), or null. The weekday name is not checked.
+ */
 export function parseHttp(s: string): i64 | null {
   const words = s
     .replaceAll(",", " ")

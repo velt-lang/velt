@@ -1,0 +1,19 @@
+// A base class value whose dynamic class holds std private state (a `BigInt` handle) is written
+// as its static class: the handle never reaches JSON.
+import { BigInt } from "velt:bigint";
+
+class Base {
+  name: string;
+  constructor(n: string) {
+    this.name = n;
+  }
+}
+
+class Holder extends Base {
+  n: BigInt = new BigInt(5);
+}
+
+function main() {
+  const b: Base = new Holder("h");
+  console.log(JSON.stringify(b));
+}

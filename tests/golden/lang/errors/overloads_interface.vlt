@@ -1,0 +1,7 @@
+// Overloaded interface methods are not supported yet.
+interface I {
+  m(x: string): string;
+  m(x: number): number;
+}
+
+function main() {}

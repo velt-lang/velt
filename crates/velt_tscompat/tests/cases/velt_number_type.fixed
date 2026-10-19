@@ -9,7 +9,7 @@ export type Pixel = { r: u8; g: u8; b: u8 }; //~ velt-number-type velt-number-ty
 
 export function sizes(xs: Map<string, usize[]>): f32 {
   //~^ velt-number-type velt-number-type
-  return xs.size;
+  return xs.size as f32; //~ velt-number-type
 }
 
 export function fine(x: number): number {

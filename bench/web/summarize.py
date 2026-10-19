@@ -7,7 +7,7 @@ Usage: bench/web/summarize.py results/<run>.jsonl"""
 import json
 import sys
 
-ORDER = ["velt", "rust", "go", "bun", "node", "node-cluster"]
+ORDER = ["velt", "velt-tsx", "rust", "go", "bun", "node", "node-cluster"]
 
 
 def label(r):

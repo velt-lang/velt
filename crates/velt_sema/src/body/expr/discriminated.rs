@@ -17,8 +17,8 @@ impl FnCx<'_, '_> {
     /// the member reading the field; its type is the union of the fields' types (a literal
     /// field reads as its constant, a non-Copy field as a copy — `.clone()`; narrow the value to
     /// borrow it instead). `Err(obj)` when a member has no such field, except for `value` on an
-    /// `IteratorResult<T>`, which reads as `T | null` (`null` when done), as TypeScript code
-    /// expects (`g().next().value`).
+    /// `IteratorResult<T>`, which reads as `T | undefined` (`undefined` when done), as in
+    /// TypeScript (`g().next().value`).
     pub(super) fn union_field(
         &mut self,
         obj: hir::Expr,
@@ -35,21 +35,36 @@ impl FnCx<'_, '_> {
             .unwrap_or_else(|| (0..members.len() as u32).collect());
         let mut fields = vec![];
         let mut without = vec![];
+        let owner = self.name_owner(&prop.name);
         for &v in &live {
             let m = members[v as usize];
-            match self.cx.field_of(m, &prop.name) {
+            match self.cx.field_seen_from(m, &prop.name, owner) {
                 Some((i, fty)) => fields.push((v, m, i, fty)),
                 None => without.push((v, m)),
             }
         }
-        // `r.value` on an `IteratorResult<T>`: `T | null`, `null` when done (TypeScript's is
-        // `undefined` there).
-        let value_or_null = !without.is_empty()
+        // `r.value` on an `IteratorResult<T>`: `T | undefined`, `undefined` when done.
+        let value_or_undefined = !without.is_empty()
             && prop.name == "value"
             && fields.iter().all(|f| f.3 != self.cx.ty.unit)
             && self.cx.is_iterator_result(obj.ty);
-        if !without.is_empty() && !value_or_null {
+        if !without.is_empty() && !value_or_undefined {
             return Err(obj);
+        }
+        // Every member's field must be usable here (`private`, `#x`), as on a single value. A
+        // `private` field is reported once (its message does not name the class); each `#x`
+        // names the class that declares it.
+        let mut private_reported = false;
+        for &(_, m, i, _) in &fields {
+            if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+                let denied = self
+                    .field_private_to(m, i)
+                    .is_some_and(|o| !self.private_allowed(o));
+                if denied && std::mem::replace(&mut private_reported, true) {
+                    continue;
+                }
+            }
+            self.check_field_private(m, i, prop);
         }
         let owns = fields.iter().any(|f| self.cx.owns_resource(f.3));
         if want == Want::BorrowMut || owns {
@@ -65,11 +80,21 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let ftys: Vec<TyId> = fields.iter().map(|f| f.3).collect();
-        let ty = self.cx.union_of(&ftys, value_or_null, span);
+        let ty = self.cx.union_with(
+            &ftys,
+            value_or_undefined.then_some(hir::Nothing::Undefined),
+            span,
+        );
         let consume = !is_place(&obj);
         let mut arms = vec![];
         for (v, m) in without {
             let wild = self.pat(P::Wildcard, m, span);
+            // An `IteratorResult<any>` (`Generator<any>`): the dynamic `undefined`, as in JS
+            // (`T | undefined` of a dynamic `T` is that `T`, which has no `Lit::Null`).
+            let none = match self.cx.dynamic(ty) {
+                Some(_) => self.dynamic_nothing(hir::Nothing::Undefined, ty, span),
+                None => self.mk(H::Lit(hir::Lit::Null), ty, span),
+            };
             arms.push(hir::Arm {
                 pat: self.pat(
                     P::Variant {
@@ -81,7 +106,7 @@ impl FnCx<'_, '_> {
                     span,
                 ),
                 guard: None,
-                body: self.mk(H::Lit(hir::Lit::Null), ty, span),
+                body: none,
             });
         }
         for (v, m, i, fty) in fields {
@@ -336,5 +361,6 @@ pub(crate) fn show_lit(l: &ast::SignedLit) -> String {
         ast::Lit::Float { value, .. } => format!("{sign}{value}"),
         ast::Lit::Bool(b) => b.to_string(),
         ast::Lit::Null => "null".into(),
+        ast::Lit::Undefined => "undefined".into(),
     }
 }

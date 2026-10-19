@@ -1,0 +1,30 @@
+// readDirEntries: Node's `readdir(path, { withFileTypes: true })`, types without a stat per entry.
+import { readDirEntries, readDirEntriesSync, readDir, mkdir, writeFile, remove } from "velt:fs";
+
+async function main() {
+  const dir = "velt_fs_dirents_tmp";
+  await mkdir(`${dir}/sub/deeper`, { recursive: true });
+  await writeFile(`${dir}/b.txt`, "b");
+  await writeFile(`${dir}/a.txt`, "a");
+  await writeFile(`${dir}/sub/c.txt`, "c");
+
+  for (const d of await readDirEntries(dir)) {
+    console.log(d.name, d.isFile(), d.isDirectory(), d.isSymbolicLink());
+  }
+  const sync = readDirEntriesSync(`${dir}/sub`);
+  console.log(sync.map((d) => `${d.name}:${d.isDirectory() ? "dir" : "file"}`).join(","));
+  console.log((await readDir(dir)).join(","));
+  console.log((await readDirEntries(`${dir}/sub/deeper`)).length);
+
+  try {
+    await readDirEntries(`${dir}/missing`);
+  } catch (e) {
+    console.log("error:", e.code);
+  }
+  try {
+    readDirEntriesSync(`${dir}/a.txt`);
+  } catch (e) {
+    console.log("error:", e.code);
+  }
+  await remove(dir, { recursive: true });
+}

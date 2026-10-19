@@ -1,6 +1,6 @@
 // Editing a generic function swaps its instances: their keys spell out the type arguments
 // (`wrap<i64>`), not type-table indices.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 function wrap<T>(value: T): string {
   return `<${value}>`;
@@ -9,7 +9,7 @@ function wrap<T>(value: T): string {
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     const n: i64 = 7;
-    return Response.text(`${wrap(n)} ${wrap("s")}`);
+    return new Response(`${wrap(n)} ${wrap("s")}`);
   });
   console.log(`listening on ${server.port}`);
   await sleep(1000000000);

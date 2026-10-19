@@ -1,0 +1,47 @@
+// Calls through an interface and through a base class on objects created just before (#559):
+// the class is known from the `new`, so the call can go to its method directly.
+interface Shape {
+  area(): number;
+}
+
+class Sq implements Shape {
+  s: number;
+  constructor(s: number) {
+    this.s = s;
+  }
+  area(): number {
+    return this.s * this.s;
+  }
+}
+
+class Item {
+  weight(): number {
+    return 1;
+  }
+}
+
+class Heavy extends Item {
+  k: number;
+  constructor(k: number) {
+    super();
+    this.k = k;
+  }
+  override weight(): number {
+    return this.k * 2 + 1;
+  }
+}
+
+function run(n: number): number {
+  let t = 0.0;
+  for (let i = 0; i < n; i++) {
+    const s: Shape = new Sq(i % 100);
+    t += s.area();
+    const it: Item = new Heavy(i % 7);
+    t += it.weight();
+  }
+  return t;
+}
+
+function main() {
+  console.log(run(20000000));
+}

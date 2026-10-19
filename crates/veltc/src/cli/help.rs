@@ -53,6 +53,10 @@ const TIMINGS: (&str, &str) = (
     "--timings",
     "like -v, plus the time of each optimizer pass and codegen step",
 );
+const REPORT: (&str, &str) = (
+    "--report numbers",
+    "list the `number` variables in loops that stay doubles (not integers), and why",
+);
 const TEMPLATE: (&str, &str) = (
     "--template <name>",
     "app | cli | api | websocket | lib (default: app)",
@@ -77,25 +81,34 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "init",
         summary: "Turn the current directory into a package from a template",
-        usage: &["init [--template <name>] [--name <name>] [--force]"],
+        usage: &[
+            "init [--template <name>] [--name <name>] [--force]",
+            "init --editor vscode [--dir <dir>]",
+        ],
         about: "Like `velt new`, in the current directory. The package is named after the \
                 directory unless --name is given. Existing files are never overwritten without \
                 --force (an existing README.md is kept and `target/` is added to an existing \
-                .gitignore).",
+                .gitignore). With --editor, adds only the editor's files (for VS Code \
+                `.vscode/launch.json`, so F5 debugs the program, and `.vscode/extensions.json`) \
+                to the current package, or to the current directory outside one (or to --dir), \
+                keeping existing files.",
         options: &[
             TEMPLATE,
             ("--name <name>", "package name (default: the directory's name)"),
             ("--force", "overwrite files the template would create"),
+            ("--editor <name>", "only add the editor's project files (vscode)"),
+            ("--dir <dir>", "with --editor: write them into this directory"),
         ],
         examples: &[
             ("velt init", "hello world in the current directory"),
             ("velt init --template websocket --name chat", "WebSocket chat, package `chat`"),
+            ("velt init --editor vscode", "set up F5 debugging in VS Code for this package"),
         ],
     },
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [-v] [--timings]"],
+        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
@@ -107,14 +120,21 @@ pub const COMMANDS: &[CommandHelp] = &[
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
             LOCKED,
+            (
+                "--json",
+                "the output path, whether it has debug info, and the diagnostics as one JSON \
+                 document on stdout (for editors and tools)",
+            ),
             VERBOSE,
             TIMINGS,
+            REPORT,
         ],
         examples: &[
             ("velt build", "build the current package"),
             ("velt build --release", "optimized build"),
             ("velt build hello.vlt -o hello", "build one file"),
             ("velt build app.vlt --target wasm32-wasip1", "build WebAssembly"),
+            ("velt build --release --report numbers", "which loop variables stay doubles"),
         ],
     },
     CommandHelp {
@@ -192,18 +212,29 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
-        usage: &["test [<file|dir>] [--release] [--locked] [--watch]"],
+        usage: &[
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]",
+        ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed.",
         options: &[
+            ("--filter <text>", "only the tests whose name contains <text>"),
+            ("--exact", "with --filter: only the test named <text>"),
             ("--release", "build the tests optimized"),
             LOCKED,
             ("--watch", "rerun on every change"),
+            (
+                "--no-run",
+                "build the test programs without running them, and print their paths",
+            ),
+            ("--json", "with --no-run: print the programs and their tests as JSON"),
         ],
         examples: &[
             ("velt test", "every test of the package (or under the current directory)"),
             ("velt test tests/api.test.vlt", "one file"),
+            ("velt test --filter parse", "the tests whose name contains `parse`"),
             ("velt test --watch", "rerun on every change"),
         ],
     },
@@ -297,6 +328,71 @@ pub const COMMANDS: &[CommandHelp] = &[
             "velt native build --target aarch64-apple-darwin",
             "the macOS arm64 library",
         )],
+    },
+    CommandHelp {
+        name: "target",
+        summary: "List, add or remove the targets velt builds for",
+        usage: &[
+            "target list",
+            "target add <triple>... [--from <pack.tar.gz> [--unverified]]",
+            "target remove <triple>...",
+        ],
+        about: "`velt build --target <triple>` builds for another platform with the target's pack: \
+                its runtime and link kit, in <prefix>/lib/targets/<triple>/. `add` downloads the \
+                packs of this velt's release ($VELT_INSTALL_BASE_URL: another repository) and \
+                checks them against the hashes the toolchain carries, or installs a pack from a \
+                file.",
+        options: &[
+            ("--from <file>", "install a target pack downloaded before"),
+            (
+                "--unverified",
+                "with --from: install a pack no hash is known for (one you built)",
+            ),
+        ],
+        examples: &[
+            ("velt target list", "the targets this toolchain builds for, and the others"),
+            (
+                "velt target add x86_64-pc-windows-msvc",
+                "build Windows executables: velt build --target x86_64-pc-windows-msvc",
+            ),
+            (
+                "velt target add x86_64-unknown-linux-musl",
+                "static Linux executables",
+            ),
+        ],
+    },
+    CommandHelp {
+        name: "toolchain",
+        summary: "List, install or select velt versions (run by the launcher)",
+        usage: &[
+            "toolchain list [--available]",
+            "toolchain install <version> [--default]",
+            "toolchain remove <toolchain> [--force]",
+            "toolchain self-update",
+            "toolchain prune [--dry-run]",
+            "toolchain default [<toolchain>]",
+            "toolchain which",
+            "toolchain link <name> <prefix>",
+            "toolchain unlink <name>",
+        ],
+        about: "Versions are installed side by side in <root>/toolchains/<version>/, and the \
+                `velt` on PATH (<root>/bin/velt, the launcher) runs the one a package pins with \
+                `velt: \"0.1\"` in package.vlt, else the default, installing it on first use. \
+                `velt +<toolchain> <command>` or $VELT_TOOLCHAIN (a version or a linked name) \
+                overrides the choice for one command. The launcher implements this command, the same for every version.",
+        options: &[
+            ("--available", "with list: the published versions"),
+            ("--default", "with install: make it the default"),
+            ("--force", "with remove: remove the default too"),
+        ],
+        examples: &[
+            ("velt toolchain which", "the version this directory runs, and why"),
+            ("velt toolchain install 0.1", "the newest published 0.1.x"),
+            (
+                "velt toolchain link dev ~/velt/dist/prefix",
+                "run a toolchain you built: VELT_TOOLCHAIN=dev velt test",
+            ),
+        ],
     },
     CommandHelp {
         name: "search",
@@ -488,7 +584,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_RT_LINK",
         "`static`: debug builds link the static runtime instead of the shared one",
     ),
-    ("VELT_LINKER", "linker program override"),
+    ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
     (
         "VELT_LLVM_BIN",
         "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
@@ -500,6 +596,22 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     (
         "VELT_WASM_RUNNER",
         "program running wasm32-wasip1 modules for `velt run` (default: wasmtime)",
+    ),
+    (
+        "VELT_TOOLCHAIN",
+        "the toolchain the launcher runs for this command: a version or a linked name",
+    ),
+    (
+        "VELT_TOOLCHAIN_AUTO_INSTALL",
+        "`0`: the launcher does not install a missing pinned version",
+    ),
+    (
+        "VELT_INSTALL_BASE_URL",
+        "where toolchains and target packs are downloaded from (a mirror)",
+    ),
+    (
+        "VELT_INSTALL_PUBLIC_KEY",
+        "keys release signatures are checked with instead of velt's (another build's releases)",
     ),
     ("NO_COLOR", "set to disable colored output"),
 ];

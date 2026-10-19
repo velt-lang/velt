@@ -9,7 +9,7 @@
 // Runs shorter than this are insertion sorted before merging.
 const MERGE_BLOCK: usize = 16;
 
-// Insertion sort of xs[lo..hi) whose prefix xs[lo..start) is already sorted. Stable.
+/** Insertion sort of xs[lo..hi) whose prefix xs[lo..start) is already sorted. Stable. */
 export function insertionTail<T, C>(
   xs: T[],
   lo: usize,
@@ -40,16 +40,18 @@ export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
   }
 }
 
-// Moves src[lo..hi) to dst[lo..hi).
+/** Moves src[lo..hi) to dst[lo..hi). */
 export function moveRange<T>(dst: T[], src: T[], lo: usize, hi: usize) {
   if (lo < hi) {
     __intrinsic_array_move(dst, lo, src, lo, hi - lo);
   }
 }
 
-// Merges the sorted runs of xs whose boundaries are `runs` (run k is xs[runs[k]..runs[k + 1]))
-// into one, ping-ponging with `scratch` (same length; its slots are stale copies or free).
-// `runs` is consumed.
+/**
+ * Merges the sorted runs of xs whose boundaries are `runs` (run k is xs[runs[k]..runs[k + 1]))
+ * into one, ping-ponging with `scratch` (same length; its slots are stale copies or free).
+ * `runs` is consumed.
+ */
 export function mergeRuns<T, C>(
   xs: T[],
   scratch: T[],
@@ -74,8 +76,10 @@ export function mergeRuns<T, C>(
   }
 }
 
-// Stable merge sort of xs[lo..hi): insertion-sorted blocks, then `mergeRuns`. The fallback of
-// the quicksort when its pivots keep coming out bad: O(n log n) whatever the input.
+/**
+ * Stable merge sort of xs[lo..hi): insertion-sorted blocks, then `mergeRuns`. The fallback of
+ * the quicksort when its pivots keep coming out bad: O(n log n) whatever the input.
+ */
 export function mergeSortRange<T, C>(
   xs: T[],
   scratch: T[],

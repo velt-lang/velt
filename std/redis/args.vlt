@@ -3,7 +3,7 @@
 
 import { SetOptions } from "velt:redis";
 
-// `SET key value [EX s] [PX ms] [NX] [XX]`.
+/** `SET key value [EX s] [PX ms] [NX] [XX]`. */
 export function setArgs(key: string, value: string, opts: SetOptions): string[] {
   const args = ["SET", key, value];
   if (opts.ex != null) {
@@ -23,7 +23,7 @@ export function setArgs(key: string, value: string, opts: SetOptions): string[] 
   return args;
 }
 
-// `head` followed by every key and value of `pairs`.
+/** `head` followed by every key and value of `pairs`. */
 export function withPairs(head: string[], pairs: Map<string, string>): string[] {
   const args = head;
   for (const [k, v] of pairs) {

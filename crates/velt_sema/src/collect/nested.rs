@@ -15,7 +15,6 @@ use velt_syntax::ast;
 
 use super::declare::new_def;
 use crate::ctx::{Ctx, Item};
-use crate::defs::member_key;
 use crate::hir::DefId;
 
 /// A nested item's name and the source range (inside `module`) where it is visible.
@@ -38,10 +37,17 @@ pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
-            let qual = item_name(item).map(|n| cx.qualify(m, n));
-            if let Some(qual) = qual {
-                item_bodies(cx, m, item, &qual, &[], defs, &mut used);
-            }
+            let Some(name) = item_name(item) else {
+                continue;
+            };
+            let qual = cx.qualify(m, name);
+            let class = match (&item.kind, cx.scopes[m].items.get(name)) {
+                (ast::ItemKind::Struct(_) | ast::ItemKind::Class(_), Some(Item::Def(d))) => {
+                    Some(*d)
+                }
+                _ => None,
+            };
+            item_bodies(cx, m, item, &qual, &[], class, defs, &mut used);
         }
     }
 }
@@ -56,13 +62,16 @@ fn item_name(item: &ast::Item) -> Option<&str> {
     })
 }
 
-/// Every function body of `item` (named `qual`), each checked for nested items.
+/// Every function body of `item` (named `qual`), each checked for nested items. `class`: the
+/// class or struct whose body the bodies are in (`item` itself, or one enclosing it).
+#[allow(clippy::too_many_arguments)] // the item, where it sits, and the shared collections
 fn item_bodies<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     item: &'m ast::Item,
     qual: &str,
     outer: &[String],
+    class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut HashSet<String>,
 ) {
@@ -73,7 +82,7 @@ fn item_bodies<'m>(
             for meth in &t.methods {
                 let q = format!(
                     "{qual}.{}",
-                    member_key(&meth.decl.sig.name.name, meth.is_setter)
+                    cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
             }
@@ -85,7 +94,7 @@ fn item_bodies<'m>(
             for meth in &e.methods {
                 let q = format!(
                     "{qual}.{}",
-                    member_key(&meth.decl.sig.name.name, meth.is_setter)
+                    cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
             }
@@ -94,7 +103,10 @@ fn item_bodies<'m>(
             for meth in &i.methods {
                 if let Some(b) = &meth.body {
                     bodies.push((
-                        format!("{qual}.{}", member_key(&meth.sig.name.name, meth.is_setter)),
+                        format!(
+                            "{qual}.{}",
+                            cx.method_key(m, &meth.sig.name, meth.is_setter)
+                        ),
                         &meth.sig.params,
                         b,
                     ));
@@ -104,7 +116,7 @@ fn item_bodies<'m>(
         _ => {}
     }
     for (q, params, body) in bodies {
-        fn_body(cx, m, &q, params, body, outer, defs, used);
+        fn_body(cx, m, &q, params, body, outer, class, defs, used);
     }
 }
 
@@ -116,6 +128,7 @@ fn fn_body<'m>(
     params: &'m [ast::Param],
     body: &'m ast::Block,
     outer: &[String],
+    class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut HashSet<String>,
 ) {
@@ -125,7 +138,13 @@ fn fn_body<'m>(
         return;
     }
     let mut locals: Vec<String> = outer.to_vec();
-    locals.extend(params.iter().map(|p| p.name.name.clone()));
+    for p in params {
+        param_bindings(p, &mut |f| {
+            if let Found::Bind(n) = f {
+                locals.push(n.to_string());
+            }
+        });
+    }
     for f in &found {
         if let Found::Bind(n) = f {
             locals.push(n.to_string());
@@ -138,6 +157,7 @@ fn fn_body<'m>(
         let Some(name) = nested_name(cx, item) else {
             continue;
         };
+        reject_nested_overloads(cx, item);
         let mut q = format!("{qual}::{name}");
         let mut k = 2;
         while !used.insert(q.clone()) {
@@ -147,9 +167,19 @@ fn fn_body<'m>(
         let Some((ident, it)) = new_def(cx, m, item, q.clone()) else {
             continue;
         };
+        let mut inner_class = class;
         if let Item::Def(d) = it {
             defs.push(d);
             cx.nested_locals.insert(d, locals.clone());
+            if let Some(c) = class {
+                cx.enclosing_class.insert(d, c);
+            }
+            if matches!(
+                item.kind,
+                ast::ItemKind::Struct(_) | ast::ItemKind::Class(_)
+            ) {
+                inner_class = Some(d);
+            }
         }
         cx.nested.push(NestedItem {
             module: m,
@@ -158,7 +188,7 @@ fn fn_body<'m>(
             name: ident.name.clone(),
             item: it,
         });
-        item_bodies(cx, m, item, &q, &locals, defs, used);
+        item_bodies(cx, m, item, &q, &locals, inner_class, defs, used);
     }
 }
 
@@ -167,6 +197,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
     let what = match &item.kind {
         ast::ItemKind::Function(f) => return Some(&f.sig.name.name),
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => return Some(&t.name.name),
+        ast::ItemKind::Interface(i) if !i.call_sigs.is_empty() => "interfaces with call signatures",
         ast::ItemKind::Interface(i) => return Some(&i.name.name),
         ast::ItemKind::Enum(e) => return Some(&e.name.name),
         ast::ItemKind::TypeAlias(a) => return Some(&a.name.name),
@@ -174,6 +205,8 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
         ast::ItemKind::ExternFn(_) => "`declare function` declarations",
         ast::ItemKind::Extend(_) => "`extend` blocks",
         ast::ItemKind::Var(_) => "module constants",
+        ast::ItemKind::Augment(_) => "`declare global` and `declare module` blocks",
+        ast::ItemKind::Namespace(_) => "namespaces",
     };
     cx.err(format!("{what} must be at the module level"), item.span);
     None
@@ -285,11 +318,24 @@ fn bindings<'m>(p: &'m ast::Pattern, f: &mut dyn FnMut(Found<'m>)) {
     }
 }
 
+/// The names a parameter binds: its own, or those of the pattern it destructures.
+fn param_bindings<'m>(p: &'m ast::Param, f: &mut dyn FnMut(Found<'m>)) {
+    match &p.pattern {
+        Some(q) => bindings(q, f),
+        None => f(Found::Bind(&p.name.name)),
+    }
+}
+
 fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
     use ast::ExprKind as E;
     match &e.kind {
         E::Arrow { params, body, .. } => {
-            params.iter().for_each(|p| f(Found::Bind(&p.name.name)));
+            for p in params {
+                match &p.pattern {
+                    Some(q) => bindings(q, f),
+                    None => f(Found::Bind(&p.name.name)),
+                }
+            }
             match body {
                 ast::ArrowBody::Expr(x) => walk_expr(x, f),
                 ast::ArrowBody::Block(b) => walk_block(b, f),
@@ -300,7 +346,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
             for p in props {
                 if let ast::ObjectProp::Method(d) = p {
                     for p in &d.sig.params {
-                        f(Found::Bind(&p.name.name));
+                        param_bindings(p, f);
                     }
                     walk_block(&d.body, f);
                 }
@@ -311,11 +357,31 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
                 f(Found::Bind(&d.sig.name.name));
             }
             for p in &d.sig.params {
-                f(Found::Bind(&p.name.name));
+                param_bindings(p, f);
                 p.default.iter().for_each(|x| walk_expr(x, f));
             }
             walk_block(&d.body, f);
         }
         _ => crate::ast_walk::children(e, &mut |c| walk_expr(c, f)),
+    }
+}
+
+/// Overload signatures of a nested function or of a nested class's method: not supported yet
+/// (`crate::overloads` rewrites module-level declarations only).
+fn reject_nested_overloads(cx: &mut Ctx, item: &ast::Item) {
+    let sigs: Vec<&ast::FnSig> = match &item.kind {
+        ast::ItemKind::Function(f) => f.overloads.iter().collect(),
+        ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => t
+            .methods
+            .iter()
+            .flat_map(|m| m.decl.overloads.first())
+            .collect(),
+        _ => vec![],
+    };
+    if let Some(sig) = sigs.first() {
+        cx.err(
+            "overloads of a function or class declared inside a function are not supported yet: declare it at module level",
+            sig.name.span,
+        );
     }
 }

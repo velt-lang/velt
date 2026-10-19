@@ -150,6 +150,7 @@ function main() {
     console.log(s.kind, area(s), width(s), sides(s));
   }
   console.log(shapes[1]);
+  // A union member in a template is written as JS writes an object.
   console.log(`${shapes[2]}`);
   console.log(JSON.stringify(shapes));
 

@@ -1,0 +1,24 @@
+ x="a" x="3" x="2.5" x
+show: a
+a
+show: 3
+3
+show: 2.5
+2.5
+show: true
+true
+show: false
+false
+null
+a handler
+value: b
+b
+value: 7
+7
+value: 1.5
+1.5
+value: false
+false
+value: null
+null
+a handler

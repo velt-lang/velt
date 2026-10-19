@@ -42,7 +42,10 @@ impl Gen {
         let init = match ty.elem() {
             // The annotation types an empty literal.
             Some(_) if self.rng.chance(15) => "[]".to_string(),
-            _ => self.owned(ty, D),
+            _ => {
+                let value = self.owned(ty, D);
+                self.unnarrowed_init(ty, value)
+            }
         };
         let rebind = ty != Ty::IntFn && self.rng.chance(60);
         let (kw, prefix) = if rebind { ("let", "v") } else { ("const", "c") };
@@ -95,7 +98,10 @@ impl Gen {
                 self.reduce(&e)
             }
             Ty::Str => format!("({}).slice(0, 40)", self.string(D).text),
-            other => self.owned(other, D),
+            other => {
+                let value = self.owned(other, D);
+                self.unnarrowed_init(other, value)
+            }
         };
         let op = match v.ty {
             Ty::Float if self.rng.chance(40) => *self.rng.pick(&["+=", "-=", "*=", "/="]),
@@ -139,7 +145,7 @@ impl Gen {
         let i = self.int(D);
         let sep = if suffix.starts_with('=') { " " } else { "." };
         format!(
-            "if ({xs}.length > 0) {{ {xs}[(({i} + 20000) as usize) % {xs}.length]{sep}{suffix}; }}"
+            "if ({xs}.length > 0) {{ {xs}[(({i} + 20000) as usize) % ({xs}.length as usize)]{sep}{suffix}; }}"
         )
     }
 

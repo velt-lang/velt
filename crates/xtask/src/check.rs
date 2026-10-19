@@ -10,8 +10,8 @@ use crate::graph::Graph;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
-/// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, smoke
-/// test) and `golden` (the end-to-end goldens).
+/// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, the VS Code
+/// extension's `npm test`, smoke test) and `golden` (the end-to-end goldens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parts {
     lint: bool,
@@ -137,6 +137,10 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         }
         let modes = opts.golden_modes.as_deref().unwrap_or("debug + release");
         gate.step(&format!("goldens ({modes})"), &mut goldens)?;
+        gate.bundled_linker_goldens(&ws, plan.golden_env(), opts.golden_modes.as_deref())?;
+    }
+    if part.has(Part::Test) && plan.vscode {
+        gate.vscode()?;
     }
     if part.has(Part::Test) && plan.vlt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
@@ -154,7 +158,57 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     Ok(())
 }
 
+/// The goldens [`Gate::bundled_linker_goldens`] runs when all of them are selected.
+const BUNDLED_LINKER_GOLDENS: &str = "m1/,m2/,m3/,m4/,async_dispatch/";
+
 impl Gate<'_> {
+    /// Some goldens again, linked with the bundled linker (`velt_link::bundled`: a link kit for
+    /// the host, written into `target/lib/targets/<host>` and removed afterwards, with the Rust
+    /// toolchain's `rust-lld`), so every OS the gate runs on checks it.
+    fn bundled_linker_goldens(
+        &mut self,
+        ws: &[String],
+        selected: Option<String>,
+        modes: Option<&str>,
+    ) -> Result<(), String> {
+        let host = host_triple()?;
+        let kit = target_dir(self.root)
+            .join("lib")
+            .join("targets")
+            .join(&host);
+        let velt_kit = target_dir(self.root).join("debug").join(exe("velt-kit"));
+        let mut build = Command::new(&velt_kit);
+        build.args(["build", "--target", &host, "--out"]).arg(&kit);
+        let result = self
+            .step("link kit for the bundled linker", &mut build)
+            .and_then(|()| {
+                let mut goldens = cargo(&["test"]);
+                goldens.args(ws).args([
+                    "--test",
+                    "golden",
+                    "--",
+                    "--nocapture",
+                    "--exact",
+                    "golden",
+                ]);
+                goldens.env("VELT_RT_PREBUILT", "1");
+                goldens.env("VELT_LINKER", "bundled");
+                goldens.env(
+                    "VELT_GOLDEN",
+                    selected.unwrap_or_else(|| BUNDLED_LINKER_GOLDENS.into()),
+                );
+                if let Some(modes) = modes {
+                    goldens.env("VELT_GOLDEN_MODES", modes);
+                }
+                self.step("goldens (bundled linker)", &mut goldens)
+            });
+        // Without the kit, later builds in this checkout link with the system linker again.
+        if !self.dry_run {
+            let _ = std::fs::remove_dir_all(&kit);
+        }
+        result
+    }
+
     fn tests(&mut self, plan: &Plan, graph: &Graph, ws: &[String]) -> Result<(), String> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
@@ -167,11 +221,7 @@ impl Gate<'_> {
             }
             c
         } else {
-            println!("note: cargo-nextest is not installed, so every test runs, one binary at a");
-            println!(
-                "      time (`cargo install cargo-nextest --locked` runs only the selected ones,"
-            );
-            println!("      in parallel).");
+            warn_no_nextest();
             let mut c = cargo(&["test"]);
             // Not `--doc`: the doctests are a step of their own below.
             c.args(ws)
@@ -184,6 +234,7 @@ impl Gate<'_> {
             // The WebAssembly goldens follow the golden selection.
             tests.env("VELT_GOLDEN", filter);
         }
+        tests.envs(plan.sweep_env());
         self.step("unit + integration tests", &mut tests)?;
         if plan.rust {
             let crates = doctests::crates_with_doctests(self.root, &graph.dirs);
@@ -200,6 +251,31 @@ impl Gate<'_> {
             }
         }
         Ok(())
+    }
+
+    /// The VS Code extension: `npm ci`, then `npm test` (tsc and its unit tests), in
+    /// `editors/vscode`. Without npm the step is skipped, except in CI.
+    fn vscode(&mut self) -> Result<(), String> {
+        let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+        let found = Command::new(npm)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !found {
+            if std::env::var_os("CI").is_some() {
+                return Err("editors/vscode: npm is not installed".into());
+            }
+            println!("note: npm is not installed, so the VS Code extension's tests are skipped.");
+            return Ok(());
+        }
+        // Steps run in the repository root.
+        let prefix = ["--prefix", crate::plan::VSCODE];
+        let mut install = Command::new(npm);
+        install.args(prefix).args(["ci", "--no-audit", "--no-fund"]);
+        self.step("editors/vscode: npm ci", &mut install)?;
+        let mut test = Command::new(npm);
+        test.args(prefix).arg("test");
+        self.step("editors/vscode: npm test", &mut test)
     }
 
     /// `cargo fmt --check` and clippy of the differential tester, a crate outside the workspace
@@ -251,7 +327,7 @@ impl Gate<'_> {
     }
 }
 
-fn cargo(args: &[&str]) -> Command {
+pub(crate) fn cargo(args: &[&str]) -> Command {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.args(args);
     c
@@ -259,7 +335,7 @@ fn cargo(args: &[&str]) -> Command {
 
 /// `--workspace`, minus the shared runtime on musl hosts (musl links statically and cannot build
 /// a cdylib; `velt` falls back to the static runtime).
-fn workspace_args(root: &Path) -> Vec<String> {
+pub(crate) fn workspace_args(root: &Path) -> Vec<String> {
     let mut args = vec!["--workspace".to_string()];
     let host = Command::new("rustc").arg("-vV").current_dir(root).output();
     let musl = host.is_ok_and(|o| {
@@ -277,6 +353,19 @@ fn difftest_manifest(root: &Path) -> PathBuf {
     root.join(DIFFTEST).join("Cargo.toml")
 }
 
+/// Without cargo-nextest the selection can't be applied to the tests: say so loudly, since the
+/// fallback takes many times longer.
+fn warn_no_nextest() {
+    let bar = "!".repeat(78);
+    eprintln!("\x1b[1;33m{bar}");
+    eprintln!("WARNING: cargo-nextest is not installed. The test selection is IGNORED: every test");
+    eprintln!("of the workspace runs, one test binary after another (over 10 minutes).");
+    eprintln!("Install it once to run only the selected tests, in parallel:");
+    eprintln!();
+    eprintln!("    cargo install cargo-nextest --locked");
+    eprintln!("{bar}\x1b[0m");
+}
+
 fn has_nextest() -> bool {
     cargo(&["nextest", "--version"])
         .output()
@@ -290,11 +379,24 @@ pub fn target_dir(root: &Path) -> PathBuf {
     }
 }
 
-fn exe(name: &str) -> String {
+/// `rustc -vV`'s host triple.
+fn host_triple() -> Result<String, String> {
+    let out = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|e| format!("cannot run rustc: {e}"))?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .map(|h| h.trim().to_string())
+        .ok_or_else(|| "rustc -vV printed no host".into())
+}
+
+pub(crate) fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn show(cmd: &Command) -> String {
+pub(crate) fn show(cmd: &Command) -> String {
     let program = Path::new(cmd.get_program());
     let mut s = match program.file_stem() {
         Some(stem) if stem == "cargo" => "cargo".to_string(),

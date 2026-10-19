@@ -1,10 +1,9 @@
 // The HTTP and WebSocket handles of std have no JSON form.
-import { Response as ServerResponse, Server } from "velt:http";
-import { ResponseWriter } from "velt:http/stream";
+import { Server } from "velt:http";
 import { WebSocket } from "velt:websocket";
 
-function write(r: ServerResponse, w: ResponseWriter): string {
-  return JSON.stringify(r) + JSON.stringify(w);
+function write(r: Response, q: Request): string {
+  return JSON.stringify(r) + JSON.stringify(q);
 }
 
 function main() {

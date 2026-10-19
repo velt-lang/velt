@@ -1,0 +1,35 @@
+// Index signatures whose value type includes `null` (#1005): a key holding `null` is present,
+// listed, iterated, printed and written to JSON like any other, as in Node.
+
+type Scores = { [name: string]: number | null };
+
+interface Slots {
+  [name: string]: string | number | null;
+}
+
+function describe(s: Scores): string {
+  return Object.keys(s)
+    .map((k) => `${k}=${s[k]}`)
+    .join(",");
+}
+
+function main() {
+  const s: Scores = { ann: null, bob: 3, cid: null };
+  console.log(s, Object.keys(s), s.ann, s.bob, s["cid"]);
+  s.dan = null;
+  s.bob = null;
+  console.log(JSON.stringify(s), describe(s));
+  delete s.ann;
+  console.log(Object.keys(s), Object.values(s), Object.entries(s));
+  s.ann = 1;
+  for (const k in s) {
+    console.log("for in", k, s[k]);
+  }
+
+  const slots: Slots = { a: "x", b: null, c: 2 };
+  slots.d = null;
+  delete slots.a;
+  console.log(slots, JSON.stringify(slots));
+  const back: Slots = JSON.parse('{"z":null,"y":"why","2":null}');
+  console.log(back, Object.keys(back), JSON.stringify(back));
+}

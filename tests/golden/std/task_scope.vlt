@@ -75,7 +75,8 @@ async function main() {
   try {
     await taskScope(async (scope: TaskScope<ScopeError>): Promise<string> throws ScopeError => {
       const signal = scope.signal;
-      const slow = scope.spawn(step("slow", 500, signal));
+      // A minute: a hang guard, `slow` only finishes if the abort never reaches it.
+      const slow = scope.spawn(step("slow", 60000, signal));
       await scope.spawn(failing(20));
       return "unreachable";
     });
@@ -89,7 +90,10 @@ async function main() {
   try {
     await taskScope(async (scope: TaskScope<ScopeError>): Promise<string[]> throws ScopeError => {
       const signal = scope.signal;
-      return await Promise.all([scope.spawn(step("c", 500, signal)), scope.spawn(failing(20))]);
+      return await Promise.all([
+        scope.spawn(step("c", 60000, signal)),
+        scope.spawn(failing(20)),
+      ]);
     });
   } catch (e) {
     console.log("scope 3 failed:", e.message);

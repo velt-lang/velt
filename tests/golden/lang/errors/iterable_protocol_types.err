@@ -10,8 +10,8 @@ iterable_protocol_types.vlt:28:17: error: mismatched types
   = note: `string[]` is an `Iterable<string, never>`, not an `Iterable<f64, never>`
 
 iterable_protocol_types.vlt:29:17: error: mismatched types
-  = note: expected Iterable<f64, never>, found i64
-  = note: `i64` does not declare `implements Iterable<f64, never>`
+  = note: expected Iterable<f64, never>, found f64
+  = note: `f64` does not declare `implements Iterable<f64, never>`
 
 iterable_protocol_types.vlt:31:18: error: mismatched types
   = note: expected Iterator<f64, never>, found IterableIterator<f64, never>

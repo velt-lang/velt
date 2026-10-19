@@ -84,10 +84,10 @@ pub extern "C" fn velt_rt_write_u64(stream: u32, v: u64) {
     emit(stream, |b| fmt::push_u64(b, v));
 }
 
-/// `console.log` of an `f64` (JS formatting).
+/// `console.log` of an `f64` (node's formatting: `-0` is `-0`).
 #[no_mangle]
 pub extern "C" fn velt_rt_write_f64(stream: u32, v: f64) {
-    emit(stream, |b| fmt::push_f64(b, v));
+    emit(stream, |b| fmt::push_inspect_f64(b, v));
 }
 
 /// `console.log` of a `bool`.
@@ -139,6 +139,20 @@ pub(crate) mod capture {
         let out = CAP.with(|c| c.borrow_mut().take()).unwrap();
         String::from_utf8(out).unwrap()
     }
+}
+
+/// `isatty(fd)` (std/process): 1 if a standard stream is a terminal (WASI hosts may say so; in
+/// the browser nothing is), 0 for any other descriptor.
+#[no_mangle]
+pub extern "C" fn velt_rt_isatty(fd: i32) -> u8 {
+    use std::io::IsTerminal;
+    let tty = match fd {
+        0 => std::io::stdin().is_terminal(),
+        1 => std::io::stdout().is_terminal(),
+        2 => std::io::stderr().is_terminal(),
+        _ => false,
+    };
+    tty as u8
 }
 
 #[cfg(test)]

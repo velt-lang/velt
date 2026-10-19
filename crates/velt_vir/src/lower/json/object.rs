@@ -1,5 +1,5 @@
 //! JSON object decoding into structs, anon objects and classes: keys are matched against the
-//! field names (unknown keys are skipped), a repeated key replaces the earlier value (like
+//! field names (unknown keys are skipped; no key fills a member a symbol names), a repeated key replaces the earlier value (like
 //! `JSON.parse`), a missing field fails with `expected field "<name>"` unless its type is
 //! `T | null` (absent and `null` are the same to a typed decode; only `JsonValue` tells them
 //! apart with `has(key)` / `isNull()`): it stays null. A class object is allocated zeroed up front, so a failure
@@ -34,7 +34,7 @@ impl FnLower<'_, '_> {
             .map(|(f, t)| {
                 (
                     f.name.clone(),
-                    matches!(self.cx.kind(*t), TyKind::Option(_)),
+                    matches!(self.cx.kind(*t), TyKind::Option(..)),
                 )
             })
             .collect();
@@ -72,6 +72,11 @@ impl FnLower<'_, '_> {
         self.json_fail(ctx, "object", fail);
         self.switch_to(dispatch);
         for (i, ((name, _), fty)) in fields.iter().zip(&tys).enumerate() {
+            // No key fills a member a symbol or a private name (`#x`) names, whatever its text
+            // (`"[Symbol(k)]"` is a string key), as in JavaScript: it stays absent.
+            if velt_sema::property_order::is_hidden_key(name) {
+                continue;
+            }
             self.json_read_member(
                 r,
                 place,
@@ -84,8 +89,39 @@ impl FnLower<'_, '_> {
         self.json_skip_member(r, ctx, key, head, fail);
         self.switch_to(end);
         for (i, (name, nullable)) in fields.iter().enumerate() {
+            // The prelude `Error`'s `#name` (the only private field sema lets decoding reach):
+            // its default, as no key fills it.
+            if name == "#name" && matches!(self.cx.kind(tys[i]), TyKind::Str) {
+                let v = self.str_lit("Error");
+                let f = self.field_place(place, ty, i as u32);
+                self.assign(f, Rvalue::Use(v));
+                continue;
+            }
             if !nullable {
-                self.json_require(ctx, seen, i as u32, name, fail);
+                // A required symbol-keyed member is never filled: the decode fails.
+                let shown = velt_sema::property_order::symbol_key(name);
+                self.json_require(ctx, seen, i as u32, shown.as_deref().unwrap_or(name), fail);
+            }
+            // `a?: T`: present when its key was there and its value is not the option's own
+            // nothing (`undefined`): a JSON `null` for an `a?: T` leaves the field absent, and
+            // one for an `a?: T | null` is a present `null`.
+            if let Some(slot) = self.cx.presence_slot(ty, i as u32) {
+                let fp = self.field_place(place, ty, i as u32);
+                let mut f = fp.clone();
+                if let Some(crate::vir::Proj::Field(x)) = f.proj.last_mut() {
+                    *x = slot;
+                }
+                let s = Operand::Copy(Place::local(seen));
+                let bit = self.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(BinOp::BitAnd, s, cint(1i128 << i, Ty::U64)),
+                );
+                let seen_key =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
+                let is_some = self.option_is_some(&fp, tys[i]);
+                let set =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, seen_key, is_some));
+                self.assign(f, Rvalue::Use(set));
             }
         }
     }

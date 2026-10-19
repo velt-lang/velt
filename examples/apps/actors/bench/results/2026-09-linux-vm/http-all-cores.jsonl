@@ -1,0 +1,15 @@
+{"server":"velt","route":"noop","conns":16,"rps":45415.04,"p50":"272.00us","p99":"2.14ms","non2xx":0,"peak_rss_mb":21}
+{"server":"velt","route":"noop","conns":64,"rps":61960.21,"p50":"803.00us","p99":"3.28ms","non2xx":0,"peak_rss_mb":21}
+{"server":"velt","route":"noop","conns":256,"rps":65789.52,"p50":"2.93ms","p99":"8.88ms","non2xx":0,"peak_rss_mb":28}
+{"server":"velt","route":"increment","conns":16,"rps":43773.70,"p50":"283.00us","p99":"2.10ms","non2xx":0,"peak_rss_mb":34}
+{"server":"velt","route":"increment","conns":64,"rps":57321.11,"p50":"0.87ms","p99":"3.45ms","non2xx":0,"peak_rss_mb":34}
+{"server":"velt","route":"increment","conns":256,"rps":62118.72,"p50":"3.21ms","p99":"9.60ms","non2xx":0,"peak_rss_mb":34}
+{"server":"node","route":"noop","conns":16,"rps":3036.33,"p50":"4.58ms","p99":"13.86ms","non2xx":0,"peak_rss_mb":218}
+{"server":"node","route":"noop","conns":64,"rps":2961.03,"p50":"20.02ms","p99":"262.12ms","non2xx":0,"peak_rss_mb":243}
+{"server":"node","route":"noop","conns":256,"rps":2881.98,"p50":"57.37ms","p99":"743.55ms","non2xx":0,"peak_rss_mb":253}
+{"server":"node","route":"increment","conns":16,"rps":2510.80,"p50":"5.47ms","p99":"20.95ms","non2xx":0,"peak_rss_mb":265}
+{"server":"node","route":"increment","conns":64,"rps":2569.74,"p50":"23.19ms","p99":"277.39ms","non2xx":0,"peak_rss_mb":301}
+{"server":"node","route":"increment","conns":256,"rps":2373.05,"p50":"63.42ms","p99":"743.22ms","non2xx":0,"peak_rss_mb":305}
+{"server":"node-bare","route":"noop","conns":16,"rps":12914.21,"p50":"1.05ms","p99":"3.65ms","non2xx":0,"peak_rss_mb":69}
+{"server":"node-bare","route":"noop","conns":64,"rps":12724.19,"p50":"4.54ms","p99":"10.50ms","non2xx":0,"peak_rss_mb":78}
+{"server":"node-bare","route":"noop","conns":256,"rps":12486.27,"p50":"18.66ms","p99":"1.08s","non2xx":0,"peak_rss_mb":96}

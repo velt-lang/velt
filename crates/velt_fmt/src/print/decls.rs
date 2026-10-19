@@ -1,9 +1,10 @@
 //! Nominal type declarations: `struct`/`class` (members in source order: fields, constructor and
 //! methods are separate lists in the AST), `interface`, `extend` and `enum`.
 
+use crate::source::has_modifier;
 use velt_syntax::ast::{
-    CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
-    TypeDecl, TypeExpr, Variant,
+    CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod,
+    Method, TypeDecl, TypeExpr, Variant,
 };
 
 use super::Printer;
@@ -15,6 +16,7 @@ enum Member<'d> {
     Constructor(&'d FnDecl, CtorVisibility),
     Method(&'d Method),
     InterfaceMethod(&'d InterfaceMethod),
+    CallSig(&'d CallSig),
 }
 
 impl Member<'_> {
@@ -22,11 +24,15 @@ impl Member<'_> {
         match self {
             Member::Field(f) => (f.span.lo, f.span.hi),
             Member::Constructor(c, _) => (c.sig.span.lo, c.body.span.hi),
-            Member::Method(m) => (m.decl.sig.span.lo, m.decl.body.span.hi),
+            Member::Method(m) => {
+                let first = m.decl.overloads.first().unwrap_or(&m.decl.sig);
+                (first.span.lo, m.decl.body.span.hi)
+            }
             Member::InterfaceMethod(m) => {
                 let hi = m.body.as_ref().map_or(m.sig.span.hi, |b| b.span.hi);
                 (m.sig.span.lo, hi)
             }
+            Member::CallSig(s) => (s.span.lo, s.span.hi),
         }
     }
 }
@@ -59,6 +65,7 @@ impl<'a> Printer<'a> {
     pub(super) fn interface(&mut self, decl: &InterfaceDecl) -> Doc {
         let mut members: Vec<Member> = decl.fields.iter().map(Member::Field).collect();
         members.extend(decl.methods.iter().map(Member::InterfaceMethod));
+        members.extend(decl.call_sigs.iter().map(Member::CallSig));
         let head = cat![
             "interface ",
             decl.name.name.clone(),
@@ -156,7 +163,8 @@ impl<'a> Printer<'a> {
             }
             Member::Method(m) => {
                 let mut mods = String::new();
-                if m.is_private {
+                // A `#m` is private by its name; `private #m` is not valid.
+                if m.is_private && !m.decl.sig.name.is_private_name() {
                     mods.push_str("private ");
                 }
                 if m.is_static {
@@ -171,8 +179,9 @@ impl<'a> Printer<'a> {
                 if m.is_setter {
                     mods.push_str("set ");
                 }
-                cat![mods, self.fn_decl(&m.decl, "")]
+                self.fn_decl_with(&m.decl, "", &mods)
             }
+            Member::CallSig(s) => cat![self.call_sig(s), ";"],
             Member::InterfaceMethod(m) => {
                 let mut mods = String::new();
                 if m.is_getter {
@@ -197,9 +206,24 @@ impl<'a> Printer<'a> {
     }
 
     fn field(&mut self, f: &Field) -> Doc {
-        let private = if f.is_private { "private " } else { "" };
+        let private = if f.is_private && !f.name.is_private_name() {
+            "private "
+        } else {
+            ""
+        };
         let is_static = if f.is_static { "static " } else { "" };
+        // `declare x: T` (a field TypeScript emits no initializer for; the AST does not keep it).
+        let declare = if has_modifier(self.src, f.span.lo, f.name.span.lo, "declare") {
+            "declare "
+        } else {
+            ""
+        };
         let readonly = if f.readonly { "readonly " } else { "" };
+        if f.optional && f.default.is_none() {
+            if let Some(sig) = self.method_sig_type(&f.name, true, &f.ty) {
+                return cat![private, is_static, readonly, sig, ";"];
+            }
+        }
         let optional = if f.optional { "?" } else { "" };
         // `count = 0;`: the parser took the type from the initializer (its span is the
         // initializer's), so none is written.
@@ -212,8 +236,9 @@ impl<'a> Printer<'a> {
         let lhs = cat![
             private,
             is_static,
+            declare,
             readonly,
-            f.name.name.clone(),
+            self.prop_key(&f.name),
             optional,
             ty
         ];

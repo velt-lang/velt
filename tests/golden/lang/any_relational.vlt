@@ -1,0 +1,43 @@
+// check: no leaks
+// `<`, `>`, `<=` and `>=` with an `any` operand (#924): two strings compare as strings, any
+// other pair as numbers by `ToNumber` (`true` is 1, `null` is 0, `undefined` and a string that
+// is not a number are `NaN`, which makes every comparison `false`).
+function cmp(a: any, b: any): string {
+  return `${a < b} ${a > b} ${a <= b} ${a >= b}`;
+}
+
+class Box {
+  items: any = [1, 2, 3];
+  count: any = 3;
+}
+
+let calls = 0;
+
+function next(v: any): any {
+  calls++;
+  console.log(`evaluated ${v}`);
+  return v;
+}
+
+function main(): void {
+  console.log(cmp(1, 2), "|", cmp(2, 1), "|", cmp(1, 1));
+  console.log(cmp("a", "b"), "|", cmp("b", "a"), "|", cmp("10", "9"), "|", cmp("", ""));
+  console.log(cmp("10", 9), "|", cmp(9, "10"), "|", cmp("x", 1), "|", cmp(" 12 ", 12));
+  console.log(cmp(NaN, 1), "|", cmp(1, NaN), "|", cmp(Infinity, 1e308), "|", cmp(-0, 0));
+  console.log(cmp(true, 0), "|", cmp(false, true), "|", cmp(true, "1"), "|", cmp(true, 1));
+  console.log(cmp(null, 0), "|", cmp(null, -1), "|", cmp(undefined, 0), "|", cmp(null, undefined));
+  console.log(cmp("é", "z"), "|", cmp("Z", "a"), "|", cmp("abc", "ab"), "|", cmp("0x10", 15));
+  const n: any = 5;
+  console.log(n > 3, 3 < n, n >= 5.5, n <= 5, 4.5 < n, n > "4", "6" > n);
+  const i: number = 2;
+  const flag = true;
+  console.log(i < n, n > i, flag < n, n < flag, "abc" < n, n < "abc");
+  const b = new Box();
+  console.log(b.items.length > 2, b.count >= b.items.length, 0 < b.count);
+  let seen = 0;
+  for (let k = 0; k < b.count; k++) {
+    seen += k;
+  }
+  console.log(seen);
+  console.log(next(1) < next(2), next("b") >= next("a"), calls);
+}

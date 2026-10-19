@@ -23,7 +23,23 @@ pub(crate) enum BindCtx {
 impl FnCx<'_, '_> {
     pub fn pattern(&mut self, p: &ast::Pattern, ty: TyId, ctx: BindCtx) -> hir::Pat {
         if let Some(inner) = self.cx.ty.opt_payload(ty).filter(|_| matches_payload(p)) {
-            // Destructuring a `T | null` value destructures its non-null payload.
+            // A `T | null` value may be `null`, which JS can't destructure (a TypeError), so
+            // tsc rejects it (TS2339 for `{ a }`, TS2488 for `[a]`). The payload's bindings are
+            // still declared, so nothing else is reported for them.
+            let tn = self.cx.display(ty);
+            let code = match p.kind {
+                ast::PatternKind::Array { .. } => "TS2488",
+                _ => "TS2339",
+            };
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "cannot destructure a value of type `{tn}`: it may be `null` (TypeScript's {code})"
+                    ),
+                    p.span,
+                )
+                .with_note("check for `null` first (`if (p !== null) { … }`), or give a value that can't be `null`"),
+            );
             let sub = self.pattern(p, inner, ctx);
             return hir::Pat {
                 kind: P::Some(Box::new(sub)),
@@ -45,8 +61,11 @@ impl FnCx<'_, '_> {
             ast::PatternKind::Ident(name) => self.binding(name, ty, ctx),
             ast::PatternKind::Object { fields, rest } => {
                 if let Some(r) = rest {
-                    self.cx
-                        .err("`...rest` in object patterns is not supported yet", r.span);
+                    // Declarations and parameters take the rest (`object_rest.rs`).
+                    self.cx.err(
+                        "`...rest` in this object pattern is not supported yet (only in `const` and `let` declarations and parameters)",
+                        r.span,
+                    );
                 }
                 self.object_pattern(fields, ty, ctx)
             }
@@ -103,7 +122,9 @@ impl FnCx<'_, '_> {
                     x
                 }
                 None => {
-                    if !self.cx.ty.is_bottom(ty) {
+                    if !self.cx.ty.is_bottom(ty)
+                        && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
+                    {
                         let tn = self.cx.display(ty);
                         self.cx.err(
                             format!("no field `{}` on type `{tn}`", name.name),
@@ -133,18 +154,27 @@ impl FnCx<'_, '_> {
         let err = self.cx.ty.error;
         match self.cx.ty.kind(ty).clone() {
             TyKind::Tuple(ts) => {
-                if ts.len() != elems.len() || rest.is_some() {
+                // Fewer elements than the tuple has leave the rest unbound (`[k]` of a
+                // `[string, number]`), as in TS.
+                if ts.len() < elems.len() || rest.is_some() {
                     let tn = self.cx.display(ty);
                     self.cx.err(
                         format!("pattern does not match the tuple type `{tn}`"),
                         span,
                     );
                 }
-                let pats = elems
+                let mut pats: Vec<hir::Pat> = elems
                     .iter()
                     .enumerate()
                     .map(|(i, e)| self.pattern(e, ts.get(i).copied().unwrap_or(err), ctx))
                     .collect();
+                for &t in ts.iter().skip(pats.len()) {
+                    pats.push(hir::Pat {
+                        kind: P::Wildcard,
+                        ty: t,
+                        span,
+                    });
+                }
                 P::Tuple(pats)
             }
             TyKind::Array(e) => {

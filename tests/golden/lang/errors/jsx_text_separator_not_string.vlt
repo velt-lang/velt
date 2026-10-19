@@ -1,0 +1,8 @@
+// @jsxImportSource ./_jsx_bad_separator
+
+// A provider's `jsxTextSeparator` is folded into the template strings at compile time, so it
+// must be a string constant.
+
+function main() {
+  const a = <p>one {2}</p>;
+}

@@ -1,7 +1,7 @@
 client: head received, posts included: false
 server: second loaded
 server: first loaded
-server: stream done true
+server: stream done
 client: complete: true
 200 text/html; charset=utf-8 chunked
 <h1>Posts &amp; news</h1><ul><li>first</li><li>second</li></ul><footer>end</footer>

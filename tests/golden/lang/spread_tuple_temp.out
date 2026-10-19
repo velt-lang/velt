@@ -1,0 +1,37 @@
+read pair
+0 1 x
+read pair
+1 2 x 2
+call pair
+7
+hi ann and bo
+call pair
+18
+call mk
+call pair
+7
+call getf
+call pair
+7
+get adder
+call pair
+7
+get adder
+call pair
+7
+get five
+call pair
+12
+get adder
+15
+call pair
+14
+get fnget
+call pair
+7
+call holder
+get fnget
+call pair
+7
+get fnget
+15

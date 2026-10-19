@@ -1,6 +1,6 @@
 //! Expressions in the moves dataflow: place paths, branches, matches, closure captures.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 use super::state::{join, Flow, Path, UNWRAP, VARIANT};
 use super::Moves;
@@ -145,6 +145,9 @@ impl Moves<'_> {
                     self.expr(c, st);
                 }
                 self.operands(args, st);
+                if let Callee::Indirect(c) = callee {
+                    self.held_call(c, e.span, st);
+                }
                 // The call may throw: a handler (and `finally`) can start from here.
                 self.record_throw(st);
             }
@@ -239,6 +242,28 @@ impl Moves<'_> {
         }
     }
 
+    /// A call through `callee`, a local holding a non-escaping closure, uses the variables the
+    /// closure borrows (a variable moved before the call is used again there).
+    fn held_call(&mut self, callee: &Expr, span: Span, st: &mut Flow) {
+        let ExprKind::Local(l, _) = callee.kind else {
+            return;
+        };
+        let Some(caps) = self.held.get(&l).and_then(|d| self.captures.get(d)) else {
+            return;
+        };
+        for c in caps.clone() {
+            if !matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut) {
+                continue;
+            }
+            if c.mode == PassMode::BorrowMut {
+                self.assigned(c.outer, span, st);
+            }
+            self.capturing = true;
+            self.use_path(c.outer, &[], UseMode::Borrow, span, st, false);
+            self.capturing = false;
+        }
+    }
+
     /// Creating a closure uses its captures: by-value captures move the variable (softly for
     /// shared values: a variable used again is shared with the closure instead).
     fn closure(&mut self, d: DefId, span: Span, holder: Option<LocalId>, st: &mut Flow) {
@@ -257,11 +282,21 @@ impl Moves<'_> {
                     self.boxed.insert(c.outer);
                 }
             }
-            // Each generator of a generator closure has its own state: a variable it assigns
-            // lives in a cell so that the closure's generators and this function see one value.
+            // Each generator of a generator closure, and each call of a local async closure,
+            // has its own state: a variable it assigns lives in a cell so that the closure's
+            // generators (or calls) and this function see one value.
             let by_value = matches!(c.mode, PassMode::Owned | PassMode::Copy);
-            if escaping && by_value && self.generators.contains(&d) && writes(&c) {
-                self.generator_writes(c.outer, span);
+            // A variable this closure captured, assigned by an escaping closure created here
+            // (#904): the assignment must reach the variable itself, which every call of this
+            // closure and the function that declared it see, so it lives in a cell all the way up
+            // (`crate::ownership::cells`).
+            if escaping && by_value && writes(&c) && self.own_captures.contains(&c.outer) {
+                self.nested_writes(c.outer, span);
+            }
+            if let (true, true, Some(&generator)) = (escaping, by_value, self.generators.get(&d)) {
+                if writes(&c) {
+                    self.generator_writes(c.outer, span, generator);
+                }
             }
             let soft_share = self.soft.contains(&span) && self.shared[c.outer.0 as usize];
             let (mode, by_closure) = match c.mode {
@@ -272,7 +307,14 @@ impl Moves<'_> {
             if c.mode == PassMode::BorrowMut {
                 self.assigned(c.outer, span, st);
             }
+            if self.late[i] && by_value {
+                // A `const` (or its flag) captured while its initializer runs, by a closure
+                // created in a closure that captured it: the cell is shared on down.
+                self.late_capture(c.outer, span);
+            }
+            self.capturing = true;
             self.use_path(c.outer, &[], mode, span, st, by_closure);
+            self.capturing = false;
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) {
                 let w = writes(&c);
                 if let Some(s) = st {
@@ -281,5 +323,38 @@ impl Moves<'_> {
                 }
             }
         }
+    }
+
+    /// A closure captures `l`, a `const` it is part of the initializer of
+    /// (`body::late_consts`): the variable lives in a cell, or, when it cannot, that is an
+    /// error.
+    pub(super) fn late_capture(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        let name = &self.locals[i].name;
+        // Once per constant: not for its hidden flag (`<ready x>`), nor again at the assignment.
+        if !self.report || name.starts_with('<') || !self.late_reported.insert(l) {
+            return;
+        }
+        let why = if self.threaded[i] {
+            format!("a closure that may run on another thread (a timer callback, a spawned closure) keeps its own copy of `{name}`, made before `{name}` is assigned")
+        } else if self.promise[i] {
+            format!("`{name}` holds a promise, which cannot be shared")
+        } else {
+            format!("a value of the type of `{name}` cannot be shared with the closure")
+        };
+        self.errors.push(
+            Diagnostic::error(
+                format!(
+                    "`{name}` is used by a closure in its own initializer, which cannot share it"
+                ),
+                span,
+            )
+            .with_note(why)
+            .with_note("this is not supported yet (#1292)"),
+        );
     }
 }

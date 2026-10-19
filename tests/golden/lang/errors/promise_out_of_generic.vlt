@@ -12,8 +12,8 @@ function peek<T>(x: T): bool {
 }
 
 function hold<T>(x: T): T {
-  const g = () => peek(x);
-  g();
+  const gs = [() => peek(x)];
+  gs[0]();
   return x;
 }
 

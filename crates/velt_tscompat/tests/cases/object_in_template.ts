@@ -1,5 +1,7 @@
-// A template literal formats objects and arrays like `console.log` in Velt; JavaScript calls
-// `toString()`. Primitives, enums and classes that declare `toString()` print the same.
+// A template literal writes a promise as `console.log` does in Velt; JavaScript as
+// `[object Promise]`. Everything else prints the same in both: primitives, enums, arrays, errors
+// (`Error: message`), and objects (through a class's `toString()`, own or inherited, else
+// `[object Object]`).
 
 export type Point = { x: number; y: number };
 
@@ -17,14 +19,48 @@ export class Money {
 
 export class Euro extends Money {}
 
+export class Plain {
+  n: number = 1;
+}
+
+export class NotFound extends Error {}
+
+export class Shown extends Error {
+  toString(): string {
+    return "shown";
+  }
+}
+
 export function describe(p: Point, xs: number[], m: Money, e: Euro, l: Level): string {
-  const a = `${p}`; //~ object-in-template
-  const b = `${xs}`; //~ object-in-template
+  const a = `${p} ${new Plain()} ${new Map<string, number>()}`;
+  const b = `${xs} ${[xs]}`;
   const c = `${m} ${l} ${p.x} ${xs.length}`;
-  const d = `${e}`; //~ object-in-template
+  const d = `${e}`;
   return a + b + c + d;
 }
 
-export function pair(t: [number, string]): string {
-  return `${t}`; //~ object-in-template
+export function errors(e: Error, nf: NotFound, s: Shown, maybe: Error | null): string {
+  const a = `${e}`;
+  const b = `${nf}`;
+  const c = `${maybe}`;
+  const d = `${s} ${e.message}`;
+  return a + b + c + d;
+}
+
+export async function pending(p: Promise<number>): Promise<string> {
+  const a = `${p}`; //~ object-in-template
+  const b = `${await p}`;
+  return a + b;
+}
+
+// In an array, an object is `[object Object]` in both (an element with its own `toString()` is
+// a compile error in Velt).
+export function pair(t: [number, string], ns: (number | null)[], ps: Point[]): string {
+  const a = `${ps}`;
+  const d = `${[new Map<string, number>()]} ${[[p0()]]}`;
+  return `${t} ${ns}` + a + d;
+}
+
+function p0(): Point {
+  return { x: 0, y: 0 };
 }

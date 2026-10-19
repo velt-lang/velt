@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::declare::{fn_placeholder, generic_names, ASYNC_DISPOSE, DISPOSE};
@@ -11,8 +11,8 @@ use super::shapes::{resolve_bounds, self_type};
 use super::ItemDefs;
 use crate::ctx::Ctx;
 use crate::defs::{
-    is_setter_key, member_key, static_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind,
-    FnSource, Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
+    is_setter_key, static_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind, FnSource,
+    Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
 };
 use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
@@ -28,7 +28,17 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
                     Some(FnSource::Decl(decl)) => &decl.sig,
                     _ => extern_sig(cx, d, module),
                 };
+                // A type query in the signature that needs a body (`ReturnType<typeof f>` of a
+                // function with an inferred result) resolves it again when collection is done.
+                let reported = cx.diags.len();
+                cx.sigq.sig_fill = true;
+                cx.sigq.sig_deferred = false;
                 fill_sig(cx, d, sig, &Generics::default(), module);
+                cx.sigq.sig_fill = false;
+                if cx.sigq.sig_deferred {
+                    cx.diags.truncate(reported);
+                    cx.sigq.deferred_sigs.insert(d, (sig, module));
+                }
             }
             DefInfo::Adt(_) => adt_methods(cx, d),
             DefInfo::Iface(_) => iface_methods(cx, d),
@@ -46,7 +56,26 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
     }
 }
 
-fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
+/// The signatures `resolve_sigs` deferred, now that bodies may be checked (`Ctx::bodies_ok`).
+/// A type query may reach one still pending (`fill_pending`), so they are filled in dependency
+/// order, whatever the declaration order.
+pub(super) fn fill_deferred(cx: &mut Ctx) {
+    while let Some((&d, _)) = cx.sigq.deferred_sigs.first_key_value() {
+        fill_pending(cx, d);
+    }
+}
+
+/// Fill `d`'s deferred signature now if it is still pending (a type query needs it).
+pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
+    let Some((sig, module)) = cx.sigq.deferred_sigs.remove(&d) else {
+        return;
+    };
+    cx.sigq.filling_sigs.push((d, sig.name.name.clone()));
+    fill_sig(cx, d, sig, &Generics::default(), module);
+    cx.sigq.filling_sigs.pop();
+}
+
+pub(crate) fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
     let span = cx.def_spans[d.0 as usize];
     cx.modules[module]
         .ast
@@ -72,7 +101,13 @@ pub(crate) fn declared_mode(cx: &mut Ctx, ty: TyId) -> PassMode {
 fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
     let mut out: Vec<ParamSig> = vec![];
     for p in ps {
-        let ty = cx.resolve_type(&p.ty, env);
+        if let Some(f) = cx.sigq.filling_sigs.last_mut() {
+            f.1.clone_from(&p.name.name);
+        }
+        let mut ty = cx.resolve_type(&p.ty, env);
+        if p.rest && !rest_param_type(cx, p.ty.span, ty) {
+            ty = cx.ty.error;
+        }
         if out.iter().any(|q| q.name == p.name.name) {
             cx.err(
                 format!(
@@ -89,6 +124,9 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
             );
         }
         let mode = declared_mode(cx, ty);
+        if crate::body::is_readonly_array(&p.ty) {
+            cx.sigq.readonly_params.insert(p.name.span);
+        }
         out.push(ParamSig {
             name: p.name.name.clone(),
             span: p.name.span,
@@ -100,18 +138,61 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
     out
 }
 
+/// A rest parameter's type must be an array type: `T[]`, `readonly T[]` or an alias of one
+/// (TypeScript's TS2370 otherwise). One typed by a type parameter (`...args: A` with
+/// `A extends unknown[]`) is not supported yet. False after reporting an error at `at` (the
+/// written type). Closures' rest parameters are checked the same way.
+pub(crate) fn rest_param_type(cx: &mut Ctx, at: Span, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Array(_) | TyKind::Error => return true,
+        TyKind::Param(_) => cx.error(
+            Diagnostic::error(
+                "a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)",
+                at,
+            )
+            .with_note("Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)"),
+        ),
+        _ => cx.err(
+            "a rest parameter must have an array type (`...xs: T[]`)",
+            at,
+        ),
+    }
+    false
+}
+
 /// Resolve `sig` into the placeholder `d`; generics = `owner` generics followed by the fn's own.
 fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: usize) {
     let mut generics = owner.clone();
     for g in &sig.generics {
         generics.push(&g.name.name);
     }
-    let env = TyEnv::new(module, &generics.names);
-    let own_bounds = resolve_bounds(cx, &sig.generics, &env);
+    let mut env = TyEnv::new(module, &generics.names);
+    env.this_ty = cx.fn_info(d).this_type();
+    let own = resolve_bounds(cx, &sig.generics, &env);
     generics.bounds.truncate(owner.len());
-    generics.bounds.extend(own_bounds);
+    generics.bounds.extend(own.bounds);
+    if !own.constraints.is_empty() || !generics.constraints.is_empty() {
+        generics.constraints.resize(owner.len(), None);
+        generics.constraints.extend(own.constraints);
+        generics.constraints.resize(generics.len(), None);
+    }
+    if sig.generics.iter().any(|g| g.default.is_some()) {
+        let mut defaults = generics.defaults.clone();
+        defaults.resize(owner.len(), None);
+        defaults.extend(cx.fn_param_defaults(&sig.generics, &env));
+        generics.defaults = defaults;
+    }
     let kind = cx.fn_info(d).kind;
+    // `function f(this: T, ...)`: `this` is a leading parameter (`body::expr::this_param`).
+    if let (Some(t), FnKind::Free | FnKind::Closure) = (&sig.this_param, kind) {
+        let ty = cx.resolve_type(t, &env);
+        let resumable = sig.is_async || sig.is_generator;
+        cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
+    }
     let mut ps = params(cx, &sig.params, &env);
+    if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
+        f.1.clone_from(&sig.name.name);
+    }
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
@@ -301,7 +382,8 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         let key = if m.is_static && instance.contains(&name.name.as_str()) {
             static_key(&name.name)
         } else {
-            member_key(&name.name, m.is_setter)
+            cx.check_method_key(module, name);
+            cx.method_key(module, name, m.is_setter)
         };
         let def = method_def(cx, &owner, m, &key);
         if methods.contains_key(&key) {
@@ -425,7 +507,8 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
     let mut methods: Vec<IfaceMethod> = vec![];
     for m in &decl.methods {
         let name = &m.sig.name;
-        let key = member_key(&name.name, m.is_setter);
+        cx.check_method_key(module, name);
+        let key = cx.method_key(module, name, m.is_setter);
         if m.sig.is_async && m.body.is_none() {
             cx.error(
                 Diagnostic::error(
@@ -468,10 +551,12 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             .as_ref()
             .map(|body| default_method(cx, d, &qual, &generics, m, body, module));
         if methods.iter().any(|x| x.name == key) {
-            cx.err(
-                format!("duplicate {} `{}`", what(m.is_setter), name.name),
-                name.span,
-            );
+            let msg = match m.is_setter || m.body.is_some() {
+                true => format!("duplicate {} `{}`", what(m.is_setter), name.name),
+                // TypeScript's overloads in an interface.
+                false => format!("overloaded interface methods are not supported yet: declare `{}` once, with parameters that take every form (`a: string | number`)", name.name),
+            };
+            cx.err(msg, name.span);
             continue;
         }
         methods.push(IfaceMethod {
@@ -509,7 +594,9 @@ fn method_generics(
         own.push(&g.name.name);
     }
     let env = TyEnv::new(module, &names);
-    own.bounds = super::shapes::resolve_bounds(cx, gs, &env);
+    let b = super::shapes::resolve_bounds(cx, gs, &env);
+    own.bounds = b.bounds;
+    own.constraints = b.constraints;
     (own, env)
 }
 
@@ -526,7 +613,7 @@ fn default_method<'m>(
 ) -> DefId {
     let name = &m.sig.name;
     let mut info = fn_placeholder(
-        format!("{qual}.{}", member_key(&name.name, m.is_setter)),
+        format!("{qual}.{}", cx.method_key(module, name, m.is_setter)),
         name.span,
         m.sig.span,
         module,
@@ -550,7 +637,20 @@ fn default_method<'m>(
 fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut HashSet<String>) {
     let mut generics = generic_names(&e.generics);
     let env = TyEnv::new(m, &generics.names);
-    generics.bounds = resolve_bounds(cx, &e.generics, &env);
+    let b = resolve_bounds(cx, &e.generics, &env);
+    if b.constraints.iter().any(Option::is_some) {
+        let at = e
+            .generics
+            .iter()
+            .zip(&b.constraints)
+            .find(|(_, c)| c.is_some());
+        if let Some((g, Some(c))) = at {
+            let tn = cx.display(*c);
+            let span = g.bounds.last().map_or(g.name.span, |t| t.span);
+            cx.err(format!("`{tn}` is not an interface"), span);
+        }
+    }
+    generics.bounds = b.bounds;
     let target = cx.resolve_type(&e.target, &env);
     let saved = std::mem::replace(&mut cx.display_params, generics.names.clone());
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
@@ -558,7 +658,7 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
     let mut methods = HashMap::new();
     for meth in &e.methods {
         let name = &meth.decl.sig.name;
-        let key = member_key(&name.name, meth.is_setter);
+        let key = cx.method_key(m, name, meth.is_setter);
         let mut full = format!("{prefix}.{key}");
         let mut n = 2;
         while !used.insert(full.clone()) {

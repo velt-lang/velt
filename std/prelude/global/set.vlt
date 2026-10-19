@@ -1,0 +1,2 @@
+// Global (loaded when a module names it): `Set` (docs/std/collections/set.md).
+export { Set } from "velt:collections/set";

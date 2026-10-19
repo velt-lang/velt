@@ -1,0 +1,125 @@
+// Object literals implementing interfaces with methods: methods typed by the interface (their
+// parameter types come from it), getters that run on each read, setters, async and throwing
+// methods, and `satisfies`. Expected output from node.
+interface Topic<T> {
+  publish(data: T): void;
+  subscribe(id: string): number;
+  readonly name?: string;
+  readonly subscriberCount: number;
+  readonly disposed: boolean;
+}
+
+function topic<T>(name: string): Topic<T> {
+  const subs: string[] = [];
+  let disposed = false;
+  return {
+    get name() {
+      return name;
+    },
+    get subscriberCount() {
+      return subs.length;
+    },
+    get disposed() {
+      return disposed;
+    },
+    publish(data) {
+      for (const s of subs) {
+        console.log(s, "got", data);
+      }
+      if (subs.length > 1) {
+        disposed = true;
+      }
+    },
+    subscribe: (id) => {
+      subs.push(id);
+      return subs.length;
+    },
+  };
+}
+
+interface Store {
+  load(key: string): Promise<string>;
+  check(n: number): number;
+  get size(): number;
+  set size(v: number);
+  label: string;
+}
+
+interface Greeter {
+  greet(who: string): string;
+  readonly count: number;
+}
+
+interface Handler<T> {
+  name: string;
+  test(value: number): boolean;
+  serialize(value: T): string;
+}
+
+async function run(): Promise<void> {
+  const t = topic<string>("news");
+  console.log(t.name, t.subscriberCount, t.disposed);
+  t.subscribe("a");
+  t.subscribe("b");
+  t.publish("hello");
+  console.log(t.subscriberCount, t.disposed);
+
+  let size = 1;
+  const s: Store = {
+    async load(key) {
+      await Promise.resolve();
+      return key + "!";
+    },
+    check(n) {
+      if (n < 0) {
+        throw new RangeError("negative");
+      }
+      return n * 2;
+    },
+    get size() {
+      return size;
+    },
+    set size(v) {
+      size = v * 10;
+    },
+    label: "store",
+  };
+  console.log(await s.load("k"), s.check(2), s.size, s.label);
+  s.size = 4;
+  console.log(s.size, size);
+  try {
+    s.check(-1);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+
+  let n = 0;
+  const g: Greeter = { greet: (who) => `hi ${who} #${++n}`, count: 7 };
+  console.log(g.greet("ann"), g.greet("bob"), g.count, n);
+
+  // Each read runs the getter again.
+  let reads = 0;
+  const live: Topic<number> = {
+    get subscriberCount() {
+      reads++;
+      return reads * 10;
+    },
+    disposed: false,
+    publish(data) {
+      console.log("published", data + 1);
+    },
+    subscribe: (id) => id.length,
+  };
+  console.log(live.subscriberCount, live.subscriberCount, reads, live.name ?? "unnamed");
+  live.publish(41);
+  console.log(live.subscribe("abc"));
+
+  const h = {
+    name: "len",
+    test: (v) => v > 2,
+    serialize: (v) => `${v.length}`,
+  } satisfies Handler<string>;
+  console.log(h.name, h.test(3), h.test(1), h.serialize("four"));
+}
+
+await run();

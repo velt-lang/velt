@@ -38,8 +38,17 @@
 //!    uphold them: `velt_opt` keeps them on clones and specializations and drops a param's
 //!    attributes when it rewrites that param. Backends may use them (LLVM param attributes) or
 //!    ignore them.
+//! 10. Debug variables (additive, optional; vir/debug.rs): `Program::debug_types` is empty and
+//!     every `LocalDecl::debug` is `None` unless `LowerOptions::debug_info` asked for them. Each
+//!     `LocalDebug::ty` and every debug type's own references index `debug_types`, and every
+//!     `AggId` and field index in them names an existing aggregate field (checked by `verify`).
+//!     `velt_opt` passes keep a local's description on the local holding the variable's value
+//!     and drop it where no single local does.
 
 use std::fmt;
+
+mod debug;
+pub use debug::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FuncId(pub u32);
@@ -70,6 +79,12 @@ pub enum Ty {
     Bool,
     /// 64-bit untyped pointer.
     Ptr,
+    /// 128-bit SIMD vector: 16 bytes whose lanes are given by each operation, not by the type
+    /// (as WebAssembly's `v128`). 8-byte aligned in memory, so backends load and store it
+    /// unaligned. Only moved, passed, returned, loaded and stored; every operation on it is a
+    /// call of a `velt_simd_*` extern that backends emit inline (rt_abi.md "SIMD"). Its only
+    /// constant is `Const::Int(0)`, all bits zero.
+    V128,
     /// Zero-sized. Only valid as a function return type or the type of a dummy call destination.
     Unit,
     /// Aggregate stored in memory with the given layout. Never in signatures.
@@ -99,8 +114,14 @@ impl Ty {
             Ty::I16 | Ty::U16 => 2,
             Ty::I32 | Ty::U32 | Ty::F32 => 4,
             Ty::I64 | Ty::U64 | Ty::F64 | Ty::Ptr => 8,
+            Ty::V128 => 16,
             Ty::Unit | Ty::Agg(_) => return None,
         })
+    }
+    /// Alignment in bytes of a scalar in memory: its size, except `V128` (8); `None` as for
+    /// [`Ty::scalar_size`].
+    pub fn scalar_align(self) -> Option<u32> {
+        self.scalar_size().map(|n| n.min(8))
     }
 }
 
@@ -122,7 +143,11 @@ pub struct AggLayout {
 /// text there, and aggregate copies need not preserve padding.
 pub const STR_AGG: AggId = AggId(0);
 
-#[derive(Clone, Debug)]
+/// `Program::default()` is the empty program, a starting point for builders and struct update
+/// syntax (`Program { aggs, funcs, ..Default::default() }`) where a new field gets its "no
+/// information" default. It is not a valid program: callers supply `aggs` with the string
+/// layout first (`STR_AGG`) and `funcs` with the exported `velt_main` (invariant 5).
+#[derive(Clone, Debug, Default)]
 pub struct Program {
     pub aggs: Vec<AggLayout>,
     pub funcs: Vec<Function>,
@@ -130,6 +155,8 @@ pub struct Program {
     pub statics: Vec<StaticData>,
     /// Source path per `FileId` (index = `SrcLoc::file`); empty without source locations.
     pub files: Vec<String>,
+    /// Debug types of source variables, by `DebugTyId` (invariant 10); empty without them.
+    pub debug_types: Vec<DebugTy>,
 }
 
 /// A source position: 1-based line and column (in bytes) in `Program::files[file]`.
@@ -143,6 +170,9 @@ pub struct SrcLoc {
 impl Program {
     pub fn agg(&self, id: AggId) -> &AggLayout {
         &self.aggs[id.0 as usize]
+    }
+    pub fn debug_ty(&self, id: DebugTyId) -> &DebugTy {
+        &self.debug_types[id.0 as usize]
     }
     pub fn func(&self, id: FuncId) -> &Function {
         &self.funcs[id.0 as usize]
@@ -158,10 +188,7 @@ impl Program {
                 (l.size, l.align)
             }
             Ty::Unit => (0, 1),
-            s => {
-                let n = s.scalar_size().unwrap();
-                (n, n)
-            }
+            s => (s.scalar_size().unwrap(), s.scalar_align().unwrap()),
         }
     }
 }
@@ -217,6 +244,26 @@ impl ParamAttrs {
 }
 
 impl Function {
+    /// A function with one unnamed local per param and no blocks, source locations or param
+    /// facts. It is not valid until the caller supplies the blocks, entry block first
+    /// (invariants 4 and 6), and any further locals after the params' (or replaces `locals`
+    /// with its own, still starting with one per param). Build the rest with struct update
+    /// syntax (`Function { locals, blocks, ..Function::new(..) }`), so adding a field touches
+    /// only this constructor, where it gets its "no information" default.
+    pub fn new(symbol: String, params: Vec<Ty>, ret: Ty, linkage: Linkage) -> Self {
+        Function {
+            symbol,
+            locals: params.iter().map(|&ty| LocalDecl::new(ty, None)).collect(),
+            params,
+            ret,
+            blocks: Vec::new(),
+            linkage,
+            locs: Vec::new(),
+            param_attrs: Vec::new(),
+            is_poll: false,
+        }
+    }
+
     /// Attributes of param `i` (the empty set when the function has none).
     pub fn param_attr(&self, i: usize) -> ParamAttrs {
         self.param_attrs.get(i).copied().unwrap_or_default()
@@ -245,6 +292,19 @@ pub struct LocalDecl {
     pub ty: Ty,
     /// Source name for debugging, if any.
     pub name: Option<String>,
+    /// The source variable this local holds, for debuggers (invariant 10).
+    pub debug: Option<LocalDebug>,
+}
+
+impl LocalDecl {
+    /// A local of type `ty`, named `name` in the source (`None` for temporaries).
+    pub fn new(ty: Ty, name: Option<String>) -> Self {
+        LocalDecl {
+            ty,
+            name,
+            debug: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -452,6 +512,7 @@ impl fmt::Display for Ty {
             Ty::F64 => "f64",
             Ty::Bool => "bool",
             Ty::Ptr => "ptr",
+            Ty::V128 => "v128",
             Ty::Unit => "unit",
             Ty::Agg(a) => return write!(f, "agg#{}", a.0),
         };

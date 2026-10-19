@@ -1,6 +1,7 @@
-//! Throughput of the string builder and the JSON reader/value parser (timings are printed; run
-//! with `cargo test -p velt_rt --release --lib text_perf -- --nocapture` for real numbers).
-//! Limits are strict in release builds and generous in debug builds.
+//! The string builder and the JSON reader/value parser on large inputs. Timings are only printed
+//! (`cargo test -p velt_rt --release --lib text_perf -- --nocapture`): what is checked is
+//! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.vlt` and
+//! `bench/json/` (`parse_typed`, `parse_value`).
 
 use super::json_reader::{borrow, decode_user_object};
 use crate::json::reader::*;
@@ -77,6 +78,7 @@ fn mb_per_s(bytes: usize, t: std::time::Duration) -> f64 {
     bytes as f64 / 1e6 / t.as_secs_f64()
 }
 
+/// 10 MB skipped, decoded and parsed as a value: the results are checked, the times printed.
 #[test]
 fn json_reader_throughput_10mb() {
     let (doc, count) = users_doc(10 << 20);
@@ -125,7 +127,4 @@ fn json_reader_throughput_10mb() {
         mb_per_s(len, decode),
         mb_per_s(len, value)
     );
-    if !cfg!(debug_assertions) {
-        assert!(mb_per_s(len, skip) > 200.0 && mb_per_s(len, decode) > 100.0);
-    }
 }

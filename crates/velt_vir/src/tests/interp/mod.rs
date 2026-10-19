@@ -8,6 +8,7 @@
 mod arith;
 mod async_rt;
 mod cancel;
+mod drops;
 mod http;
 mod json;
 mod local;
@@ -69,6 +70,8 @@ struct Interp<'p> {
     throw_loc: u64,
     /// Emulated async runtime (async_rt.rs, net.rs).
     exec: async_rt::Exec,
+    /// Bounded drop nesting (drops.rs).
+    drops: drops::Drops,
 }
 
 /// Run `velt_main` to completion (or until panic/exit).
@@ -116,7 +119,8 @@ impl<'p> Interp<'p> {
     fn new(p: &'p Program) -> Self {
         let mut it = Interp {
             p,
-            heap: vec![0; 16],
+            // Bytes 8..16: `cx` (async_rt.rs `CX`), pointing at the await word at 16..24 (0).
+            heap: [0u64, 16, 0].iter().flat_map(|w| w.to_le_bytes()).collect(),
             stack: vec![],
             statics: vec![],
             allocs: HashMap::new(),
@@ -126,6 +130,7 @@ impl<'p> Interp<'p> {
             frees: 0,
             throw_loc: 0,
             exec: async_rt::Exec::default(),
+            drops: drops::Drops::default(),
         };
         for s in &p.statics {
             let a = it.raw_alloc(s.bytes.len().max(1) as u64);

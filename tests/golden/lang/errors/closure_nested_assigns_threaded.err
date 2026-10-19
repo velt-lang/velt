@@ -1,0 +1,2 @@
+closure_nested_assigns_threaded.vlt:10:7: error: `last` is assigned by a closure created inside another closure, and cannot be shared with it
+  = note: a closure that runs on several threads (an HTTP handler, a spawned async closure) captures `last` too, and each of its runs would see its own copy; share it with `shared(...)`

@@ -72,7 +72,8 @@ mod tests {
     fn result_lands_at_offset_16() {
         let f = ready_leaf(|| 42i64);
         let mut cx = Context::from_waker(Waker::noop());
-        let raw = crate::task::raw_cx(&mut cx);
+        let raw_cx = crate::task::raw_cx(&mut cx);
+        let raw = raw_cx.ptr();
         unsafe {
             assert_eq!(velt_rt_fut_poll(f, raw), READY);
             let v = *((f as *const u8).add(FUT_RESULT_OFFSET) as *const i64);

@@ -1,0 +1,40 @@
+// A `resolve` called later queues the callbacks and `await`s waiting for its promise at once,
+// as Node does (#1104). Expected output recorded with Node 22.
+class Failed extends Error {}
+
+function log(s: string) {
+  console.log(s);
+}
+
+async function waitFor(name: string, p: Promise<number, Failed>): Promise<number, Failed> {
+  log(`${name} waits`);
+  const x = await p;
+  log(`${name} got ${x}`);
+  return x;
+}
+
+async function main() {
+  const { promise: rp0, resolve: rr0 } = Promise.withResolvers<number, Failed>();
+  const w0 = waitFor("r0", rp0);
+  const { promise: rp1, resolve: rr1 } = Promise.withResolvers<number, Failed>();
+  const w1 = rp1.then((n) => {
+    log(`r1 then ${n}`);
+    return n;
+  });
+  const t = (async () => {
+    log("x0");
+    await Promise.resolve(0);
+    log("x1");
+    rr1(7);
+    log("x2");
+    await Promise.resolve(0);
+    log("x3");
+  })();
+  rr0(5);
+  queueMicrotask(() => log("qm"));
+  log("sync end");
+  log(`r0 -> ${await w0}`);
+  log(`r1 -> ${await w1}`);
+  await t;
+}
+

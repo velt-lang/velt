@@ -1,0 +1,44 @@
+// Methods in object literals (expected output from `node`): `name(params) { body }` is a
+// property holding the function. Parameter types may be left out when the literal's type gives
+// them, as for an arrow; `async` methods return promises.
+
+type Handler = {
+  get(target: string, key: string): number;
+  set(target: string, key: string, value: number): boolean;
+};
+
+const handler: Handler = {
+  get(target, key) {
+    return target.length + key.length;
+  },
+  set(target, key, value) {
+    return value > 0 && target !== key;
+  },
+};
+console.log(handler.get("ab", "c"), handler.set("a", "b", 1), handler.set("a", "a", 1));
+
+function install(plugin: { name: string; setup(level: number): string }): string {
+  return plugin.setup(2);
+}
+console.log(
+  install({
+    name: "logger",
+    setup(level) {
+      return `level ${level}`;
+    },
+  }),
+);
+
+const tools = {
+  double(x: number): number {
+    return x * 2;
+  },
+  greet(name: string) {
+    return "hi " + name;
+  },
+  async load(x: number): Promise<number> {
+    return x + 1;
+  },
+};
+console.log(tools.double(21), tools.greet("ann"));
+console.log("loaded", await tools.load(1));

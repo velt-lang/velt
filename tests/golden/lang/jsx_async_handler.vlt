@@ -1,0 +1,25 @@
+// @jsxImportSource ./_jsx_events
+
+// Event handler attributes typed `() => void` take async arrows and arrows returning a value,
+// as in TSX (`onClick={async () => { await save(); }}`, `onClick={() => count++}`); handlers
+// render nothing on the server.
+
+import { renderToStringSync } from "velt:jsx";
+import { delay } from "velt:timers";
+
+function main() {
+  let count = 0;
+  const page = (
+    <div>
+      <button onClick={() => count++}>Add</button>
+      <button
+        onClick={async () => {
+          await delay(1);
+        }}
+      >
+        Save
+      </button>
+    </div>
+  );
+  console.log(renderToStringSync(page));
+}

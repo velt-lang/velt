@@ -1,0 +1,16 @@
+// Attributes of every component (docs/internals/contracts/jsx.md "Attributes of every
+// component"): a provider whose `IntrinsicAttributes` declares `client:*` attributes receives them
+// through `jsxComponentAttributes` (bare ones as `true`, values as written, in source order), not
+// as props. Both lowerings render byte-identically; a component without them is a plain
+// `jsxComponent`.
+
+import { renderToStringSync } from "velt:jsx";
+import * as generic from "./_jsx_attrs_page_generic";
+import * as precompiled from "./_jsx_attrs_page_precompile";
+
+function main() {
+  const a = renderToStringSync(generic.page(2));
+  const b = renderToStringSync(precompiled.page(2));
+  console.log(a);
+  console.log(a == b ? "same in both lowerings" : `different: ${b}`);
+}

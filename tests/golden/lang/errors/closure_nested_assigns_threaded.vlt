@@ -1,0 +1,21 @@
+// A closure created inside another closure assigns a variable that an HTTP handler also
+// captures (#904): the variable cannot live in one cell shared with requests running on other
+// threads, so this is an error rather than an assignment that would be lost.
+import { serve } from "velt:http";
+
+async function main() {
+  let last = "";
+  const f = (v: string) => {
+    const g = () => {
+      last = v;
+    };
+    return g;
+  };
+  const server = await serve({ port: 0 }, async (req) => {
+    return new Response(last);
+  });
+  const k = f("y");
+  k();
+  await server.shutdown();
+  console.log(last);
+}

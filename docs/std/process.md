@@ -5,11 +5,9 @@ import, as in Node:
 
 - `process.stdout.write(s)`, `process.stderr.write(s)`: write a string without a newline, ordered
   with `console.log` / `console.error`. They return `true`, like Node.
-- `process.env.NAME`, `process.env[name]`: the variable as `string | null`. An unset variable is
-  `null` where Node has `undefined`, so `process.env.NAME ?? "default"` reads the same, but
-  `process.env.NOPE !== null` is `false` in Velt and `true` in Node. Each read asks the
-  operating system again, so a check doesn't narrow a second read: read the variable into a
-  `const` and test that. On Windows names ignore case, as in Node.
+- `process.env.NAME`, `process.env[name]`: the variable as `string | undefined`; an unset
+  variable is `undefined`, as in Node. Each read asks the operating system again, so a check
+  doesn't narrow a second read: read the variable into a `const` and test that. On Windows names ignore case, as in Node.
 - `process.argv`: Node's layout, `[runtime, script, ...args]`, so `process.argv.slice(2)` is the
   arguments. The runtime is the running executable, with symbolic links resolved (`velt` under
   `velt dev`). The script is the source file under `velt run` / `velt dev`, the test file under
@@ -19,6 +17,12 @@ import, as in Node:
   changing it in place (`process.argv.push(x)`, `process.argv[2] = s`) is an error: copy it
   first (`const argv = process.argv`).
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
+
+`process` is a global, and `velt:process` exports it too: `import { process } from
+"velt:process"` names the same builtin, for code that imports it explicitly as Node code does
+(`import process from "node:process"`; Velt has named exports only, so the import takes braces).
+The builtin is known by its name, so it can't be imported under another one
+(`import { process as p }` is an error).
 
 `import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and
 changing variables, the working directory and byte writes.
@@ -34,6 +38,25 @@ changing variables, the working directory and byte writes.
   synchronized with concurrent reads.
 - `cwd()`, `chdir(path)`: both throw `IoError`. `exit(code: i32)`.
 - `stdout.write(bytes: u8[])`: raw bytes, without a copy for large arrays.
+- `stdout.isTTY`, `stderr.isTTY`, `stdin.isTTY`: whether the stream is a terminal, as Node's
+  `process.stdout.isTTY` (`false` when output goes to a file or a pipe, so a CLI can leave out
+  colours). `isatty(fd: i32)`: the same for a file descriptor, as Node's `tty.isatty(fd)`; on
+  Windows only 0, 1 and 2 can be terminals. The answer for a standard stream is computed once,
+  so asking on every write costs nothing. Where Velt differs from Node:
+  - `isTTY` is `false` for a stream that isn't a terminal, where Node's is `undefined`.
+  - `isatty` is in `velt:process`; Node has it in `node:tty`.
+  - On Windows, a mintty or MSYS terminal (Git Bash) counts as a terminal; in Node it doesn't.
+  - The builtin `process.stdout` has only `write` so far (`process.stdout.isTTY` is #729):
+    import `stdout` for `isTTY`.
+
+```ts
+import { stdout } from "velt:process";
+
+function main() {
+  const color = stdout.isTTY && process.env.NO_COLOR == null;
+  console.log(color ? "\u001b[32mok\u001b[0m" : "ok"); // ok, when piped
+}
+```
 
 ```ts
 import { args, envAll, setEnv, cwd } from "velt:process";

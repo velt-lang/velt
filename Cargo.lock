@@ -3,12 +3,33 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "alloc-no-stdlib"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fb6cfd47bf496ff64095c20eaba0c201404ee38714d4142fcfa1dc334fcc7a"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1"
+dependencies = [
+ "alloc-no-stdlib",
 ]
 
 [[package]]
@@ -80,6 +101,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
 ]
 
 [[package]]
@@ -418,12 +449,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data-encoding"
-version = "2.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -497,10 +522,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+
+[[package]]
+name = "flate2"
+version = "1.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide",
+ "zlib-rs",
+]
 
 [[package]]
 name = "fnv"
@@ -1100,6 +1146,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1630,6 +1686,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "simd-adler32"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+
+[[package]]
 name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,6 +1780,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
 ]
 
 [[package]]
@@ -1827,18 +1900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-tungstenite"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite",
-]
-
-[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1923,22 +1984,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tungstenite"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
-dependencies = [
- "bytes",
- "data-encoding",
- "http",
- "httparse",
- "log",
- "rand",
- "sha1",
- "thiserror",
-]
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2004,7 +2049,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "velt_codegen_cl"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -2020,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "velt_codegen_llvm"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "object",
  "velt_codegen_cl",
@@ -2030,11 +2075,11 @@ dependencies = [
 
 [[package]]
 name = "velt_common"
-version = "0.1.0"
+version = "0.2.2"
 
 [[package]]
 name = "velt_doc"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "tempfile",
  "velt_common",
@@ -2043,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "velt_fmt"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -2051,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "velt_http"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "rustls",
  "tempfile",
@@ -2059,19 +2104,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_launcher"
+version = "0.2.2"
+dependencies = [
+ "flate2",
+ "ring",
+ "semver",
+ "tar",
+ "tempfile",
+ "velt_http",
+ "velt_toolchain",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "velt_link"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "cc",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "object",
 ]
 
 [[package]]
 name = "velt_lsp"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "lsp-server",
  "lsp-types",
@@ -2079,6 +2139,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "velt_common",
+ "velt_doc",
  "velt_fmt",
  "velt_http",
  "velt_registry",
@@ -2106,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "velt_opt"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_codegen_cl",
  "velt_opt",
@@ -2115,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "velt_registry"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "getrandom 0.2.17",
  "semver",
@@ -2129,11 +2190,14 @@ dependencies = [
 
 [[package]]
 name = "velt_rt"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
+ "base64",
+ "brotli-decompressor",
  "bytes",
  "cc",
  "dashu-int",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",
@@ -2153,11 +2217,12 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
+ "tower-service",
  "url",
  "velt_native",
  "webpki-roots",
@@ -2166,10 +2231,13 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_host"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
+ "base64",
+ "brotli-decompressor",
  "bytes",
  "dashu-int",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",
@@ -2189,11 +2257,12 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
+ "tower-service",
  "url",
  "velt_native",
  "webpki-roots",
@@ -2202,10 +2271,13 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_shared"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
+ "base64",
+ "brotli-decompressor",
  "bytes",
  "dashu-int",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",
@@ -2225,11 +2297,12 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
+ "tower-service",
  "url",
  "velt_native",
  "webpki-roots",
@@ -2238,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_wasm"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "dashu-int",
  "itoa",
@@ -2249,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "velt_sema"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -2257,14 +2330,30 @@ dependencies = [
 
 [[package]]
 name = "velt_syntax"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_common",
 ]
 
 [[package]]
+name = "velt_toolchain"
+version = "0.2.2"
+dependencies = [
+ "flate2",
+ "ring",
+ "semver",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "velt_common",
+ "velt_http",
+ "velt_syntax",
+]
+
+[[package]]
 name = "velt_tscompat"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_sema",
@@ -2273,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "velt_vir"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "velt_codegen_cl",
  "velt_common",
@@ -2283,13 +2372,15 @@ dependencies = [
 
 [[package]]
 name = "veltc"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
+ "flate2",
  "libc",
  "lsp-server",
  "lsp-types",
  "notify",
  "serde_json",
+ "tar",
  "tempfile",
  "velt_codegen_cl",
  "velt_codegen_llvm",
@@ -2304,6 +2395,7 @@ dependencies = [
  "velt_rt_host",
  "velt_sema",
  "velt_syntax",
+ "velt_toolchain",
  "velt_tscompat",
  "velt_vir",
  "vpm",
@@ -2318,7 +2410,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vpm"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "object",
  "semver",
@@ -2331,6 +2423,7 @@ dependencies = [
  "velt_fmt",
  "velt_http",
  "velt_syntax",
+ "velt_toolchain",
  "windows-sys 0.61.2",
 ]
 
@@ -2675,8 +2768,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
+]
+
+[[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.2"
 
 [[package]]
 name = "yoke"
@@ -2760,6 +2863,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

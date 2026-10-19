@@ -1,5 +1,5 @@
 // Array `fill(value, start, end)`, `at(index)`, `findLast` and `findLastIndex`, with JS positions
-// (negative ones count from the end; `at` out of range is null where JS says undefined).
+// (negative ones count from the end; `at` out of range is undefined).
 function main() {
   const xs: i64[] = [1, 2, 3, 4, 5];
   xs.fill(0, 1, -1);

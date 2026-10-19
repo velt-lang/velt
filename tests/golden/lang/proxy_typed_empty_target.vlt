@@ -1,0 +1,15 @@
+// check: no leaks
+// A proxy over an empty target typed as an object type (#823): every read is answered by the trap.
+type Props = { title: string; size: number };
+const source: Props = { title: "hello", size: 3 };
+const props = new Proxy({}, {
+  get(_t: any, key: string | symbol, _r: any): any {
+    return Reflect.get(source, key);
+  },
+  has(_t: any, key: string | symbol): boolean {
+    return Reflect.has(source, key);
+  },
+}) as Props;
+console.log(props.title, props.size);
+source.size = 4;
+console.log(props.size);

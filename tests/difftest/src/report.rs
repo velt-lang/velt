@@ -52,7 +52,8 @@ pub fn describe(verdict: &Verdict) -> String {
             }
         }
         Verdict::CompilerCrash { message, .. } => s.push_str(&format!("{message}\n")),
-        Verdict::VeltRejected(msg) | Verdict::NodeRejected(msg) => s.push_str(&format!("{msg}\n")),
+        Verdict::VeltRejected { diagnostic, .. } => s.push_str(&format!("{diagnostic}\n")),
+        Verdict::NodeRejected(msg) => s.push_str(&format!("{msg}\n")),
         Verdict::Agree | Verdict::OracleTimeout => {}
     }
     s

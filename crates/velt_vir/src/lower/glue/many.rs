@@ -21,6 +21,16 @@ use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 impl FnLower<'_, '_> {
     pub(super) fn many_check_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
+        if self.cx.proxiable(ty) {
+            // A typed proxy: its `Proxy` object is checked, as an `any` holding it would be.
+            let done = self.new_block();
+            self.proxy_glue_split(&place, done, |lw, up, pty| lw.many_check(up, pty));
+            self.many_check_expand(&place, ty);
+            self.goto(done);
+            self.switch_to(done);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         self.many_check_expand(&place, ty);
         self.terminate(Terminator::Return(unit()));
     }
@@ -56,26 +66,37 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.many_check_option(place, ty, e),
+            TyKind::Option(e, _) => self.many_check_option(place, ty, e),
             TyKind::Array(e) => self.many_check_elems(place, e),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.many_check_closure(place),
-            TyKind::Dyn(..) => {
-                let vt = self.rvalue_temp(
-                    Ty::Ptr,
-                    Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
+            TyKind::Dyn(..) if self.cx.has_proxies() => {
+                let data = proj(place, Proj::Field(0));
+                self.proxy_dyn_data(
+                    &data,
+                    |lw, up, pty| lw.many_check(up, pty),
+                    |lw| lw.many_check_dyn(place),
                 );
-                let done = self.new_block();
-                let nn = self.non_null(vt.clone());
-                self.when(nn, done);
-                let data = Operand::Copy(proj(place, Proj::Field(0)));
-                let tagged = self.tagged(data);
-                let f = self.dispatch(vt, SLOT_TRANSFER);
-                self.call_entry(f, vec![tagged], vec![Ty::Ptr], Ty::Ptr);
-                self.goto(done);
-                self.switch_to(done);
             }
+            TyKind::Dyn(..) => self.many_check_dyn(place),
             _ => {}
         }
+    }
+
+    /// The interface value at `place`, checked through its table's `SLOT_TRANSFER` entry.
+    fn many_check_dyn(&mut self, place: &Place) {
+        let vt = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
+        );
+        let done = self.new_block();
+        let nn = self.non_null(vt.clone());
+        self.when(nn, done);
+        let data = Operand::Copy(proj(place, Proj::Field(0)));
+        let tagged = self.tagged(data);
+        let f = self.dispatch(vt, SLOT_TRANSFER);
+        self.call_entry(f, vec![tagged], vec![Ty::Ptr], Ty::Ptr);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     fn many_check_boxed(&mut self, place: &Place, ty: TyId) {

@@ -1,10 +1,14 @@
-// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`), backed by memchr,
-// memmove and memset in the runtime instead of byte-at-a-time loops.
+// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): short searches sixteen
+// bytes at a time with SIMD vectors, here in Velt so that they are compiled into their caller;
+// long searches by memchr, copying, filling and XOR masking by memmove, memset and word loops
+// in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
 declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
@@ -12,20 +16,118 @@ declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
+declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
+declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
+declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
+// The SIMD operations used below (`velt:simd`, std/simd/*.vlt, is the API; declared again
+// here so that the prelude does not load it). `load` does not check its range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+
+// Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
+// and the result is clamped to `0..=n`.
+function relative(i: i64, n: usize): usize {
+  if (i < 0) {
+    const fromEnd = (n as i64) + i;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return (i as usize) < n ? i as usize : n;
+}
+
+// The position of the first set lane of `m`, a mask of the 16 bytes at `at`.
+function hit(at: usize, m: mask8x16): i64 {
+  return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
+}
+
+// Up to this many bytes, the vectors below are faster than the runtime's memchr (32 bytes per
+// vector with AVX2 on x86-64) with its call; past it, memchr is.
+const SHORT_SEARCH: usize = 208;
+
+// First position at or after `start` holding `byte`, or -1. Up to `SHORT_SEARCH` bytes here:
+// one vector first (most searches end within a few bytes), then four per step with one test
+// for all of them, and the last bytes in a vector ending at the array's end, which may overlap
+// bytes already seen (none of them matched, so its first match is past them). Longer searches
+// in the runtime.
+function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
+  const n = d.length;
+  if (n - start > SHORT_SEARCH) {
+    return velt_rt_bytes_index_of(d, byte, start as i64);
+  }
+  const needle = velt_simd_u8x16_splat(byte);
+  let i = start;
+  if (n - i >= 16) {
+    const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+    if (velt_simd_mask8x16_any(m)) {
+      return hit(i, m);
+    }
+    i += 16;
+    while (i + 64 <= n) {
+      const m0 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      const m1 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 16) as u64), needle);
+      const m2 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 32) as u64), needle);
+      const m3 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 48) as u64), needle);
+      const any = velt_simd_mask8x16_or(
+        velt_simd_mask8x16_or(m0, m1),
+        velt_simd_mask8x16_or(m2, m3),
+      );
+      if (velt_simd_mask8x16_any(any)) {
+        if (velt_simd_mask8x16_any(m0)) {
+          return hit(i, m0);
+        }
+        if (velt_simd_mask8x16_any(m1)) {
+          return hit(i + 16, m1);
+        }
+        if (velt_simd_mask8x16_any(m2)) {
+          return hit(i + 32, m2);
+        }
+        return hit(i + 48, m3);
+      }
+      i += 64;
+    }
+    while (i + 16 <= n) {
+      const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      if (velt_simd_mask8x16_any(m)) {
+        return hit(i, m);
+      }
+      i += 16;
+    }
+    if (i < n) {
+      const last = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (n - 16) as u64), needle);
+      if (velt_simd_mask8x16_any(last)) {
+        return hit(n - 16, last);
+      }
+    }
+    return -1;
+  }
+  while (i < n) {
+    if (d[i] == byte) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
 declare function velt_rt_str_byte_length(s: string): u64;
 
-// Node's `Buffer` constructors (static only; buffers are `u8[]`).
+/** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
 export class Buffer {
-  // `n` zero bytes.
+  /** `n` zero bytes. */
   static alloc(n: usize): u8[] {
     return velt_rt_bytes_zeroed(n as u64);
   }
 
-  // The number of bytes `s` takes in `encoding`, as Node's `Buffer.byteLength(s, encoding)`:
-  // UTF-8 by default (O(1), a lone surrogate counting as the 3 bytes of U+FFFD), `utf16le` /
-  // `ucs2` two per code unit, `latin1` / `binary` / `ascii` one, `hex` one per two digits,
-  // `base64` / `base64url` the decoded size. Names ignore case; an unknown one counts UTF-8, as
-  // Node does. `s.length` counts UTF-16 code units, not bytes.
+  /**
+   * The number of bytes `s` takes in `encoding`, as Node's `Buffer.byteLength(s, encoding)`:
+   * UTF-8 by default (O(1), a lone surrogate counting as the 3 bytes of U+FFFD), `utf16le` /
+   * `ucs2` two per code unit, `latin1` / `binary` / `ascii` one, `hex` one per two digits,
+   * `base64` / `base64url` the decoded size. Names ignore case; an unknown one counts UTF-8, as
+   * Node does. `s.length` counts UTF-16 code units, not bytes.
+   */
   static byteLength(s: string, encoding: string = "utf8"): usize {
     if (encoding == "utf8") {
       return velt_rt_str_byte_length(s) as usize;
@@ -56,34 +158,59 @@ export class Buffer {
 }
 
 extend Array<u8> {
-  // Position of the first `byte` at or after `from`, or -1 (memchr).
+  /** Position of the first `byte` at or after `from`, or -1. */
   indexOf(byte: u8, from: i64 = 0): i64 {
-    return velt_rt_bytes_index_of(this, byte, from);
+    return indexOfByte(this, byte, relative(from, this.length));
   }
 
-  // Position of the last `byte` at or before `from`, or -1.
+  /** Position of the last `byte` at or before `from`, or -1. */
   lastIndexOf(byte: u8, from: i64 = 9223372036854775807): i64 {
     return velt_rt_bytes_last_index_of(this, byte, from);
   }
 
-  includes(byte: u8): bool {
-    return velt_rt_bytes_index_of(this, byte, 0) >= 0;
+  /**
+   * Determines whether an array includes a certain byte, returning true or false as appropriate.
+   * @param byte - The byte to search for.
+   * @param from - The position to start the search at (negative: from the end).
+   */
+  includes(byte: u8, from: i64 = 0): bool {
+    return indexOfByte(this, byte, relative(from, this.length)) >= 0;
   }
 
-  // Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`); the
-  // array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
+  /**
+   * Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`); the
+   * array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
+   */
   set(src: u8[], offset: usize = 0) {
     if (!velt_rt_bytes_set(this, src, offset as u64)) {
       panic("RangeError: offset is out of bounds");
     }
   }
 
-  // Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine).
+  /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
   copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_copy_within(this, target, start, end);
   }
 
-  // Sets the bytes in [start, end) to `byte` (memset).
+  /** The bytes in [start, end) as a new array (JS `slice`: negative positions count from the end). */
+  slice(start: i64 = 0, end: i64 = 9223372036854775807): u8[] {
+    return velt_rt_bytes_slice(this, start, end);
+  }
+
+  /** New array with this array's bytes followed by `other`'s. */
+  concat(other: u8[]): u8[] {
+    return velt_rt_bytes_concat(this, other);
+  }
+
+  /**
+   * XORs the bytes in [start, end) with the four bytes of `mask` (most significant first),
+   * repeating from `start`: WebSocket masking (RFC 6455 §5.3). Applying it twice restores them.
+   */
+  xorMask(mask: u32, start: i64 = 0, end: i64 = 9223372036854775807) {
+    velt_rt_bytes_xor_mask(this, mask, start, end);
+  }
+
+  /** Sets the bytes in [start, end) to `byte` (memset). */
   fill(byte: u8, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_fill(this, byte, start, end);
   }

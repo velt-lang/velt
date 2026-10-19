@@ -4,39 +4,39 @@
 // `civil_from_days` algorithms (http://howardhinnant.github.io/date_algorithms.html): exact for
 // every i64 day count a DateTime can hold, branch-light, and without tables.
 
-// Milliseconds per unit.
+/** Milliseconds per unit. */
 export const MS_PER_SECOND: i64 = 1000;
 export const MS_PER_MINUTE: i64 = 60000;
 export const MS_PER_HOUR: i64 = 3600000;
 export const MS_PER_DAY: i64 = 86400000;
 
-// Calendar fields of an instant, in UTC or shifted by `offsetMinutes` (local time).
+/** Calendar fields of an instant, in UTC or shifted by `offsetMinutes` (local time). */
 export struct DateParts {
-  // Proleptic Gregorian year (1 BC is 0).
+  /** Proleptic Gregorian year (1 BC is 0). */
   year: i64;
-  // 1-12.
+  /** 1-12. */
   month: i64;
-  // 1-31.
+  /** 1-31. */
   day: i64;
   hour: i64;
   minute: i64;
   second: i64;
   millisecond: i64;
-  // 0 = Sunday … 6 = Saturday (JS `getUTCDay`).
+  /** 0 = Sunday … 6 = Saturday (JS `getUTCDay`). */
   dayOfWeek: i64;
-  // 1-366.
+  /** 1-366. */
   dayOfYear: i64;
-  // Minutes added to UTC to get these fields (0 for UTC; +60 for UTC+01:00).
+  /** Minutes added to UTC to get these fields (0 for UTC; +60 for UTC+01:00). */
   offsetMinutes: i64;
 }
 
-// Integer division rounding toward negative infinity (`/` truncates).
+/** Integer division rounding toward negative infinity (`/` truncates). */
 export function floorDiv(a: i64, b: i64): i64 {
   const q = a / b;
   return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q;
 }
 
-// The remainder matching `floorDiv` (same sign as `b`).
+/** The remainder matching `floorDiv` (same sign as `b`). */
 export function floorMod(a: i64, b: i64): i64 {
   return a - floorDiv(a, b) * b;
 }
@@ -45,7 +45,7 @@ export function isLeapYear(y: i64): bool {
   return floorMod(y, 4) == 0 && (floorMod(y, 100) != 0 || floorMod(y, 400) == 0);
 }
 
-// Days in month `m` (1-12) of year `y`.
+/** Days in month `m` (1-12) of year `y`. */
 export function daysInMonth(y: i64, m: i64): i64 {
   if (m == 2) {
     return isLeapYear(y) ? 29 : 28;
@@ -53,7 +53,7 @@ export function daysInMonth(y: i64, m: i64): i64 {
   return m == 4 || m == 6 || m == 9 || m == 11 ? 30 : 31;
 }
 
-// Day number (0 = 1970-01-01) of `y-m-d`; `m` is 1-12, `d` may overflow the month.
+/** Day number (0 = 1970-01-01) of `y-m-d`; `m` is 1-12, `d` may overflow the month. */
 export function daysFromCivil(y: i64, m: i64, d: i64): i64 {
   const yy = m <= 2 ? y - 1 : y;
   const era = floorDiv(yy, 400);
@@ -64,8 +64,10 @@ export function daysFromCivil(y: i64, m: i64, d: i64): i64 {
   return era * 146097 + doe - 719468;
 }
 
-// Epoch ms of the given UTC fields; the month may be any integer (13 = January next year) and the
-// other fields may overflow, like JS `Date.UTC`.
+/**
+ * Epoch ms of the given UTC fields; the month may be any integer (13 = January next year) and the
+ * other fields may overflow, like JS `Date.UTC`.
+ */
 export function epochMsOf(y: i64, month: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64): i64 {
   const m0 = month - 1;
   const year = y + floorDiv(m0, 12);
@@ -73,7 +75,7 @@ export function epochMsOf(y: i64, month: i64, d: i64, h: i64, mi: i64, s: i64, m
   return days * MS_PER_DAY + h * MS_PER_HOUR + mi * MS_PER_MINUTE + s * MS_PER_SECOND + ms;
 }
 
-// The calendar fields of epoch ms `t` shifted by `offsetMinutes`.
+/** The calendar fields of epoch ms `t` shifted by `offsetMinutes`. */
 export function partsOf(t: i64, offsetMinutes: i64): DateParts {
   const local = t + offsetMinutes * MS_PER_MINUTE;
   const days = floorDiv(local, MS_PER_DAY);
@@ -100,30 +102,30 @@ export function partsOf(t: i64, offsetMinutes: i64): DateParts {
   };
 }
 
-// `Jan` … `Dec` for month 1-12.
+/** `Jan` … `Dec` for month 1-12. */
 export function monthShort(m: i64): string {
   return "JanFebMarAprMayJunJulAugSepOctNovDec".slice((m - 1) * 3, m * 3);
 }
 
-// `January` … `December`.
+/** `January` … `December`. */
 export function monthLong(m: i64): string {
   const names =
     "January February March April May June July August September October November December";
   return names.split(" ")[(m - 1) as usize].clone();
 }
 
-// `Sun` … `Sat` for day of week 0-6.
+/** `Sun` … `Sat` for day of week 0-6. */
 export function weekdayShort(d: i64): string {
   return "SunMonTueWedThuFriSat".slice(d * 3, d * 3 + 3);
 }
 
-// `Sunday` … `Saturday`.
+/** `Sunday` … `Saturday`. */
 export function weekdayLong(d: i64): string {
   const names = "Sunday Monday Tuesday Wednesday Thursday Friday Saturday";
   return names.split(" ")[d as usize].clone();
 }
 
-// Month number (1-12) of a three-letter English abbreviation (case-insensitive), or 0.
+/** Month number (1-12) of a three-letter English abbreviation (case-insensitive), or 0. */
 export function monthFromShort(name: string): i64 {
   if (name.length != 3) {
     return 0;

@@ -1,0 +1,28 @@
+// `Symbol.iterator in o` and `Symbol.asyncIterator in o` are answered from the type's methods:
+// a generator has no `[Symbol.asyncIterator]` and an async generator no `[Symbol.iterator]`, as
+// in Node. Expected output from node.
+function* g(): Generator<number> {
+  yield 1;
+}
+
+async function* h(): AsyncGenerator<number> {
+  yield 1;
+}
+
+class Plain {
+  x = 1;
+}
+
+class Counter {
+  *[Symbol.iterator](): Generator<number> {
+    yield 1;
+  }
+}
+
+function main() {
+  console.log(Symbol.asyncIterator in g(), Symbol.iterator in g());
+  console.log(Symbol.asyncIterator in h(), Symbol.iterator in h());
+  console.log(Symbol.iterator in [1], Symbol.asyncIterator in [1]);
+  console.log(Symbol.iterator in new Map<string, number>(), Symbol.asyncIterator in new Set<number>());
+  console.log(Symbol.iterator in new Plain(), Symbol.iterator in new Counter(), Symbol.asyncIterator in new Counter());
+}

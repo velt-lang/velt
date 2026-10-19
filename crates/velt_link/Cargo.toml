@@ -3,7 +3,12 @@ name = "velt_link"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "velt-kit"
+
 [dependencies]
+# Link kits: stub objects for glibc's libraries (write) and the DLL export lists (read, `velt-kit`).
+object = { version = "0.39", default-features = false, features = ["std", "read_core", "write_std", "elf", "pe", "coff", "macho"] }
 
 [target."cfg(windows)".dependencies]
 cc = "1.5.1"

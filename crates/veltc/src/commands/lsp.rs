@@ -540,6 +540,112 @@ mod tests {
         server.join().unwrap().unwrap();
     }
 
+    /// Hover on a standard-library function shows its doc comment.
+    #[test]
+    fn hover_shows_std_doc_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        let text = "import { normalize } from \"velt:path\";\nfunction main() {\n  console.log(normalize(\"a//b\"));\n}\n";
+        std::fs::write(&main, text).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = json!({
+            "textDocument": { "uri": main_uri },
+            "position": position(text, "normalize(\"", 0),
+        });
+        let hover = request(&conn, 2, "textDocument/hover", at);
+        let value = hover["contents"]["value"].as_str().unwrap();
+        assert!(
+            value.starts_with("```velt\nfunction normalize(p: string): string\n```\n\n---\n\n")
+                && value.contains("Resolves \".\" and \"..\" segments"),
+            "{value}"
+        );
+        request(&conn, 3, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
+
+    const STD_DOCS: &str = "async function main() {
+  const res = await fetch(\"http://localhost:1/\");
+  console.log(res.headers.get(\"a\"));
+  setTimeout(() => {}, 10).unref();
+  console.log([1, 2].findIndex((x) => x > 1));
+  const h = new Headers();
+  h.
+}
+";
+
+    /// The prelude's and the fetch globals' doc comments (converted to `/** */` in #520) in
+    /// hover, completion and signature help, through the real loader and std.
+    #[test]
+    fn std_globals_and_prelude_methods_show_their_docs() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        std::fs::write(&main, STD_DOCS).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": STD_DOCS });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = |needle: &str, delta: usize| json!({ "textDocument": { "uri": main_uri }, "position": position(STD_DOCS, needle, delta) });
+        let mut id = 2;
+        let mut hover = |needle: &str| {
+            id += 1;
+            let hover = request(&conn, id, "textDocument/hover", at(needle, 0));
+            let value = hover["contents"]["value"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            value
+                .split_once("\n```\n\n---\n\n")
+                .map(|(_, d)| d.to_string())
+                .unwrap_or_else(|| format!("no doc: {value}"))
+        };
+        let fetch = hover("fetch(\"");
+        assert!(fetch.starts_with("Sends a request."), "{fetch}");
+        let get = hover("get(\"a\")");
+        assert!(get.starts_with("The values of `name` joined"), "{get}");
+        let unref = hover("unref()");
+        assert!(unref.starts_with("Lets the process exit"), "{unref}");
+        let find = hover("findIndex(");
+        assert!(find.starts_with("Index of the first element"), "{find}");
+
+        // Completion: a fetch global's members resolve to their docs.
+        let items = request(&conn, 20, "textDocument/completion", at("h.\n", 2));
+        let list = items.get("items").unwrap_or(&items).as_array().unwrap();
+        let get = list.iter().find(|i| i["label"] == json!("get")).unwrap();
+        let resolved = request(&conn, 21, "completionItem/resolve", get.clone());
+        let value = resolved["documentation"]["value"].as_str().unwrap_or("");
+        assert!(value.starts_with("The values of `name` joined"), "{value}");
+
+        // Signature help: the global `fetch`.
+        let help = request(&conn, 22, "textDocument/signatureHelp", at("fetch(\"", 6));
+        let value = help["signatures"][0]["documentation"]["value"]
+            .as_str()
+            .unwrap_or("");
+        assert!(value.starts_with("Sends a request."), "{value}");
+        request(&conn, 99, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
+
     const GENERATORS: &str = "function* count(limit: i64): Generator<i64> {
   for (let i = 0; i < limit; i++) {
     yield i * 2;

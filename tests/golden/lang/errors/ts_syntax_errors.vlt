@@ -1,0 +1,7 @@
+// TypeScript's errors for the newer syntax: `readonly` only on array and tuple types (TS1354)
+// and `declare` fields without initializers.
+type R = readonly string;
+
+class C {
+  declare x: number = 1;
+}

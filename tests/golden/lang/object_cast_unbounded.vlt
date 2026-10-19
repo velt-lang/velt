@@ -1,0 +1,47 @@
+// `x as object` of a type parameter without an `object` bound (issue #926), as sigx's
+// `toRaw<T>(observed: T): T` does: the instantiation's value enters `object` as it is; a
+// `T | null` or a union is unpacked at run time.
+const seen = new Set<object>();
+
+function track<T>(value: T): boolean {
+  const o = value as object;
+  if (seen.has(o)) {
+    return false;
+  }
+  seen.add(o);
+  return true;
+}
+
+function kind<T>(value: T): string {
+  return typeof (value as object);
+}
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+interface Box {
+  label: string;
+}
+
+function main(): void {
+  const p = new Point(1, 2);
+  const b: Box = { label: "b" };
+  const xs = [1, 2, 3];
+  console.log(track(p), track(p), track(b), track(b), track(xs), track(xs));
+  const maybe: Point | null = p;
+  console.log(track(maybe));
+  const none: Point | null = null;
+  console.log(kind(none));
+  const either: Point | number[] = xs;
+  console.log(track(either), kind(either));
+  const either2: Point | number[] = new Point(3, 4);
+  console.log(track(either2), kind(either2), seen.size);
+  console.log(kind(() => 1));
+}
+

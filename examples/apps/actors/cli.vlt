@@ -1,0 +1,7 @@
+// Compiles the `actors` command line (src/main.vlt, src/bench.vlt), which demo.vlt does not
+// import, so the gate notices when `actors serve | bench | calls` stops building.
+import { cli } from "./src/main";
+
+async function main() {
+  await cli(["help"]);
+}

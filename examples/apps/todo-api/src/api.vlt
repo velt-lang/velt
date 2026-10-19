@@ -51,7 +51,7 @@ function decodeParam(raw: string): string {
 export function queryParam(q: string, name: string): string | null {
   for (const pair of q.split("&")) {
     const eq = pair.indexOf("=");
-    const key = pair.slice(0, eq < 0 ? pair.length as i64 : eq);
+    const key = pair.slice(0, eq < 0 ? pair.length : eq);
     if (key === name) {
       return eq < 0 ? "" : decodeParam(pair.slice(eq + 1));
     }

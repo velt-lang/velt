@@ -6,32 +6,32 @@ declare function velt_rt_os_cpu_count(): u64;
 declare function velt_rt_os_tmpdir(): string;
 declare function velt_rt_os_hostname(): string;
 
-// "darwin", "linux" or "win32" (Node's `process.platform` names).
+/** "darwin", "linux" or "win32" (Node's `process.platform` names). */
 export function platform(): string {
   return velt_rt_os_platform();
 }
 
-// "arm64" or "x64" (Node's `process.arch` names).
+/** "arm64" or "x64" (Node's `process.arch` names). */
 export function arch(): string {
   return velt_rt_os_arch();
 }
 
-// Logical CPUs this process may use (at least 1).
+/** Logical CPUs this process may use (at least 1). */
 export function availableParallelism(): i64 {
   return velt_rt_os_cpu_count() as i64;
 }
 
-// The directory for temporary files, without a trailing separator.
+/** The directory for temporary files, without a trailing separator. */
 export function tmpdir(): string {
   return velt_rt_os_tmpdir();
 }
 
-// The machine's host name ("" if unknown).
+/** The machine's host name ("" if unknown). */
 export function hostname(): string {
   return velt_rt_os_hostname();
 }
 
-// The line terminator of the platform: "\r\n" on Windows, "\n" elsewhere.
+/** The line terminator of the platform: "\r\n" on Windows, "\n" elsewhere. */
 export function eol(): string {
   return velt_rt_os_platform() == "win32" ? "\r\n" : "\n";
 }

@@ -1,0 +1,19 @@
+// A timer callback whose own closure assigns a variable the callback captured (#913): the
+// callback runs on its own copy of `k`, so this is the error for the callback modifying `k`.
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((r) => {
+    setTimeout(() => r(), ms);
+  });
+}
+
+async function main() {
+  let k = 0;
+  setTimeout(() => {
+    const g = () => {
+      k += 5;
+    };
+    g();
+  }, 1);
+  await delay(10);
+  console.log(k);
+}

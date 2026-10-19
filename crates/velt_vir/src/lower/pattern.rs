@@ -6,6 +6,7 @@
 use velt_sema::hir::{self, Lit, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
+use super::types::VariantAt;
 use super::{cint, ice, FnLower};
 use crate::vir::{BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty};
 
@@ -65,9 +66,10 @@ impl FnLower<'_, '_> {
                 let ok = self.lit_eq(l, place, ty);
                 self.cond_jump(ok, fail);
             }
-            PatKind::Variant { variant, args, .. } => {
-                self.test_variant(*variant, args, place, ty, fail)
-            }
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => self.test_variant(v, args, place, ty, fail),
+                VariantAt::Whole => self.test_pat(&args[0], place, ty, fail),
+            },
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
@@ -109,10 +111,7 @@ impl FnLower<'_, '_> {
             PatKind::Some(p) => {
                 let some = self.option_is_some(place, ty);
                 self.cond_jump(some, fail);
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(place, ty);
+                let (payload, inner) = self.some_part(p, place, ty);
                 self.test_pat(p, &payload, inner, fail);
             }
         }
@@ -135,7 +134,14 @@ impl FnLower<'_, '_> {
         self.switch_to(ok);
     }
 
-    fn test_variant(&mut self, v: u32, args: &[Pat], place: &Place, ty: TyId, fail: BlockId) {
+    pub(super) fn test_variant(
+        &mut self,
+        v: u32,
+        args: &[Pat],
+        place: &Place,
+        ty: TyId,
+        fail: BlockId,
+    ) {
         let tag = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
                 let disc = self.cx.enum_def(d).variants[v as usize].discriminant;
@@ -195,14 +201,23 @@ impl FnLower<'_, '_> {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
                 let moving = *mode == UseMode::Move;
+                if self.info[id.0 as usize].cell {
+                    return self.bind_cell(*id, moving, register, place);
+                }
+                if *mode == UseMode::Borrow && self.stable_binds {
+                    return self.bind_share(*id, place);
+                }
                 self.bind_local(*id, moving && register, moving, place)
             }
-            PatKind::Variant { variant, args, .. } => {
-                for (k, p) in args.iter().enumerate() {
-                    let (sp, st) = self.variant_part(place, ty, *variant, k);
-                    self.bind_pat(p, &sp, st, register);
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => {
+                    for (k, p) in args.iter().enumerate() {
+                        let (sp, st) = self.variant_part(place, ty, v, k);
+                        self.bind_pat(p, &sp, st, register);
+                    }
                 }
-            }
+                VariantAt::Whole => self.bind_pat(&args[0], place, ty, register),
+            },
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
@@ -236,10 +251,7 @@ impl FnLower<'_, '_> {
                 }
             }
             PatKind::Some(p) => {
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(place, ty);
+                let (payload, inner) = self.some_part(p, place, ty);
                 self.bind_pat(p, &payload, inner, register);
             }
             PatKind::Or(alts) => {
@@ -275,6 +287,57 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// A binding that is a shared cell (`LocalDef::boxed`: a closure assigns it): a new cell,
+    /// every time the pattern binds (each iteration of a loop has its own variable, as in JS),
+    /// holding the matched part. A moving binding moves the part into the cell (a share inside a
+    /// counted value); any other takes a share of it. The current scope owns the cell, except
+    /// for a moving binding that is not owned yet (a `match` arm owns its moved bindings later,
+    /// `own_bindings`).
+    fn bind_cell(&mut self, id: hir::LocalId, moving: bool, register: bool, place: &Place) {
+        let ty = self.info[id.0 as usize].ty;
+        if self.info[id.0 as usize].vir.is_none() {
+            return;
+        }
+        let v = match moving && !self.share_binds {
+            true => Operand::Copy(place.clone()),
+            false => self.share_value(Operand::Copy(place.clone()), ty),
+        };
+        let vt = self.cx.ty(ty);
+        let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
+        self.new_cell(id);
+        let p = self.local_place(id);
+        self.store(p, v);
+        if register || !moving {
+            self.mark_init(id);
+            self.register_local_drop(id);
+        }
+    }
+
+    /// A binding by reference into a place others may replace while it lives (`stable_binds`):
+    /// it refers to a share of the value, owned by the current scope (semantics stage 2). An
+    /// indirect binding (a value stored inline, bound by reference) points to that share. A
+    /// share copies the parts that can be changed in place, so those types are counted first
+    /// (`Cx::note_identity_borrow`, as `stable_borrow` does): the share is then the same
+    /// object, and writes through the binding reach the original.
+    fn bind_share(&mut self, id: hir::LocalId, place: &Place) {
+        let info = &self.info[id.0 as usize];
+        let (Some(l), ty) = (info.vir, info.ty) else {
+            return;
+        };
+        let indirect = info.indirect;
+        for p in self.cx.in_place_parts(ty) {
+            self.cx.note_identity_borrow(p);
+        }
+        let s = self.share_value(Operand::Copy(place.clone()), ty);
+        let vt = self.cx.ty(ty);
+        let t = Place::local(self.copy_to_temp(s, vt));
+        self.own_place(t.clone(), ty);
+        if indirect {
+            return self.bind_local(id, false, false, &t);
+        }
+        self.assign(Place::local(l), Rvalue::Use(Operand::Copy(t)));
+    }
+
     /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).
     fn bind_rest(&mut self, r: hir::LocalId, place: &Place, ty: TyId, skip: usize) {
         let Some(l) = self.info[r.0 as usize].vir else {
@@ -290,7 +353,13 @@ impl FnLower<'_, '_> {
         let fp = Place::local(fresh);
         self.copy_elems(place, cint(skip as i128, Ty::U64), &fp, n, elem, true);
         let v = self.box_value(Operand::Copy(fp), ty);
-        self.assign(Place::local(l), Rvalue::Use(v));
+        if self.info[r.0 as usize].cell {
+            self.new_cell(r);
+            let p = self.local_place(r);
+            self.store(p, v);
+        } else {
+            self.assign(Place::local(l), Rvalue::Use(v));
+        }
         if self.info[r.0 as usize].droppable {
             self.mark_init(r);
             self.register_local_drop(r);
@@ -307,12 +376,15 @@ impl FnLower<'_, '_> {
         }
         match &pat.kind {
             PatKind::Binding(..) => {}
-            PatKind::Variant { variant, args, .. } => {
-                for (k, p) in args.iter().enumerate() {
-                    let (sp, st) = self.variant_part(&place, ty, *variant, k);
-                    self.drop_rest(sp, st, p);
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => {
+                    for (k, p) in args.iter().enumerate() {
+                        let (sp, st) = self.variant_part(&place, ty, v, k);
+                        self.drop_rest(sp, st, p);
+                    }
                 }
-            }
+                VariantAt::Whole => self.drop_rest(place, ty, &args[0]),
+            },
             PatKind::Adt { fields } => self.drop_rest_fields(place, ty, fields),
             PatKind::Tuple(ps) => {
                 let TyKind::Tuple(tys) = self.cx.kind(ty) else {
@@ -324,10 +396,7 @@ impl FnLower<'_, '_> {
                 }
             }
             PatKind::Some(p) => {
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(&place, ty);
+                let (payload, inner) = self.some_part(p, &place, ty);
                 self.drop_rest(payload, inner, p);
             }
             PatKind::Array { elems, .. } => self.drop_rest_array(place, ty, elems),
@@ -381,5 +450,29 @@ fn binds_anything(p: &Pat) -> bool {
         PatKind::Array { elems, rest } => rest.is_some() || elems.iter().any(binds_anything),
         PatKind::Some(q) => binds_anything(q),
         PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => false,
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Where variant `variant` of the HIR union type `hir_ty` lives in its canonical type `ty`
+    /// in this instance (`Cx::union_variant`).
+    pub(super) fn variant_at(&mut self, hir_ty: TyId, variant: u32, ty: TyId) -> VariantAt {
+        let targs = std::mem::take(&mut self.targs);
+        let at = self.cx.union_variant(hir_ty, &targs, variant, ty);
+        self.targs = targs;
+        at
+    }
+
+    /// The payload place and type a `Some(p)` pattern matches in the option at `place` (of
+    /// type `ty`). When `p`'s type is the option itself (a generic `U | null` at a nullable `U`,
+    /// `TyTable::intern`), that is the whole value.
+    fn some_part(&mut self, p: &Pat, place: &Place, ty: TyId) -> (Place, TyId) {
+        if self.sub(p.ty) == ty {
+            return (place.clone(), ty);
+        }
+        let TyKind::Option(inner, _) = self.cx.kind(ty) else {
+            ice("Some pattern")
+        };
+        (self.some_payload(place, ty), inner)
     }
 }

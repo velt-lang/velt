@@ -25,12 +25,12 @@ function lineOf(r: LineRead): string | null {
   return unwrapIo(r.line);
 }
 
-// The next line without its "\n" / "\r\n", or null at end of input.
+/** The next line without its "\n" / "\r\n", or null at end of input. */
 export async function readLine(): Promise<string | null> {
   return lineOf(await velt_rt_stdin_read_line());
 }
 
-// The remaining lines, as `readLine` reads them: `for await (const line of lines())`.
+/** The remaining lines, as `readLine` reads them: `for await (const line of lines())`. */
 export async function* lines(): AsyncGenerator<string, IoError> {
   while (true) {
     const r = await velt_rt_stdin_read_line();
@@ -41,27 +41,27 @@ export async function* lines(): AsyncGenerator<string, IoError> {
   }
 }
 
-// `readLine` that blocks the calling thread.
+/** `readLine` that blocks the calling thread. */
 export function readLineSync(): string | null {
   return lineOf(velt_rt_stdin_read_line_sync());
 }
 
-// Everything left on standard input.
+/** Everything left on standard input. */
 export async function readAll(): Promise<string> {
   return unwrapIo(await velt_rt_stdin_read_all());
 }
 
-// `readAll` that blocks the calling thread.
+/** `readAll` that blocks the calling thread. */
 export function readAllSync(): string {
   return unwrapIo(velt_rt_stdin_read_all_sync());
 }
 
-// Everything left on standard input, as raw bytes (the runtime's read buffer, not a copy).
+/** Everything left on standard input, as raw bytes (the runtime's read buffer, not a copy). */
 export async function readAllBytes(): Promise<u8[]> {
   return unwrapIo(await velt_rt_stdin_read_all_bytes());
 }
 
-// `readAllBytes` that blocks the calling thread.
+/** `readAllBytes` that blocks the calling thread. */
 export function readAllBytesSync(): u8[] {
   return unwrapIo(velt_rt_stdin_read_all_bytes_sync());
 }

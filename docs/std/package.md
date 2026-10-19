@@ -10,6 +10,7 @@ import type { Package } from "velt:package";
 export const pkg: Package = {
   name: "todo-api",
   version: "0.3.0",
+  velt: "0.1",
   dependencies: { sqlite: "^0.1", util: { path: "../util" } },
   paths: { "@app/*": "src/*" },
 };
@@ -21,7 +22,7 @@ type-checking the file; these types document the same fields (a test keeps them 
 
 | Type | What it describes |
 |---|---|
-| `Package` | the manifest: `name`, `version`, and the optional `description`, `keywords`, `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native`, `tsCompat` |
+| `Package` | the manifest: `name`, `version`, and the optional `velt`, `description`, `keywords`, `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native`, `tsCompat` |
 | `Dependency` | `string` (a semver requirement) or a `DependencySource` |
 | `DependencySource` | `{ version?: string; path?: string }` |
 | `Jsx` | `{ importSource?: string }` |

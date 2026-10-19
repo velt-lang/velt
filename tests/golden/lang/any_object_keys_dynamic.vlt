@@ -1,0 +1,54 @@
+// check: no leaks
+// `Object.keys` of an `any` or an `object` (#924, #926) lists the own enumerable string keys of
+// whatever value it holds, in JavaScript's order (integer-like keys first, ascending), and
+// `{ ...a }`, `Object.values` and `Object.entries` of an `any` read them.
+class Point {
+  x = 1;
+  y = 2;
+}
+
+class Point3 extends Point {
+  z = 3;
+}
+
+interface Opt {
+  a: number;
+  b?: string;
+  "2": boolean;
+  "1": boolean;
+}
+
+function keys(v: any): string[] {
+  return Object.keys(v);
+}
+
+function objectKeys(v: object): string {
+  return Object.keys(v).join(",");
+}
+
+function main(): void {
+  console.log(keys(new Point3()));
+  const without: Opt = { a: 1, "2": true, "1": false };
+  const with_: Opt = { a: 1, b: "x", "2": true, "1": false };
+  console.log(keys(without), keys(with_));
+  console.log(keys([10, 20, 30]), keys("hé"));
+  console.log(keys(42), keys(true), keys(() => 1));
+  const r: Record<string, number> = {};
+  r["z"] = 1;
+  r["y"] = 2;
+  console.log(keys(r));
+  console.log(objectKeys(new Point()), objectKeys([1, 2]), objectKeys(new Map<string, number>()));
+  const a: any = { x: 10, y: "two" };
+  const b: any = new Point3();
+  const n: any = null;
+  const s = { ...a, ...b, w: true, ...n };
+  console.log(s);
+  console.log(Object.keys(s).length);
+  const e: any = { k: 1, j: "two" };
+  console.log(Object.values(e), Object.entries(e));
+  const list: any = [5, 6];
+  const point: any = new Point();
+  console.log(Object.values(list), Object.entries(point));
+  const text: any = "hi";
+  console.log(Object.values(text), Object.entries(text), { ...text });
+}

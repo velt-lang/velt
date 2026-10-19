@@ -1,10 +1,4 @@
-numbers_division.vlt:4:3: error: `/=` would store a float in an integer variable
-  = note: `/` gives a float (like JS) unless both operands are declared with integer types
-  = note: for integer division write `x = Math.trunc(x / y)`, or declare the variable as a float (`let x = 0.0`)
-
-numbers_division.vlt:6:18: error: mismatched types
-  = note: expected i64, found f64
-  = note: `/` gives a float (like JS) unless both operands are declared with integer types; for integer division write `Math.trunc(a / b)`
-
-numbers_division.vlt:8:28: error: array index must be an integer, found `f64`
-  = note: `/` gives a float (like JS) unless both operands are declared with integer types; for integer division write `Math.trunc(a / b)`
+numbers_division.vlt:7:18: error: mismatched types
+= note: expected i64, found f64
+= note: `/` on numbers gives a float (like JS); for integer division write `Math.trunc(a / b)`
+numbers_division.vlt:9:28: error: array index must be an integer, found `f64`

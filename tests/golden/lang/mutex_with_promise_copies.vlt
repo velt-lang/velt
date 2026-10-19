@@ -17,7 +17,7 @@ async function save(s: string): Promise<string> {
 
 async function count(xs: string[]): Promise<i64> {
   await yieldNow();
-  return xs.length;
+  return xs.length as i64;
 }
 
 async function read(s: State): Promise<i64> {
@@ -27,7 +27,7 @@ async function read(s: State): Promise<i64> {
 
 async function fetchNum(u: string): Promise<i64> {
   await yieldNow();
-  return u.length;
+  return u.length as i64;
 }
 
 function locked<T>(m: shared<Mutex<State>>, f: (s: State) => T): T {

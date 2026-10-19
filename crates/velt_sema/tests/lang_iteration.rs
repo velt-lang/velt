@@ -135,8 +135,8 @@ fn builtin_iterables_convert_and_keep_their_loops() {
            console.log(it.next(), arrays([]), strings(\"\"), maps(new Map<string, i64>()));
          }",
     );
-    // `for...of` over an array, a string or a map keeps its `ForOf` loop; over an
-    // `Iterable<T>` value it is the protocol's `while` (inside a block).
+    // `for...of` over an array or a string keeps its `ForOf` loop; over a map place it is the
+    // live cursor's `while`, and over an `Iterable<T>` value the protocol's (inside a block).
     let for_of = |f: &str| {
         let f = common::hir_walk::func(&p, f);
         f.body
@@ -145,9 +145,10 @@ fn builtin_iterables_convert_and_keep_their_loops() {
             .iter()
             .any(|s| matches!(s.kind, velt_sema::hir::StmtKind::ForOf { .. }))
     };
-    for f in ["arrays", "strings", "maps"] {
+    for f in ["arrays", "strings"] {
         assert!(for_of(f), "{f}");
     }
+    assert!(!for_of("maps"));
     assert!(!for_of("sum"));
 }
 

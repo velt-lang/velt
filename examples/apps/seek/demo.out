@@ -1,0 +1,56 @@
+$ seek greet
+docs/guide.md:1:Use `seek greet` to find greet.
+src/main.ts:1:// TODO: greet more people
+src/main.ts:2:export function greet(name: string): string {
+[exit 0]
+$ seek -i SEEK
+README.md:2:Seek finds text fast.
+README.md:3:Try seek -i to ignore case.
+docs/guide.md:1:Use `seek greet` to find greet.
+[exit 0]
+$ seek -w ok
+src/main.ts:5:const ok = true; // broken? no, ok
+[exit 0]
+$ seek -c -t ts function
+src/main.ts:1
+src/util.ts:1
+[exit 0]
+$ seek -l é
+src/café.ts
+[exit 0]
+$ seek x\s+y
+[exit 1]
+$ seek --color always -F a + b
+src/util.ts:2:  return «a + b»; // TODO overflow
+[exit 0]
+$ seek --heading TODO src/main.ts
+src/main.ts
+1:// TODO: greet more people
+[exit 0]
+$ seek -f
+README.md
+data.bin
+docs/guide.md
+keep.log
+src/café.ts
+src/main.ts
+src/util.ts
+[exit 0]
+$ seek -f -H secret
+src/.secret.ts
+[exit 0]
+$ seek --no-ignore -l log line
+debug.log
+keep.log
+[exit 0]
+$ seek nothing-here
+[exit 1]
+$ seek (
+seek: Invalid regular expression: /(/m: regex parse error:
+    (
+    ^
+error: unclosed group
+[exit 2]
+$ seek --bogus
+seek: Unknown option '--bogus'
+[exit 2]

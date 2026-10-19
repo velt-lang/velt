@@ -1,0 +1,63 @@
+// sigx/data (imported as "@sigx/velt/data"): `useData`, sigx's keyed data loading, with the same
+// API in the browser (../../src/data.js, which is sigx's own `useData`).
+//
+//   const stats = useData(ctx, "stats", () => getStats());
+//   return () => stats.match({ pending: () => <p>Loading…</p>, ready: (s) => <p>{s.users}</p> });
+//
+// On the server the load runs while the page renders. When streaming, the component first
+// renders `pending` inside a placeholder and its `ready` content follows the shell; the value
+// goes into `window.__SIGX_ASYNC__`, so the browser's `useData` restores it without fetching.
+// It takes `ctx` rather than finding the component itself: Velt has no "current component" yet
+// (render-local context, #386).
+
+import { SetupContext } from "./component";
+import { Load, State } from "./node";
+
+export type Arms<T, R> = { pending: () => R; ready: (value: T) => R };
+
+export class Data<T> {
+  value: T | null = null;
+
+  // `pending()` until the data has loaded, then `ready(value)`.
+  match<R>(arms: Arms<T, R>): R {
+    const v = this.value;
+    if (v == null) {
+      const pending = arms.pending;
+      return pending();
+    }
+    const ready = arms.ready;
+    return ready(v);
+  }
+}
+
+// One `useData` load: fetches, records the value in the render's state and in `data`.
+class DataLoad<T> implements Load {
+  key: string;
+  fetcher: (key: string) => Promise<T>;
+  data: Data<T>;
+  state: State;
+
+  constructor(key: string, fetcher: (key: string) => Promise<T>, data: Data<T>, state: State) {
+    this.key = key;
+    this.fetcher = fetcher;
+    this.data = data;
+    this.state = state;
+  }
+
+  async run(): Promise<void> {
+    const fetcher = this.fetcher;
+    const value = await fetcher(this.key);
+    this.state.add(this.key, JSON.stringify(value));
+    this.data.value = value;
+  }
+}
+
+export function useData<P, T>(
+  ctx: SetupContext<P>,
+  key: string,
+  fetcher: (key: string) => Promise<T>,
+): Data<T> {
+  const data = new Data<T>();
+  ctx.loads.push(new DataLoad<T>(key, fetcher, data, ctx.state));
+  return data;
+}

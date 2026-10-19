@@ -1,0 +1,9 @@
+// Helper module for module_const_calls: an exported constant initialized by a pure call.
+
+export type Greeter = (name: string) => string;
+
+export function greeter(greeting: string): Greeter {
+  return (name: string): string => `${greeting}, ${name}!`;
+}
+
+export const HELLO = greeter("Hello");

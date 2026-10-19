@@ -3,7 +3,9 @@
 //! must have every key. Where the expected record's type arguments are not known yet (a generic
 //! callee such as `Object.values({ a: 1 })`), an unknown key type is `string`, as in TypeScript
 //! (an object's keys are strings), and an unknown value type is the first value's (widened), which
-//! every other value must have.
+//! every other value must have. A spread of an `any` or `object` (`{ ...a }`) makes the literal
+//! a `Record<string, any>`, filled at run time by the prelude's `__spreadAny` with the keys of the
+//! value held (`Intrinsic::AnyKeys`, then a member read of each).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -35,9 +37,7 @@ impl FnCx<'_, '_> {
             );
             return true;
         }
-        let spread = props
-            .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
+        let spread = props.iter().any(is_spread);
         !spread
             && self.reject_generic_key(
                 k,
@@ -57,21 +57,50 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let error = self.cx.ty.error;
-        let spread = props
-            .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
-        if (k != error && v != error) || spread || props.is_empty() {
+        // `{ ...a }` of an `any`: a `Record<string, any>`.
+        let dynamic = props.iter().any(|p| match p {
+            ast::ObjectProp::Spread(e) if computed_entry(e).is_none() => {
+                self.trial_type(e).is_some_and(|t| self.spreads_dynamic(t))
+            }
+            _ => false,
+        });
+        let (k, v) = match (dynamic, self.any_ty()) {
+            (true, Some(any)) if v == error => (if k == error { self.cx.ty.str_ } else { k }, any),
+            _ => (k, v),
+        };
+        let spread = props.iter().any(is_spread);
+        if (k != error && v != error) || (spread && v != error) || props.is_empty() {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
         let k = if k == error { self.cx.ty.str_ } else { k };
         if v != error {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
+        // `{ ...r, a: 1 }` spreading a record: its value type (the first such record's).
+        let spread_v = props.iter().find_map(|p| match p {
+            ast::ObjectProp::Spread(e) if computed_entry(e).is_none() => self
+                .trial_type(e)
+                .and_then(|t| self.record_args(t))
+                .map(|(_, v)| v),
+            _ => None,
+        });
+        if let Some(v) = spread_v {
+            return self.record_literal_with(d, k, v, props, vec![], span);
+        }
+        if !props.iter().any(|p| !is_spread(p)) {
+            // Only spreads (`{ ...a, ...b }` where a `Record` of unknown value type is built).
+            self.cx.error(
+                Diagnostic::error("cannot infer the value type of this object literal", span)
+                    .with_note("annotate it (`const o: Record<string, V> = { ... }`)"),
+            );
+            return self.error_expr(span);
+        }
+        // The value type is the first value's; the spreads must have it too (`__extend`).
         let (v, pre) = self.record_literal_values(props, span);
         self.record_literal_with(d, k, v, props, pre, span)
     }
 
-    /// The values of a record literal (with no spread and at least one key) whose value type
+    /// The values of a record literal (with at least one key; spreads are skipped) whose value type
     /// is not known yet, checked: the first one gives the type, and the others must have it
     /// (a value that has not is reported, and replaced by an error expression).
     fn record_literal_values(
@@ -83,15 +112,18 @@ impl FnCx<'_, '_> {
         let mut pre = vec![];
         let mut other = None;
         for p in props {
-            let (name, value) = match p {
-                ast::ObjectProp::KeyValue(name, value) => (name, Some(value)),
-                ast::ObjectProp::Shorthand(name) => (name, None),
+            let h = match p {
+                ast::ObjectProp::KeyValue(name, value) => self.prop_value(name, Some(value), v),
+                ast::ObjectProp::Shorthand(name) => self.prop_value(name, None, v),
+                ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
+                    let (_, value) = computed_entry(e).expect("ICE: a computed entry");
+                    self.expr(value, v, crate::body::Want::Move)
+                }
                 ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => {
                     pre.push(None);
                     continue;
                 }
             };
-            let h = self.prop_value(name, value, v);
             // `{ a: "x", b: "y" }` holds `string`s: literal types widen, as in array literals.
             let vt = match v {
                 Some(vt) => vt,
@@ -185,6 +217,29 @@ impl FnCx<'_, '_> {
         for (i, p) in props.iter().enumerate() {
             let recv = self.mk(H::Local(t, UseMode::Borrow), ty, span);
             let call = match p {
+                ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
+                    let (key, value) = computed_entry(e).expect("ICE: a computed entry");
+                    let key = RecordKey::Computed(key);
+                    match pre.get_mut(i).and_then(Option::take) {
+                        Some(h) => self.record_set_checked(recv, key, h, e.span),
+                        None => self.record_call_keyed(
+                            recv,
+                            "__set",
+                            key,
+                            std::slice::from_ref(value),
+                            e.span,
+                        ),
+                    }
+                }
+                ast::ObjectProp::Spread(e)
+                    if self.trial_type(e).is_some_and(|t| self.spreads_dynamic(t)) =>
+                {
+                    complete = true;
+                    match self.spread_any(recv, ty, e) {
+                        Some(call) => call,
+                        None => continue,
+                    }
+                }
                 ast::ObjectProp::Spread(e) => {
                     complete = true;
                     self.record_call(recv, "__extend", std::slice::from_ref(e), e.span)
@@ -239,6 +294,17 @@ impl FnCx<'_, '_> {
         seen: &mut Vec<String>,
         span: Span,
     ) -> Option<hir::Expr> {
+        // `[KEY]` with a module constant holding a string: the string is the key.
+        let resolved;
+        let name = if crate::symbols::is_computed_key(name) {
+            resolved = ast::Ident {
+                name: self.cx.member_key(self.module, name),
+                span: name.span,
+            };
+            &resolved
+        } else {
+            name
+        };
         if self.record_keys(k).is_some() && !self.record_has_key(k, &name.name, name.span) {
             return None;
         }
@@ -260,4 +326,96 @@ impl FnCx<'_, '_> {
         };
         Some(self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span))
     }
+
+    /// Is `t` a dynamic type an object spread takes (`any`, `object`; also `| null`)? An
+    /// `unknown` is not one (TypeScript's TS2698).
+    pub(super) fn spreads_dynamic(&self, t: TyId) -> bool {
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        self.cx
+            .dynamic(t)
+            .is_some_and(|d| d != crate::any::Dynamic::Unknown)
+    }
+
+    /// `__spreadAny(r, e)` for the spread `...e` of an `any` into the record literal whose
+    /// temporary `recv` (of type `ty`) reads; `None` when reported.
+    fn spread_any(&mut self, recv: hir::Expr, ty: TyId, e: &ast::Expr) -> Option<hir::Expr> {
+        let value_any = self.record_args(ty).is_some_and(|(k, v)| {
+            k == self.cx.ty.str_ && self.cx.dynamic(v) == Some(crate::any::Dynamic::Any)
+        });
+        let H::Local(t, _) = recv.kind else {
+            return None;
+        };
+        if !value_any {
+            let tn = self.cx.display(ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("spreading an `any` into a `{tn}` is not supported yet (#924)"),
+                    e.span,
+                )
+                .with_note(
+                    "build a `Record<string, any>` (`const o: Record<string, any> = { ...a }`)",
+                ),
+            );
+            return None;
+        }
+        let name = format!("<spread@{}>", e.span.lo);
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name.clone(), t);
+        }
+        let ident = |n: &str| {
+            synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: n.to_string(),
+                    span: e.span,
+                }),
+                e.span,
+            )
+        };
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(ident("__spreadAny")),
+                type_args: vec![],
+                args: vec![ident(&name), e.clone()],
+                optional: false,
+            },
+            e.span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, crate::body::Want::Move))
+    }
+}
+
+/// The key and value of `{ [key]: value }` with a key known only at run time, which the parser
+/// writes as a spread of a call of the prelude's `__computed_key` (`ast::COMPUTED_KEY_FN`).
+pub(crate) fn computed_entry(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
+    let ast::ExprKind::Call {
+        callee,
+        args,
+        type_args,
+        ..
+    } = &e.kind
+    else {
+        return None;
+    };
+    match (&callee.kind, args.as_slice()) {
+        (ast::ExprKind::Ident(f), [key, value])
+            if f.name == ast::COMPUTED_KEY_FN && type_args.is_empty() =>
+        {
+            Some((key, value))
+        }
+        _ => None,
+    }
+}
+
+/// Is `p` a spread (`...e`, not a computed-key entry)?
+fn is_spread(p: &ast::ObjectProp) -> bool {
+    matches!(p, ast::ObjectProp::Spread(e) if computed_entry(e).is_none())
+}
+
+/// Does an object literal have a property with a computed key known only at run time?
+pub(crate) fn has_computed_entry(props: &[ast::ObjectProp]) -> bool {
+    props
+        .iter()
+        .any(|p| matches!(p, ast::ObjectProp::Spread(e) if computed_entry(e).is_some()))
 }

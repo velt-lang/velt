@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
-use crate::hir::{DefId, ImplDef, TyId, TyKind};
+use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 
 impl Ctx<'_> {
     /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
@@ -47,6 +47,15 @@ impl Ctx<'_> {
             (TyKind::Adt(..), _) if self.union_def(pat).is_some() => {
                 self.match_union_member(pat, actual, slots)
             }
+            (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) if self.same_anon_shape(d, d2) => {
+                // Two anonymous defs of one shape (`{ v: T0; n: i64 }` and `{ v: string; n: i64 }`,
+                // crate::anon): match field by field.
+                let pf: Vec<TyId> = self.anon_field_tys(d);
+                let af: Vec<TyId> = self.anon_field_tys(d2);
+                let pf: Vec<TyId> = pf.iter().map(|t| self.subst(*t, &ps)).collect();
+                let af: Vec<TyId> = af.iter().map(|t| self.subst(*t, &as_)).collect();
+                self.match_all(&pf, &af, slots)
+            }
             (TyKind::Adt(..), TyKind::Adt(..)) => match self.base_of(actual) {
                 Some(b) => self.match_ty(pat, b, slots),
                 None => false,
@@ -59,19 +68,27 @@ impl Ctx<'_> {
                 None => false,
             },
             (TyKind::Array(p), TyKind::Array(a))
-            | (TyKind::Option(p), TyKind::Option(a))
+            | (TyKind::Option(p, _), TyKind::Option(a, _))
             | (TyKind::Shared(p), TyKind::Shared(a)) => self.match_ty(p, a, slots),
             (TyKind::Promise(p, pe), TyKind::Promise(a, ae)) => {
                 let x = self.match_ty(p, a, slots);
                 self.match_error(pe, ae, slots) && x
             }
-            (TyKind::Option(p), _) => self.match_ty(p, actual, slots),
+            (TyKind::Option(p, _), _) => self.match_ty(p, actual, slots),
             (TyKind::Result(p1, p2), TyKind::Result(a1, a2))
             | (TyKind::Map(p1, p2), TyKind::Map(a1, a2)) => {
                 let x = self.match_ty(p1, a1, slots);
                 self.match_ty(p2, a2, slots) && x
             }
             (TyKind::Tuple(ps), TyKind::Tuple(as_)) => self.match_all(&ps, &as_, slots),
+            (TyKind::Op(TyOp::Intersect, ps), TyKind::Op(TyOp::Intersect, as_))
+                if ps.len() == as_.len() =>
+            {
+                self.match_all(&ps, &as_, slots)
+            }
+            (TyKind::Op(TyOp::Intersect, parts), _) => {
+                self.match_intersection(&parts, actual, slots)
+            }
             (
                 TyKind::FnPtr {
                     params: pp,
@@ -90,6 +107,117 @@ impl Ctx<'_> {
             }
             _ => pat == actual,
         }
+    }
+
+    /// A deferred intersection `T & { … }` against an object type (#350). The object parts' fields
+    /// match the argument's fields of the same names first (`$set: (v: T) => void` of
+    /// `Signal<T>` against a `Signal<{ n: number }>` binds `T = { n: number }`); a type parameter
+    /// part still unbound then takes the whole argument, as TypeScript infers it from an object
+    /// literal (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against
+    /// `T & { id: string }`), or, for an argument whose type an intersection made, the
+    /// intersection of its parts that are not parts of the pattern (`T = A` for an
+    /// `A & { id: string }`, as TypeScript infers it).
+    fn match_intersection(
+        &mut self,
+        parts: &[TyId],
+        actual: TyId,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        // `Signal<T & object>`: the nested intersection's parts are parts of this one, and an
+        // `object` part binds nothing.
+        let mut flat = vec![];
+        for &p in parts {
+            match self.ty.kind(p) {
+                TyKind::Op(TyOp::Intersect, ps) => flat.extend(ps.iter().copied()),
+                _ => flat.push(p),
+            }
+        }
+        let all = flat.len();
+        flat.retain(|&p| self.dynamic(p) != Some(crate::any::Dynamic::Object));
+        // `T & object` against a class instance, an array or a `Map`: `T` is the argument, as
+        // TypeScript infers it.
+        if let [p] = flat[..] {
+            if let TyKind::Param(i) = *self.ty.kind(p) {
+                let i = i as usize;
+                if flat.len() < all
+                    && !self.is_object_type(actual)
+                    && self.is_object_ty(actual)
+                    && !self.ty.has_error(actual)
+                {
+                    if i < slots.len() && slots[i].is_none() {
+                        slots[i] = Some(actual);
+                    }
+                    return i >= slots.len() || slots[i] == Some(actual);
+                }
+            }
+        }
+        if !self.is_object_type(actual) {
+            return false;
+        }
+        let parts = &flat[..];
+        let fields = self.public_fields(actual);
+        let mut ok = true;
+        for &p in parts {
+            if !self.is_object_type(p) {
+                continue;
+            }
+            for f in self.public_fields(p) {
+                if let Some(a) = fields.iter().find(|a| a.name == f.name) {
+                    ok &= self.match_ty(f.ty, a.ty, slots);
+                }
+            }
+        }
+        for &p in parts {
+            if let TyKind::Param(i) = self.ty.kind(p) {
+                let i = *i as usize;
+                if i < slots.len() && slots[i].is_none() && !self.ty.has_error(actual) {
+                    slots[i] = Some(self.unmatched_parts(parts, actual));
+                }
+            }
+        }
+        ok
+    }
+
+    /// `actual` without the parts of the intersection that made it which are parts of the
+    /// pattern `parts` too; `actual` when no intersection made it, or nothing is left.
+    fn unmatched_parts(&mut self, parts: &[TyId], actual: TyId) -> TyId {
+        let Some(declared) = self.type_level.intersection_parts.get(&actual).cloned() else {
+            return actual;
+        };
+        let all = declared.len();
+        let rest: Vec<TyId> = declared
+            .into_iter()
+            .filter(|&q| !parts.iter().any(|&p| self.same_object(p, q)))
+            .collect();
+        // No part of the pattern is a part of the argument (or every one is): the whole argument.
+        let Some((&first, others)) = rest.split_first().filter(|_| rest.len() < all) else {
+            return actual;
+        };
+        let mut acc = first;
+        for &o in others {
+            match self.meet(acc, o, 0, 0) {
+                Ok(m) => acc = m,
+                Err(_) => return actual,
+            }
+        }
+        acc
+    }
+
+    /// Are `a` and `b` one object type by structure: the same type, or object types (an
+    /// interface's or written out) with the same fields, each of the same type and optionality?
+    fn same_object(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b {
+            return true;
+        }
+        if !self.is_object_type(a) || !self.is_object_type(b) {
+            return false;
+        }
+        let (fa, fb) = (self.public_fields(a), self.public_fields(b));
+        fa.len() == fb.len()
+            && fa.iter().all(|f| {
+                fb.iter()
+                    .any(|g| g.name == f.name && g.ty == f.ty && g.optional == f.optional)
+            })
     }
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other
@@ -117,6 +245,25 @@ impl Ctx<'_> {
         }
         let mut members = self.union_members(pat).unwrap_or_default();
         members.sort_by_key(|m| matches!(self.ty.kind(*m), TyKind::Param(_)));
+        // A union against a union (`{ ok: true; v: T } | { ok: false; e: string }` against the
+        // same union at `T = i64`): every member of `actual` matches some member of `pat`.
+        if let Some(actual_members) = self.union_members(actual) {
+            let mut trial = slots.to_vec();
+            let all = actual_members.iter().all(|a| {
+                members.iter().any(|m| {
+                    let mut t = trial.clone();
+                    let ok = self.match_ty(*m, *a, &mut t);
+                    if ok {
+                        trial = t;
+                    }
+                    ok
+                })
+            });
+            if all {
+                slots.copy_from_slice(&trial);
+                return true;
+            }
+        }
         for m in members {
             let mut trial = slots.to_vec();
             if self.match_ty(m, actual, &mut trial) {
@@ -193,6 +340,11 @@ impl Ctx<'_> {
         ty: TyId,
         iface: crate::hir::DefId,
     ) -> Option<(u32, Vec<TyId>, TyId)> {
+        match self.dynamic_takes(iface, ty) {
+            Some(true) => return self.any_impl().map(|i| (i, vec![], ty)),
+            Some(false) => return None,
+            None => {}
+        }
         self.impl_index.extend(&self.impls);
         let mut cur = Some(ty);
         let mut guard = 0;
@@ -240,14 +392,14 @@ impl Ctx<'_> {
                 }
             }
         }
-        if !(self.match_ty(pat, t, &mut slots) && self.ty.subst_known(pat, &slots) == t) {
+        if !(self.match_ty(pat, t, &mut slots) && self.subst_known(pat, &slots) == t) {
             return None;
         }
         let args = slots
             .iter()
             .map(|s| s.unwrap_or(self.ty.error))
             .collect::<Vec<_>>();
-        let iargs = iargs.iter().map(|a| self.ty.subst(*a, &args)).collect();
+        let iargs = iargs.iter().map(|a| self.subst(*a, &args)).collect();
         Some((i, iargs, t))
     }
 
@@ -261,7 +413,7 @@ impl Ctx<'_> {
             .into_iter()
             .map(|p| Bound {
                 iface: p.iface,
-                args: p.args.iter().map(|t| self.ty.subst(*t, &b.args)).collect(),
+                args: p.args.iter().map(|t| self.subst(*t, &b.args)).collect(),
             })
             .collect()
     }

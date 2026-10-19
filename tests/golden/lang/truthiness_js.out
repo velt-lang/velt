@@ -1,0 +1,48 @@
+0 falsy true false
+-0 falsy true false
+NaN falsy true false
+1 truthy false true
+-1 truthy false true
+0.5 truthy false true
+Infinity truthy false true
+-Infinity truthy false true
+"" falsy true
+" " truthy false
+"0" truthy false
+"a" truthy false
+"false" truthy false
+f t t true false
+count 3
+k 0
+i hit 3
+red falsy
+green truthy
+enum strings
+5 7 0 5 8080
+default x "" y
+mixed=zero mixed2=7
+-1 NaN
+Infinity -Infinity
+2 ab
+0 ab
+z abc
+yes xp
+f f 0 9
+name 3
+no name
+f  nullish
+ann anon anon
+3
+empty array is truthy
+false false box 0
+function is truthy
+3 5 7 filled replaced
+[[0,3],[0,5],[1,1],[1,2]]
+f fallback
+f fallback
+t 3
+t x
+f
+zero
+on false true 5
+false f

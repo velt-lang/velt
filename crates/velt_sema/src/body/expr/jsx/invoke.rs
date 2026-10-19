@@ -10,7 +10,8 @@ use crate::body::FnCx;
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId};
 
 /// Reports an argument its parameter does not accept: (parameter name, its type, the argument).
-pub(super) type OnMismatch<'f, 'a, 'm> = dyn FnMut(&mut FnCx<'a, 'm>, &str, TyId, &hir::Expr) + 'f;
+pub(in crate::body::expr) type OnMismatch<'f, 'a, 'm> =
+    dyn FnMut(&mut FnCx<'a, 'm>, &str, TyId, &hir::Expr) + 'f;
 
 impl<'a, 'm> FnCx<'a, 'm> {
     /// `name(args)` for runtime function `d` of provider `p`.
@@ -53,7 +54,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
     }
 
     /// `d(args)` with `args` already checked (as many as `d` has parameters).
-    pub(super) fn call_checked(
+    pub(in crate::body::expr) fn call_checked(
         &mut self,
         d: DefId,
         args: Vec<hir::Expr>,
@@ -69,7 +70,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
         let type_args = self.solve_slots(&c, &slots, false, span);
         let mut hargs = vec![];
         for (h, param) in args.into_iter().zip(&c.params) {
-            let target = self.cx.ty.subst(param.ty, &type_args);
+            let target = self.cx.subst(param.ty, &type_args);
             let mut h = match self.try_coerce(h, target) {
                 Ok(h) => h,
                 Err(h) => {
@@ -83,7 +84,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             hargs.push(h);
         }
         self.note_async_args(d, &hargs);
-        let ret = self.cx.ty.subst(c.ret, &type_args);
+        let ret = self.cx.subst(c.ret, &type_args);
         self.call_throws(d, &type_args, ret, span);
         let kind = H::Call {
             callee: Callee::Def(d, type_args),
@@ -93,4 +94,5 @@ impl<'a, 'm> FnCx<'a, 'm> {
     }
 }
 
-const CONTRACT_NOTE: &str = "JSX runtimes implement the signatures in docs/contracts/jsx.md";
+const CONTRACT_NOTE: &str =
+    "JSX runtimes implement the signatures in docs/internals/contracts/jsx.md";

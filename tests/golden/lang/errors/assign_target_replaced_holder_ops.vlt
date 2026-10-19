@@ -1,0 +1,20 @@
+// Each compound operator in an assignment whose right-hand side may replace the object it writes
+// into (#876): the error names the operator as written (`|=` and string `+=` are rewritten by
+// the checker) and the fix shows the right-hand side; a logical assignment keeps its condition.
+type Inner = { v: number; s: string; n: number | null };
+type Outer = { inner: Inner };
+
+function main() {
+  const p: Outer = { inner: { v: 1, s: "a", n: null } };
+  const g = (k: number): number => {
+    p.inner = { v: 200, s: "b", n: 1 };
+    return k;
+  };
+  p.inner.v **= g(2);
+  p.inner.v |= g(1) + 3;
+  p.inner.s += `${g(1)}`;
+  p.inner.v ||= g(4);
+  p.inner.n ??= g(5);
+  p.inner.v = Math.max(g(1), p.inner.v);
+  console.log(p.inner.v);
+}

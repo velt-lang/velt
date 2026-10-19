@@ -5,10 +5,13 @@ Pushing and popping at either end is amortized O(1), and indexing is O(1).
 
 - `new Deque<T>()`, `Deque.from(xs)`, `length` / `size`, `isEmpty()`, `clear()`.
 - `pushBack(v)`, `pushFront(v)`.
-- `popBack()`, `popFront()`: return `T | null`.
-- `peekFront()`, `peekBack()`, `at(i: i64)`: return clones or null; a negative `i` counts from
+- `popBack()`, `popFront()`: return `T | undefined` (`undefined` when empty).
+- `peekFront()`, `peekBack()`, `at(i: i64)`: return clones or `undefined`; a negative `i` counts from
   the back.
-- `toArray()`: clones, front to back. `forEach(f)`.
+- `toArray()`: clones, front to back. `forEach(f)` visits the elements by position from the
+  front and reads the length again after each call, as a `for` loop over an array does: when
+  the callback changes the deque through another reference, elements pushed at the back are
+  visited, and a push or pop at the front shifts the positions still to come.
 
 ```ts
 import { Deque } from "velt:collections/deque";
@@ -21,5 +24,6 @@ function main() {
 }
 ```
 
-Notes: don't store a nullable `T` (`Deque<i64 | null>`), because a stored null reads as an empty
-slot.
+An element type may allow `null` or `undefined` (`Deque<i64 | null>`): a stored `null` reads as
+`null`, and a stored `undefined` reads as `undefined`, as an empty deque's `popFront()` does, the
+same as with an array's `shift()`.

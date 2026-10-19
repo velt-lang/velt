@@ -1,0 +1,66 @@
+/** @jsxImportSource velt:jsx/generic */
+
+// The page of `jsx_list` under `velt:jsx/generic`: `_jsx_list_page.vlt` under the generic
+// runtime.
+
+function Name(props: { name: string }): JSX.Element {
+  return <b>{props.name}</b>;
+}
+
+// An element from a call: a slot that only the types show, so a list of rows with one is tried as
+// a fold and rolled back.
+function badge(name: string): JSX.Element {
+  return <b>{name}</b>;
+}
+
+class Row {
+  constructor(public name: string, public tags: string[]) {}
+}
+
+// One case per line: lists the compiler folds into strings, lists it doesn't, numbers.
+export function cases(xs: string[], ns: i64[], fs: f64[]): JSX.Element[] {
+  const empty: string[] = [];
+  const rows = [new Row("r1", ["t1"]), new Row("r2", [])];
+  return [
+    <ul>{xs.map((x) => <li class="row">{x}</li>)}</ul>,
+    <ul>{empty.map((x) => <li>{x}</li>)}</ul>,
+    <p>before {xs.map((x) => <i>{x}</i>)} after {ns.length}</p>,
+    <table>{ns.map((n) => <tr><td>{n}</td><td>{n * 2}</td></tr>)}</table>,
+    <div>{xs.map((x) => <ul>{ns.map((n) => <li>{x}{n}</li>)}</ul>)}</div>,
+    <ul>{xs.map((x) => <li><Name name={x} /></li>)}</ul>,
+    <ul>{xs.map((x) => <li key={x}>{x}</li>)}</ul>,
+    // Tried as a fold and checked again (`badge` makes a slot): `r` is read three times.
+    <ul>{rows.map((r) => <li title={r.name}>{badge(r.name)}{r.tags.length}</li>)}</ul>,
+    <ul>{xs.map((x) => <li>{x}{badge(x)}{x}</li>)}</ul>,
+    // After a slot of the same template: not folded, so the rows run after `<Name>`'s props.
+    <div><Name name={xs[0]} />{xs.map((x) => <i>{x}</i>)}</div>,
+    <div>{xs.map((x) => <ul>{xs.map((y) => <li><Name name={y} />{x}</li>)}</ul>)}</div>,
+    <p>{fs.map((f) => <span>{f}</span>)}</p>,
+    <p>{fs[0]} {ns[0]} {-0.0} {0.1 + 0.2}</p>,
+  ];
+}
+
+export class Oops extends Error {}
+
+function risky(s: string): string throws Oops {
+  if (s == "!") {
+    throw new Oops(`no ${s}`);
+  }
+  return s;
+}
+
+// A row that calls a throwing function, tried as a fold and rolled back (it has a slot): the
+// function throws `Oops` once, as without the try.
+export function throwing(xs: string[]): JSX.Element throws Oops {
+  return <ul>{xs.map((x) => <li>{risky(x)}{badge(x)}</li>)}</ul>;
+}
+
+// A list inside an arrow component that captures an outer `let` (tried and rolled back).
+export function captured(xs: string[]): JSX.Element {
+  let n = 1;
+  const Row = (props: { label: string }): JSX.Element => (
+    <ul>{xs.map((x) => <li>{x}{n}{badge(props.label)}</li>)}</ul>
+  );
+  n = 2;
+  return <div><Row label="r" /></div>;
+}

@@ -42,7 +42,7 @@ impl Gen {
             _ => {
                 let xs = self.array(Ty::IntArr, d).text;
                 if self.rng.chance(50) {
-                    return Some(format!("{xs}.lastIndexOf({})", self.int(d)));
+                    return Some(format!("({xs}.lastIndexOf({}) as i64)", self.int(d)));
                 }
                 let pred = self.callback(&xs, Ty::IntArr, |g, d| g.boolean(d), d);
                 Some(format!("({xs}.find({pred}) ?? {})", self.int(d)))
@@ -127,8 +127,9 @@ impl Gen {
                 false => format!("{{ ...{r}, x: {}, s: {s} }}", self.int(d)),
             };
         }
+        // `as i64`: an unannotated literal's field would be a `number` (JS's type for `x: 7`).
         let (x, s) = (self.int(d), self.owned_string(d));
-        format!("{{ x: {x}, s: {s} }}")
+        format!("{{ x: ({x} as i64), s: {s} }}")
     }
 
     /// A nullable int value: `null` or an int.

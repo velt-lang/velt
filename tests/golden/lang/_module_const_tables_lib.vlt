@@ -1,0 +1,8 @@
+// Helper module for module_const_tables_loops: exported tables.
+
+export const PRIMES: u16[] = [2, 3, 5, 7, 11, 13];
+export const HALVES: f64[] = [0.5, 0.25, 0.125];
+
+export function primeAt(i: usize): u16 {
+  return PRIMES[i];
+}

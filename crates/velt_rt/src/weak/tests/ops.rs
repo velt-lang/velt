@@ -1,0 +1,263 @@
+//! WeakMap, WeakSet and WeakRef operations, and entries vanishing with their keys.
+
+use super::*;
+
+#[test]
+fn set_get_has_delete() {
+    no_leak(|| {
+        let m = obj_map();
+        let k = new_obj(&[]);
+        let v = new_obj(&[]);
+        assert_eq!(get(m, k), None);
+        set(m, k, retain(v));
+        assert_eq!(get(m, k), Some(v));
+        assert_eq!(count(v), 3, "get returns a counted reference");
+        release(v);
+        assert_eq!(velt_rt_weakmap_has(m, k), 1);
+        assert_eq!(count(k), 1, "a weak key is not counted");
+        assert_eq!(count(v), 2, "the map holds its value");
+        assert!(is_marked(k) && !is_marked(v));
+        // SAFETY: `m` is live.
+        assert_eq!(unsafe { velt_rt_weakmap_delete(m, k) }, 1);
+        assert_eq!(unsafe { velt_rt_weakmap_delete(m, k) }, 0);
+        assert_eq!(velt_rt_weakmap_has(m, k), 0);
+        assert_eq!(count(v), 1);
+        assert!(!is_marked(k), "a key in no map loses its mark");
+        release(k);
+        release(v);
+        finish(&[m]);
+    });
+}
+
+#[test]
+fn an_entry_vanishes_with_its_key() {
+    no_leak(|| {
+        let m = obj_map();
+        let k = new_obj(&[]);
+        let v = new_obj(&[]);
+        set(m, k, v);
+        let k2 = retain(k);
+        release(k);
+        assert_eq!(weakmap_len(m), 1, "still referenced");
+        let before = live();
+        release(k2);
+        assert_eq!(weakmap_len(m), 0);
+        assert_eq!(live(), before - 2, "the key and its value are freed");
+        finish(&[m]);
+    });
+}
+
+#[test]
+fn set_replaces_and_releases_the_old_value() {
+    no_leak(|| {
+        let m = obj_map();
+        let k = new_obj(&[]);
+        let before = live();
+        set(m, k, new_obj(&[]));
+        set(m, k, new_obj(&[]));
+        assert_eq!(live(), before + 1);
+        assert_eq!(weakmap_len(m), 1);
+        release(k);
+        finish(&[m]);
+    });
+}
+
+#[test]
+fn dropping_the_map_releases_values_and_unmarks_keys() {
+    no_leak(|| {
+        let m = obj_map();
+        let keys: Vec<_> = (0..10).map(|_| new_obj(&[])).collect();
+        for &k in &keys {
+            set(m, k, new_obj(&[]));
+        }
+        finish(&[m]);
+        for k in keys {
+            assert!(!is_marked(k));
+            release(k);
+        }
+    });
+}
+
+#[test]
+fn a_key_in_two_maps_leaves_both() {
+    no_leak(|| {
+        let (a, b) = (obj_map(), obj_map());
+        let k = new_obj(&[]);
+        set(a, k, new_obj(&[]));
+        set(b, k, new_obj(&[]));
+        release(k);
+        assert_eq!(weakmap_len(a) + weakmap_len(b), 0);
+        finish(&[a, b]);
+    });
+}
+
+#[test]
+fn plain_values_and_weak_sets() {
+    no_leak(|| {
+        let numbers = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None, None);
+        let set_ = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None, None);
+        let k = new_obj(&[]);
+        // SAFETY: plain words need no ownership.
+        unsafe {
+            velt_rt_weakmap_set(numbers, k, 42);
+            velt_rt_weakmap_set(set_, k, 0);
+        }
+        assert_eq!(get(numbers, k), Some(42 as *mut u8));
+        assert_eq!(velt_rt_weakmap_has(set_, k), 1);
+        // SAFETY: the maps are live.
+        unsafe {
+            assert_eq!(
+                velt_rt_weakmap_delete(set_, k),
+                1,
+                "delete finds a plain entry"
+            );
+            assert_eq!(velt_rt_weakmap_delete(set_, k), 0);
+            velt_rt_weakmap_set(set_, k, 0);
+        }
+        release(k);
+        assert_eq!(weakmap_len(numbers) + weakmap_len(set_), 0);
+        finish(&[numbers, set_]);
+    });
+}
+
+#[test]
+fn weak_ref_deref_and_clearing() {
+    no_leak(|| {
+        let o = new_obj(&[]);
+        // SAFETY: `o` is live; each ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new(o) };
+        assert_eq!(count(o), 1, "a WeakRef does not count its target");
+        let d = velt_rt_weakref_deref(r);
+        assert_eq!(d, o);
+        assert_eq!(count(o), 2, "deref returns a counted reference");
+        release(d);
+        release(o);
+        assert!(
+            velt_rt_weakref_deref(r).is_null(),
+            "cleared when the target is freed"
+        );
+        unsafe { velt_rt_weakref_drop(r) };
+
+        let o = new_obj(&[]);
+        let r = unsafe { velt_rt_weakref_new(o) };
+        unsafe { velt_rt_weakref_drop(r) };
+        assert!(!is_marked(o), "the last WeakRef dropped unmarks its target");
+        release(o);
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+fn handles_are_reused() {
+    no_leak(|| {
+        let a = obj_map();
+        finish(&[a]);
+        let b = obj_map();
+        assert_eq!(a, b);
+        finish(&[b]);
+    });
+}
+
+#[test]
+fn weak_ref_to_a_tagged_word() {
+    no_leak(|| {
+        // A typed proxy's word: the counted object with bit 0 set.
+        let o = new_obj(&[]);
+        let tagged = (o as usize | 1) as *mut u8;
+        // SAFETY: `o` is live; the ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new(tagged) };
+        assert!(is_marked(o), "the object is recorded, not the tagged word");
+        let d = velt_rt_weakref_deref(r);
+        assert_eq!(d, tagged, "deref gives the word back as given");
+        assert_eq!(count(o), 2);
+        release(o);
+        release(o);
+        assert!(velt_rt_weakref_deref(r).is_null());
+        unsafe { velt_rt_weakref_drop(r) };
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+fn a_weak_ref_keeps_its_word() {
+    no_leak(|| {
+        let o = new_obj(&[]);
+        // SAFETY: `o` is live; each ref is dropped once.
+        let r = unsafe { velt_rt_weakref_new_with(o, 0xdead_beef) };
+        let plain = unsafe { velt_rt_weakref_new(o) };
+        assert_eq!(velt_rt_weakref_word(r), 0xdead_beef);
+        assert_eq!(velt_rt_weakref_word(plain), 0);
+        release(o);
+        assert!(velt_rt_weakref_deref(r).is_null());
+        assert_eq!(
+            velt_rt_weakref_word(r),
+            0xdead_beef,
+            "kept after the target goes"
+        );
+        unsafe { velt_rt_weakref_drop(r) };
+        unsafe { velt_rt_weakref_drop(plain) };
+        // Reused slots take the new word: both freed slots come back, one made with another
+        // word, one with none.
+        let o = new_obj(&[]);
+        let a = unsafe { velt_rt_weakref_new_with(o, 7) };
+        let b = unsafe { velt_rt_weakref_new(o) };
+        let mut ids = [a, b];
+        ids.sort_unstable();
+        let mut old = [r, plain];
+        old.sort_unstable();
+        assert_eq!(ids, old, "the freed slots are reused");
+        assert_eq!(velt_rt_weakref_word(a), 7);
+        assert_eq!(velt_rt_weakref_word(b), 0);
+        assert_eq!(velt_rt_weakref_deref(a), o);
+        release(o);
+        unsafe { velt_rt_weakref_drop(a) };
+        unsafe { velt_rt_weakref_drop(b) };
+        release(o);
+        assert_eq!(tracked_objects(), 0);
+    });
+}
+
+#[test]
+#[should_panic(expected = "ICE: a tagged proxy word")]
+fn a_tagged_map_key_is_an_ice() {
+    no_leak(|| {
+        let m = obj_map();
+        let k = new_obj(&[]);
+        let _ = table::with(|s| s.get(m, (k as usize | 1) as *mut u8));
+    });
+}
+
+#[test]
+fn keys_traced_one_by_one_free_their_cycle() {
+    // A map whose key type is dynamic (`WeakMap<object, object>`) has no key trace of its
+    // own: each key brings its trace glue to `set`, and the trial uses it.
+    in_any_order_traced();
+}
+
+fn in_any_order_traced() {
+    for first_raw in [true, false] {
+        no_leak(|| {
+            let m = velt_rt_weakmap_new(
+                None,
+                Some(retain_value),
+                Some(release_value),
+                Some(TraceFn(trace_obj)),
+            );
+            let raw = new_obj(&[]);
+            let p = new_obj(&[retain(raw)]);
+            // SAFETY: live objects; the map takes the reference to `p` given here.
+            unsafe {
+                velt_rt_weakmap_set_traced(m, raw, retain(p) as u64, Some(TraceFn(trace_obj)))
+            };
+            if first_raw {
+                release(raw);
+                release(p);
+            } else {
+                release(p);
+                release(raw);
+            }
+            assert_eq!(weakmap_len(m), 0, "first_raw {first_raw}");
+            finish(&[m]);
+        });
+    }
+}

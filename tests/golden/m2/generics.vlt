@@ -23,12 +23,12 @@ class Stack<T> {
     this.items.push(x);
   }
 
-  pop(): T | null {
+  pop(): T | undefined {
     return this.items.pop();
   }
 
   size(): usize {
-    return this.items.length;
+    return this.items.length as usize;
   }
 }
 

@@ -13,19 +13,6 @@ use crate::body::FnCx;
 use crate::defs::member_key;
 use crate::hir::{self, TyId};
 
-/// `(object, prop)` of an assignment target `object.prop` (parentheses removed).
-fn member_parts(target: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
-    match &target.kind {
-        ast::ExprKind::Paren(inner) => member_parts(inner),
-        ast::ExprKind::Member {
-            object,
-            prop,
-            optional: false,
-        } => Some((object, prop)),
-        _ => None,
-    }
-}
-
 /// Evaluating `e` twice is the same as once: a variable, `this` or a field path of those.
 pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
     match &e.kind {
@@ -36,6 +23,11 @@ pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
             optional: false,
             ..
         } => side_effect_free(object),
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } if super::member::literal_key(index).is_some() => side_effect_free(object),
         _ => false,
     }
 }
@@ -49,6 +41,29 @@ pub(super) fn synth(kind: ast::ExprKind, span: Span) -> ast::Expr {
 }
 
 impl FnCx<'_, '_> {
+    /// `(object, prop)` of an assignment target `object.prop`, `object["prop"]` or `object[KEY]`
+    /// with a symbol key (parentheses removed).
+    fn member_parts<'e>(&mut self, target: &'e ast::Expr) -> Option<(&'e ast::Expr, ast::Ident)> {
+        match &target.kind {
+            ast::ExprKind::Paren(inner) => self.member_parts(inner),
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+            } => match self.symbol_key_of(index) {
+                Some(name) => Some((
+                    object,
+                    ast::Ident {
+                        name,
+                        span: index.span,
+                    },
+                )),
+                None => super::member::member_view(target),
+            },
+            _ => super::member::member_view(target),
+        }
+    }
+
     /// Does type `t` have a setter `name` (and no field of that name)?
     pub(crate) fn has_setter(&mut self, t: TyId, name: &str) -> bool {
         self.field_of(t, name).is_none()
@@ -57,6 +72,9 @@ impl FnCx<'_, '_> {
 
     /// The parameter type of setter `name` of type `t` (`None` when it is not known here).
     pub(super) fn setter_param_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        if let Some(f) = self.iface_field_of(t, name) {
+            return Some(f.ty);
+        }
         let (ty, slots) = match self.resolve_method(t, &member_key(name, true))? {
             Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
                 (self.cx.fn_info(def).params.first()?.ty, slots)
@@ -69,7 +87,7 @@ impl FnCx<'_, '_> {
             }
             Resolved::Builtin(_) => return None,
         };
-        let ty = self.cx.ty.subst_known(ty, &slots);
+        let ty = self.cx.subst_known(ty, &slots);
         (!self.cx.ty.has_error(ty)).then_some(ty)
     }
 
@@ -91,6 +109,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
+            return self.iface_setter_call(obj, f, arg, span);
+        }
         self.method_call_on(obj, &key, &[], args, None, span)
     }
 
@@ -105,7 +126,14 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        let (object, prop) = self
+            .member_parts(target)
+            .expect("ICE: setter target is a member");
+        let prop = &prop;
+        if self.private_accessor_outside(obj.ty, prop, true) {
+            self.check_args_loose(std::slice::from_ref(value));
+            return self.error_expr(span);
+        }
         let Some(op) = op else {
             if as_value {
                 return self.accessor_assign_value(obj, object, prop, value, span);
@@ -135,8 +163,11 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
-        if !self.readable(obj.ty, prop) {
+        let (object, prop) = self
+            .member_parts(target)
+            .expect("ICE: setter target is a member");
+        let prop = &prop;
+        if self.private_accessor_outside(obj.ty, prop, true) || !self.readable(obj.ty, prop) {
             return self.error_expr(span);
         }
         let rmw = Rmw::Update(op, prefix);
@@ -145,11 +176,14 @@ impl FnCx<'_, '_> {
 
     /// A read-modify-write of setter `prop` needs a getter. Reports and returns false otherwise.
     fn readable(&mut self, t: TyId, prop: &ast::Ident) -> bool {
-        if self.has_getter(t, &prop.name) {
+        if self.has_getter(t, &prop.name) || self.iface_field_of(t, &prop.name).is_some() {
             return true;
         }
         self.cx.err(
-            format!("cannot read `{}`: it has a setter but no getter", prop.name),
+            format!(
+                "cannot read `{}`: it has a setter but no getter",
+                self.cx.shown_name(&prop.name)
+            ),
             prop.span,
         );
         false

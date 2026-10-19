@@ -1,0 +1,22 @@
+// The HTTP server's port and a response's status are numbers, as in TypeScript: a `number`
+// goes in without a cast (`{ port }`, `{ status }`), and `server.port` and `info.remoteAddr.port`
+// read as numbers.
+import { serve, ServeInfo } from "velt:http";
+
+async function main() {
+  const codes: number[] = [201, 404, 503];
+  const port = Number("0");
+  const server = await serve({ port }, async (req: Request, info: ServeInfo): Promise<Response> => {
+    const i = Number(new URL(req.url).searchParams.get("i") ?? "0");
+    const from: number = info.remoteAddr.port;
+    return new Response(`status ${codes[i]} from a port: ${from > 0}`, { status: codes[i] });
+  });
+  const listening: number = server.port;
+  for (let i = 0; i < codes.length; i++) {
+    const res = await fetch(`http://127.0.0.1:${listening}/?i=${i}`);
+    const status: number = res.status;
+    console.log(status, res.ok, await res.text());
+  }
+  console.log(Response.redirect("http://x/", 307).status);
+  server.close();
+}

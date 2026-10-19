@@ -18,13 +18,23 @@ use crate::visit;
 
 /// Replace every readonly object type in the finished program by its plain twin.
 pub(crate) fn erase(cx: &mut Ctx) {
-    if cx.readonly_twins.is_empty() {
+    if cx.readonly_twins.is_empty() && cx.brands.is_empty() {
         return;
     }
     let twins = cx.readonly_twins.clone();
+    // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: HashMap<TyId, TyId> = HashMap::new();
+    for (&d, &base) in &cx.brands {
+        let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
+        cache.insert(brand, base);
+    }
     let Ctx {
-        ty, defs, impls, ..
+        ty,
+        defs,
+        impls,
+        counted_objects,
+        type_level,
+        ..
     } = cx;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).
@@ -87,6 +97,13 @@ pub(crate) fn erase(cx: &mut Ctx) {
             }
         }
     }
+    for t in counted_objects.iter_mut() {
+        *t = e(*t);
+    }
+    type_level.reduced = std::mem::take(&mut type_level.reduced)
+        .into_iter()
+        .map(|(k, v)| (e(k), e(v)))
+        .collect();
     for imp in impls.iter_mut() {
         imp.ty = e(imp.ty);
         for a in &mut imp.iface_args {
@@ -127,10 +144,11 @@ pub(crate) fn erase_ty(
             }
         }
         TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| sub(ty, cache, *a)).collect()),
+        TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| sub(ty, cache, *a)).collect()),
         TyKind::Array(x) => TyKind::Array(sub(ty, cache, x)),
         TyKind::Map(a, b) => TyKind::Map(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Tuple(xs) => TyKind::Tuple(xs.iter().map(|a| sub(ty, cache, *a)).collect()),
-        TyKind::Option(x) => TyKind::Option(sub(ty, cache, x)),
+        TyKind::Option(x, n) => TyKind::Option(sub(ty, cache, x), n),
         TyKind::Result(a, b) => TyKind::Result(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Promise(v, x) => TyKind::Promise(sub(ty, cache, v), sub(ty, cache, x)),
         TyKind::Shared(x) => TyKind::Shared(sub(ty, cache, x)),

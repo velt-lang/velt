@@ -1,0 +1,12 @@
+// check: no leaks
+// A conversion copies `r` into `area`'s parameter, which never reaches a dynamic type, and the
+// only dynamic comparison is with `undefined`: no copy can be told apart (#1240).
+type Size = { w: number; h: number };
+type Rect = { x: number; y: number; w: number; h: number };
+function area(s: Size): number { return s.w * s.h; }
+const r: Rect = { x: 1, y: 2, w: 3, h: 4 };
+console.log(area(r));
+const cache = new Map<string, unknown>();
+const unit: Size = { w: 1, h: 1 };
+cache.set("unit", unit);
+console.log(cache.get("unit") !== undefined);

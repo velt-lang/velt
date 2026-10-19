@@ -156,7 +156,7 @@ fn modification_on_any_path_counts() {
     // Reading only: fine.
     ok_src(
         "class Acc { items: i64[] = [];
-           count(xs: i64[]): usize { return this.items.length + xs.length; } }
+           count(xs: i64[]): number { return this.items.length + xs.length; } }
          function main() { const a = new Acc(); console.log(a.count(a.items)); }",
     );
 }

@@ -3,7 +3,7 @@
 //! Declared `void` fields are rejected where they are declared (`collect::shapes`); this pass
 //! checks every instantiation the program's types mention, after all bodies.
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{TyId, TyKind};
@@ -19,10 +19,20 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             continue;
         }
         let Some(a) = cx.adt(d) else { continue };
-        let fields: Vec<(String, TyId)> = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
-        let span = a.span;
-        for (name, fty) in fields {
-            if cx.ty.subst(fty, &args) == cx.ty.unit {
+        let fields: Vec<(String, TyId, Span)> = a
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.ty, f.span))
+            .collect();
+        let def_span = a.span;
+        for (name, fty, field_span) in fields {
+            // At the field where it is written; an anonymous object type has no span of its
+            // own (an intersection's fields are those of the parts it merges).
+            let span = match field_span {
+                Span::DUMMY => def_span,
+                s => s,
+            };
+            if cx.subst(fty, &args) == cx.ty.unit {
                 let tn = cx.display(t);
                 cx.error(
                     Diagnostic::error(

@@ -23,5 +23,9 @@ text/plain;charset=UTF-8 made
 202 application/json {"a":1}
 application/json 1
 application/problem+json
+"" "" false
+POST text/plain;charset=UTF-8 - once true
+Cannot construct a Request with a Request object that has already been used.
+"  v"
 refused: true
 Request with GET/HEAD method cannot have body.

@@ -24,9 +24,11 @@
 
 mod all;
 mod all_settle;
+pub(crate) mod await_order;
 mod channel;
 mod ctor;
 mod gen_object;
+mod gen_send;
 mod generator;
 mod handler;
 mod kept;
@@ -349,6 +351,26 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let d = self.new_block();
         self.live[d.0 as usize] = true;
         self.switch_to(d);
+        self.drop_inputs(f);
+        // Finished: a generator closed before it started is done (`next()` after `return()`).
+        // A cancelled async function is never polled again: its tag can stay.
+        let done = match self.in_generator() {
+            true => {
+                self.set_tag(DONE);
+                self.gen_code(generator::GEN_DONE)
+            }
+            false => 0,
+        };
+        self.terminate(Terminator::Return(cint(done, Ty::U32)));
+        self.switch_to(saved);
+        self.cancel_cases(0, d);
+        if self.in_generator() {
+            self.throw_start_cases(f);
+        }
+    }
+
+    /// Drop the owned inputs of a state machine that has not started.
+    fn drop_inputs(&mut self, f: &FnDef) {
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
             if info.cell {
@@ -362,18 +384,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.drop_glue(place, ty);
             }
         }
-        // Finished: a generator closed before it started is done (`next()` after `return()`).
-        // A cancelled async function is never polled again: its tag can stay.
-        let done = match self.in_generator() {
-            true => {
-                self.set_tag(DONE);
-                self.gen_code(generator::GEN_DONE)
-            }
-            false => 0,
-        };
-        self.terminate(Terminator::Return(cint(done, Ty::U32)));
-        self.switch_to(saved);
-        self.cancel_cases(0, d);
     }
 
     /// Fill the entry block: `switch state.tag`.

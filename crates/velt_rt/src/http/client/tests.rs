@@ -3,7 +3,6 @@
 
 use super::send::{self, Outgoing};
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -65,8 +64,9 @@ fn get(url: &str, headers: &[&str]) -> Outgoing {
     let flat: Vec<&[u8]> = headers.iter().map(|h| h.as_bytes()).collect();
     Outgoing {
         method: Method::GET,
-        url: send::parse_url(url).unwrap(),
+        url: target::Target::parse(url).unwrap(),
         headers: send::header_map(&flat).unwrap(),
+        codings: decode::accept_encoding(false),
         body: Bytes::new(),
     }
 }
@@ -181,7 +181,17 @@ fn credentials_stay_on_their_origin() {
     rt().block_on(async {
         let (port, log) = server(redirects).await;
         let url = format!("http://127.0.0.1:{port}/other");
-        let o = get(&url, &["authorization", "Bearer t", "x-keep", "1"]);
+        let o = get(
+            &url,
+            &[
+                "authorization",
+                "Bearer t",
+                "x-keep",
+                "1",
+                "host",
+                "app.test",
+            ],
+        );
         let r = fetch(o, Redirect::Follow).await.unwrap();
         assert_eq!(r.url, format!("http://localhost:{port}/b"));
         let seen = log.lock().unwrap().clone();
@@ -191,6 +201,9 @@ fn credentials_stay_on_their_origin() {
             .iter()
             .any(|h| h.starts_with("authorization")));
         assert!(seen[1].headers.contains(&"x-keep: 1".into()));
+        // A `host` the request set is the first origin's: the next hop names its own.
+        assert!(seen[0].headers.contains(&"host: app.test".into()));
+        assert!(seen[1].headers.contains(&format!("host: localhost:{port}")));
     });
 }
 
@@ -202,7 +215,7 @@ fn reason_phrase_and_bodies() {
         let r = fetch(get(&format!("{base}/teapot"), &[]), Redirect::Follow)
             .await
             .unwrap();
-        assert_eq!((r.status, r.status_text.as_str()), (418, "Teapot Time"));
+        assert_eq!((r.status, &*r.status_text), (418, "Teapot Time"));
         let r = Arc::new(r);
         let w = receive(r.clone()).await.unwrap();
         assert_eq!(w.as_slice(), b"short and stout");
@@ -221,10 +234,10 @@ fn reason_phrase_and_bodies() {
 
 #[test]
 fn bad_urls_and_headers_fail_before_connecting() {
-    let e = send::parse_url("ftp://example.com/").err().unwrap();
+    let e = target::Target::parse("ftp://example.com/").err().unwrap();
     assert_eq!(e.code, code::UNSUPPORTED);
     assert_eq!(
-        send::parse_url("not a url").err().unwrap().code,
+        target::Target::parse("not a url").err().unwrap().code,
         code::INVALID_INPUT
     );
     let bad: [&[u8]; 2] = [b"bad name", b"v"];
@@ -237,25 +250,54 @@ fn bad_urls_and_headers_fail_before_connecting() {
         send::header_map(&bad).err().unwrap().code,
         code::INVALID_INPUT
     );
-    let set: [&[u8]; 4] = [b"accept", b"text/html", b"user-agent", b"me"];
-    let map = send::header_map(&set).unwrap();
+    let set: [&[u8]; 6] = [
+        b"accept",
+        b"text/html",
+        b"user-agent",
+        b"me",
+        b"accept-encoding",
+        b"identity",
+    ];
+    let map = send::with_defaults(
+        send::header_map(&set).unwrap(),
+        decode::accept_encoding(true),
+        None,
+    );
     assert_eq!(map.get("accept").unwrap(), "text/html");
     assert_eq!(map.get("user-agent").unwrap(), "me");
+    assert_eq!(map.get("accept-encoding").unwrap(), "identity");
+    let map = send::with_defaults(
+        send::header_map(&[]).unwrap(),
+        decode::accept_encoding(true),
+        None,
+    );
+    assert_eq!(map.get("accept-encoding").unwrap(), "br, gzip, deflate");
+    assert_eq!(map.len(), 3);
 }
 
 #[test]
 fn an_aborted_signal_drops_the_request() {
-    static ACCEPTED: AtomicUsize = AtomicUsize::new(0);
     rt().block_on(async {
-        // Accepts and never answers.
+        // Reads the request, never answers, and reports when the client closes the connection.
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
+        let (arrived_tx, arrived) = tokio::sync::oneshot::channel::<()>();
+        let (closed_tx, closed) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
-            let mut held = vec![];
-            while let Ok((s, _)) = l.accept().await {
-                ACCEPTED.fetch_add(1, Ordering::SeqCst);
-                held.push(s);
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let mut arrived_tx = Some(arrived_tx);
+            loop {
+                match s.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Some(tx) = arrived_tx.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+                }
             }
+            let _ = closed_tx.send(());
         });
         let signal = Arc::new(Signal::default());
         let url = format!("http://127.0.0.1:{port}/");
@@ -265,11 +307,101 @@ fn an_aborted_signal_drops_the_request() {
             Redirect::Follow,
             Some(signal.clone()),
         ));
-        while ACCEPTED.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
+        // Hang guards, not assertions: each step completes at once.
+        let guard = std::time::Duration::from_secs(60);
+        tokio::time::timeout(guard, arrived).await.unwrap().unwrap();
         crate::task::abort::abort_for_test(&signal);
         let e = work.await.unwrap().err().unwrap();
         assert_eq!(message(e), "This operation was aborted");
+        // The request was dropped, not abandoned: its connection is closed.
+        tokio::time::timeout(guard, closed).await.unwrap().unwrap();
+    });
+}
+
+#[test]
+fn text_decodes_valid_utf8_as_is_and_invalid_lossily() {
+    for (bytes, want) in [
+        (&b"plain ascii"[..], "plain ascii"),
+        ("h\u{e9}j \u{1f600}".as_bytes(), "h\u{e9}j \u{1f600}"),
+        (&b"a\xffb\xe2\x82"[..], "a\u{fffd}b\u{fffd}"),
+    ] {
+        let s = text_of(bytes);
+        // SAFETY: an owned string just made.
+        unsafe {
+            assert_eq!(s.as_bytes(), want.as_bytes());
+            assert_eq!(s.units(), want.encode_utf16().count());
+            let mut s = s;
+            s.release();
+        }
+    }
+}
+
+/// The header lines of each request the server saw, in order.
+fn lines_seen(log: &Log) -> Vec<Vec<String>> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .map(|s| s.headers.clone())
+        .collect()
+}
+
+#[test]
+fn header_lines_go_out_in_order() {
+    rt().block_on(async {
+        let (port, log) = server(redirects).await;
+        let base = format!("http://127.0.0.1:{port}");
+        let host = format!("host: 127.0.0.1:{port}");
+        let defaults = [
+            "accept: */*",
+            "user-agent: velt",
+            "accept-encoding: gzip, deflate",
+        ];
+        let with = |own: &[&str], host: &str| -> Vec<String> {
+            own.iter()
+                .chain(&defaults)
+                .map(|s| s.to_string())
+                .chain([host.to_string()])
+                .collect()
+        };
+
+        // `fetch(url)`: the defaults, then the host hyper would add.
+        fetch(get(&format!("{base}/b"), &[]), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(lines_seen(&log)[0], with(&[], &host));
+
+        // The caller's headers in their order; a default they set is not added again.
+        let own = ["user-agent", "me", "x-a", "1", "accept", "text/html"];
+        fetch(get(&format!("{base}/b"), &own), Redirect::Follow)
+            .await
+            .unwrap();
+        let want: Vec<String> = ["user-agent: me", "x-a: 1", "accept: text/html"]
+            .iter()
+            .map(|s| s.to_string())
+            .chain(["accept-encoding: gzip, deflate".to_string(), host.clone()])
+            .collect();
+        assert_eq!(lines_seen(&log)[1], want);
+
+        // A redirect sends the same lines again.
+        fetch(get(&format!("{base}/a"), &["x-a", "1"]), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(lines_seen(&log)[2], with(&["x-a: 1"], &host));
+        assert_eq!(lines_seen(&log)[3], with(&["x-a: 1"], &host));
+
+        // To another origin, `authorization` is dropped: the caller's other headers, then the
+        // defaults, then the new host.
+        let own = ["authorization", "secret", "x-a", "1"];
+        fetch(get(&format!("{base}/other"), &own), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(
+            lines_seen(&log)[4],
+            with(&["authorization: secret", "x-a: 1"], &host)
+        );
+        assert_eq!(
+            lines_seen(&log)[5],
+            with(&["x-a: 1"], &format!("host: localhost:{port}"))
+        );
     });
 }

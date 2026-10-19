@@ -1,0 +1,5 @@
+// A JSX runtime that declares `IntrinsicAttributes` but has no `jsxComponentAttributes`.
+
+export * from "velt:jsx/jsx-runtime";
+
+export type IntrinsicAttributes = { "client:load"?: boolean };

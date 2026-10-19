@@ -1,0 +1,34 @@
+// Generic code looks at each type it is called with: `includes`, `indexOf` and `lastIndexOf`
+// compare elements with `===`, and a generic function may compare or print its arguments. A
+// conversion that copies a value into one of those types is an error, as where the program
+// compares or prints the type directly.
+type A = { a: number };
+type AB = A & { b: number };
+type C = { c: number };
+type CD = C & { d: number };
+type E = { e: number };
+type EF = E & { f: number };
+type G = { g: number };
+type GH = G & { h: number };
+
+function eq<T>(x: T, y: T): boolean {
+  return x === y;
+}
+
+function log<T>(x: T) {
+  console.log(x);
+}
+
+function main() {
+  const ab: AB = { a: 1, b: 2 };
+  const xs: A[] = [];
+  xs.push(ab);
+  console.log(xs.includes(ab), xs.indexOf(ab));
+  const cd: CD = { c: 1, d: 2 };
+  const cs: C[] = [cd];
+  console.log(cs.lastIndexOf(cd));
+  const ef: EF = { e: 1, f: 2 };
+  console.log(eq<E>(ef, ef));
+  const gh: GH = { g: 1, h: 2 };
+  log<G>(gh);
+}

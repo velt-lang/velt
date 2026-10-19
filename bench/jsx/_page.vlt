@@ -1,0 +1,50 @@
+// The fortunes page in TSX, precompiled by std/jsx (_page_generic.vlt: the same source through
+// the generic lowering). `rows` and `rowsFragment` are its parts, for the breakdown.
+
+import { Fortune } from "./_data";
+
+export function page(fortunes: Fortune[]): JSX.Element {
+  return (
+    <html>
+      <head>
+        <title>Fortunes</title>
+      </head>
+      <body>
+        <table>
+          <tr>
+            <th>id</th>
+            <th>message</th>
+          </tr>
+          {fortunes.map((f) => (
+            <tr>
+              <td>{f.id}</td>
+              <td>{f.message}</td>
+            </tr>
+          ))}
+        </table>
+      </body>
+    </html>
+  );
+}
+
+export function rows(fortunes: Fortune[]): JSX.Element[] {
+  return fortunes.map((f) => (
+    <tr>
+      <td>{f.id}</td>
+      <td>{f.message}</td>
+    </tr>
+  ));
+}
+
+export function rowsFragment(fortunes: Fortune[]): JSX.Element {
+  return (
+    <>
+      {fortunes.map((f) => (
+        <tr>
+          <td>{f.id}</td>
+          <td>{f.message}</td>
+        </tr>
+      ))}
+    </>
+  );
+}

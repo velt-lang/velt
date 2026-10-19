@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -20,10 +20,19 @@ vpm = { path = "crates/vpm" }
 velt_fmt = { path = "crates/velt_fmt" }
 velt_lsp = { path = "crates/velt_lsp" }
 velt_tscompat = { path = "crates/velt_tscompat" }
+velt_toolchain = { path = "crates/velt_toolchain" }
 
 [profile.dev]
 # Keep debug builds reasonably fast when running compiled test programs.
 opt-level = 1
+# File and line in backtraces and panics, without full debug info: debug info was 60% of a
+# debug build directory (mostly .pdb files on Windows) and slows linking. Build with
+# `CARGO_PROFILE_DEV_DEBUG=full` to step through the compiler with local variables.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Dependencies: no debug info at all.
+debug = false
 
 [profile.release]
 lto = "thin"

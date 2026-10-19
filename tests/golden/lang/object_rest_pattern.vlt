@@ -1,0 +1,114 @@
+// check: no leaks
+// `...rest` in object patterns (#1200): the rest is an object of the other own properties, in
+// the value's order, as in JS. On an object type or interface of fields it has the other fields
+// (TypeScript's `Omit<T, "a">`; an optional field only while present), on a class instance the
+// other fields (methods and getters live on the prototype), on a `Record<string, V>` the other
+// keys. It works in `const` and `let` declarations, nested patterns, next to defaults, and in
+// parameters. Expected output: Node's.
+interface Opts {
+  host: string;
+  port: number;
+  secure?: boolean;
+  tag?: string;
+}
+
+class Point {
+  x: number;
+  y: number;
+  label: string;
+  constructor(x: number, y: number, label: string) {
+    this.x = x;
+    this.y = y;
+    this.label = label;
+  }
+  norm(): number {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+  get twice(): number {
+    return this.x * 2;
+  }
+}
+
+class Self {
+  a = 1;
+  private b = 2;
+  taken(): void {
+    // The pattern takes the `private` field, so the rest has none (see errors/object_rest_private).
+    const { b, ...r } = this;
+    console.log(b, r);
+  }
+}
+
+class Open {
+  #hidden = 1;
+  shown = 2;
+  peek(): number {
+    return this.#hidden;
+  }
+}
+
+function split(props: { children: string; id: number; title: string }): void {
+  const { children, ...rest } = props;
+  console.log(children, rest.id, rest.title);
+  console.log(rest);
+  console.log(props);
+}
+
+function show({ host, ...others }: Opts): void {
+  console.log(host, others);
+}
+
+function splitProps(initialProps: Record<string, number>): Record<string, number> {
+  const { children, key: _key, ...propsData } = initialProps;
+  console.log(children, propsData);
+  return propsData;
+}
+
+function main() {
+  split({ children: "c", id: 1, title: "t" });
+  const o: Opts = { host: "h", port: 80, secure: true };
+  const { port, ...r1 } = o;
+  console.log(port, r1, r1.host, r1.secure);
+  show(o);
+  show({ host: "a", port: 1, tag: "t" });
+
+  const p = new Point(3, 4, "p");
+  const { label, ...coords } = p;
+  console.log(label, coords, coords.x + coords.y);
+  console.log(p.norm(), p.twice);
+  let { x, ...pr } = p;
+  pr.y = 10;
+  x = x + 1;
+  console.log(x, pr, p.y);
+
+  const { ...all } = o;
+  console.log(all);
+  const { host: _h, port: _p, secure: _s, tag: _t, ...none } = o;
+  console.log(none);
+
+  const nested = { a: 1, inner: { b: "b", c: [1, 2], d: true } };
+  const { inner: { b, ...innerRest }, ...outerRest } = nested;
+  console.log(b, innerRest, outerRest);
+  innerRest.c.push(3);
+  console.log(nested.inner.c);
+  const { a = 5, ...withDefault } = nested;
+  console.log(a, withDefault);
+
+  const rec: Record<string, number> = { one: 1, two: 2, three: 3 };
+  const { two, ...recRest } = rec;
+  console.log(two, recRest, rec);
+  console.log(Object.keys(recRest).length);
+  const kept = splitProps({ a: 1, children: 2, key: 3, b: 4 });
+  kept["c"] = 5;
+  console.log(kept);
+
+  const names = ["ann", "bo"];
+  const holder = { names, count: names.length, title: "people" };
+  const { title, ...data } = holder;
+  console.log(title, data);
+
+  // `#private` fields are not copied, as in JS.
+  new Self().taken();
+  const { ...open } = new Open();
+  console.log(open, new Open().peek());
+}

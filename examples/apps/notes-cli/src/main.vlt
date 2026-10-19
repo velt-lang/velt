@@ -4,7 +4,7 @@ import { execute } from "./commands";
 
 function main() {
   try {
-    const lines = execute(args(), process.env.NOTES_DB ?? "notes.json", Date.now());
+    const lines = execute(args(), process.env.NOTES_DB ?? "notes.json", Date.now() as i64);
     for (const l of lines) {
       console.log(l);
     }

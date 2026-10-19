@@ -68,8 +68,8 @@ pub(super) fn check(
         let name = cx.fn_info(f).name.clone();
         for (caller, span, targs) in calls_of(cx, f) {
             let sub = Sig {
-                param: sig.param.map(|t| cx.ty.subst(t, &targs)),
-                ret: cx.ty.subst(sig.ret, &targs),
+                param: sig.param.map(|t| cx.subst(t, &targs)),
+                ret: cx.subst(sig.ret, &targs),
             };
             if !reporter.report(cx, sub, span, &what, Some(&name)) {
                 work.push((caller, sub, what.clone()));

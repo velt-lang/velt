@@ -1,0 +1,4 @@
+method_value_identity.vlt:11:15
+error: method value `o.get` compared by identity: each read of a method is a new function
+store it in a `const` first and compare that: `const f = o.get;`
+method_value_identity.vlt:13:15

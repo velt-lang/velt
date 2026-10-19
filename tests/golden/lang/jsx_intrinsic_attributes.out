@@ -1,0 +1,2 @@
+<main><h1>Static</h1><!--island client:load=true Counter--><p>load 1</p><!--/island--><!--island client:visible=true Counter--><p>visible 2</p><!--/island--><!--island client:media="(min-width: 768px)" client:idle=true Counter--><p>media 3</p><!--/island--><p>plain 4</p></main>
+same in both lowerings

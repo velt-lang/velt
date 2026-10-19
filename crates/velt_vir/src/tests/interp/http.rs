@@ -35,32 +35,31 @@ impl Interp<'_> {
             "velt_rt_http_serve" => return Some(self.http_serve(a[1])),
             "velt_rt_http_server_port" => 8080,
             "velt_rt_http_server_close" => return Some(self.http_close().map(|_| 0)),
-            "velt_rt_http_req_method" | "velt_rt_http_req_path" | "velt_rt_http_req_body" => {
-                let (m, p, b) = self.exec.http.live_reqs[&a[0]].clone();
+            "velt_rt_http_req_method" | "velt_rt_http_req_url" => {
+                let (m, p, _) = self.exec.http.live_reqs[&a[0]].clone();
                 let text = match sym {
                     "velt_rt_http_req_method" => m,
-                    "velt_rt_http_req_path" => p,
-                    _ => b,
+                    // The scripted requests name `Host: localhost`.
+                    _ => format!("http://localhost{p}"),
                 };
                 self.new_str(a[1], text.as_bytes());
                 0
             }
-            "velt_rt_http_req_header_count" => 0,
             "velt_rt_http_req_drop" => {
                 let r = self.exec.http.live_reqs.remove(&a[0]);
                 assert!(r.is_some(), "interp: request dropped twice");
                 0
             }
-            "velt_rt_http_resp_new" => {
+            // `(status, reason, headers, kind, text, bytes, implied)`: a text body.
+            "velt_rt_http_resp_build" => {
                 let h = self.http_handle(RESP_BASE);
-                self.exec.http.resps.insert(h, (a[0] as u32, String::new()));
-                h
-            }
-            "velt_rt_http_resp_body_text" => {
-                let body = String::from_utf8_lossy(&self.str_bytes(a[1])).into_owned();
-                self.exec.http.resps.get_mut(&a[0]).expect("response").1 = body;
+                let body = String::from_utf8_lossy(&self.str_bytes(a[4])).into_owned();
+                self.exec.http.resps.insert(h, (a[0] as u32, body));
                 // The runtime takes the body: the caller's string is left empty.
-                return Some(self.rt("velt_rt_str_drop", &[a[1]]));
+                if let Err(e) = self.rt("velt_rt_str_drop", &[a[4]]) {
+                    return Some(Err(e));
+                }
+                h
             }
             _ => return None,
         }))

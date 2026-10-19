@@ -1,0 +1,57 @@
+// An object inside an array that a template literal, `join` or `toString()` writes is written
+// as JS's default `Object.prototype.toString` writes it: `[object Object]` for objects, classes
+// and object unions, `[object Map]`, `[object Set]`; also through a type parameter. A union of
+// primitives is written as its member, `null` as empty text. The output is Node's.
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+type Shape = { kind: "circle"; r: number } | { kind: "empty" };
+
+enum Mode {
+  Fast = "FAST",
+  Slow = "SLOW",
+}
+
+function show<T>(label: string, x: T) {
+  console.log(`${label}: ${x}`);
+}
+
+function main() {
+  console.log(`class: ${[new Animal("a")]}`);
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  console.log(`map: ${[m]}`);
+  const s = new Set<number>();
+  console.log(`set: ${[s, s]}`);
+  console.log(`object: ${[{ a: 1 }]}`);
+  const shapes: Shape[] = [{ kind: "circle", r: 1 }, { kind: "empty" }];
+  console.log(`union: ${shapes}`);
+  show("generic union", shapes);
+  show("generic maps", [m, m]);
+  const mixed: (number | string | null)[] = [1, "two", null];
+  console.log(`primitives: ${mixed}`);
+  console.log(`string enum: ${[Mode.Fast, Mode.Slow]}`);
+  const t: [number, Animal] = [1, new Animal("t")];
+  console.log(`tuple: ${t}`);
+
+  console.log(`join: ${[new Animal("a"), new Animal("b")].join("-")}`);
+  console.log(`join default: ${[{ a: 1 }].join()}`);
+  console.log(`join union: ${shapes.join(";")}`);
+  const nested = [[new Animal("x")], []];
+  console.log(`nested: ${nested} ${nested.join("|")}`);
+  const opt: (Animal | null)[] = [new Animal("q"), null];
+  console.log(`nullable: ${opt} ${opt.join("+")}`);
+  console.log(`join enum: ${[Mode.Fast, Mode.Slow].join("/")}`);
+
+  // `toString()` writes what `${xs}` writes.
+  console.log([1, 2].toString());
+  const deep: (number | null)[][] = [[1, null], [], [3]];
+  console.log(deep.toString());
+  const empty: string[] = [];
+  console.log(`[${empty.toString()}]`);
+  console.log([new Animal("z")].toString() == `${[new Animal("z")]}`);
+}

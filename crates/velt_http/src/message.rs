@@ -173,6 +173,9 @@ pub fn read_response(r: &mut impl BufRead, max_body: usize) -> Result<Response, 
         r.take(max_body as u64 + 1)
             .read_to_end(&mut body)
             .map_err(|e| format!("cannot read HTTP body: {e}"))?;
+        if body.len() > max_body {
+            return Err(format!("body exceeds the limit of {max_body} bytes"));
+        }
         body
     };
     Ok(Response {

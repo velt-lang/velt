@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::build::take_value;
 use super::{strings, Command};
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// Parse subcommand `name` with its arguments `rest`.
 pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> {
@@ -30,6 +30,17 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
                 flags.name = Some(take_value(inline.as_deref(), &mut it, "--name")?)
             }
             ("init", "--force") => flags.force = true,
+            ("init", "--dir") => {
+                flags.dir = Some(PathBuf::from(take_value(
+                    inline.as_deref(),
+                    &mut it,
+                    "--dir",
+                )?))
+            }
+            ("init", "--editor") => {
+                let e = take_value(inline.as_deref(), &mut it, "--editor")?;
+                flags.editor = Some(Editor::parse(&e)?);
+            }
             ("add", "--path") => {
                 flags.path = Some(take_value(inline.as_deref(), &mut it, "--path")?)
             }
@@ -44,6 +55,12 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             }
             ("test", "--release") => flags.release = true,
             ("test", "--watch") => flags.watch = true,
+            ("test", "--filter") => {
+                flags.filter = Some(take_value(inline.as_deref(), &mut it, "--filter")?)
+            }
+            ("test", "--exact") => flags.exact = true,
+            ("test", "--no-run") => flags.no_run = true,
+            ("test", "--json") => flags.json = true,
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
             _ => positional.push(s),
         }
@@ -56,9 +73,15 @@ struct Flags {
     template: Option<Template>,
     name: Option<String>,
     force: bool,
+    editor: Option<Editor>,
+    dir: Option<PathBuf>,
     locked: bool,
     release: bool,
     watch: bool,
+    filter: Option<String>,
+    exact: bool,
+    no_run: bool,
+    json: bool,
     path: Option<String>,
     native_artifacts: Option<PathBuf>,
     native_only: bool,
@@ -85,11 +108,29 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             )?,
             template: flags.template.unwrap_or_default(),
         }),
-        "init" => Ok(Command::Init {
-            name: flags.name,
-            template: flags.template.unwrap_or_default(),
-            force: flags.force,
-        }),
+        "init" => match flags.editor {
+            Some(editor) => {
+                if flags.template.is_some() || flags.name.is_some() || flags.force {
+                    return Err(
+                        "`velt init --editor` only adds the editor's files; it takes no \
+                         --template, --name or --force"
+                            .into(),
+                    );
+                }
+                Ok(Command::InitEditor {
+                    editor,
+                    dir: flags.dir,
+                })
+            }
+            None if flags.dir.is_some() => {
+                Err("`--dir` goes with `--editor` (`velt init --editor vscode --dir <dir>`)".into())
+            }
+            None => Ok(Command::Init {
+                name: flags.name,
+                template: flags.template.unwrap_or_default(),
+                force: flags.force,
+            }),
+        },
         "add" => {
             let spec = arg.ok_or(
                 "missing package (e.g. `velt add json@1.2` or `velt add util --path ../util`)",
@@ -124,11 +165,24 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             )),
             None => Err("usage: velt native build [--target <triple>]".into()),
         },
+        "test" if flags.json && !flags.no_run => {
+            Err("`--json` goes with `--no-run` (`velt test --no-run --json`)".into())
+        }
+        "test" if flags.exact && flags.filter.is_none() => {
+            Err("`--exact` goes with `--filter <name>`".into())
+        }
+        "test" if flags.watch && flags.no_run => {
+            Err("`--watch` runs the tests; it does not go with `--no-run`".into())
+        }
         "test" => Ok(Command::Test {
             path: arg.map(PathBuf::from),
             release: flags.release,
             locked: flags.locked,
             watch: flags.watch,
+            filter: flags.filter,
+            exact: flags.exact,
+            no_run: flags.no_run,
+            json: flags.json,
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
@@ -170,6 +224,29 @@ mod tests {
                 force: true
             }
         );
+        assert_eq!(
+            p(&["init", "--editor", "vscode"]).unwrap(),
+            Command::InitEditor {
+                editor: Editor::VsCode,
+                dir: None
+            }
+        );
+        assert_eq!(
+            p(&["init", "--editor=code", "--dir", "w"]).unwrap(),
+            Command::InitEditor {
+                editor: Editor::VsCode,
+                dir: Some(PathBuf::from("w"))
+            }
+        );
+        assert!(p(&["init", "--dir", "w"])
+            .unwrap_err()
+            .contains("goes with `--editor`"));
+        assert!(p(&["init", "--editor", "vscode", "--force"])
+            .unwrap_err()
+            .contains("only adds the editor's files"));
+        assert!(p(&["init", "--editor", "emacs"])
+            .unwrap_err()
+            .contains("unknown editor"));
         assert_eq!(
             p(&["init"]).unwrap(),
             Command::Init {
@@ -243,7 +320,11 @@ mod tests {
                 path: None,
                 release: false,
                 locked: false,
-                watch: false
+                watch: false,
+                filter: None,
+                exact: false,
+                no_run: false,
+                json: false,
             }
         );
         assert_eq!(
@@ -252,9 +333,39 @@ mod tests {
                 path: Some(PathBuf::from("tests")),
                 release: true,
                 locked: false,
-                watch: true
+                watch: true,
+                filter: None,
+                exact: false,
+                no_run: false,
+                json: false,
             }
         );
+        assert_eq!(
+            p(&[
+                "test",
+                "a.test.vlt",
+                "--filter",
+                "test_add",
+                "--no-run",
+                "--json"
+            ])
+            .unwrap(),
+            Command::Test {
+                path: Some(PathBuf::from("a.test.vlt")),
+                release: false,
+                locked: false,
+                watch: false,
+                filter: Some("test_add".into()),
+                exact: false,
+                no_run: true,
+                json: true,
+            }
+        );
+        assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));
+        assert!(p(&["test", "--exact"]).unwrap_err().contains("`--filter"));
+        assert!(p(&["test", "--no-run", "--watch"])
+            .unwrap_err()
+            .contains("`--watch`"));
     }
 
     #[test]

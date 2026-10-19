@@ -1,0 +1,57 @@
+// A static method using `this` is checked once, with the types of the class declaring it: a
+// subclass's static overriding one it calls may return a subtype (`Dog` for `Animal`, `2` for
+// `number`), and the inherited body still sees the declaring class's type.
+class Animal {
+  name(): string { return "animal"; }
+}
+class Dog extends Animal {
+  override name(): string { return "dog"; }
+}
+class Cat extends Animal {
+  override name(): string { return "cat"; }
+}
+class Shelter {
+  static create(): Animal { return new Animal(); }
+  static pair(): string {
+    const xs = [this.create()];
+    xs.push(new Cat());
+    return xs.map((a: Animal) => a.name()).join("+");
+  }
+}
+class DogShelter extends Shelter {
+  static create(): Dog { return new Dog(); }
+}
+console.log(Shelter.pair(), DogShelter.pair());
+
+class A {
+  static readonly LIMIT: number = 10;
+  static kind(): number { return 1.5; }
+  static run(): number {
+    let x = this.kind();
+    x = x + 5;
+    let l = this.LIMIT;
+    l = l + 0.5;
+    return x + l;
+  }
+  static once(): number {
+    let x = this.kind();
+    x = x + 5;
+    return x;
+  }
+}
+class B extends A {
+  static readonly LIMIT: 3 = 3;
+  static kind(): 2 { return 2; }
+}
+console.log(A.run(), B.run());
+console.log(A.once(), B.once());
+
+// `this.f` passed where a function with more parameters is expected.
+class P {
+  static plain(): string { return "p"; }
+  static run(): string[] { return ["a"].map(this.plain); }
+}
+class PB extends P {
+  static plain(): string { return "pB"; }
+}
+console.log(P.run(), PB.run());

@@ -18,14 +18,27 @@
 //! (`LocalDef::mutable` records the modification instead; see `crate::ownership`).
 //! Capture modes that depend on inferred mutation are finalized by `crate::ownership`.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 use velt_syntax::ast;
 
 use super::closure_sig::Expected;
+use crate::body::stmt::void_op;
 use crate::body::{FnCx, Frame, LocalKind, Want};
 use crate::collect::fn_placeholder;
 use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
+
+/// What [`FnCx::trial_frames`] saves.
+pub(crate) struct TrialFrames {
+    f: Frame,
+    outer: Vec<Frame>,
+    refused_reads: Vec<(Span, crate::body::closure_assigned::Refused)>,
+    literal: crate::body::literal_locals::LiteralLocals,
+    std_callback: Option<Vec<bool>>,
+    void_task: Option<Span>,
+    thread_task: Option<Span>,
+    await_body: Option<Span>,
+}
 
 /// A checked closure, before its locals are renumbered (captures first).
 pub(super) struct Checked {
@@ -55,6 +68,80 @@ fn local_order(frame: &Frame, captures: &[hir::Capture], declared: &[LocalId]) -
 }
 
 impl FnCx<'_, '_> {
+    /// The function's state a trial check changes, to restore after rolling it back (`Mark`
+    /// restores the context): locals, captures, throws, moves, literal-local uses and the
+    /// pending callback notes of the call being checked.
+    pub(crate) fn trial_frames(&self) -> TrialFrames {
+        TrialFrames {
+            f: self.f.clone(),
+            outer: self.outer.clone(),
+            refused_reads: self.refused_reads.clone(),
+            literal: self.literal.clone(),
+            std_callback: self.std_callback.clone(),
+            void_task: self.void_task,
+            thread_task: self.thread_task,
+            await_body: self.await_body,
+        }
+    }
+
+    pub(crate) fn restore_trial_frames(&mut self, t: TrialFrames) {
+        self.f = t.f;
+        self.outer = t.outer;
+        self.refused_reads = t.refused_reads;
+        self.literal = t.literal;
+        self.std_callback = t.std_callback;
+        self.void_task = t.void_task;
+        self.thread_task = t.thread_task;
+        self.await_body = t.await_body;
+    }
+
+    /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
+    /// the first one, whose errors the real check then reports.
+    fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
+        // Remembered per arrow, members and the types of every local visible where it is
+        // checked: an arrow nested in one being tried is tried once, not once per try of each
+        // enclosing arrow (exponential in the nesting), unless something it can see has another
+        // type in this try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a
+        // string).
+        let key = (e.span, members.to_vec(), self.visible_types());
+        if let Some(&m) = self.member_choices.get(&key) {
+            return m;
+        }
+        let m = self.first_fitting(e, members, escaping);
+        self.member_choices.insert(key, m);
+        m
+    }
+
+    /// A fingerprint of the types of the locals of this function and of the functions it is
+    /// nested in.
+    fn visible_types(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for f in self.outer.iter().chain(std::iter::once(&self.f)) {
+            f.locals.len().hash(&mut h);
+            for l in &f.locals {
+                l.ty.hash(&mut h);
+            }
+        }
+        h.finish()
+    }
+
+    fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
+        for &m in members {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = self.trial_frames();
+            let diags = self.cx.diags.len();
+            let h = self.closure(e, Some(m), escaping);
+            let ok = self.cx.diags.len() == diags && h.ty == m;
+            mark.rollback(self.cx);
+            self.restore_trial_frames(frames);
+            if ok {
+                return m;
+            }
+        }
+        members[0]
+    }
+
     /// An arrow function (`e` is an `ast::ExprKind::Arrow`) where a value of type `exp` is
     /// expected; `escaping` when it is stored or returned rather than passed to a call.
     pub(crate) fn closure(
@@ -74,6 +161,8 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        // A member of a recursive closure group (`closure_group`).
+        let member = self.pending_member.take();
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
@@ -84,7 +173,52 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
-        let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);
+        if let Some(p) = params.iter().find(|p| p.rest) {
+            // Its type is checked as a function's is; one of an array type is not supported yet
+            // (a module-level constant is lifted into a function, `generic_arrows`).
+            if let Some(t) = &p.ty {
+                let ty = self.resolve(t);
+                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                    return self.error_expr(e.span);
+                }
+            }
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    "rest parameters of arrow functions are not supported yet",
+                    p.name.span,
+                )
+                .with_note("declare a `function` with the rest parameter (`function f(...xs: T[])`), or take an array (`(xs: T[]) => …`)"),
+            );
+            return self.error_expr(e.span);
+        }
+        // Against a union of function types, the arrow is typed by one member; the caller
+        // converts the closure to the union.
+        let members = self.arrow_members(exp, *is_async, params.len());
+        let exp = match members.as_slice() {
+            [] => exp,
+            [one] => Some(*one),
+            several => Some(self.member_by_trial(e, several, escaping)),
+        };
+        if !*is_async && self.thread_task == Some(e.span) {
+            self.thread_task = None;
+            return self.thread_arrow(e, exp, escaping);
+        }
+        if *is_async {
+            if let Some(h) = self.async_arrow_callback(e, exp) {
+                return h;
+            }
+        } else if let Some(h) = self.declared_member_callback(e, exp) {
+            return h;
+        }
+        let await_body = self.await_body == Some(e.span) && *is_async;
+        if await_body {
+            self.await_body = None;
+        }
+        let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
+        if void_task {
+            self.void_task = None;
+        }
+        let (ret, is_async, span) = (ret.as_ref(), *is_async || void_task, e.span);
         let Expected {
             params: exp_params,
             ret: exp_ret,
@@ -122,15 +256,36 @@ impl FnCx<'_, '_> {
                 })
                 .filter(|r| !self.cx.ty.has_error(*r)),
         };
-        let def = self.alloc_closure(span);
+        let def = match member {
+            Some((_, _, d)) => d,
+            None => self.alloc_closure(span),
+        };
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
         frame.closure_assigned = closure_assigned_in(params, body);
+        let defaults = params.iter().filter_map(|p| p.default.as_ref());
+        frame.assign_ends = match body {
+            ast::ArrowBody::Block(b) => {
+                crate::body::assign_ends::assignment_ends(&b.stmts, defaults)
+            }
+            ast::ArrowBody::Expr(e) => {
+                crate::body::assign_ends::assignment_ends(&[], defaults.chain([&**e]))
+            }
+        };
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
+        frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
         frame.is_async = is_async;
+        // A JS API callback returning a number (a comparator) may return any integer.
+        frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);
+        // A JS API predicate's result is tested like a condition (`xs.filter((n) => n)`).
+        frame.truthy_returns =
+            std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
+        if let Some((g, m, _)) = member {
+            self.enter_group_member(g, m, span);
+        }
         let mut declared = vec![];
         let mut locals = vec![];
         for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
@@ -139,10 +294,14 @@ impl FnCx<'_, '_> {
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
-            // A JS number: an index or accumulator from a std callback, or `(n = 0) => …`.
-            let js_number = std_callback || p.default.is_some();
-            if js_number && p.ty.is_none() && self.cx.ty.is_int(*ty) {
-                self.f.inferred_ints.insert(l);
+            self.note_readonly_array(l, p.ty.as_ref());
+            // An index from a std callback is a number in the body.
+            let std_int = std_callback
+                .as_ref()
+                .and_then(|m| m.get(k).copied())
+                .unwrap_or(false);
+            if std_int && p.ty.is_none() && self.cx.ty.is_int(*ty) {
+                locals.push(self.number_shadow(l));
             }
             declared.push(l);
         }
@@ -155,7 +314,25 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
-        let mut block = self.closure_body(body, span);
+        self.default_prologue(
+            params
+                .iter()
+                .zip(&ptys)
+                .take(n_params)
+                .map(|(p, ty)| (&p.name, p.default.as_ref(), p.optional, *ty)),
+            &mut locals,
+        );
+        self.destructure_params(
+            params
+                .iter()
+                .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
+            &mut locals,
+        );
+        let mut block = match body {
+            ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
+            ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
+            _ => self.closure_body(body, span),
+        };
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()
@@ -168,12 +345,23 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        // Reads outside the body's statements (an expression body) check at its start.
+        let late = self.late_check_stmts(frame.late.checks.clone(), span);
+        block.stmts.splice(0..0, late);
+        let peers = self.group_peer_lets(&frame, span);
+        block.stmts.splice(0..0, peers);
         if is_async {
-            self.no_mutated_captures(&frame);
-            self.no_captured_generators(&frame);
+            // A captured generator is checked once it is known whether the closure stays on
+            // its task (`ownership::local_async`).
+            self.no_captured_weak(&frame);
         }
+        // Allowed while the closure stays on its task (`ownership::local_async`).
+        let mutated = mutated_captures(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
+        if declared_err.is_none() {
+            self.provisional_slot(span, &frame.uncaught);
+        }
         let err = self.closure_error(def, declared_err, &frame, clause);
         let fn_ty = self.closure_type(ptys.clone(), body_ret, err, is_async);
         let ret = if is_async {
@@ -181,7 +369,9 @@ impl FnCx<'_, '_> {
         } else {
             body_ret
         };
-        self.cx.fn_info_mut(def).escaping = escaping || is_async;
+        let info = self.cx.fn_info_mut(def);
+        info.escaping = escaping || is_async;
+        info.mutated_captures = mutated;
         self.finish_closure(Checked {
             def,
             frame,
@@ -194,7 +384,7 @@ impl FnCx<'_, '_> {
             generator: None,
             span,
         });
-        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params, true);
         self.mk(H::Closure(def), fn_ty, span)
     }
 
@@ -203,9 +393,6 @@ impl FnCx<'_, '_> {
         let e = p.default.as_ref().expect("ICE: a defaulted parameter");
         let init = self.expr_coerce(e, ty, Want::Move);
         let local = self.declare_local_mut(&p.name, ty, LocalKind::Let, true);
-        if p.ty.is_none() && self.cx.ty.is_int(ty) {
-            self.f.inferred_ints.insert(local);
-        }
         hir::Stmt {
             kind: S::Let {
                 local,
@@ -215,26 +402,19 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Async closures run as tasks, possibly on another thread and after the enclosing function
-    /// has moved on: mutating a captured variable would be a data race (or lost), so it is an
-    /// error; shared state goes through `shared` (docs/reference/async.md).
-    pub(super) fn no_mutated_captures(&mut self, frame: &Frame) {
+    /// An async closure that may run on another thread copies its captures when it runs: none
+    /// may hold a weak collection.
+    fn no_captured_weak(&mut self, frame: &Frame) {
         for c in &frame.captures {
-            let Some(at) = c.mutated_at else { continue };
-            let name = frame.locals[c.inner.0 as usize].name.clone();
-            self.cx.error(
-                Diagnostic::error(
-                    format!("cannot mutate captured variable `{name}` in a spawned task (async closure)"),
-                    at,
-                )
-                .with_note(format!(
-                    "tasks may run concurrently on other threads; share it with `shared` instead: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
-                )),
-            );
+            let l = &frame.locals[c.inner.0 as usize];
+            if self.cx.holds_weak(l.ty) {
+                let (ty, name, at) = (l.ty, l.name.clone(), l.span);
+                self.no_weak_copy(ty, crate::body::GenCopy::Capture(name), at);
+            }
         }
     }
 
-    /// An async closure copies its captures when it runs: none may hold a generator.
+    /// A generator function expression captures no generator (nor weak collection).
     pub(super) fn no_captured_generators(&mut self, frame: &Frame) {
         for c in &frame.captures {
             let l = &frame.locals[c.inner.0 as usize];
@@ -243,7 +423,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(super) fn alloc_closure(&mut self, span: Span) -> DefId {
+    pub(crate) fn alloc_closure(&mut self, span: Span) -> DefId {
         let n = self
             .cx
             .closure_counts
@@ -254,34 +434,61 @@ impl FnCx<'_, '_> {
         let mut info = fn_placeholder(name, span, span, self.module, FnKind::Closure, None);
         info.generics.names = self.env.params.clone();
         info.generics.bounds = self.bounds.clone();
+        info.generics.constraints = self.constraints.clone();
         info.generics
             .bounds
             .resize(info.generics.names.len(), vec![]);
         info.state = BodyState::Done;
-        self.cx.alloc_def(span, DefInfo::Fn(Box::new(info)))
+        let info = DefInfo::Fn(Box::new(info));
+        // A check after a rollback creates the same closures again (`recheck`).
+        let def = match crate::body::recheck::reuse_closure(self.cx) {
+            Some(d) => {
+                self.cx.redefine_closure(d, span, info);
+                d
+            }
+            None => self.cx.alloc_def(span, info),
+        };
+        self.cx.closure_defs.push(def);
+        def
     }
 
     fn closure_body(&mut self, body: &ast::ArrowBody, span: Span) -> hir::Block {
         match body {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
-                    Some(r) => self.expr_coerce(e, r, Want::Move),
+                    Some(_) if self.f.discards_value => self.expr_stmt(e),
+                    // `(): void => void e` is `e;`, as in TypeScript.
+                    Some(r) if r == self.cx.ty.unit && void_op(e).is_some() => {
+                        self.expr_stmt(void_op(e).unwrap_or(e))
+                    }
+                    Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
+                };
+                let h = match (self.f.ret, self.promise_value(h.ty)) {
+                    // An async arrow giving a promise: its result is the promise's value.
+                    (None, Some(t)) => {
+                        self.f.ret = Some(t);
+                        self.inferred_promise_return(h, t)
+                    }
+                    _ => h,
                 };
                 if self.f.ret.is_none() {
                     self.f.ret = Some(h.ty);
                 }
                 let hs = h.span;
-                let kind = if h.ty == self.cx.ty.unit {
+                let adopt = std::mem::take(&mut self.f.adopt_stmt);
+                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value || adopt {
                     S::Expr(h)
                 } else {
                     S::Return(Some(h))
                 };
-                hir::Block {
+                let mut block = hir::Block {
                     stmts: vec![hir::Stmt { kind, span: hs }],
                     value: None,
                     span: e.span,
-                }
+                };
+                self.wrap_adopted(&mut block);
+                block
             }
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
@@ -293,12 +500,10 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => {
-                        self.finish_inferred_ret(&mut block, "this arrow function")
-                            .0
-                    }
+                    None => self.finish_inferred_ret(&mut block),
                 };
-                self.check_returns("closure", ret, span, &block);
+                self.check_returns("closure", ret, span, &mut block);
+                self.wrap_adopted(&mut block);
                 block
             }
         }
@@ -311,6 +516,11 @@ impl FnCx<'_, '_> {
         for c in &frame.captures {
             let ty = frame.locals[c.inner.0 as usize].ty;
             let copy = self.cx.is_copy(ty);
+            // A `const` captured while its initializer runs, and its flag: the cell itself,
+            // which closures created inside this one share too (`late_consts`).
+            let late = frame.late.caps.contains_key(&c.inner)
+                || frame.late.caps.values().any(|r| *r == c.inner);
+            let escaping = escaping || late && !c.mutated;
             let mode = match (escaping, c.mutated, copy) {
                 (false, true, _) => PassMode::BorrowMut,
                 (false, false, true) => PassMode::Copy,
@@ -356,6 +566,16 @@ impl FnCx<'_, '_> {
             generator,
             span,
         } = c;
+        // A variable this closure modifies that the enclosing closure captured is modified by
+        // that one too (#913): a handler or timer callback whose own closure assigns its capture
+        // must stay on its task (`crate::ownership::local_async`).
+        for c in &frame.captures {
+            if let Some(at) = c.mutated_at {
+                if let Some(p) = self.f.captures.iter_mut().find(|p| p.inner == c.outer) {
+                    p.mutated_at.get_or_insert(at);
+                }
+            }
+        }
         let order = local_order(&frame, &captures, &declared);
         let mut map = vec![LocalId(0); order.len()];
         for (new, old) in order.iter().enumerate() {
@@ -412,6 +632,7 @@ impl FnCx<'_, '_> {
             is_generator: generator.is_some(),
             self_ty: None,
             captures,
+            shares_captures: false,
             body: hir::Body { locals, block },
             throws: None,
             span,
@@ -488,4 +709,18 @@ fn closure_assigned_in(
         }
     };
     crate::body::closure_assigned::owned(assigned)
+}
+
+/// The captured variables a closure's body modifies, with the first place each is
+/// modified. They are only allowed when the closure stays on its task
+/// (`crate::ownership::local_async`).
+fn mutated_captures(frame: &Frame) -> Vec<(String, Span)> {
+    frame
+        .captures
+        .iter()
+        .filter_map(|c| {
+            let at = c.mutated_at?;
+            Some((frame.locals[c.inner.0 as usize].name.clone(), at))
+        })
+        .collect()
 }

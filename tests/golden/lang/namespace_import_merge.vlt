@@ -1,0 +1,31 @@
+// A namespace of types named like a type or value import merges with it, as in TypeScript:
+// the bare name is the import, `N.T` the namespace's member.
+import { N, type Q, v } from "./_namespace_import_merge_lib.vlt";
+import type { P } from "./_namespace_import_merge_lib.vlt";
+import { Q as R } from "./_namespace_import_merge_lib.vlt";
+
+namespace N {
+  export type T = string;
+}
+namespace P {
+  export type T = boolean;
+}
+namespace Q {
+  export type T = number;
+}
+namespace R.Inner {
+  export type U = string;
+}
+declare namespace v {
+  type T = string;
+}
+
+const n: N = 1;
+const t: N.T = "s";
+const p: P = "p";
+const pt: P.T = true;
+const q: Q.T = 3;
+const r: R = false;
+const ru: R.Inner.U = "u";
+const vt: v.T = "y";
+console.log(n, t, p, pt, q, r, ru, vt, v);

@@ -1,0 +1,78 @@
+// std/jsx/attrs/mathml: attribute types of MathML Core elements (each is `MathAttrs`, the
+// attributes every MathML element accepts, `&` its own; public as `velt:jsx/attrs`).
+
+import type { Style } from "velt:jsx/node";
+
+/** The attributes of MathML elements that have no others (`<mi>`, `<mrow>`, `<msqrt>`, …). */
+export type MathAttrs = {
+  autofocus?: bool;
+  class?: string;
+  dir?: string;
+  displaystyle?: "true" | "false";
+  id?: string;
+  lang?: string;
+  mathbackground?: string;
+  mathcolor?: string;
+  mathsize?: string;
+  mathvariant?: string;
+  nonce?: string;
+  role?: string;
+  scriptlevel?: string | i64 | f64;
+  style?: string | Style;
+  tabindex?: string | i64 | f64;
+};
+
+/** `<math>`. */
+export type MathRootAttrs = MathAttrs & { display?: string; xmlns?: string; alttext?: string };
+
+/** `<mo>`. */
+export type MoAttrs = MathAttrs & {
+  form?: string;
+  fence?: "true" | "false";
+  separator?: "true" | "false";
+  lspace?: string | i64 | f64;
+  rspace?: string | i64 | f64;
+  stretchy?: "true" | "false";
+  symmetric?: "true" | "false";
+  maxsize?: string | i64 | f64;
+  minsize?: string | i64 | f64;
+  largeop?: "true" | "false";
+  movablelimits?: "true" | "false";
+};
+
+/** `<mfrac>`. */
+export type MfracAttrs = MathAttrs & { linethickness?: string | i64 | f64 };
+
+/** `<mspace>`. */
+export type MspaceAttrs = MathAttrs & {
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  depth?: string | i64 | f64;
+};
+
+/** `<mpadded>`. */
+export type MpaddedAttrs = MathAttrs & {
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  depth?: string | i64 | f64;
+  lspace?: string | i64 | f64;
+  voffset?: string | i64 | f64;
+};
+
+/** `<munder>`, `<mover>` and `<munderover>`. */
+export type MunderoverAttrs = MathAttrs & {
+  accent?: "true" | "false";
+  accentunder?: "true" | "false";
+};
+
+/** `<mtd>`. */
+export type MtdAttrs = MathAttrs & {
+  columnspan?: string | i64 | f64;
+  rowspan?: string | i64 | f64;
+};
+
+/** `<annotation>`. */
+export type AnnotationAttrs = MathAttrs & { encoding?: string };
+
+/** `<maction>`. */
+export type MactionAttrs = MathAttrs & { actiontype?: string; selection?: string | i64 | f64 };

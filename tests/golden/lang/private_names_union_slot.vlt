@@ -1,0 +1,34 @@
+// `o.#x` in `B`'s body names `B`'s `#x` on every member of a union receiver, also on a subclass
+// `C` that declares its own `#x`, and never the base `A`'s `#x` (each class's `#x` is its own
+// slot).
+class A {
+  #x: string = "A";
+  readA(): string {
+    return this.#x;
+  }
+}
+
+class B extends A {
+  #x: string;
+  constructor(x: string) {
+    super();
+    this.#x = x;
+  }
+  read(o: B | C): string {
+    return o.#x;
+  }
+}
+
+class C extends B {
+  #x: string = "C";
+  readC(): string {
+    return this.#x;
+  }
+}
+
+function main() {
+  const b = new B("b1");
+  const c = new C("b2");
+  console.log(b.read(b), b.read(c), c.read(c));
+  console.log(c.readA(), c.readC());
+}

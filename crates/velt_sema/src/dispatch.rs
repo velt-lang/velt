@@ -85,7 +85,7 @@ impl Dispatch {
             for m in methods {
                 let a = if cx.iface(owner(cx, m)).is_some() {
                     let mut a: Vec<TyId> =
-                        iface_args.iter().map(|t| cx.ty.subst(*t, &cargs)).collect();
+                        iface_args.iter().map(|t| cx.subst(*t, &cargs)).collect();
                     a.push(cx.ty.intern(TyKind::Adt(c, cargs.clone())));
                     Some(a)
                 } else {
@@ -107,7 +107,7 @@ pub(crate) fn instantiate(cx: &mut Ctx, need: TyId, args: &[TyId]) -> Option<TyI
     collect_params(&cx.ty, need, &mut ps);
     ps.iter()
         .all(|p| (*p as usize) < args.len())
-        .then(|| cx.ty.subst(need, args))
+        .then(|| cx.subst(need, args))
 }
 
 /// `Ctx::impls` indices per implementing struct or class.
@@ -128,7 +128,7 @@ fn push(out: &mut Vec<Target>, t: Target) {
 }
 
 /// `(d, args)` followed by its base classes with their (substituted) arguments.
-fn class_chain(cx: &mut Ctx, d: DefId, args: Vec<TyId>) -> Vec<(DefId, Vec<TyId>)> {
+pub(crate) fn class_chain(cx: &mut Ctx, d: DefId, args: Vec<TyId>) -> Vec<(DefId, Vec<TyId>)> {
     let mut chain = vec![(d, args)];
     while chain.len() < 64 {
         let (c, a) = chain
@@ -138,7 +138,7 @@ fn class_chain(cx: &mut Ctx, d: DefId, args: Vec<TyId>) -> Vec<(DefId, Vec<TyId>
         let Some(base) = cx.adt(c).and_then(|x| x.base) else {
             break;
         };
-        let base = cx.ty.subst(base, &a);
+        let base = cx.subst(base, &a);
         let Some(next) = cx.class_of(base) else { break };
         chain.push(next);
     }
@@ -198,6 +198,15 @@ impl Rounds {
         }
         self.at = self.current.pop_first()?;
         Some(self.at)
+    }
+
+    /// The function at `reader` reads `d`'s requirements too (a dependency found during a
+    /// visit: `inst_sites::resolve_param_calls`).
+    pub(crate) fn read(&mut self, reader: usize, d: DefId) {
+        let rs = self.readers.entry(d).or_default();
+        if !rs.contains(&reader) {
+            rs.push(reader);
+        }
     }
 
     /// The requirements of `d` grew while visiting the current function.

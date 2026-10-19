@@ -1,0 +1,23 @@
+// A function nested in a method is in that class's body only: not in a subclass's, nor in an
+// unrelated class's.
+class A {
+  #x: number = 1;
+  private y: number = 2;
+}
+class B extends A {
+  m(o: A): number {
+    function f(p: A): number { return p.#x; }
+    return f(o);
+  }
+}
+class C {
+  m(o: A): number {
+    function g(p: A): number { return p.y; }
+    return g(o);
+  }
+}
+function outside(o: A): number {
+  function h(p: A): number { return p.y; }
+  return h(o);
+}
+console.log(new B().m(new A()), new C().m(new A()), outside(new A()));

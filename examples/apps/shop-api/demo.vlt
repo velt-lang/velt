@@ -1,0 +1,71 @@
+// A scripted session against a small seeded shop (golden: demo.out): what each request answers.
+// It calls `route` directly; src/server.vlt serves the same function over HTTP.
+import { route } from "./src/api";
+import { Store } from "./src/store";
+
+function call(store: Store, method: string, target: string, body: string = "") {
+  const q = target.indexOf("?");
+  const path = q < 0 ? target : target.slice(0, q);
+  const query = q < 0 ? "" : target.slice(q + 1);
+  const res = route(store, method, path, query, body);
+  console.log(`${method} ${target} → ${res.status}`);
+  console.log(`  ${res.body}`);
+}
+
+function main() {
+  const shop = Store.seeded(7u32, 12, 30);
+  call(shop, "GET", "/health");
+  call(shop, "GET", "/products/3");
+  call(shop, "GET", "/products?category=kitchen&sort=-price&limit=2");
+  call(shop, "GET", "/products?q=WATERPROOF&inStock=true&limit=1&page=2");
+  call(shop, "GET", "/products?sort=cheapest");
+  call(shop, "GET", "/products/x1");
+  call(
+    shop,
+    "POST",
+    "/products",
+    "{\"name\":\" Pour-over Kettle \",\"category\":\"coffee\",\"brand\":\"Fjord\",\"tags\":[\"Gift\",\"gift\",\"steel\"],\"variants\":[{\"sku\":\"KET-1\",\"color\":\"steel\",\"size\":\"M\",\"stock\":3,\"price\":{\"amount\":4500,\"currency\":\"EUR\"}}]}",
+  );
+  call(
+    shop,
+    "POST",
+    "/products",
+    "{\"name\":\"Kettle\",\"category\":\"coffee\",\"brand\":\"Fjord\",\"variants\":[{\"sku\":\"KET-1\",\"color\":\"red\",\"size\":\"M\",\"stock\":1,\"price\":{\"amount\":4500,\"currency\":\"EUR\"}}]}",
+  );
+  call(
+    shop,
+    "POST",
+    "/products",
+    "{\"name\":\"Kettle\",\"category\":\"coffee\",\"brand\":\"Fjord\",\"variants\":[{\"sku\":\"KET-2\",\"color\":\"red\",\"size\":\"M\",\"stock\":\"many\",\"price\":{\"amount\":4500,\"currency\":\"EUR\"}}]}",
+  );
+  call(
+    shop,
+    "POST",
+    "/products/bulk",
+    "[{\"name\":\"Mug\",\"category\":\"kitchen\",\"brand\":\"Ivy\",\"variants\":[{\"sku\":\"MUG-1\",\"color\":\"white\",\"size\":\"S\",\"stock\":40,\"price\":{\"amount\":1200,\"currency\":\"EUR\"}}]},{\"name\":\"Plate\",\"category\":\"dishes\",\"brand\":\"Ivy\",\"variants\":[{\"sku\":\"PLT-1\",\"color\":\"white\",\"size\":\"M\",\"stock\":5,\"price\":{\"amount\":900,\"currency\":\"EUR\"}}]},{\"name\":\"Cup\",\"category\":\"kitchen\",\"brand\":\"Ivy\",\"variants\":[{\"sku\":\"MUG-1\",\"color\":\"blue\",\"size\":\"S\",\"stock\":5,\"price\":{\"amount\":800,\"currency\":\"EUR\"}}]}]",
+  );
+  call(
+    shop,
+    "PATCH",
+    "/products/13",
+    "{\"description\":\"Slow coffee, fast mornings.\",\"attributes\":{\"material\":\"steel\"},\"tags\":[\"Coffee\"]}",
+  );
+  call(shop, "PATCH", "/products/13", "{\"name\":\"\",\"active\":false}");
+  const order = (
+    lines: string,
+  ) => `{"customer":{"id":9,"name":"Ada","email":"ada@example.com"},"items":${lines},"shipping":{"line1":"1 Main Street","city":"Oslo","postalCode":"0150","country":"NO"}}`;
+  call(
+    shop,
+    "POST",
+    "/orders",
+    order("[{\"sku\":\"KET-1\",\"quantity\":2},{\"sku\":\"MUG-1\",\"quantity\":30}]"),
+  );
+  call(shop, "POST", "/orders", order("[{\"sku\":\"KET-1\",\"quantity\":2}]"));
+  call(shop, "POST", "/orders", order("[{\"sku\":\"NOPE\",\"quantity\":1}]"));
+  call(shop, "POST", "/orders/31/status", "{\"status\":\"shipped\"}");
+  call(shop, "POST", "/orders/31/status", "{\"status\":\"cancelled\"}");
+  call(shop, "GET", "/products/13");
+  call(shop, "GET", "/orders?customer=9");
+  call(shop, "GET", "/stats");
+  call(shop, "DELETE", "/orders/31");
+}

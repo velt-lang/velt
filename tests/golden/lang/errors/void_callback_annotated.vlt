@@ -1,0 +1,19 @@
+// A result is dropped only where `void` comes from the expected function type: an arrow or a
+// function declared `: void` that returns a value is an error, as in TypeScript.
+function each(xs: string[], f: (s: string) => void) {
+  for (const x of xs) {
+    f(x);
+  }
+}
+
+function done(): void {
+  return 1;
+}
+
+function main() {
+  each(["a"], (s): void => s.length);
+  each(["b"], (s): void => {
+    return 2;
+  });
+  done();
+}

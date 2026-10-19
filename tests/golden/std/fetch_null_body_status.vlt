@@ -1,0 +1,7 @@
+// A body with a status that has none (204, 205, 304) stops the program with Node's TypeError
+// message (a programming error, like an index out of bounds); a null body is fine.
+function main() {
+  console.log(new Response(null, { status: 204 }).status);
+  const r = new Response("", { status: 204 });
+  console.log("unreachable", r.status);
+}

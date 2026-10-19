@@ -79,6 +79,8 @@ fn velt_class(ty: &str) -> String {
         "i8" | "i16" | "i32" | "i64" | "u16" | "u32" | "u64" | "f32" | "f64" => ty.to_string(),
         "bool" | "u8" => "u8".to_string(),
         "number" => "f64".to_string(),
+        // The address of a symbol record (rt_abi.md "Symbols").
+        "symbol" => "ptr".to_string(),
         "" | "void" | "never" => "void".to_string(),
         _ => "agg".to_string(),
     }
@@ -235,6 +237,11 @@ fn render((params, ret): &Sig) -> String {
 fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> Vec<String> {
     let mut out = vec![];
     for (name, (want, velt_path)) in velt_declarations() {
+        // The SIMD operations are emitted inline by the backends (rt_abi.md "SIMD"): no
+        // runtime defines them. `velt_vir`'s `simd` tests check their declarations.
+        if name.starts_with("velt_simd_") {
+            continue;
+        }
         let Some(found) = defs.get(&name) else {
             if required {
                 out.push(format!(
@@ -283,6 +290,84 @@ fn std_declarations_match_velt_rt_wasm() {
         "{} mismatches:\n{}",
         bad.len(),
         bad.join("\n")
+    );
+}
+
+/// The velt_rt sources velt_rt_wasm compiles through `#[path = "…"]` (a mirrored `mod.rs`
+/// brings its whole directory).
+fn mirrored_sources() -> Vec<PathBuf> {
+    let mut out = vec![];
+    for own in runtime_sources("velt_rt_wasm") {
+        let text = std::fs::read_to_string(&own).expect("read runtime source");
+        let dir = own.parent().expect("source directory");
+        for line in text.lines() {
+            let Some(rel) = line
+                .trim()
+                .strip_prefix("#[path = \"")
+                .and_then(|r| r.strip_suffix("\"]"))
+            else {
+                continue;
+            };
+            let path = dir
+                .join(rel)
+                .canonicalize()
+                .expect("mirrored source exists");
+            if path.file_name().is_some_and(|n| n == "mod.rs") {
+                files(path.parent().expect("module directory"), "rs", &mut out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// velt_rt files in mirrored directories that are not on wasm yet: `std/fs_stream`
+/// (its reads run on velt_rt's blocking pool).
+const NATIVE_ONLY: &[&str] = &["fs/stream.rs"];
+
+/// A velt_rt directory velt_rt_wasm mirrors part of (`json/`, `fs/`) is portable code: every
+/// symbol std declares from a file there must be linkable on wasm too, mirrored or defined by
+/// velt_rt_wasm itself (a missing symbol fails only when a wasm program calls it), except in
+/// the files of `NATIVE_ONLY`.
+#[test]
+fn velt_rt_wasm_defines_what_mirrored_directories_export() {
+    let mirrored = mirrored_sources();
+    let mut wasm_sources = runtime_sources("velt_rt_wasm");
+    wasm_sources.extend(mirrored.iter().cloned());
+    let wasm = rust_definitions(&wasm_sources);
+    let src = repo()
+        .join("crates/velt_rt/src")
+        .canonicalize()
+        .expect("velt_rt sources");
+    let dirs: Vec<PathBuf> = mirrored
+        .iter()
+        .filter_map(|p| p.parent().map(Path::to_path_buf))
+        .filter(|d| *d != src)
+        .collect();
+    let decls = velt_declarations();
+    let native = rust_definitions(&runtime_sources("velt_rt"));
+    let mut missing = vec![];
+    for (name, defs) in &native {
+        if !decls.contains_key(name) || wasm.contains_key(name) {
+            continue;
+        }
+        for (_, path) in defs {
+            let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let native_only = NATIVE_ONLY.iter().any(|f| path.ends_with(f));
+            if !native_only && path.parent().is_some_and(|d| dirs.iter().any(|m| *m == d)) {
+                missing.push(format!("{name}: defined in {}", short(&path)));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "not linkable on wasm (mirror the file in velt_rt_wasm):
+{}",
+        missing.join(
+            "
+"
+        )
     );
 }
 

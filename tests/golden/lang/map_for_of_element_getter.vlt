@@ -1,0 +1,69 @@
+// `for...of` over a map reached through an array element, a getter or a call iterates the live
+// map, as in JS: entries the body adds are visited, deleted ones are not, and replacing the
+// element or the getter's field goes on iterating the original map (#877).
+class Holder {
+  private _m: Map<number, string> = new Map([[1, "a"], [2, "b"], [3, "c"]]);
+  get m(): Map<number, string> {
+    return this._m;
+  }
+  replace() {
+    this._m = new Map([[100, "z"]]);
+  }
+}
+
+function main() {
+  const ms: Map<number, number>[] = [new Map([[1, 1], [2, 2], [3, 3]])];
+  const seen: number[] = [];
+  for (const [k, v] of ms[0]) {
+    seen.push(k + v);
+    if (k === 1) ms[0].set(4, 4);
+    if (k === 2) ms[0].delete(3);
+  }
+  console.log(seen.join(","));
+
+  const vals: number[] = [];
+  for (const v of ms[0].values()) {
+    vals.push(v);
+    if (v === 4) ms[0].set(9, 9);
+  }
+  console.log(vals.join(","));
+
+  const old: number[] = [];
+  for (const k of ms[0].keys()) {
+    old.push(k);
+    if (k === 1) ms[0] = new Map([[50, 50]]);
+  }
+  console.log(old.join(","), [...ms[0].keys()].join(","));
+
+  const h = new Holder();
+  const keys: string[] = [];
+  for (const [k, v] of h.m.entries()) {
+    keys.push(`${k}${v}`);
+    if (k === 2) h.m.set(7, "g");
+  }
+  console.log(keys.join(","));
+
+  const kept: number[] = [];
+  for (const [k, _v] of h.m) {
+    kept.push(k);
+    if (k === 1) h.replace();
+  }
+  console.log(kept.join(","), [...h.m.keys()].join(","));
+
+  const maps: Map<string, number>[] = [new Map([["x", 1]])];
+  const shared = (): Map<string, number> => maps[0];
+  const names: string[] = [];
+  for (const [k, v] of shared()) {
+    names.push(`${k}=${v}`);
+    if (k === "x") shared().set("y", 2);
+  }
+  console.log(names.join(" "));
+
+  const grid: Map<number, number>[][] = [[new Map([[0, 0]])]];
+  let steps = 0;
+  for (const [k, v] of grid[0][0]) {
+    steps += v;
+    if (k < 5) grid[0][0].set(k + 1, k + 1);
+  }
+  console.log(steps, grid[0][0].size);
+}

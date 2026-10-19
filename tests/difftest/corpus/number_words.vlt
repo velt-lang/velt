@@ -1,18 +1,18 @@
 // Spelling out numbers in English words. (Word tables come from functions: a module-level
 // `const` array is not a constant expression in Velt.)
-function ones(i: i64): string {
+function ones(i: number): string {
   const words = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split(
     " ",
   );
   return `${words[i as usize]}`;
 }
 
-function tens(i: i64): string {
+function tens(i: number): string {
   const words = ",,twenty,thirty,forty,fifty,sixty,seventy,eighty,ninety".split(",");
   return `${words[i as usize]}`;
 }
 
-function words(n: i64): string {
+function words(n: number): string {
   if (n < 20) {
     return ones(n);
   }

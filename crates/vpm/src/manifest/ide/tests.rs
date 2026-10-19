@@ -23,6 +23,7 @@ fn top_level_keys_not_yet_written() {
         labels("{ name: \"a\", | }"),
         [
             "version",
+            "velt",
             "description",
             "keywords",
             "entry",
@@ -30,6 +31,7 @@ fn top_level_keys_not_yet_written() {
             "dependencies",
             "paths",
             "jsx",
+            "define",
             "native",
             "tsCompat"
         ]

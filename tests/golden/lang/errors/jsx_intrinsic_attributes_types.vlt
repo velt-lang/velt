@@ -1,0 +1,13 @@
+// @jsxImportSource ./_jsx_attrs_types
+
+// The provider's `jsxComponentAttributes` parameters and `IntrinsicAttributes` field types are
+// checked once, when the provider is loaded: one error each, however many elements use them.
+
+function Card(props: { n: number }): JSX.Element {
+  return <p>{props.n}</p>;
+}
+
+function main() {
+  const a = <Card client:load n={1} />;
+  const b = <Card client:load n={2} />;
+}

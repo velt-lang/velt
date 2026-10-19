@@ -1,0 +1,10 @@
+// `replaceAll` with a regex without the `g` flag that is not known while compiling: Node's
+// TypeError.
+function replaceEvery(s: string, re: RegExp): string {
+  return s.replaceAll(re, "b");
+}
+
+function main() {
+  console.log(replaceEvery("aa", /a/g));
+  console.log(replaceEvery("aa", /a/));
+}

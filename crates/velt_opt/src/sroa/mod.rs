@@ -66,7 +66,12 @@ fn split_once(aggs: &[AggLayout], func: &mut Function) -> bool {
         for (f, &(ty, _)) in layout.fields.iter().enumerate() {
             let l = Local(func.locals.len() as u32);
             let name = base.as_ref().map(|n| format!("{n}.{f}"));
-            func.locals.push(LocalDecl { ty, name });
+            // A field of the variable is not the variable: no debug description (only release
+            // builds split locals, and they describe none).
+            func.locals.push(LocalDecl {
+                debug: None,
+                ..LocalDecl::new(ty, name)
+            });
             if cand.partial {
                 entry_inits.push(Stmt::Assign(Place::local(l), Rvalue::Use(zero(ty))));
             }
@@ -120,10 +125,10 @@ pub(crate) fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
                 _ => return false,
             },
             Ty::Unit => return false,
-            scalar => {
-                let n = scalar.scalar_size().unwrap_or(0);
-                (n, n)
-            }
+            scalar => (
+                scalar.scalar_size().unwrap_or(0),
+                scalar.scalar_align().unwrap_or(1),
+            ),
         };
         fields.push((offset, size, align.max(1)));
     }

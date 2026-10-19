@@ -2,7 +2,6 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId};
 
-use super::expr::may_write;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -14,8 +13,11 @@ impl FnLower<'_, '_> {
     pub(super) fn intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         use Intrinsic as I;
         match (i, args) {
-            (I::Yield, [a]) => self.yield_value(a),
+            (I::Yield, [a, rest @ ..]) => self.yield_value(a, rest.first(), ty),
             (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
+            (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
+            (I::YieldDelegate, [g]) => self.yield_delegate(g),
             (I::GeneratorValue, [g]) => self.gen_value(g),
             (I::GeneratorReturn, [g]) => self.gen_return(g),
             (I::AsyncGeneratorValue, [g]) => self.gen_value(g),
@@ -35,8 +37,23 @@ impl FnLower<'_, '_> {
                 self.gen_embed_value(&e)
             }
             (I::Print, _) => self.print(1, args),
+            (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
+            (I::SymbolRegistry, []) => self.symbol_registry(),
+            (I::FieldAbsent, []) => {
+                // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
+                let t = self.sub(ty);
+                self.none_value(t)
+            }
+            (I::FieldPresent, [f]) => {
+                let p = self.place_expr(f);
+                match self.presence_place(f, &p) {
+                    Some(fp) => Operand::Copy(fp),
+                    None => ice("`FieldPresent` of a field without a presence flag"),
+                }
+            }
             (I::PrintErr, _) => self.print(2, args),
-            (I::ToString, [a]) => self.stringify(a, ty),
+            (I::ToString, [a]) => self.stringify(a, ty, false),
+            (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
                 let v = self.expr(a);
@@ -100,7 +117,48 @@ impl FnLower<'_, '_> {
             (I::NeedsDrop, [a]) => {
                 Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
             }
+            (I::MayAlias, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
+            }
+            (I::HoldsNull, [a]) => {
+                let t = self.sub(a.ty);
+                let holds = matches!(self.cx.kind(t), hir::TyKind::Option(..));
+                Operand::Const(crate::vir::Const::Bool(holds), Ty::Bool)
+            }
+            (I::NullAs, []) => {
+                let t = self.sub(ty);
+                if matches!(self.cx.kind(t), hir::TyKind::Option(..)) {
+                    return self.none_value(t);
+                }
+                // Behind a `HoldsNull` test that is false here: never runs.
+                self.panic_msg("ICE: null as a type without null");
+                let vt = self.cx.ty(t);
+                self.zero_value(vt)
+            }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
+            (I::ClosureSibling(def), []) => self.closure_sibling(def, ty),
+            (I::Truthy, [a]) => self.truthy_intrinsic(a),
+            (I::IsNull, [a]) => self.null_intrinsic(a, false),
+            (I::IsNullish, [a]) => self.null_intrinsic(a, true),
+            (I::MayHoldPrimitive, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
+            }
+            (I::AnyTo, [a]) => self.any_to(a, ty),
+            (I::AnyTypeof, [a]) => self.any_typeof(a),
+            (I::AnyGet, [o, k]) => self.any_get(o, k, ty),
+            (I::AnyIndex, [o, i]) => self.any_index(o, i, ty),
+            (I::AnyCall, [o, k, text, rest @ ..]) => self.any_call(o, Some(k), text, rest, ty),
+            (I::AnyApply, [f, text, rest @ ..]) => self.any_call(f, None, text, rest, ty),
+            (I::AnySet, [o, k, v]) => self.any_set(o, k, v, false),
+            (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
+            (I::AnyHas, [o, k]) => self.any_has(o, k),
+            (I::AnyIsArray, [a]) => self.any_is_array(a),
+            (I::AnyKeys, [o]) => self.any_keys(o, ty),
+            (I::AnyTruthy, [a]) => self.any_truthy(a),
+            (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
+            (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
@@ -116,6 +174,21 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 let (pa, pb) = self.two_places(a, b);
                 self.same_values(&pa, &pb, t)
+            }
+            (I::IncludesEq, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.includes_values(&pa, &pb, t)
+            }
+            (I::KeyEq, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.key_same_values(&pa, &pb, t)
+            }
+            (I::SameValue, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.same_value_values(&pa, &pb, t)
             }
             (I::Hash, [a]) => {
                 let t = self.sub(a.ty);
@@ -151,6 +224,16 @@ impl FnLower<'_, '_> {
             (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
+            (
+                I::WeakMapSet
+                | I::WeakMapGet
+                | I::WeakMapHas
+                | I::WeakMapDelete
+                | I::WeakMapValue
+                | I::WeakRefNew
+                | I::WeakRefDeref,
+                _,
+            ) => self.weak_intrinsic(i, args, ty),
             (I::ArrayDataPtr, [xs]) => {
                 let v = self.expr(xs);
                 let aty = self.sub(xs.ty);
@@ -167,15 +250,11 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Evaluate two operands to places (the first frozen if the second may write).
+    /// Evaluate two operands to places (the first held if the second may change it).
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
-        let va = self.expr(a);
-        let va = if may_write(b) {
-            self.freeze(va, a.ty)
-        } else {
-            va
-        };
+        let later = self.later_of(b);
+        let va = self.expr_held(a, later);
         let vb = self.expr(b);
         (self.place_of(va, ta), self.place_of(vb, tb))
     }

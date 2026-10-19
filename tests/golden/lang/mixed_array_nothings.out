@@ -1,0 +1,3 @@
+[ 1, null ] [ null, 1 ] [ 'u', undefined ] [ [ 1 ], [ 'a' ] ] [ 1, 'a', true ] [ null, undefined, 2 ] [ null, undefined ]
+true true 2 3 boolean
+[ null, undefined, 1 ]

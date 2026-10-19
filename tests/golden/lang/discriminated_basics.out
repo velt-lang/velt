@@ -3,7 +3,7 @@ rect 6 2 4
 square 4 2 4
 circle 0.75 1 0
 { kind: 'rect', w: 2, h: 3 }
-{ kind: 'square', side: 2 }
+[object Object]
 [{"kind":"circle","r":1},{"kind":"rect","w":2,"h":3},{"kind":"square","side":2},{"kind":"circle","r":0.5}]
 ok 7
 fail 404: missing

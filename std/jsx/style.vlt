@@ -1,0 +1,123 @@
+// std/jsx/style: the `style` attribute's object form (`style={{ color: c, fontSize: 12 }}`),
+// rendered with React's rules, so the value is react-dom 19's: `color:red;font-size:12px`.
+// Names are camelCase CSS properties written in kebab-case (`msTransition` is
+// `-ms-transition`; custom properties such as `--accent` stay as written), numbers get `px`
+// unless the property takes plain numbers (`lineHeight`, `opacity`, `zIndex`, …) or the number
+// is 0, strings are trimmed, and empty strings are left out.
+
+import type { Style } from "velt:jsx/node";
+
+// Does CSS property `name` take plain numbers (react-dom 19's `unitlessNumbers` list)?
+function unitless(name: string): boolean {
+  switch (name) {
+    case "animationIterationCount":
+    case "aspectRatio":
+    case "borderImageOutset":
+    case "borderImageSlice":
+    case "borderImageWidth":
+    case "boxFlex":
+    case "boxFlexGroup":
+    case "boxOrdinalGroup":
+    case "columnCount":
+    case "columns":
+    case "flex":
+    case "flexGrow":
+    case "flexPositive":
+    case "flexShrink":
+    case "flexNegative":
+    case "flexOrder":
+    case "gridArea":
+    case "gridRow":
+    case "gridRowEnd":
+    case "gridRowSpan":
+    case "gridRowStart":
+    case "gridColumn":
+    case "gridColumnEnd":
+    case "gridColumnSpan":
+    case "gridColumnStart":
+    case "fontWeight":
+    case "lineClamp":
+    case "lineHeight":
+    case "opacity":
+    case "order":
+    case "orphans":
+    case "scale":
+    case "tabSize":
+    case "widows":
+    case "zIndex":
+    case "zoom":
+    case "fillOpacity":
+    case "floodOpacity":
+    case "stopOpacity":
+    case "strokeDasharray":
+    case "strokeDashoffset":
+    case "strokeMiterlimit":
+    case "strokeOpacity":
+    case "strokeWidth":
+    // The vendor-prefixed names React lists (`WebKitBoxFlexGroup` is spelled as React spells it).
+    case "MozAnimationIterationCount":
+    case "MozBoxFlex":
+    case "MozBoxFlexGroup":
+    case "MozLineClamp":
+    case "msAnimationIterationCount":
+    case "msFlex":
+    case "msZoom":
+    case "msFlexGrow":
+    case "msFlexNegative":
+    case "msFlexOrder":
+    case "msFlexPositive":
+    case "msFlexShrink":
+    case "msGridColumn":
+    case "msGridColumnSpan":
+    case "msGridRow":
+    case "msGridRowSpan":
+    case "WebkitAnimationIterationCount":
+    case "WebkitBoxFlex":
+    case "WebKitBoxFlexGroup":
+    case "WebkitBoxOrdinalGroup":
+    case "WebkitColumnCount":
+    case "WebkitColumns":
+    case "WebkitFlex":
+    case "WebkitFlexGrow":
+    case "WebkitFlexPositive":
+    case "WebkitFlexShrink":
+    case "WebkitLineClamp":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** The declarations of `style`, in insertion order, separated by `;` (no spaces). */
+export function renderStyle(style: Style): string {
+  let out = "";
+  for (const [name, value] of Object.entries(style)) {
+    let text = "";
+    if (typeof value === "string") {
+      text = value.trim();
+      if (text == "") {
+        continue;
+      }
+    } else if (value == 0 || name.startsWith("--") || unitless(name)) {
+      text = `${value}`;
+    } else {
+      text = `${value}px`;
+    }
+    const sep = out == "" ? "" : ";";
+    out += `${sep}${cssName(name)}:${text}`;
+  }
+  return out;
+}
+
+// `fontSize` as `font-size`; `--custom` as it is; a leading `ms-` becomes `-ms-`.
+function cssName(name: string): string {
+  if (name.startsWith("--")) {
+    return name;
+  }
+  let out = "";
+  for (const ch of name) {
+    const lower = ch.toLowerCase();
+    out += lower == ch ? ch : `-${lower}`;
+  }
+  return out.startsWith("ms-") ? `-${out}` : out;
+}

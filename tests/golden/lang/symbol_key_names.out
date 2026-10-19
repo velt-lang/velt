@@ -1,0 +1,3 @@
+{ '[x]': 3, '[Symbol(k)]': 2 } 2 3 [ '[x]', '[Symbol(k)]' ] {"[x]":3,"[Symbol(k)]":2}
+false 1 false
+{ '[Symbol(k)]': 1, [Symbol(k)]: 2 } 1 2 {"[Symbol(k)]":1}

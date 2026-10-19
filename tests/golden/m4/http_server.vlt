@@ -1,18 +1,19 @@
 // check: no leaks
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const hits = shared(0);
   const counter = hits.clone();
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     counter.add(1);
-    if (req.path == "/json") {
-      return Response.json({ path: req.path, method: req.method, n: counter.get() });
+    const path = new URL(req.url).pathname;
+    if (path == "/json") {
+      return Response.json({ path: path, method: req.method, n: counter.get() });
     }
-    if (req.path == "/echo") {
-      return Response.text(`got ${req.body}`);
+    if (path == "/echo") {
+      return new Response(`got ${await req.text()}`);
     }
-    return Response.text("not found", 404);
+    return new Response("not found", { status: 404 });
   });
 
   const base = `http://127.0.0.1:${server.port}`;

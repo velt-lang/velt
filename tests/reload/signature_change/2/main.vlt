@@ -1,5 +1,5 @@
 // A changed signature restarts: frames on the stack would call the new code with the old ABI.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 function greet(name: string, times: number): string {
   return `hello ${name} x${times}`;
@@ -7,7 +7,7 @@ function greet(name: string, times: number): string {
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    return Response.text(greet("v2", 2));
+    return new Response(greet("v2", 2));
   });
   console.log(`listening on ${server.port}`);
   await sleep(1000000000);

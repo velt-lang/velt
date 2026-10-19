@@ -1,0 +1,59 @@
+// check: no leaks
+// Borrowing in a held closure or through `const me = this` only changes the cost: where it
+// would make a caller's borrow check fail, the closure and `me` share instead, so the program
+// is accepted and prints what Node prints.
+
+class Bag {
+  items: number[] = [10, 30];
+  clear(): void {
+    const me = this;
+    me.items = [1];
+  }
+}
+
+class Pile {
+  items: number[] = [5, 6, 7];
+  clear(): void {
+    const wipe = () => {
+      this.items = [2, 3];
+    };
+    wipe();
+  }
+}
+
+class Tags {
+  items: string[] = [];
+  add(tag: string): void {
+    const put = () => {
+      this.items.push(tag);
+    };
+    put();
+    put();
+  }
+}
+
+function main() {
+  // A loop over `c.items` while a method replaces `c.items` through `me`.
+  const c = new Bag();
+  let sum: number = 0;
+  for (const it of c.items) {
+    c.clear();
+    sum += it;
+  }
+  console.log(sum, c.items.length);
+
+  // The same through a held closure.
+  const p = new Pile();
+  let total: number = 0;
+  for (const it of p.items) {
+    p.clear();
+    total += it;
+  }
+  console.log(total, p.items.length);
+
+  // A method whose held closure changes `this.items`, called with an element of it.
+  const a = new Tags();
+  a.items.push("x");
+  a.add(a.items[0]);
+  console.log(a.items.join(","));
+}

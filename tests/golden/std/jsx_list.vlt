@@ -1,0 +1,41 @@
+// Lists and numbers in precompiled templates (#77): `{xs.map((x) => <li>…</li>)}` with rows
+// without slots is built from strings (`jsxList`), and a number child is written `${n}`; both
+// render as the generic lowering does, including empty lists, nested lists, lists next to text
+// and the formatting of `NaN`, `Infinity`, `-0`, `1e21` and `0.1 + 0.2`.
+
+import { renderToStringSync } from "velt:jsx";
+import * as precompiled from "./_jsx_list_page";
+import * as generic from "./_jsx_list_page_generic";
+
+function main() {
+  const xs = ["a", "<b>", "c's"];
+  const ns: i64[] = [1, -2, 9007199254740993];
+  const fs: f64[] = [1.5, -0.0, 1e21, 1 / 0, 0 / 0, 0.1 + 0.2];
+  for (const input of [["a", "b"], ["a", "!"]]) {
+    try {
+      console.log(renderToStringSync(precompiled.throwing(input)));
+    } catch (e) {
+      console.log(`threw: ${e.message}`);
+    }
+    try {
+      console.log(renderToStringSync(generic.throwing(input)));
+    } catch (e) {
+      console.log(`threw: ${e.message}`);
+    }
+  }
+  console.log(renderToStringSync(precompiled.captured(xs)));
+  console.log(renderToStringSync(generic.captured(xs)));
+  const a = precompiled.cases(xs, ns, fs);
+  const b = generic.cases(xs, ns, fs);
+  a.reverse();
+  b.reverse();
+  while (a.length > 0) {
+    const x = a.pop();
+    const y = b.pop();
+    if (x != null && y != null) {
+      const s = renderToStringSync(x);
+      const t = renderToStringSync(y);
+      console.log(s == t ? s : `different:\n  ${s}\n  ${t}`);
+    }
+  }
+}

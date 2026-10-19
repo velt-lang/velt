@@ -65,7 +65,7 @@ class Pair<T> extends Box<T> {
   constructor(a: T, b: T) {
     super(a);
     this.items.push(b);
-    this.count = this.items.length;
+    this.count = this.items.length as usize;
   }
 }
 

@@ -1,0 +1,1 @@
+jsx_intrinsic_attributes_not_object.vlt:6:13: error: `JSX.IntrinsicAttributes` of the JSX provider '_jsx_attrs_bad' must be an object type

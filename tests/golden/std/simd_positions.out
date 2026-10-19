@@ -1,0 +1,13 @@
+0 true true
+2 true false
+16 true false
+17 false false
+-1 false false
+-0.5 false false
+1.5 false false
+NaN false false
+Infinity false false
+-Infinity false false
+18446744073709552000 false false
+9 5
+255 1

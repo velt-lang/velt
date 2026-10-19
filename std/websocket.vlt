@@ -17,8 +17,9 @@
 // are pulled with `receive` (null once the peer has closed); pings are answered automatically.
 // Only HTTP/1.1 upgrades are supported (HTTP/2 clients fall back to HTTP/1.1 for WebSockets).
 
-import { IoError, IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
-import { Request, Response } from "velt:http";
+import { IoError, IoResult, IoStatus, unwrapIo, checkIo, ioError } from "velt:io";
+import { Request } from "velt:fetch/request";
+import { Response } from "velt:fetch/response";
 
 // The runtime's `VeltWsMessage`: kind 0 = closed, 1 = text, 2 = binary.
 struct RawMessage {
@@ -33,6 +34,7 @@ struct RawAccept {
   response: u64;
 }
 
+declare function velt_rt_http_req_upgrade(r: u64): u64;
 declare function velt_rt_ws_accept(upgradeKey: u64, secKey: string): IoResult<RawAccept>;
 declare async function velt_rt_ws_connect(url: string, ca: string): Promise<IoResult<u64>>;
 declare async function velt_rt_ws_send_text(ws: u64, text: string): Promise<IoStatus>;
@@ -40,10 +42,14 @@ declare async function velt_rt_ws_send_binary(ws: u64, data: u8[]): Promise<IoSt
 declare async function velt_rt_ws_receive(ws: u64): Promise<IoResult<RawMessage>>;
 declare async function velt_rt_ws_close(ws: u64, code: u32, reason: string): Promise<IoStatus>;
 declare function velt_rt_ws_free(ws: u64);
+declare async function velt_rt_ws_subscribe(ws: u64, topic: string): Promise<IoStatus>;
+declare function velt_rt_ws_unsubscribe(ws: u64, topic: string);
+declare function velt_rt_ws_publish(topic: string, text: string, except: u64): u64;
+declare function velt_rt_ws_publish_binary(topic: string, data: u8[], except: u64): u64;
 
-// One received message: text, or binary data.
+/** One received message: text, or binary data. */
 export class WsMessage {
-  // True for a binary message (`data`), false for text (`text`).
+  /** True for a binary message (`data`), false for text (`text`). */
   isBinary: bool;
   text: string;
   data: u8[];
@@ -55,21 +61,27 @@ export class WsMessage {
   }
 }
 
-// An open WebSocket connection (a Copy handle; see the module header).
+/**
+ * An open WebSocket connection. A Copy handle like std/net's `TcpStream`: async methods take
+ * `this` by copy, so one task can wait in `receive` while another `send`s. Released by `close()`.
+ */
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   private handle: u64;
 
-  // Sends a text message.
+  /**
+   * Sends a text message: returns once it is queued (everything queued goes out in one write),
+   * waiting while more than 1 MiB is queued for this connection.
+   */
   async send(text: string): Promise<void> {
     checkIo(await velt_rt_ws_send_text(this.handle, text));
   }
 
-  // Sends a binary message.
+  /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
     checkIo(await velt_rt_ws_send_binary(this.handle, data));
   }
 
-  // The next message, or null once the peer has closed the connection.
+  /** The next message, or null once the peer has closed the connection. */
   async receive(): Promise<WsMessage | null> {
     const m = unwrapIo(await velt_rt_ws_receive(this.handle));
     if (m.kind == 0) {
@@ -78,8 +90,36 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     return new WsMessage(m.kind == 2, m.text, m.data);
   }
 
-  // `for await (const m of ws)`: the messages until the peer has closed the connection.
-  // Leaving the loop early leaves the connection open.
+  /**
+   * Subscribes this connection to `topic`: messages published to it (`publish`) are sent here
+   * until `unsubscribe(topic)` or the connection closes. Subscribing twice is a no-op.
+   */
+  async subscribe(topic: string): Promise<void> {
+    checkIo(await velt_rt_ws_subscribe(this.handle, topic));
+  }
+
+  /** Leaves `topic` (nothing happens if this connection is not subscribed to it). */
+  unsubscribe(topic: string) {
+    velt_rt_ws_unsubscribe(this.handle, topic);
+  }
+
+  /**
+   * Sends `text` to every connection subscribed to `topic` except this one (Bun's
+   * `ws.publish`); the number of connections it was queued for.
+   */
+  publish(topic: string, text: string): i64 {
+    return velt_rt_ws_publish(topic, text, this.handle) as i64;
+  }
+
+  /** `publish` with a binary message. */
+  publishBytes(topic: string, data: u8[]): i64 {
+    return velt_rt_ws_publish_binary(topic, data, this.handle) as i64;
+  }
+
+  /**
+   * `for await (const m of ws)`: the messages until the peer has closed the connection.
+   * Leaving the loop early leaves the connection open.
+   */
   async *[Symbol.asyncIterator](): AsyncIterator<WsMessage, IoError> {
     while (true) {
       const m = unwrapIo(await velt_rt_ws_receive(this.handle));
@@ -90,44 +130,86 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     }
   }
 
-  // Sends a close frame (`code` 1000 = normal closure) and releases the handle. Closing a
-  // connection the peer already closed, or closing twice, is fine; other operations on the
-  // handle (through any copy) throw `IoError` `EBADF` afterwards.
+  /**
+   * Sends a close frame (`code` 1000 = normal closure; 1000-1003, 1007-1014 or 3000-4999, else
+   * `IoError` "EINVAL", nothing is sent and the connection stays open) after everything queued,
+   * waits until it is written, and releases the handle. Closing a connection the peer already closed, or closing
+   * twice, is fine; other operations on the handle (through any copy) throw `IoError` `EBADF`
+   * afterwards.
+   */
   async close(code: i64 = 1000, reason: string = ""): Promise<void> {
+    if (code < 0 || code > 65535) {
+      throw new IoError(
+        "EINVAL",
+        `invalid WebSocket close code ${code} (1000-1003, 1007-1014 or 3000-4999)`,
+      );
+    }
     const s = await velt_rt_ws_close(this.handle, code as u32, reason);
+    if (s.code != 0) {
+      const e = ioError(s.code, s.message);
+      // A rejected code sent nothing: the connection stays usable (like Node).
+      if (e.code != "EINVAL") {
+        velt_rt_ws_free(this.handle);
+      }
+      throw e;
+    }
     velt_rt_ws_free(this.handle);
-    checkIo(s);
   }
 }
 
-// What `upgradeWebSocket` returns: the connection, and the response to return from the handler.
+/**
+ * Sends `text` to every connection subscribed to `topic` (`ws.subscribe`): the frame is encoded
+ * once and queued for each subscriber, which sends it with whatever else is queued. A subscriber
+ * with more than 16 MiB already queued misses the message. Returns the number of connections it
+ * was queued for.
+ */
+export function publish(topic: string, text: string): i64 {
+  return velt_rt_ws_publish(topic, text, 0) as i64;
+}
+
+/** `publish` with a binary message. */
+export function publishBytes(topic: string, data: u8[]): i64 {
+  return velt_rt_ws_publish_binary(topic, data, 0) as i64;
+}
+
+/** What `upgradeWebSocket` returns: the connection, and the response to return from the handler. */
 export struct WebSocketUpgrade {
   socket: WebSocket;
   response: Response;
 }
 
-// Whether `req` asks to be upgraded to a WebSocket.
+/** Whether `req` asks to be upgraded to a WebSocket. */
 export function isWebSocketRequest(req: Request): bool {
-  const upgrade = req.header("upgrade") ?? "";
-  return req.upgrade != 0 && upgrade.toLowerCase() == "websocket";
+  const upgrade = req.headers.get("upgrade") ?? "";
+  return upgradeKey(req) != 0 && upgrade.toLowerCase() == "websocket";
 }
 
-// Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one). Return
-// `response` from the handler; the socket works once that response has been sent.
+// The runtime key of the upgrade `req` asks for (0: none, or not a request a server received).
+function upgradeKey(req: Request): u64 {
+  const raw = req.serverKey();
+  return raw == 0 ? 0 : velt_rt_http_req_upgrade(raw);
+}
+
+/**
+ * Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one, or was
+ * already accepted). Return `response` from the handler; the socket works once that response
+ * has been sent.
+ */
 export function upgradeWebSocket(req: Request): WebSocketUpgrade {
-  const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.header("sec-websocket-key") ?? ""));
+  const key = req.headers.get("sec-websocket-key") ?? "";
+  const r = unwrapIo(velt_rt_ws_accept(upgradeKey(req), key));
   return WebSocketUpgrade {
     socket: WebSocket { handle: r.ws },
-    response: Response.adopt(r.response),
+    response: Response.built(r.response, 101),
   };
 }
 
 export struct WsConnectOptions {
-  // Extra trusted CA certificates (PEM) for `wss://`, e.g. a private or test CA.
+  /** Extra trusted CA certificates (PEM) for `wss://`, e.g. a private or test CA. */
   ca?: string;
 }
 
-// Opens a client connection to a `ws://` or `wss://` URL.
+/** Opens a client connection to a `ws://` or `wss://` URL. */
 export async function connectWebSocket(
   url: string,
   opts: WsConnectOptions = {},

@@ -1,0 +1,57 @@
+// check: no leaks
+// A closure that assigns a destructured `let` (at the top of a function and in loops), a `let`
+// in a `catch` block or a `for…of` over a string: the variable gets a cell of its own each time
+// it is declared (#799; the cell used to point into the destructured value).
+
+function pair(i: number): [string, number] { const p: [string, number] = [`s${i}`, i]; return p; }
+async function destructured() {
+  let [a, b] = [1, 10];
+  const f = () => { a += b + 1; return a; };
+  console.log(f(), f(), a);
+  let { x, y } = { x: "s", y: "t" };
+  const h = () => { x += y; y = "u"; return x; };
+  console.log(h(), h(), x, y);
+  let [s, ...rest] = ["p", "q", "r"];
+  const r = () => { s += rest.length; rest = [s]; return rest.join("") + s; };
+  console.log(r(), r(), s, rest.join(","));
+  const fs: (() => string)[] = [];
+  let i = 0;
+  while (i < 2) { i++; let [k, v] = pair(i); { v = v * 10; fs.push(() => `${k}${v}`); } }
+  console.log(fs.map((f) => f()).join(","));
+  const gs: (() => number)[] = [];
+  for (let j = 0; j < 3; j++) { let [c, d] = [j, j * 10]; gs.push(() => { c += d + 1; return c; }); }
+  console.log(gs.map((f) => f()).join(","), gs.map((f) => f()).join(","));
+  const m = new Map<string, number>([["a", 1], ["b", 2]]);
+  const hs: (() => string)[] = [];
+  for (const e of m) { let [k, v] = e; hs.push(() => { v += m.size; k += v; return k; }); }
+  console.log(hs.map((f) => f()).join(","), hs.map((f) => f()).join(","));
+}
+
+async function misc() {
+  const fs: (() => string)[] = [];
+  for (const w of ["e1", "e2"]) {
+    try { throw new Error(w); } catch (e) {
+      let msg = (e as Error).message;
+      fs.push(() => { msg += "!"; return msg; });
+    }
+  }
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const out: string[] = [];
+  for (let c of "hey") { const up = () => { c = c.toUpperCase(); }; up(); out.push(c); }
+  console.log(out.join(""));
+  const objs: { n: number }[] = [{ n: 1 }, { n: 2 }];
+  const gs: (() => number)[] = [];
+  for (let o of objs) gs.push(() => { o = { n: o.n * 7 }; return o.n; });
+  console.log(gs.map((f) => f()).join(","), gs.map((f) => f()).join(","), objs.map((o) => o.n).join(","));
+  const arrs: string[][] = [["a"], ["b"]];
+  const hs: (() => number)[] = [];
+  for (let a of arrs) hs.push(() => { a = [...a, "z"]; return a.length; });
+  console.log(hs.map((f) => f()).join(","), hs.map((f) => f()).join(","), JSON.stringify(arrs));
+  label: for (let x of [1, 2, 3, 4]) { const g = () => { x += 1; }; g(); if (x === 3) continue label; if (x === 5) break; out.push("" + x); }
+  console.log(out.join(","));
+}
+
+async function main() {
+  await destructured();
+  await misc();
+}

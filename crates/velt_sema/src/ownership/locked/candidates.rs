@@ -140,7 +140,7 @@ impl<'s> Candidates<'s> {
         let (all, complete) = self.instances(cx, res, d);
         let mut out: Vec<Vec<TyId>> = all
             .into_iter()
-            .filter(|targs| cx.ty.subst(ty, targs) == param)
+            .filter(|targs| cx.subst(ty, targs) == param)
             .collect();
         // An instantiation not found through direct calls (a method called through an
         // interface, …): any type of the same shape, in the program's own code, checked as
@@ -217,7 +217,7 @@ impl<'s> Candidates<'s> {
                 }
                 let sub: Vec<TyId> = match &so_far {
                     None => targs,
-                    Some(ts) => ts.iter().map(|t| cx.ty.subst(*t, &targs)).collect(),
+                    Some(ts) => ts.iter().map(|t| cx.subst(*t, &targs)).collect(),
                 };
                 if sub.iter().any(|t| cx.mentions_params(*t)) {
                     work.push((maker(cx, res, caller), Some(sub)));
@@ -333,17 +333,17 @@ fn instantiate(cx: &mut Ctx, f: &mut FnDef, targs: &[TyId]) {
         return;
     }
     for l in f.body.locals.iter_mut() {
-        l.ty = cx.ty.subst(l.ty, targs);
+        l.ty = cx.subst(l.ty, targs);
     }
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-        e.ty = cx.ty.subst(e.ty, targs);
+        e.ty = cx.subst(e.ty, targs);
         if let E::Call {
             callee: Callee::Def(_, args),
             ..
         } = &mut e.kind
         {
             for a in args.iter_mut() {
-                *a = cx.ty.subst(*a, targs);
+                *a = cx.subst(*a, targs);
             }
         }
     });

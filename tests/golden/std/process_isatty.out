@@ -1,0 +1,5 @@
+stdout.isTTY: false false
+stderr.isTTY: false false
+asked again: false
+closed and negative: false false
+ok

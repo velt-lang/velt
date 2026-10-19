@@ -1,0 +1,56 @@
+// Function values where the function type returns `T | Promise<T, E>` (#667): a sync or async
+// named function, a local function value, or an arrow of either kind. `await` on such a result
+// awaits a promise and passes any other value through, as in JS. An error type parameter that
+// nothing fixes is `never`.
+
+class Resp {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class Denied extends Error {}
+
+async function call<E>(h: (x: number) => Resp | Promise<Resp, E>): Promise<number> {
+  const r = await h(1);
+  return r.v;
+}
+
+function syncHandler(x: number): Resp {
+  return new Resp(x + 10);
+}
+
+async function asyncHandler(x: number): Promise<Resp> {
+  return new Resp(x + 20);
+}
+
+async function eight(): Promise<number> {
+  return 8;
+}
+
+// `await` on a value that may be a promise, or `null`.
+async function settle(p: Promise<number> | number | null): Promise<string> {
+  const v = await p;
+  return `${v}`;
+}
+
+async function main() {
+  console.log(await call(syncHandler));
+  console.log(await call(asyncHandler));
+  console.log(await call((x) => new Resp(x + 30)));
+  console.log(await call(async (x) => new Resp(x + 40)));
+  const local = (x: number): Resp => new Resp(x + 50);
+  console.log(await call(local));
+  try {
+    await call(async (x) => {
+      if (x > 0) {
+        throw new Denied("no");
+      }
+      return new Resp(x);
+    });
+  } catch (e) {
+    console.log("rejected", e instanceof Denied);
+  }
+  console.log(await settle(7), await settle(eight()), await settle(null));
+}

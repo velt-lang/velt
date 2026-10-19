@@ -1,0 +1,27 @@
+// Only `new Date(y, m, ...)` and `Date.UTC` read a year of 0-99 as 1900-1999; the setters take
+// the year as given (#674).
+function main() {
+  const d = new Date(Date.UTC(2024, 0, 15));
+  d.setUTCFullYear(50);
+  console.log(d.getUTCFullYear());
+
+  const e = new Date(Date.UTC(2024, 0, 15));
+  e.setUTCFullYear(5);
+  e.setUTCMonth(3);
+  console.log(e.getUTCFullYear(), e.getUTCMonth());
+
+  const f = new Date(Date.UTC(2024, 5, 1));
+  f.setUTCFullYear(0, 1, 29);
+  console.log(f.getUTCFullYear(), f.getUTCMonth(), f.getUTCDate());
+
+  const l = new Date(2024, 0, 15);
+  l.setFullYear(99);
+  l.setDate(20);
+  console.log(l.getFullYear(), l.getDate());
+
+  console.log(new Date(Date.UTC(50, 0, 1)).getUTCFullYear());
+  console.log(new Date(99, 11, 31).getFullYear());
+  console.log(new Date(Date.UTC(100, 0, 1)).getUTCFullYear());
+  console.log(new Date(Date.UTC(-1, 0, 1)).getUTCFullYear());
+  console.log(new Date(Date.UTC(99.7, 0, 1)).getUTCFullYear());
+}

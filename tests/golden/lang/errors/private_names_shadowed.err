@@ -1,0 +1,4 @@
+private_names_shadowed.vlt:10:41: error: property `#x` cannot be accessed on type `Outer` within this class because it is shadowed by another private identifier with the same spelling
+`Inner` declares its own `#x`, which is what the name means in its body; rename one of them to use `Outer`'s
+private_names_shadowed.vlt:11:33: error: property `#x` cannot be accessed on type `Outer` within this class because it is shadowed
+private_names_shadowed.vlt:12:41: error: property `#m` cannot be accessed on type `Outer` within this class because it is shadowed

@@ -1,15 +1,15 @@
 // Breadth-first search on a text maze; prints distance and the maze with the path marked.
 function main() {
   const maze = ["S.#.....", ".##.###.", "....#...", "##.##.#.", "...#..#E"];
-  const h = maze.length as i64;
-  const w = maze[0].length as i64;
-  const dist: i64[] = [];
+  const h = maze.length as number;
+  const w = maze[0].length as number;
+  const dist: number[] = [];
   for (let i = 0; i < h * w; i++) {
     dist.push(-1);
   }
-  const queue: i64[] = [0];
+  const queue: number[] = [0];
   dist[0] = 0;
-  let head: usize = 0;
+  let head: number = 0;
   while (head < queue.length) {
     const cell = queue[head];
     head++;

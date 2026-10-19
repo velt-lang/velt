@@ -1,0 +1,34 @@
+// Private accessors and statics: `get #v` / `set #v` follow the rules of public accessors
+// (`++` and `+=` use both), `static #m()` and `static readonly #K` are used as `C.#m()` and
+// `C.#K` inside the body.
+class Temperature {
+  #celsius: number = 0;
+  static readonly #ABSOLUTE: number = -273.15;
+  get #c(): number {
+    return this.#celsius;
+  }
+  set #c(v: number) {
+    this.#celsius = v < Temperature.#ABSOLUTE ? Temperature.#ABSOLUTE : v;
+  }
+  warm(by: number): number {
+    this.#c++;
+    this.#c += by;
+    return this.#c;
+  }
+  freeze(): number {
+    this.#c = -1000;
+    return this.#c;
+  }
+  static #make(): Temperature {
+    return new Temperature();
+  }
+  static create(): Temperature {
+    return Temperature.#make();
+  }
+}
+
+function main() {
+  const t = Temperature.create();
+  console.log(t.warm(2), t.warm(0.5), t.freeze());
+  console.log(t);
+}

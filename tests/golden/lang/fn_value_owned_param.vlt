@@ -97,7 +97,7 @@ async function main() {
 
   // Arrays, structs and maps are kept by reference too.
   const nf: (xs: i64[]) => i64[][] = nest;
-  const arr = [1, 2];
+  const arr: i64[] = [1, 2];
   const nested = nf(arr);
   arr.push(3);
   console.log(nested[0].length);

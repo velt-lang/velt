@@ -83,13 +83,16 @@ pub(super) fn check_whole(s: &VeltStr) {
             "ICE: {s:?} has lone surrogates but no flag"
         );
     } else if s.is_heap() {
+        let (cap, header) = s.buffer_kind();
+        let offset = s.ptr() as usize - s.buffer() as usize;
         assert!(
-            s.len() <= s.w2 as usize,
+            offset + s.len() <= cap,
             "ICE: {s:?} is longer than its buffer"
         );
+        assert!(header || s.is_ascii(), "ICE: {s:?} has no header");
         if !s.is_ascii() {
             // SAFETY: a heap string with a header.
-            let lone = unsafe { super::heap::lone(s.ptr()) };
+            let lone = unsafe { s.heap_lone() };
             if lone != wtf8::LONE_UNKNOWN {
                 assert_eq!(lone, counted.lone, "ICE: lone surrogates of {s:?}");
             }

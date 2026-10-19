@@ -49,9 +49,10 @@ pub(super) struct Value {
 }
 
 impl Value {
-    /// Parse a value's text into `self` (cleared first); false if the text does not have the
+    /// Parse a value's text into `self` (cleared first), keeping each of `atoms` (custom inspect
+    /// text) as plain text; false if the text does not have the
     /// glue's shape (it is then printed as it is).
-    pub(super) fn parse(&mut self, text: &[u8]) -> bool {
+    pub(super) fn parse(&mut self, text: &[u8], atoms: &[Range<usize>]) -> bool {
         self.segs.clear();
         self.nodes.clear();
         self.entries.clear();
@@ -59,6 +60,7 @@ impl Value {
         self.pending_entries.clear();
         let mut p = Parser {
             s: text,
+            atoms,
             i: 0,
             v: self,
         };
@@ -81,6 +83,8 @@ enum End {
 }
 
 struct Parser<'a> {
+    /// Ranges of `s` kept as plain text (`velt_rt_strbuf_inspect_atom`).
+    atoms: &'a [Range<usize>],
     s: &'a [u8],
     i: usize,
     v: &'a mut Value,
@@ -113,6 +117,11 @@ impl Parser<'_> {
                 self.i += 1;
             }
             let i = self.i;
+            if let Some(atom) = self.atoms.iter().find(|a| a.contains(&i)) {
+                // Custom inspect text: plain text, whatever it looks like.
+                self.i = atom.end;
+                continue;
+            }
             let Some(&c) = s.get(i) else {
                 if close.is_some() || parens > 0 {
                     return None;
@@ -207,7 +216,17 @@ impl Parser<'_> {
         let entries = self.v.pending_entries.drain(base..);
         self.v.entries.extend(entries);
         let has_base = self.s[open.clone()].starts_with(b"<ref *");
-        let open_len = super::group::units(&self.s[open.clone()]) - has_base as usize;
+        // A custom inspect's `Name ` before the brace (`Headers {`): node formats the object
+        // after it by itself, where only the brace counts.
+        let brace_at = open.end - 1;
+        let custom = self
+            .atoms
+            .iter()
+            .any(|a| a.end == brace_at && a.start >= open.start);
+        let open_len = match custom {
+            true => 1,
+            false => super::group::units(&self.s[open.clone()]) - has_base as usize,
+        };
         self.v.nodes.push(Container {
             open,
             open_len,

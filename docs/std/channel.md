@@ -5,7 +5,8 @@ for producer/consumer pipelines and worker pools. Any number of tasks may send a
 through one channel.
 
 - `channel<T>(capacity = 0): Channel<T>`: unbounded with `0`, else holding at most `capacity`
-  values. On a full channel, `send` waits until a receiver makes room (backpressure).
+  values. On a full channel, `send` waits until a receiver makes room (backpressure). A
+  negative `capacity` panics.
 - `Channel<T>`:
   - `send(value: T): Promise<void>` queues the value. It throws `ChannelClosed` if the channel
     is closed, also while waiting; the value is dropped then.
@@ -14,7 +15,10 @@ through one channel.
     dropped then. Being synchronous, it can be called where `await` can't, such as inside a
     `Mutex`'s `with` callback (an unbounded channel is never full).
   - `receive(): Promise<T | null>` returns the oldest value, waiting for one. It returns `null`
-    once the channel is closed and empty.
+    once the channel is closed and empty. `T | null | null` is `T | null`, so for a channel of
+    nullable values (`channel<string | null>`) a received `null` and a closed channel look alike
+    here and in `tryReceive`; send the values wrapped (`{ v: string | null }`) to tell them
+    apart.
   - `tryReceive(): T | null` returns the oldest value if one is queued, without waiting.
   - A channel is an `AsyncIterable<T>`: `for await (const v of ch)` receives values until the
     channel is closed and drained, then ends. Leaving the loop early (`break`, `return`, an
@@ -25,13 +29,18 @@ through one channel.
   - `closed` and `length` (the number of queued values).
 - A sent value crosses to the receiver like a `spawn` argument: it moves when the sender no
   longer uses it, and is deep-copied otherwise, so tasks never share an object. Changing an
-  object after sending it doesn't affect the receiver's copy.
+  object after sending it doesn't affect the receiver's copy. A resource is copied with its
+  class's `clone()` (a `RegExp` compiles its pattern again); sending one without `clone()`
+  while still using it is a compile error ([Promises](../reference/async.md#promises)).
 - `Channel<T>` is a handle struct, like `TcpStream` ([Handles](README.md#conventions)). Copies
   share one channel, so pass it to producers and consumers, `spawn`ed tasks included, without
   `shared(...)`.
-- Close a channel when you're done with it. A closed channel is freed once it is drained;
-  values left in a closed channel that nobody drains are not dropped. A channel that is never
-  closed lives until the process exits.
+- Close a channel when you're done with it. A closed channel is freed once it is drained. A
+  channel abandoned with values still queued (one per connection, say) keeps them until the
+  program ends, since any copy of the channel may still receive them; they are dropped only
+  then (when `main` succeeds; on WebAssembly they are not dropped, the instance's memory goes
+  with it). To free them sooner, drain it: close it and receive until you get `null`. A
+  channel that is never closed lives until the program ends.
 
 ```ts
 import { channel, Channel, ChannelClosed } from "velt:channel";

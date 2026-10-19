@@ -1,7 +1,7 @@
 # JSX provider contract (Mac round 12)
 
 How the compiler lowers TSX and what a **provider** (`std/jsx`, sigx, any SSR renderer) must
-export. Design and rationale: [docs/design/tsx.md](../design/tsx.md). Nothing here is specific to
+export. Design and rationale: [docs/internals/design/tsx.md](../design/tsx.md). Nothing here is specific to
 one framework; providers live in their own packages.
 
 ## Choosing the provider
@@ -39,16 +39,19 @@ compile-time shapes), so the compiler does the part TS leaves to the runtime:
   distinction TS uses for key warnings carries no information here.
 
 ## Compatibility rule
-A component written in the TS/Velt common subset (docs/design/tsx.md, "Sharing components with
+A component written in the TS/Velt common subset (docs/internals/design/tsx.md, "Sharing components with
 the client") must type-check and **behave identically** under `tsc` with the provider's TS
 runtime and under `velt` with its Velt runtime: same props object, same children shape (one
 child → the child, several → an array, none → field absent/`null`), same `key` handling, same
-evaluation order (props first; the component runs when the provider calls it), booleans/`null`
-render nothing. Anything the compiler cannot match is a compile error, never a silent
-difference. Known gaps are listed at the end.
+evaluation order (props first; the component runs when the provider calls it), the same output
+for booleans and `null` (nothing, or the provider's placeholder: "Children" below). Anything the
+compiler cannot match is a compile error, never a silent difference. Known gaps are listed at
+the end.
 
 ## Required exports of `<source>/jsx-runtime`
-Types (any declaration kind that `import * as JSX` can name):
+Types (any declaration kind that `import * as JSX` can name). `number` in the unions below is
+TypeScript's; a Velt provider spells it with Velt's number types, usually `i64 | f64` (std/jsx's
+`Child` is `Element | Element[] | string | i64 | f64 | bool | null`).
 
 | Export | Meaning |
 |---|---|
@@ -80,8 +83,13 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   and the call is then checked against its signature like any call.
 - The compiler never calls a component itself, so evaluation order is TS's: the props object
   (including already-built child elements) is evaluated, and the component runs when the
-  provider calls it. A provider may call it at once (`std/jsx`, no context) or store it and call
-  it while rendering parent-first (a provider with `provide`/`inject`).
+  provider calls it. Within the element, as in TS's `jsx(C, { ... }, key)`, the attributes
+  (props, spread sources, attributes of every component) are evaluated in source order, then
+  the children, then the key; a key after a spread source is evaluated in its place, as TS's
+  `createElement(C, { ...o, key })`. Where the call's own order differs (props are passed in
+  field order), the compiler binds the values to temporaries first. A provider may call it at
+  once (`std/jsx`, no context) or store it and call it while rendering parent-first (a provider
+  with `provide`/`inject`).
 - A component that `throw`s: its error type must be accepted by the provider's signature;
   `std/jsx` reports errors from rendering.
 - **Until semantics stage 2** (shared object references) a component passed as a value takes
@@ -95,6 +103,9 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   `"src/components/card#Card"`. Providers use it for hydration/island/resumability markers.
 - `key`: `key={k}` is removed from the attributes/props and passed separately (`string` or
   `number`, numbers converted to their decimal string). Missing → `null`.
+- A provider may declare attributes that **every component** accepts besides its props
+  (`JSX.IntrinsicAttributes`, e.g. sigx's `client:load`): see "Attributes of every component"
+  below.
 
 ## How the compiler lowers each construct
 - **Tag kind:** a lower-case simple name (`div`, `my-widget`) or a namespaced name (`svg:rect`)
@@ -116,9 +127,23 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   one of them is an arrow function). Children go into the
   children field: one child → the child itself, several → an array, each checked against the
   field's type; children with no children field in `P` are an error.
+- **Void elements:** a provider that writes some tags without an end tag declares them, as a
+  string constant of space-separated tags (an error otherwise):
+
+  ```ts
+  export const jsxVoidElements = "area base br col embed hr img input link meta source track wbr";
+  ```
+  Children of those tags are then a compile error ("<br> is a void element and cannot have
+  children"); `{}` and `{/* */}` are no children, and an explicit end tag (`<br></br>`) is
+  allowed. Precompiled templates write these tags without an end tag. `std/jsx` and
+  `std/jsx/generic` export HTML's list. Without the export, any tag may have children (an XML or
+  terminal provider's `<link>`), and templates leave out the end tag of HTML's void elements.
 - **Children:** text (after JSX whitespace rules and entity decoding) becomes a `string` child;
   `{expr}` is coerced to `Child`; `{...xs}` passes `xs` as one child; `{/* */}` and `{}` vanish.
-  `true`, `false` and `null` must render nothing (provider responsibility).
+  What `true`, `false` and `null` children render is the provider's choice: nothing (`std/jsx`,
+  as in React), or a placeholder of its own, e.g. the empty comment `<!---->` that a hydrating
+  client aligns its children on (sigx). A provider renders them the same way in both lowerings
+  (its `jsxEscape` returns the placeholder) and in its TS runtime.
 - **Async:** a component whose return type is `Promise<…>` uses `jsxAsyncComponent`. A
   provider that calls it at creation stores the promise (hybrid promises start it immediately, so siblings load
   concurrently) and awaits it while rendering.
@@ -128,7 +153,7 @@ When the runtime also exports all of
 
 ```ts
 type Text = string | number | boolean | null;                      // provider-defined union
-function jsxEscape(value: Text): string;                           // escaped text ("" for bool/null)
+function jsxEscape(value: Text): string;                           // escaped text; bool/null: "" or a placeholder
 function jsxAttr(name: string, value: AttrValue): string;           // ` name="…"`, ` name`, or ""
 function jsxTemplate(strings: string[], slots: Element[]): Element; // strings.length == slots.length + 1
 ```
@@ -138,37 +163,235 @@ shape of Deno's precompile transform, with text folded into the strings):
 - a dynamic child whose type is assignable to `Text` and every dynamic attribute are folded into
   the surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` ``
   (template literals build in place, rt_abi_async.md §12.1, so a row costs what a hand-written
-  template costs);
+  template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}` without
+  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings.
+  A child whose type is `string`, and static text with a `'` (below), goes to
+
+  ```ts
+  function jsxEscapeString(value: string): string;                   // optional: escaped string
+  ```
+  instead when the runtime exports it, so a string is not converted to `Text` to be escaped. It
+  must return what `jsxEscape` returns for the same string. Without it, every string part goes
+  to `jsxEscape` (or is a slot, when `Text` has no strings); so does a child of any other type
+  that holds a string at run time (`string | null`, a `Text`, a branded string);
 - every other dynamic part becomes an `Element` slot: components (`jsxComponent(C, props, …)`/
   `jsxAsyncComponent`), fragments, `Element`-typed expressions as they are, and any other
   `Child` (arrays, unions containing `Element`) as `Fragment([v], null)`;
-- a subtree with no `Element` slot is `jsxTemplate([html], [])`.
+- a subtree with no `Element` slot is `jsxTemplate([html], [])`, or `jsxTemplateString(html)`
+  when the runtime also exports
+
+  ```ts
+  function jsxTemplateString(html: string): Element;                 // optional: no slots, no arrays
+  ```
+  which saves the two arrays per call.
+- **Lists:** when the runtime also exports
+
+  ```ts
+  function jsxList(items: string[]): string;                         // optional: a list's rows
+  ```
+  and no `jsxTextSeparator`, a child `{xs.map((x) => <tr>…</tr>)}` (an array's `map` with an
+  arrow whose body is one intrinsic element, with no declared return type, spread or `key`) whose
+  row is a subtree without slots is written into the surrounding string as
+  `` ${jsxList(xs.map((x) => `<tr>…</tr>`))} ``: the rows are strings, not elements. `std/jsx`
+  joins them; a provider may add its own list markup. Any other list is a slot as before. The
+  source does not change, and nor does its type: the arrow is the compiler's.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
-  wbr`) have no closing tag; any other self-closing element is written `<x></x>`.
+  wbr`, or the provider's `jsxVoidElements` when it exports them) have no closing tag; any
+  other self-closing element is written `<x></x>`.
 - An element with an attribute spread or a `key` is not precompiled (it goes through `jsx`);
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
-  `std/jsx_precompile_equals_generic` checks `std/jsx`).
+  `lang/jsx_precompile_equals_generic` checks `std/jsx`).
+- The optional exports below (`jsxTextSeparator`, `jsxSoleEmpty`) are read only for the
+  precompile lowering: a provider without the four exports above may export them, and they are
+  ignored (not even checked).
+
+### Text separator (optional export)
+The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
+by one writes a separator between them (sigx: `<!--t-->`). The generic lowering passes every
+child, so the provider inserts it itself; in a template string the compiler has folded the text
+together, so a precompiling provider declares the separator instead:
+
+```ts
+export const jsxTextSeparator = "<!--t-->";   // a string constant (an error otherwise)
+```
+The compiler then writes it between two adjacent **text parts** of one element: static text
+and dynamic `Text` children, in any combination (`<p>Count: {n}</p>` →
+`"<p>Count: <!--t-->" + jsxEscape(n) + "</p>"`, `<p>{name}{n}</p>` →
+`jsxEscape(name) + "<!--t-->" + jsxEscape(n)`).
+- Tags break adjacency (`<p>a<b>x</b>c</p>` has no separator); `{}` and `{/* */}` do not, as
+  they are no children.
+- `true`, `false` and `null` are boundaries, not text: no separator goes next to them (the
+  provider renders its placeholder, "Children"). A child whose type is only `boolean` or `null`
+  is a boundary at compile time; one whose type mixes them with text (`string | null`) is tested
+  at run time, with the value read once. All other separators are part of the constant strings,
+  so a template costs nothing extra.
+- An empty string is text (`a{""}b` → `a<!--t--><!--t-->b`, as sigx renders it).
+- Between a template string and a slot (a fragment, a component, an element child), only the
+  provider knows what the slot renders, so the separator there is the provider's: a non-empty
+  template string starts with text unless it starts with `<`, and ends with text unless it ends
+  with `>` (escaped text contains neither, and the separator and placeholders are comments),
+  and an empty one is no boundary. This is how the separator crosses fragments and components
+  (`<p>{a}<>{b}</></p>` → `a<!--t-->b`).
+- An empty string at a slot edge would be invisible there (`<p>{s}<Name/></p>` with `s == ""`
+  must render `<p><!--t-->ada</p>`, as in the generic lowering). So a dynamic text child whose
+  type has a `string` member (other than a non-empty literal) and that is next to a slot,
+  possibly through other such children, is a slot `Fragment([v], null)` itself, and the
+  provider renders it as in the generic lowering. Numbers, booleans, `null` and static text are
+  never empty and stay in the strings. Like any slot, it is evaluated after the template's
+  strings.
+- A provider that exports a separator must render `true`, `false` and `null` as a non-empty
+  placeholder that starts with `<` and ends with `>` (sigx: `<!---->`). The compiler does not
+  check this. If it rendered them as `""`, a `null` would be a boundary inside a template
+  string (`<p>{a}{null}{b}</p>` → `ab`) but invisible to the provider next to a slot
+  (`<p>{a}{null}<Name/></p>` → `a<!--t-->ada`), and no generic renderer matches both.
+- Without the export nothing changes. The generic lowering ignores it.
+
+The golden `lang/jsx_text_separator` renders the cases above through a provider in both
+lowerings.
+
+### Sole child (optional export)
+A runtime that receives one child as itself and several as an array may render a `true`,
+`false` or `null` child differently when it is its element's only child. sigx renders
+`<p>{x}</p>` with `x = null` as `<p></p>`, but `<p>{x}a</p>` as `<p><!---->a</p>`. The generic
+lowering passes every child, so the provider sees how many there are. `jsxEscape` and
+`Fragment` see only the value, so a precompiling provider declares what such a sole child
+renders as instead:
+
+```ts
+export const jsxSoleEmpty = "";   // a string constant (an error otherwise)
+```
+The compiler then writes it in place of a `{expr}` or `{...expr}` child that is the only child
+of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `false` or `null`:
+- A child whose type is only `boolean` or `null` is the export's string at compile time
+  (`<p>{false}</p>` → `"<p></p>"`); any other expression is still evaluated.
+- A text child whose type mixes them with text (`string | null`) is tested at run time, with the
+  value read once: `jsxEscape(v)` when it is text, the export's string otherwise.
+- A slot child whose type has a `null` or boolean member (`JSX.Element | null`) is the slot
+  `Fragment([v], null)` when it is something else, and `jsxTemplate([sole], [])` when it is not.
+- Static text, elements, components and arrays are rendered as without the export, and so is a
+  child that has siblings.
+
+Without the export nothing changes, and the generic lowering ignores it. The golden
+`lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
+
+## Attributes of every component (optional exports)
+TypeScript checks a component element's attributes against `Props & JSX.IntrinsicAttributes`:
+`IntrinsicAttributes` lists attributes that every component accepts besides its own props. Velt
+does the same. sigx's island directives are the use case (`<Counter client:load />`,
+`client:visible`, `client:media="(min-width: 768px)"`):
+
+```ts ignore
+export type IntrinsicAttributes = {
+  "client:load"?: boolean;
+  "client:media"?: string;
+};
+// <Counter client:load start={1} /> → jsxComponentAttributes(Counter, { start: 1 }, null,
+//   "src/counter#Counter", ["client:load"], [true])
+function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
+                                   key: string | null, name: string,
+                                   names: string[], values: AttrValue[]): Element;
+```
+- **Typing is TypeScript's.** An attribute of a component element that is not one of its props is
+  looked up in `IntrinsicAttributes`. Its value is checked against the declared type, with the
+  same errors as `tsc`:
+  - `Property 'client:lod' does not exist on type 'IntrinsicAttributes & CounterProps'. Did you
+    mean 'client:load'?`;
+  - a value of the wrong type;
+  - a required field that is missing;
+  - the same attribute twice.
+
+  An optional field's value is checked against its declared type, so an optional value (a
+  forwarded optional prop, an optional field of a spread source) is accepted, as `tsc` accepts
+  it; a mismatch names the type without `| undefined`, as `tsc` reports it
+  (`not assignable to type 'string'`). A spread source may give these attributes, and a prop of
+  the same name counts as given (its value must fit both types, as `tsc` intersects them).
+  `key` keeps its own handling. The names are usually quoted property names, since they hold a
+  `:`.
+- **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
+  component element with at least one of them calls `jsxComponentAttributes`, with the names and
+  the values converted to `AttrValue` (a bare attribute is `true`, a written optional value that
+  is absent is `undefined`, or `null` when `AttrValue` has no `undefined`), in source order and
+  evaluated in source order with the props (above).
+  An attribute given by a spread source is passed too. Each name is passed once: a later value
+  replaces an earlier one in its place, as in an object, whether it is written or comes from a
+  spread source. An optional field that a spread source does not have keeps the earlier value,
+  and without one is not passed, as the props object has no such key (the arrays may then be
+  empty). An element without any calls `jsxComponent` as before.
+- **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
+  `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
+  take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
+  an object type whose fields convert to `AttrValue` (an optional field's `T | undefined`, whose
+  `undefined` an `AttrValue` with `null` and no `undefined` gets as `null`; so `AttrValue`
+  includes `null` or `undefined` when a field is optional). All of this is checked once, when
+  the provider is loaded: a mismatch is one error, not one per element.
+- **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
+  synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
+  namespaced names on them are ordinary attributes.
+- **Precompile.** Component calls are template slots, so these attributes work the same in both
+  lowerings.
+- **The same source under `tsc`.** The TypeScript runtime declares the same
+  `JSX.IntrinsicAttributes`, as sigx does through its `ComponentAttributeExtensions`
+  augmentation, so `tsc` and Velt accept and reject the same `.tsx`.
+- **Editors.** Velt's language server completes these attributes after a component's props,
+  shows their type and docs on hover, and reports the errors above as diagnostics.
+
+The golden `lang/jsx_intrinsic_attributes` renders them through a provider in both lowerings.
 
 ## Escaping (all providers that render HTML)
-- Text: `&` `<` `>` → `&amp;` `&lt;` `&gt;`; attribute values additionally `"` → `&quot;` and
-  `'` → `&#39;`. `std/html` `escapeHtml` implements this set.
-- `true` attributes render as the bare name, `false`/`null` attributes are omitted.
-- The precompile lowering escapes static text and attribute values at compile time with exactly
-  `escapeHtml`'s five replacements (also `"` and `'` in text), so a runtime that escapes with
-  `escapeHtml` renders byte-identically.
+- Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
+  provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
+  `escapeHtml`.
+- `true` attributes render as the bare name, `false`/`null` attributes are omitted. An attribute
+  whose value is `undefined` (`title={props.title}` with `title?: string`) is omitted as well.
+- The precompile lowering escapes static text and attribute values at compile time with the four
+  replacements every provider shares; static text or an attribute value that contains a `'` is
+  passed to `jsxEscape` (`jsxEscapeString` when exported) or `jsxAttr` at run time instead (as
+  one text part: no separator inside it), so the provider's own apostrophe appears in both
+  lowerings.
 - Raw HTML only through an explicit provider API (`std/jsx` `raw(html)`), never by default.
 
 ## `std/jsx` specifics
 `std/jsx` (default) implements the generic and precompile functions, has no event-handler
 attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
-provider), and offers `renderToString(el)`, `renderToStream(el, res)` (`std/http`
-`Response.stream`, flushing at async component boundaries) and `raw(html)`.
+provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async
+components), `renderToStream(el)` (a `BodyStream` for a `Response` body, sent in chunks at async
+component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
+
+## Extending `IntrinsicElements`
+A provider usually starts from std's HTML types rather than copying them: `velt:jsx/intrinsic`
+exports std's `IntrinsicElements`, and `velt:jsx/attrs` the attribute types it is made of
+(`HtmlAttrs`, `ButtonAttrs`, …). An intersection extends either one, and a field present in
+both parts merges recursively, so `Html & { button: Events }` gives `<button>` std's attributes
+plus the handlers. `Omit` replaces an attribute's type (an intersection only narrows one):
+
+```ts ignore
+import type { IntrinsicElements as Html } from "velt:jsx/intrinsic";
+import type { HtmlAttrs } from "velt:jsx/attrs";
+import type { Style } from "velt:jsx";
+
+export type Handler = () => void;
+export type AttrValue = string | i64 | f64 | bool | Style | Handler | null;
+type Events = { onClick?: Handler; onInput?: Handler };
+
+export type IntrinsicElements = Html & {
+  button: Events;                                       // std's ButtonAttrs & Events
+  input: Events;
+  section: Omit<HtmlAttrs, "style"> & { style?: string }; // only the string form
+};
+```
+
+A provider whose attributes include handlers adds the handler type to `AttrValue` (every
+attribute's type must convert to it) and decides what its `jsx` does with them; a server
+renderer drops them. TypeScript's other route, merging declarations of a global
+`JSX.IntrinsicElements` interface, does not exist: the provider module's export is the one
+definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provider (used by
+`lang/jsx_extend_intrinsic`).
 
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async
   element are rejected until then.
-- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes`/`IntrinsicAttributes` are
-  not supported.
+- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes` are not supported.
+  `JSX.IntrinsicAttributes` is supported (above).
 

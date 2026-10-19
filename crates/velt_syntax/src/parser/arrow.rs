@@ -7,6 +7,7 @@
 //! `(`-started arrows are recognized by speculatively parsing a parameter list followed by `=>`;
 //! on failure the parser rewinds and the `(` is parsed as a parenthesized expression.
 
+use super::param_patterns::ParamDefault;
 use super::{PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -46,9 +47,11 @@ impl<'a> Parser<'a> {
             self.bump(); // =>
             let params = vec![ArrowParam {
                 name,
+                pattern: None,
                 ty: None,
                 default: None,
                 optional: false,
+                rest: false,
             }];
             return self
                 .finish_arrow(lo, vec![], (params, None, None), is_async)
@@ -120,14 +123,19 @@ impl<'a> Parser<'a> {
         self.nth(gt + 1) == Tok::LParen
     }
 
-    /// Cheap pre-check before speculating: `()` or `(name`, and the matching `)` is followed by
-    /// `=>` or a return type's `:` (so a parenthesized expression is not tried as an arrow).
+    /// Cheap pre-check before speculating: `()`, `(name`, `(...`, `([` or `({`, and the matching
+    /// `)` is followed by `=>` or a return type's `:` (so a parenthesized expression is not tried
+    /// as an arrow).
     fn may_start_arrow_params(&mut self, off: usize) -> bool {
         if self.nth(off) != Tok::LParen {
             return false;
         }
         let first = self.nth(off + 1);
-        (first == Tok::RParen || Self::is_ident_like(first))
+        (matches!(
+            first,
+            Tok::RParen | Tok::DotDotDot | Tok::LBracket | Tok::LBrace
+        ) || Self::is_ident_like(first)
+            || first == Tok::Kw(Kw::This))
             && matches!(
                 self.after_matching_paren(off),
                 Some(Tok::FatArrow | Tok::Colon)
@@ -136,56 +144,94 @@ impl<'a> Parser<'a> {
 
     /// `( params ) [: Ret [throws E]] =>`
     fn parse_arrow_head(&mut self) -> PResult<ArrowHead> {
-        self.expect(Tok::LParen)?;
-        let mut params = Vec::new();
-        while !self.at(Tok::RParen) {
-            self.reject_mut_modifier();
-            let name = self.parse_binding_ident()?;
-            let optional = self.eat(Tok::Question);
-            let ty = if self.eat(Tok::Colon) {
-                Some(self.parse_type()?)
-            } else {
-                None
-            };
-            let mut default = if self.eat(Tok::Eq) {
-                Some(self.parse_assign()?)
-            } else {
-                None
-            };
-            let ty = match (optional, ty) {
-                (true, ty) => {
-                    if let Some(d) = &default {
-                        let msg = format!(
-                            "parameter `{}` cannot be optional and have a default value",
-                            name.name
-                        );
-                        self.error(msg, d.span);
-                    }
-                    let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
-                    let span = Span::new(self.file, at, at);
-                    default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-                    ty.map(super::types::or_null)
-                }
-                (false, ty) => ty,
-            };
-            params.push(ArrowParam {
-                name,
-                ty,
-                default,
-                optional,
-            });
-            if !self.eat(Tok::Comma) {
-                break;
-            }
+        let params = self.parse_arrow_params()?;
+        if let Some((span, _)) = self.this_param.take() {
+            self.param_error(
+                "an arrow function cannot have a 'this' parameter (TypeScript's TS2730)",
+                span,
+            );
         }
-        self.expect(Tok::RParen)?;
         let (ret, throws) = if self.eat(Tok::Colon) {
-            (Some(self.parse_type()?), self.parse_throws_clause()?)
+            (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
             (None, None)
         };
         self.expect(Tok::FatArrow)?;
         Ok((params, ret, throws))
+    }
+
+    /// `( params )` of an arrow or an object-literal method: types may be left out (they come
+    /// from the context).
+    pub(super) fn parse_arrow_params(&mut self) -> PResult<Vec<ArrowParam>> {
+        self.expect(Tok::LParen)?;
+        let mut params: Vec<ArrowParam> = Vec::new();
+        self.parse_this_param()?;
+        while !self.at(Tok::RParen) {
+            let lo = self.cur_lo();
+            let p = self.parse_arrow_param(params.len())?;
+            if params.last().is_some_and(|q| q.rest) {
+                let span = self.span_from(lo);
+                self.param_error("a rest parameter must be the last parameter", span);
+            }
+            params.push(p);
+            if !self.eat(Tok::Comma) {
+                break;
+            }
+        }
+        self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_arrow_param).collect();
+        self.check_param_defaults(&checked);
+        Ok(params)
+    }
+
+    /// The `index`-th parameter of an arrow: `x`, `x: T`, `x?: T`, `x = e`, `...xs: T[]`, or a
+    /// destructuring pattern (`[k, v]`, `{ a, b }: P`).
+    fn parse_arrow_param(&mut self, index: usize) -> PResult<ArrowParam> {
+        self.reject_mut_modifier();
+        let rest = self.eat(Tok::DotDotDot);
+        let (name, pattern) = self.parse_param_binding(index, rest)?;
+        let optional = self.eat(Tok::Question);
+        let ty = if self.eat(Tok::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let mut default = if self.eat(Tok::Eq) {
+            Some(self.parse_assign()?)
+        } else {
+            None
+        };
+        if rest {
+            if let Some(d) = &default {
+                self.param_error("a rest parameter cannot have a default value", d.span);
+            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
+        }
+        let ty = match (optional, ty) {
+            (true, ty) => {
+                if let Some(d) = &default {
+                    let msg = format!(
+                        "parameter `{}` cannot be optional and have a default value",
+                        name.name
+                    );
+                    self.error(msg, d.span);
+                }
+                let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
+                let span = Span::new(self.file, at, at);
+                default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
+                ty.map(super::types::optional_param)
+            }
+            (false, ty) => ty,
+        };
+        Ok(ArrowParam {
+            name,
+            pattern,
+            ty,
+            default,
+            optional,
+            rest,
+        })
     }
 
     /// Body after `=>`: a block, or an assignment-level expression.
@@ -197,7 +243,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> PResult<Expr> {
         let body = if self.at(Tok::LBrace) {
-            ArrowBody::Block(self.guarded(|p| p.parse_block())?)
+            ArrowBody::Block(self.guarded(|p| p.parse_fn_body())?)
         } else {
             ArrowBody::Expr(Box::new(self.guarded(|p| p.parse_assign())?))
         };

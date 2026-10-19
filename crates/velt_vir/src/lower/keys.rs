@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use velt_sema::hir::{FloatTy, IntTy, LitValue, TyId, TyKind};
+use velt_sema::hir::{DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
 use super::Cx;
 use crate::mangle::{mangle, segment};
@@ -18,9 +18,17 @@ use crate::vir::Function;
 impl Cx<'_> {
     /// The stable spelling of type `t`, e.g. `i64`, `Map<string, Point[]>`, `Box<i64>`.
     pub(super) fn type_key(&self, t: TyId) -> String {
-        let list = |ts: &[TyId]| {
+        self.type_key_in(t, &[], &mut vec![])
+    }
+
+    /// [`type_key`](Self::type_key) with `Param(n)` spelled `env[n]` (the field types of an
+    /// anonymous def, over its own parameters).
+    /// `stack`: the anonymous defs being spelled, so a recursive shape (a field-only interface
+    /// `Tree { children: Tree[] }`) names itself instead of unfolding forever.
+    fn type_key_in(&self, t: TyId, env: &[String], stack: &mut Vec<DefId>) -> String {
+        let list = |ts: &[TyId], stack: &mut Vec<DefId>| {
             ts.iter()
-                .map(|t| self.type_key(*t))
+                .map(|t| self.type_key_in(*t, env, stack))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -30,30 +38,114 @@ impl Cx<'_> {
             TyKind::Float(FloatTy::F64) => "f64".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
+            TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "error".into(),
-            TyKind::Adt(d, args) => with_args(&self.def_name(*d), &list(args)),
-            TyKind::Dyn(d, args) => with_args(&format!("dyn {}", self.def_name(*d)), &list(args)),
-            TyKind::Array(e) => format!("{}[]", self.type_key(*e)),
-            TyKind::Map(k, v) => format!("Map<{}>", list(&[*k, *v])),
-            TyKind::Tuple(ts) => format!("[{}]", list(ts)),
-            TyKind::Option(e) => format!("Option<{}>", self.type_key(*e)),
-            TyKind::Result(a, b) => format!("Result<{}>", list(&[*a, *b])),
-            TyKind::Promise(t, e) => format!("Promise<{}>", list(&[*t, *e])),
-            TyKind::Shared(e) => format!("shared<{}>", self.type_key(*e)),
+            // Only in a generic def's own fields: an instance's are reduced (`Cx::subst`).
+            TyKind::Op(velt_sema::hir::TyOp::Alias(a), args) => {
+                format!("op{a}<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Intersect, args) => {
+                format!("op&<{}>", list(args, stack))
+            }
+            // Anonymous object types are structural: one shape can be several defs (a generic
+            // def's instance, sema's concrete def, Cx::canon), and its symbols must not depend
+            // on which one a program happens to use.
+            TyKind::Adt(d, args) if self.is_anon_def(*d) && !stack.contains(d) => {
+                let env: Vec<String> = args
+                    .iter()
+                    .map(|a| self.type_key_in(*a, env, stack))
+                    .collect();
+                let velt_sema::hir::Def::Adt(a) = self.hir.def(*d) else {
+                    unreachable!("anonymous def")
+                };
+                stack.push(*d);
+                let fs: Vec<String> = a
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        // `??` marks a presence field (`d?: T | null`), whose layout differs
+                        // from `d?: T`'s although both read as `Option<T>`.
+                        let q = match (f.optional, f.presence) {
+                            (_, true) => "??",
+                            (true, false) => "?",
+                            (false, false) => "",
+                        };
+                        format!("{}{q}: {}", f.name, self.type_key_in(f.ty, &env, stack))
+                    })
+                    .collect();
+                stack.pop();
+                format!("{{ {} }}", fs.join("; "))
+            }
+            // Unions likewise: their members, sorted (a generic union's instance and the written
+            // union are one type, Cx::canon). A recursive union (`type Json = … | Json[]`) names
+            // itself inside.
+            TyKind::Adt(d, args) if self.is_union_def(*d) && !stack.contains(d) => {
+                let env: Vec<String> = args
+                    .iter()
+                    .map(|a| self.type_key_in(*a, env, stack))
+                    .collect();
+                let velt_sema::hir::Def::Enum(e) = self.hir.def(*d) else {
+                    unreachable!("union def")
+                };
+                stack.push(*d);
+                let mut ms: Vec<String> = e
+                    .variants
+                    .iter()
+                    .map(|v| self.type_key_in(v.payload[0], &env, stack))
+                    .collect();
+                stack.pop();
+                ms.sort();
+                ms.join(" | ")
+            }
+            TyKind::Adt(d, args) => {
+                // `Generator<T, E, never>` is spelled `Generator<T, E>`, as before `N` existed.
+                let args = match args.as_slice() {
+                    [_, _, n] if self.generator_obj_kind(t) == Some(false) => {
+                        match self.types.kind(*n) {
+                            TyKind::Never => &args[..2],
+                            _ => &args[..],
+                        }
+                    }
+                    _ => &args[..],
+                };
+                with_args(&self.def_name(*d), &list(args, stack))
+            }
+            TyKind::Dyn(d, args) => {
+                with_args(&format!("dyn {}", self.def_name(*d)), &list(args, stack))
+            }
+            TyKind::Array(e) => format!("{}[]", self.type_key_in(*e, env, stack)),
+            TyKind::Map(k, v) => format!("Map<{}>", list(&[*k, *v], stack)),
+            TyKind::Tuple(ts) => format!("[{}]", list(ts, stack)),
+            TyKind::Option(e, n) => {
+                // `T | null` keeps its key; `T | undefined` prints and writes JSON differently.
+                let name = match n {
+                    velt_sema::hir::Nothing::Null => "Option",
+                    velt_sema::hir::Nothing::Undefined => "OptionU",
+                    velt_sema::hir::Nothing::Both => "OptionNU",
+                };
+                format!("{name}<{}>", self.type_key_in(*e, env, stack))
+            }
+            TyKind::Result(a, b) => format!("Result<{}>", list(&[*a, *b], stack)),
+            TyKind::Promise(t, e) => format!("Promise<{}>", list(&[*t, *e], stack)),
+            TyKind::Shared(e) => format!("shared<{}>", self.type_key_in(*e, env, stack)),
             TyKind::FnPtr {
                 params,
                 ret,
                 throws,
             } => format!(
                 "fn({}) => {} throws {}",
-                list(params),
-                self.type_key(*ret),
-                self.type_key(*throws)
+                list(params, stack),
+                self.type_key_in(*ret, env, stack),
+                self.type_key_in(*throws, env, stack)
             ),
             TyKind::Closure(d) => format!("closure {}", self.def_name(*d)),
-            TyKind::Param(n) => format!("${n}"),
+            TyKind::Param(n) => env
+                .get(*n as usize)
+                .cloned()
+                .unwrap_or_else(|| format!("${n}")),
             TyKind::Literal(v) => lit_key(v),
         }
     }
@@ -63,6 +155,16 @@ impl Cx<'_> {
     /// collide with other names).
     pub(super) fn instance_symbol(&self, name: &str, targs: &[TyId]) -> String {
         let mut s = mangle(name);
+        // A method of `Generator<T, E, never>` is spelled as `Generator<T, E>`'s, as before `N`.
+        let targs = match targs {
+            [_, _, n]
+                if name.starts_with("std/prelude/iter::Generator.")
+                    && matches!(self.types.kind(*n), TyKind::Never) =>
+            {
+                &targs[..2]
+            }
+            _ => targs,
+        };
         if !targs.is_empty() {
             s.push_str("_T");
             s.push_str(&segment(&self.type_args_key(targs)));
@@ -81,6 +183,15 @@ impl Cx<'_> {
             .map(|t| self.type_key(*t))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    fn is_union_def(&self, d: velt_sema::hir::DefId) -> bool {
+        matches!(self.hir.def(d), velt_sema::hir::Def::Enum(e) if e.is_union)
+    }
+
+    fn is_anon_def(&self, d: velt_sema::hir::DefId) -> bool {
+        matches!(self.hir.def(d), velt_sema::hir::Def::Adt(a)
+            if a.kind == velt_sema::hir::AdtKind::Anon)
     }
 
     fn def_name(&self, d: velt_sema::hir::DefId) -> String {
@@ -118,7 +229,7 @@ fn with_args(name: &str, args: &str) -> String {
     }
 }
 
-fn int_key(i: IntTy) -> &'static str {
+pub(super) fn int_key(i: IntTy) -> &'static str {
     match i {
         IntTy::I8 => "i8",
         IntTy::I16 => "i16",

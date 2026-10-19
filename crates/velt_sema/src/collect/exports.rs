@@ -6,9 +6,12 @@
 //! other modules' imports), so they do not depend on the order modules are processed in. Chains
 //! and cycles of re-exports are followed up to [`MAX_DEPTH`] steps.
 
+use std::collections::HashSet;
+
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
+use crate::hir::{DefId, TyId, TyKind};
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
 const MAX_DEPTH: u32 = 32;
@@ -34,6 +37,90 @@ pub(crate) fn all_exports(cx: &Ctx, t: usize) -> Vec<(String, Item)> {
 pub(crate) fn import_target(cx: &Ctx, m: usize, spec: &str) -> Option<usize> {
     let (_, path) = cx.modules[m].imports.iter().find(|(s, _)| s == spec)?;
     cx.modules.iter().position(|mm| mm.path == *path)
+}
+
+/// The identifier-like words of source text `src`.
+pub(crate) fn words(src: &str) -> HashSet<String> {
+    src.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `name`, which module `t` doesn't export, may be a declaration the parser dropped
+/// from a module it recovered (`Ctx::recovered`): one whose source has the word, reached from
+/// `t` through re-exports (`export * from`, `export { name } from`).
+pub(crate) fn maybe_dropped(cx: &Ctx, t: usize, name: &str) -> bool {
+    fn go(cx: &Ctx, t: usize, name: &str, seen: &mut HashSet<usize>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        if cx.recovered.get(&t).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+        for (imp, exported) in imports_of(cx, t) {
+            if !exported || imp.from.is_empty() {
+                continue;
+            }
+            let Some(s) = import_target(cx, t, &imp.from) else {
+                continue;
+            };
+            let named = imp.names.iter().find(|n| bound_name(n).name == name);
+            let found = match named {
+                Some(n) => go(cx, s, &n.name.name, seen),
+                None => imp.all && go(cx, s, name, seen),
+            };
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+    !cx.recovered.is_empty() && go(cx, t, name, &mut HashSet::new())
+}
+
+/// Whether member `name`, which values of type `t` don't have, may be one the parser dropped
+/// from a module it recovered (`Ctx::recovered`): `t` is a class, struct or interface declared
+/// in such a module (or extends one declared there, through base classes and `extends`) whose
+/// source has the word. A class or interface whose body lost a member keeps its name, so its
+/// import finds it; a use of the lost member reports nothing more.
+pub(crate) fn member_maybe_dropped(cx: &Ctx, t: TyId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    def(t).is_some_and(|d| def_member_maybe_dropped(cx, d, name))
+}
+
+/// [`member_maybe_dropped`] for the class, struct or interface `d`.
+pub(crate) fn def_member_maybe_dropped(cx: &Ctx, d: DefId, name: &str) -> bool {
+    let def = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Adt(d, _) | TyKind::Dyn(d, _) => Some(*d),
+        _ => None,
+    };
+    if cx.recovered.is_empty() {
+        return false;
+    }
+    let mut todo = vec![d];
+    let mut seen = HashSet::new();
+    while let Some(d) = todo.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let module = if let Some(a) = cx.adt(d) {
+            todo.extend(a.base.and_then(def));
+            a.module
+        } else if let Some(i) = cx.iface(d) {
+            todo.extend(i.parents.iter().map(|b| b.iface));
+            i.module
+        } else {
+            continue;
+        };
+        if cx.recovered.get(&module).is_some_and(|w| w.contains(name)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The name an import or export list entry binds (`b` in `a as b`).
@@ -66,18 +153,13 @@ fn export_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
     }
     let reexports = imports_of(cx, t).filter(|(imp, exported)| *exported && !imp.all);
     for (imp, _) in reexports {
-        let Some(n) = imp.names.iter().find(|n| bound_name(n).name == name) else {
+        let Some(source) = imp.names.iter().find_map(|n| renamed(n, name)) else {
             continue;
         };
         if imp.from.is_empty() {
-            return local_at(cx, t, &n.name.name, depth + 1);
+            return local_at(cx, t, &source, depth + 1);
         }
-        return export_at(
-            cx,
-            import_target(cx, t, &imp.from)?,
-            &n.name.name,
-            depth + 1,
-        );
+        return export_at(cx, import_target(cx, t, &imp.from)?, &source, depth + 1);
     }
     imports_of(cx, t)
         .filter(|(imp, exported)| *exported && imp.all)
@@ -94,13 +176,79 @@ fn local_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
     let imported = imports_of(cx, t)
         .filter(|(imp, exported)| !exported && !imp.from.is_empty())
         .find_map(|(imp, _)| {
-            let n = imp.names.iter().find(|n| bound_name(n).name == name)?;
-            Some((imp, n))
+            let source = imp.names.iter().find_map(|n| renamed(n, name))?;
+            Some((imp, source))
         });
     match imported {
-        Some((imp, n)) => export_at(cx, import_target(cx, t, &imp.from)?, &n.name.name, depth),
+        Some((imp, source)) => export_at(cx, import_target(cx, t, &imp.from)?, &source, depth),
         None => cx.scopes[t].items.get(name).copied(),
     }
+}
+
+/// The name in the source module of the name `name` that import or export list entry `n`
+/// binds, if it binds it: `a` for `b` in `a as b`, and for a member of a namespace `N`
+/// (`N.T`, `crate::namespaces`), `M.T` when the entry is `M as N`.
+fn renamed(n: &ast::ImportName, name: &str) -> Option<String> {
+    let bound = &bound_name(n).name;
+    if name == bound {
+        return Some(n.name.name.clone());
+    }
+    let rest = name.strip_prefix(bound.as_str())?.strip_prefix('.')?;
+    Some(format!("{}.{rest}", n.name.name))
+}
+
+/// The members `x` of a namespace `name` (the items named `name.x`) that module `t` exports.
+pub(crate) fn namespace_exports(cx: &Ctx, t: usize, name: &str) -> Vec<(String, Item)> {
+    let prefix = format!("{name}.");
+    all_exports(cx, t)
+        .into_iter()
+        .filter_map(|(n, it)| Some((n.strip_prefix(&prefix)?.to_string(), it)))
+        .collect()
+}
+
+/// The namespace members (`N.x`, as `x`) named by entry `n` of an export list of module `t`:
+/// declared in `t` or imported into it (`from` empty), or exported by module `from`.
+fn list_members(
+    cx: &Ctx,
+    t: usize,
+    imp: &ast::Import,
+    n: &ast::ImportName,
+    depth: u32,
+) -> Vec<String> {
+    let mut names = vec![];
+    let source = if imp.from.is_empty() {
+        let imported = imports_of(cx, t)
+            .filter(|(i, exported)| !exported && !i.from.is_empty())
+            .find_map(|(i, _)| {
+                let m = i.names.iter().find(|m| bound_name(m).name == n.name.name)?;
+                Some((import_target(cx, t, &i.from)?, m.name.name.clone()))
+            });
+        match imported {
+            Some(s) => Some(s),
+            None => {
+                let prefix = format!("{}.", n.name.name);
+                names.extend(
+                    cx.scopes[t]
+                        .items
+                        .keys()
+                        .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string)),
+                );
+                None
+            }
+        }
+    } else {
+        import_target(cx, t, &imp.from).map(|target| (target, n.name.name.clone()))
+    };
+    if let Some((target, name)) = source {
+        let mut all = vec![];
+        export_names(cx, target, &mut all, depth + 1);
+        let prefix = format!("{name}.");
+        names.extend(
+            all.iter()
+                .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string)),
+        );
+    }
+    names
 }
 
 fn export_names(cx: &Ctx, t: usize, out: &mut Vec<String>, depth: u32) {
@@ -112,7 +260,12 @@ fn export_names(cx: &Ctx, t: usize, out: &mut Vec<String>, depth: u32) {
         if !exported {
             continue;
         }
-        out.extend(imp.names.iter().map(|n| bound_name(n).name.clone()));
+        for n in &imp.names {
+            let bound = &bound_name(n).name;
+            out.push(bound.clone());
+            let members = list_members(cx, t, imp, n, depth);
+            out.extend(members.into_iter().map(|x| format!("{bound}.{x}")));
+        }
         if imp.all {
             if let Some(target) = import_target(cx, t, &imp.from) {
                 export_names(cx, target, out, depth + 1);

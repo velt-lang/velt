@@ -1,0 +1,76 @@
+// check: no leaks
+// Closures only ever called in the function creating them keep their environment in the
+// frame, whatever they capture: copies, values moved into them (dropped with the closure),
+// shared cells. Immediately called closures too.
+
+function copies(): number {
+  const k: number = 3;
+  const scale = (x: number): number => x * k;
+  let total: number = 0;
+  for (let i: number = 0; i < 5; i++) {
+    total += scale(i);
+  }
+  const offset: number = 7;
+  return total + ((y: number): number => y + offset)(1);
+}
+
+function owned(n: number): number {
+  const label = `item-${n}`;
+  const size = (): number => label.length;
+  const words: string[] = [`a${n}`, `b${n}`];
+  const count = (): number => words.length;
+  return size() + count();
+}
+
+function inLoop(): string[] {
+  const out: string[] = [];
+  for (let i: number = 0; i < 3; i++) {
+    const name = `n${i}`;
+    const show = (): string => name + "!";
+    out.push(show());
+  }
+  return out;
+}
+
+function cells(): number {
+  let c: number = 0;
+  const inc = () => {
+    c += 1;
+  };
+  inc();
+  inc();
+  return c;
+}
+
+function generic<T>(x: T, n: number): T[] {
+  const rep = (): T[] => {
+    const out: T[] = [];
+    for (let i: number = 0; i < n; i++) {
+      out.push(x);
+    }
+    return out;
+  };
+  return rep();
+}
+
+function whileIterating(): number[] {
+  const xs: number[] = [1, 2, 3];
+  const grow = (v: number) => {
+    xs.push(v);
+  };
+  for (const x of xs) {
+    if (x == 2) {
+      grow(9);
+    }
+  }
+  return xs;
+}
+
+function main() {
+  console.log(copies());
+  console.log(owned(42));
+  console.log(inLoop());
+  console.log(cells());
+  console.log(generic("ab", 3));
+  console.log(whileIterating());
+}

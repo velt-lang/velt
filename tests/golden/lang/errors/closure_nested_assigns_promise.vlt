@@ -1,0 +1,14 @@
+// A closure created inside another closure assigns a captured promise: a promise cannot live in
+// a shared variable, so this is one error (not also a move of `p` out of the closure and a use
+// of `p` after it moved).
+async function main() {
+  let p: Promise<number> = Promise.resolve(1);
+  const f = () => {
+    const g = () => {
+      p = Promise.resolve(2);
+    };
+    g();
+  };
+  f();
+  console.log(await p);
+}

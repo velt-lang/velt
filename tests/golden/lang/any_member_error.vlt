@@ -1,0 +1,9 @@
+// Calling a member of an `any` that is not a function stops with Node's `TypeError` (#924).
+class P {
+  x: number = 1;
+}
+function main(): void {
+  const p: any = new P();
+  console.log(p.x);
+  console.log(p.x());
+}

@@ -1,0 +1,8 @@
+a.txt true false false
+b.txt true false false
+sub false true false
+c.txt:file,deeper:dir
+a.txt,b.txt,sub
+0
+error: ENOENT
+error: ENOTDIR

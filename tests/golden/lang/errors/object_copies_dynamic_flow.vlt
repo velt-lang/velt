@@ -1,0 +1,19 @@
+// The copy is followed through parameters, results and variables to the conversion to `any`
+// (#1240): Node prints `true` twice.
+type A = { a: number };
+type AB = { a: number; b: number };
+function same(x: A, y: any): boolean {
+  const k = x;
+  return (k as any) === y;
+}
+const s: AB = JSON.parse('{"a":1,"b":2}');
+console.log(same(s, s));
+
+type C = { c: number };
+type CD = { c: number; d: number };
+function narrow(x: CD): C {
+  return x;
+}
+const t: CD = JSON.parse('{"c":1,"d":2}');
+const u = narrow(t);
+console.log((u as unknown) === (t as unknown));

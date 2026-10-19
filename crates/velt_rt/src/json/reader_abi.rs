@@ -3,6 +3,7 @@
 //! `array_next` (0 = end, 1 = more, 2 = error) and `peek` (a `TOKEN_*` kind).
 
 use super::reader::{Reader, STEP_END, STEP_ERROR, STEP_MORE};
+use super::rows_reader::RowReader;
 use super::value_abi::ValueHandle;
 use crate::handle::Handle;
 use crate::str::VeltStr;
@@ -23,11 +24,23 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     flags: u32,
     max_depth: u32,
 ) -> *mut Reader {
+    // A driver's parked rows (`rows_bin.rs`): the reader owns them, not the marker string.
+    if let Some(rows) = super::rows_bin::take_pending((*src).as_bytes()) {
+        return Box::into_raw(Box::new(Reader::over_rows(rows, flags)));
+    }
     let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());
     let lone_free = (*src).is_well_formed();
     Box::into_raw(Box::new(Reader::with_source(
         bytes, lone_free, flags, max_depth,
     )))
+}
+
+/// May a JSON `null` stand for an absent optional field whose type has no `null`? 1 = yes
+/// (`JSON.parse<T>`), 0 = no: the decoder reads the field's value and fails
+/// (`FLAG_NULL_NOT_ABSENT`, `JSON.parse(text) as T`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_null_absent(r: *mut Reader) -> u8 {
+    u8::from(!(*r).null_not_absent)
 }
 
 /// Free the reader (not the source).
@@ -67,7 +80,14 @@ pub unsafe extern "C" fn velt_rt_json_reader_next_key(r: *mut Reader, out: *mut 
             STEP_MORE
         }
         Ok(None) => STEP_END,
-        Err(()) => STEP_ERROR,
+        Err(()) => match r.rows.as_deref_mut().map(RowReader::next_key) {
+            Some(Ok(Some(key))) => {
+                out.write(key);
+                STEP_MORE
+            }
+            Some(Ok(None)) => STEP_END,
+            _ => STEP_ERROR,
+        },
     }
 }
 
@@ -86,14 +106,25 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_string(r: *mut Reader, out: *m
             out.write(r.owned_str(tok));
             1
         }
-        None => 0,
+        None => r
+            .rows
+            .as_deref_mut()
+            .and_then(RowReader::string)
+            .map_or(0, |s| {
+                out.write(s);
+                1
+            }),
     }
 }
 
 /// Read a number: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_f64(r: *mut Reader, out: *mut f64) -> u8 {
-    (*r).f64().map_or(0, |v| {
+    let v = match (*r).f64() {
+        None => (*r).rows.as_deref_mut().and_then(RowReader::f64),
+        v => v,
+    };
+    v.map_or(0, |v| {
         out.write(v);
         1
     })
@@ -102,7 +133,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_f64(r: *mut Reader, out: *mut 
 /// Read an integral number that fits `i64` exactly (`3`, `3.0`, `3e2`): 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_i64(r: *mut Reader, out: *mut i64) -> u8 {
-    (*r).i64().map_or(0, |v| {
+    let v = match (*r).i64() {
+        None => (*r).rows.as_deref_mut().and_then(RowReader::i64),
+        v => v,
+    };
+    v.map_or(0, |v| {
         out.write(v);
         1
     })
@@ -111,7 +146,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_i64(r: *mut Reader, out: *mut 
 /// Read `true`/`false` into `*out` (0/1): 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_bool(r: *mut Reader, out: *mut u8) -> u8 {
-    (*r).bool().map_or(0, |v| {
+    let v = match (*r).bool() {
+        None => (*r).rows.as_deref_mut().and_then(RowReader::bool),
+        v => v,
+    };
+    v.map_or(0, |v| {
         out.write(v as u8);
         1
     })
@@ -140,12 +179,26 @@ pub unsafe extern "C" fn velt_rt_json_reader_skip_lookahead(r: *mut Reader) -> u
 /// The reader's position, for `reset` (looking ahead and coming back).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_mark(r: *const Reader) -> u64 {
+    // A rows reader always has `error` set; a text reader rarely has when a decoder marks.
+    if (*r).error().is_some() {
+        // SAFETY: a reader belongs to the one decoder running on it, so nothing else refers
+        // to it; the rows reader keeps its marks in a list.
+        if let Some(rows) = (*r.cast_mut()).rows.as_deref_mut() {
+            return rows.mark();
+        }
+    }
     (*r).mark()
 }
 
 /// Go back to a position from `mark` (of the same reader), clearing any error since.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_reset(r: *mut Reader, mark: u64) {
+    // As in `mark`: only a failed reader can be a rows reader, whose `error` must stay set.
+    if (*r).error().is_some() {
+        if let Some(rows) = (*r).rows.as_deref_mut() {
+            return rows.reset(mark);
+        }
+    }
     (*r).reset(mark)
 }
 
@@ -156,7 +209,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_value(
     r: *mut Reader,
     out: *mut ValueHandle,
 ) -> u8 {
-    (*r).value().map_or(0, |v| {
+    let v = match (*r).value() {
+        None => (*r).rows.as_deref_mut().and_then(RowReader::value),
+        v => v,
+    };
+    v.map_or(0, |v| {
         out.write(Handle::from_arc(v));
         1
     })

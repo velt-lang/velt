@@ -1,0 +1,428 @@
+//! Which toolchain a command runs with, and installing it when it is missing.
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use semver::Version;
+use velt_toolchain::layout::velt_exe;
+use velt_toolchain::pin::{find_pin, locked_version, Pin};
+use velt_toolchain::{release, Requirement, Root, Toolchain};
+
+use crate::{ENV_AUTO_INSTALL, ENV_TOOLCHAIN};
+
+/// What the launcher works with: the root, the directory it runs in, and its environment.
+#[derive(Clone, Debug)]
+pub struct Context {
+    pub root: Root,
+    pub cwd: PathBuf,
+    /// `velt +<toolchain> …`.
+    pub plus: Option<String>,
+    /// Pick the newest toolchain the pin accepts, not the one `velt.lock.json` records: for
+    /// `velt update`, which moves the lock to it.
+    pub ignore_lock: bool,
+    /// `$VELT_TOOLCHAIN`.
+    pub env_toolchain: Option<String>,
+    /// Unless `$VELT_TOOLCHAIN_AUTO_INSTALL` is `0` (or `false`, `no`, `off`).
+    pub auto_install: bool,
+    /// Where releases come from ([`release::base_url`]).
+    pub base: String,
+}
+
+impl Context {
+    pub fn from_env(root: Root) -> Result<Context, String> {
+        let cwd = std::env::current_dir()
+            .map_err(|e| format!("cannot read the current directory: {e}"))?;
+        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let auto_install = !var(ENV_AUTO_INSTALL).is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        });
+        Ok(Context {
+            root,
+            cwd,
+            plus: None,
+            ignore_lock: false,
+            env_toolchain: var(ENV_TOOLCHAIN),
+            auto_install,
+            base: release::base_url(),
+        })
+    }
+}
+
+/// What selected the toolchain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// `velt +<toolchain>`.
+    Plus(String),
+    Env,
+    Pin(Pin),
+    /// The version `velt.lock.json` records, which the pin accepts.
+    Locked(Pin),
+    Default,
+}
+
+impl fmt::Display for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reason::Plus(name) => write!(f, "+{name}"),
+            Reason::Env => write!(f, "${ENV_TOOLCHAIN}"),
+            Reason::Pin(pin) => write!(
+                f,
+                "velt: \"{}\" in {}:{}",
+                pin.requirement,
+                pin.manifest.display(),
+                pin.line
+            ),
+            Reason::Locked(pin) => write!(
+                f,
+                "velt.lock.json, with velt: \"{}\" in {}:{}",
+                pin.requirement,
+                pin.manifest.display(),
+                pin.line
+            ),
+            Reason::Default => f.write_str("the default"),
+        }
+    }
+}
+
+/// The toolchain asked for: a specific one, or the newest a requirement accepts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Wanted {
+    Toolchain(Toolchain),
+    Requirement(Requirement),
+}
+
+impl fmt::Display for Wanted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Wanted::Toolchain(t) => write!(f, "{t}"),
+            Wanted::Requirement(r) => write!(f, "{r}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub wanted: Wanted,
+    pub reason: Reason,
+}
+
+/// A toolchain chosen for one command (`+<x>`, `$VELT_TOOLCHAIN`): a full version (`0.2.0`)
+/// is that version, a name (`dev`) a link, anything else a requirement read like a pin (`0.2`:
+/// the newest 0.2.x).
+fn chosen(text: &str) -> Result<Wanted, String> {
+    if let Ok(toolchain) = Toolchain::parse(text) {
+        return Ok(Wanted::Toolchain(toolchain));
+    }
+    Requirement::parse(text)
+        .map(Wanted::Requirement)
+        .map_err(|_| {
+            format!(
+            "`{text}` is not a version (`0.2.0`), a requirement (`0.2`, `>=0.2`) or a toolchain \
+             name (`dev`)"
+        )
+        })
+}
+
+/// `+<toolchain>`, else `$VELT_TOOLCHAIN`, else the package's pin (the version its lock records
+/// when the pin accepts it), else the default.
+pub fn select(ctx: &Context) -> Result<Selection, String> {
+    if let Some(name) = &ctx.plus {
+        return Ok(Selection {
+            wanted: chosen(name).map_err(|e| format!("`+{name}`: {e}"))?,
+            reason: Reason::Plus(name.clone()),
+        });
+    }
+    if let Some(text) = &ctx.env_toolchain {
+        return Ok(Selection {
+            wanted: chosen(text).map_err(|e| format!("${ENV_TOOLCHAIN}: {e}"))?,
+            reason: Reason::Env,
+        });
+    }
+    if let Some(pin) = find_pin(&ctx.cwd)? {
+        // The lock's version, so every machine builds a commit with the same toolchain; not one
+        // the pin no longer accepts (the toolchain then records the one it is).
+        if !ctx.ignore_lock {
+            if let Some(locked) = locked_version(&pin.manifest) {
+                if pin.requirement.matches(&locked) {
+                    return Ok(Selection {
+                        wanted: Wanted::Toolchain(Toolchain::Version(locked)),
+                        reason: Reason::Locked(pin),
+                    });
+                }
+            }
+        }
+        return Ok(Selection {
+            wanted: Wanted::Requirement(pin.requirement.clone()),
+            reason: Reason::Pin(pin),
+        });
+    }
+    match ctx.root.default()? {
+        Some(toolchain) => Ok(Selection {
+            wanted: Wanted::Toolchain(toolchain),
+            reason: Reason::Default,
+        }),
+        None => Err(format!(
+            "no velt toolchain is selected: there is no `velt` field in a package.vlt here and no \
+             default; run `velt toolchain install <version>` (the first one installed becomes \
+             the default) or `velt toolchain default <version>` ({} has the toolchains)",
+            ctx.root.toolchains_dir().display()
+        )),
+    }
+}
+
+/// The installed toolchain that satisfies `selection`, if any.
+pub fn installed(root: &Root, selection: &Selection) -> Option<Toolchain> {
+    match &selection.wanted {
+        Wanted::Toolchain(t) => root.is_installed(t).then(|| t.clone()),
+        Wanted::Requirement(req) => req
+            .best(&root.versions())
+            .map(|v| Toolchain::Version(v.clone())),
+    }
+}
+
+/// A toolchain ready to run.
+#[derive(Clone, Debug)]
+pub struct Resolved {
+    pub toolchain: Toolchain,
+    pub prefix: PathBuf,
+    pub reason: Reason,
+}
+
+impl Resolved {
+    /// `0.1.4 (velt: "0.1" in /p/package.vlt:4)`, for `$VELT_TOOLCHAIN_SELECTED` and `which`.
+    pub fn describe(&self) -> String {
+        format!("{} ({})", self.toolchain, self.reason)
+    }
+
+    pub fn velt(&self) -> PathBuf {
+        velt_exe(&self.prefix)
+    }
+}
+
+/// The toolchain `selection` runs with, installing it first when it is missing (and installing
+/// is allowed).
+pub fn resolve(ctx: &Context, selection: &Selection) -> Result<Resolved, String> {
+    let root = &ctx.root;
+    let done = |toolchain: Toolchain| -> Result<Resolved, String> {
+        Ok(Resolved {
+            prefix: root.prefix(&toolchain)?,
+            toolchain,
+            reason: selection.reason.clone(),
+        })
+    };
+    // `velt update` in a pinned package moves to the newest published version the pin accepts,
+    // installing it, not only the newest installed one; never to an older one than is installed
+    // (a version the index doesn't list: a mirror, an archive install). Without the network it
+    // goes on with what is there.
+    if let (true, true, Reason::Pin(_), Wanted::Requirement(req)) = (
+        ctx.ignore_lock,
+        ctx.auto_install,
+        &selection.reason,
+        &selection.wanted,
+    ) {
+        match newest_published(ctx, req) {
+            Ok(newest) if req.best(&root.versions()).is_none_or(|have| *have < newest) => {
+                eprintln!(
+                    "velt: installing velt {newest} ({}) from {}",
+                    selection.reason, ctx.base
+                );
+                install(ctx, &newest)?;
+                return done(Toolchain::Version(newest));
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("velt: note: not looking for a newer velt: {e}"),
+        }
+    }
+    if let Some(toolchain) = installed(root, selection) {
+        return done(toolchain);
+    }
+    let reason = &selection.reason;
+    let version = match &selection.wanted {
+        Wanted::Toolchain(Toolchain::Linked(name)) => {
+            let prefix = root.prefix(&Toolchain::Linked(name.clone()))?;
+            return Err(format!(
+                "the toolchain linked as `{name}` ({reason}) has no {}",
+                velt_exe(&prefix).display()
+            ));
+        }
+        Wanted::Toolchain(Toolchain::Version(v)) => v.clone(),
+        Wanted::Requirement(req) => {
+            if !ctx.auto_install {
+                return Err(not_installed(&selection.wanted, reason));
+            }
+            match req.exact_version() {
+                Some(v) => v,
+                None => newest_published(ctx, req).map_err(|e| {
+                    format!("no installed velt matches `{req}` ({reason}), and {e}")
+                })?,
+            }
+        }
+    };
+    if !ctx.auto_install {
+        return Err(not_installed(&selection.wanted, reason));
+    }
+    eprintln!(
+        "velt: installing velt {version} ({reason}) from {}",
+        ctx.base
+    );
+    install(ctx, &version)?;
+    done(Toolchain::Version(version))
+}
+
+fn not_installed(wanted: &Wanted, reason: &Reason) -> String {
+    let what = match wanted {
+        Wanted::Toolchain(t) => format!("velt {t} is not installed"),
+        Wanted::Requirement(r) => format!("no installed velt matches `{r}`"),
+    };
+    format!(
+        "{what} ({reason}); run `velt toolchain install {wanted}` (installing on first use is \
+         off: ${ENV_AUTO_INSTALL}=0)"
+    )
+}
+
+/// The signed index of releases; says so when it names a newer launcher than this one.
+pub fn index(ctx: &Context) -> Result<release::Index, String> {
+    let index = release::fetch_index(&ctx.root, &ctx.base)?;
+    let own = Version::parse(env!("CARGO_PKG_VERSION")).expect("ICE: the crate version");
+    if let Some(newer) = index.newer_launcher(&own) {
+        eprintln!(
+            "velt: a newer velt launcher ({newer}) is available (this one is {own}): run \
+             `velt toolchain self-update`"
+        );
+    }
+    Ok(index)
+}
+
+/// The newest published version `req` accepts (not a yanked one, unless `req` names exactly it).
+pub fn newest_published(ctx: &Context, req: &Requirement) -> Result<Version, String> {
+    let published = index(ctx)
+        .map_err(|e| format!("the list of published versions is unavailable: {e}"))?
+        .releases;
+    if let Some(release) = release::newest_match(&published, req) {
+        return Ok(release.version.clone());
+    }
+    {
+        let shown: Vec<String> = published
+            .iter()
+            .filter(|r| r.yanked.is_none())
+            .map(|r| r.version.to_string())
+            .collect();
+        Err(format!(
+            "no published velt matches `{req}`; the published versions are {}",
+            if shown.is_empty() {
+                "none".to_string()
+            } else {
+                shown.join(", ")
+            }
+        ))
+    }
+}
+
+/// Add to the newly installed `version` (at `prefix`) the target packs of the version it follows
+/// ([`velt_toolchain::layout::predecessor`]), so `velt build --target …` keeps working after a
+/// patch update. The new toolchain's own `velt target add` downloads and checks them against its
+/// release; a failure is a warning, never a failed install.
+fn carry_target_packs(ctx: &Context, before: &[Version], version: &Version, prefix: &Path) {
+    let Some(previous) = velt_toolchain::layout::predecessor(before, version) else {
+        return;
+    };
+    let packs = velt_toolchain::layout::installed_target_packs(&ctx.root.version_dir(&previous));
+    if packs.is_empty() {
+        return;
+    }
+    eprintln!(
+        "velt: adding the target packs velt {previous} had to velt {version}: {}",
+        packs.join(", ")
+    );
+    // One at a time, so one that fails doesn't stop the others; the child's output goes to
+    // stderr, since this runs before the command the user asked for (`velt run | jq`).
+    let failed: Vec<&String> = packs
+        .iter()
+        .filter(|pack| {
+            let status = std::process::Command::new(velt_exe(prefix))
+                .arg("target")
+                .arg("add")
+                .arg(pack.as_str())
+                .env(
+                    crate::ENV_LAUNCHER,
+                    std::env::current_exe().unwrap_or_default(),
+                )
+                .stdout(std::process::Stdio::from(std::io::stderr()))
+                .status();
+            !status.is_ok_and(|s| s.success())
+        })
+        .collect();
+    if !failed.is_empty() {
+        let names: Vec<&str> = failed.iter().map(|p| p.as_str()).collect();
+        eprintln!(
+            "velt: warning: could not add {}; run `velt +{version} target add {}`",
+            names.join(", "),
+            names.join(" ")
+        );
+    }
+}
+
+/// Install the toolchain archive `file` downloaded before (`velt toolchain install --from`),
+/// checked against the signed `SHA256SUMS` beside it unless `unverified`, then add the target
+/// packs of the version it follows, as for a download. Returns the version, and whether it was
+/// installed now (`false`: it was installed already, and is kept).
+pub fn install_from(
+    ctx: &Context,
+    file: &Path,
+    unverified: bool,
+) -> Result<(Version, bool), String> {
+    let before = ctx.root.versions();
+    let (version, prefix, installed) =
+        release::install_toolchain_from_file(&ctx.root, file, unverified, None)?;
+    if installed {
+        carry_target_packs(ctx, &before, &version, &prefix);
+    }
+    Ok((version, installed))
+}
+
+/// Install release `version`; another launcher finishing the same install first is fine. The
+/// target packs the version it follows had are added to it ([`carry_target_packs`]).
+pub fn install(ctx: &Context, version: &Version) -> Result<PathBuf, String> {
+    let before = ctx.root.versions();
+    match release::install_toolchain(&ctx.root, version, &ctx.base) {
+        Ok(prefix) => {
+            carry_target_packs(ctx, &before, version, &prefix);
+            Ok(prefix)
+        }
+        Err(_) if ctx.root.is_installed(&Toolchain::Version(version.clone())) => {
+            Ok(ctx.root.version_dir(version))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Tell the user when the version about to run is yanked or has an advisory, from the last index
+/// fetched (no network), at most once a day per version (`<root>/notices/<version>`).
+pub fn notice(ctx: &Context, resolved: &Resolved) {
+    let Toolchain::Version(version) = &resolved.toolchain else {
+        return;
+    };
+    let Some(index) = release::cached_index(&ctx.root) else {
+        return;
+    };
+    let Some(text) = release::notice_for(&index, version) else {
+        return;
+    };
+    let stamp = ctx.root.dir().join("notices").join(version.to_string());
+    let recent = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60));
+    if recent {
+        return;
+    }
+    eprintln!("velt: {text}");
+    if let Some(dir) = stamp.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&stamp, b"");
+}

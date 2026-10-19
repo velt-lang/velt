@@ -1,0 +1,1 @@
+TypeError: Cannot add property y: an object of a fixed shape gets no new properties through `any` (#924)

@@ -47,12 +47,6 @@ pub(crate) fn blank_line_before(src: &str, pos: u32) -> bool {
     before[gap.len()..].matches('\n').count() >= 2
 }
 
-/// The source spelling of `==`/`!=` between two operands: `===`/`!==` if written that way.
-pub(crate) fn strict_equality(src: &str, lhs_hi: u32, rhs_lo: u32) -> bool {
-    src.get(lhs_hi as usize..rhs_lo as usize)
-        .is_some_and(|gap| gap.contains("===") || gap.contains("!=="))
-}
-
 /// The literal tokens (numbers, strings, `true`/`false`/`null`) inside a pattern's span, in order.
 /// Pattern literals keep no spelling in the AST, so it is re-read from the source.
 pub(crate) fn literal_tokens(src: &str, span: Span) -> Vec<String> {
@@ -120,11 +114,65 @@ fn is_word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
 }
 
+/// The word (identifier or keyword) directly before `pos`, whitespace skipped: the `const` of
+/// `<const T>`.
+pub(crate) fn word_before(src: &str, pos: u32) -> Option<&str> {
+    let before = src.get(..pos as usize)?.trim_end();
+    let start = before
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .map_or(0, |i| i + 1);
+    let word = &before[start..];
+    (!word.is_empty()).then_some(word)
+}
+
+/// The characters at or after `pos` that are not whitespace, the first two.
+pub(crate) fn chars_after(src: &str, pos: u32) -> (Option<char>, Option<char>) {
+    let rest = src.get(pos as usize..).unwrap_or("").trim_start();
+    let mut cs = rest.chars();
+    let first = cs.next();
+    (first, cs.as_str().trim_start().chars().next())
+}
+
+/// The words of the modifiers written in `src[lo..name_lo]` (a member's `declare`, `readonly`).
+pub(crate) fn has_modifier(src: &str, lo: u32, name_lo: u32, word: &str) -> bool {
+    src.get(lo as usize..name_lo as usize)
+        .is_some_and(|s| s.split_whitespace().any(|w| w == word))
+}
+
 /// The `name:` written before a function-type parameter whose type starts at `type_lo`
 /// (the AST drops these names; they are kept for readability).
 pub(crate) fn fn_type_param_name(src: &str, type_lo: u32) -> Option<&str> {
     let before = src.get(..type_lo as usize)?.trim_end();
-    let before = before.strip_suffix(':')?.trim_end();
+    label_before(before.strip_suffix(':')?.trim_end())
+}
+
+/// The name of an optional parameter of a function type or an optional tuple element, `name?:`,
+/// before its type at `type_lo`.
+pub(crate) fn optional_label(src: &str, type_lo: u32) -> Option<&str> {
+    let before = src.get(..type_lo as usize)?.trim_end();
+    let before = before.strip_suffix(':')?.trim_end().strip_suffix('?')?;
+    label_before(before).filter(|l| !l.starts_with(['[', '{']))
+}
+
+/// The name (or destructuring pattern) that `before` ends with.
+fn label_before(before: &str) -> Option<&str> {
+    if before.ends_with([']', '}']) {
+        // A destructured parameter (`([a, b]: [A, B]) => R`): the balanced pattern.
+        let mut depth = 0usize;
+        for (i, c) in before.char_indices().rev() {
+            match c {
+                ']' | '}' => depth += 1,
+                '[' | '{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&before[i..]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
     let name_start = before
         .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
         .map_or(0, |i| i + 1);
@@ -175,5 +223,9 @@ mod tests {
         assert_eq!(fn_type_param_name(src, 6), Some("acc"));
         assert_eq!(fn_type_param_name(src, 14), Some("x"));
         assert_eq!(fn_type_param_name(src, 17), None);
+        let src = "type F = ([a, { b }]: T, x: U) => R;";
+        assert_eq!(fn_type_param_name(src, 22), Some("[a, { b }]"));
+        assert_eq!(fn_type_param_name(src, 28), Some("x"));
+        assert_eq!(fn_type_param_name("x = a]: T", 8), None);
     }
 }

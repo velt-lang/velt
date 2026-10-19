@@ -1,0 +1,9 @@
+32 [ 'bob', 'alice', 'carol', 'dave' ] {"bob":2,"alice":1,"carol":3,"dave":26}
+1 true none
+{ bob: 2, alice: 1, carol: 3 } [ 2, 1, 3 ]
+{ bob: 2, alice: 1, carol: 3, erin: 5 }
+{ fruit: [ 'apple', 'pear' ], veg: [] } 2
+text/html { 'content-type': 'text/html', 'x-id': '7' }
+a write false
+b ship true
+{"a":{"label":"write","done":false},"b":{"label":"ship","done":true}}

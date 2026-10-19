@@ -7,6 +7,7 @@
 /// Append the decimal representation of `v`.
 #[inline]
 pub fn push_i64(out: &mut Vec<u8>, v: i64) {
+    crate::freed::check_value(v as u64, "an integer read from a freed block");
     let mut b = itoa::Buffer::new();
     out.extend_from_slice(b.format(v).as_bytes());
 }
@@ -23,8 +24,32 @@ pub fn push_bool(out: &mut Vec<u8>, v: u8) {
     out.extend_from_slice(if v != 0 { b"true" } else { b"false" });
 }
 
+/// Append `v` formatted like node's `util.inspect` (what `console.log` prints): as
+/// [`push_f64`], except that `-0` is `-0`.
+pub fn push_inspect_f64(out: &mut Vec<u8>, v: f64) {
+    if v == 0.0 && v.is_sign_negative() {
+        out.extend_from_slice(b"-0");
+        return;
+    }
+    push_f64(out, v);
+}
+
+/// `v` as an integer when it is a whole number below 2^53 in magnitude (`-0` is 0): what JS
+/// prints for it is the integer's digits.
+#[inline]
+pub fn whole(v: f64) -> Option<i64> {
+    (v.abs() < 9_007_199_254_740_992.0 && v == v.trunc()).then_some(v as i64)
+}
+
 /// Append `v` formatted like JavaScript's `String(v)`.
 pub fn push_f64(out: &mut Vec<u8>, v: f64) {
+    crate::freed::check_value(v.to_bits(), "a number read from a freed block");
+    // A counter or an index (`${i}`): its integer digits, which is what the general path below
+    // prints for it, without the shortest-digits search. `-0` prints `0` as JS does.
+    if let Some(i) = whole(v) {
+        push_i64(out, i);
+        return;
+    }
     if v.is_nan() {
         out.extend_from_slice(b"NaN");
         return;

@@ -1,0 +1,27 @@
+// Per-request cost on one core, without HTTP: seeds the shop and times `route` on a few routes
+// (node/inprocess.mjs does the same with the Node twin).
+//
+//   velt run --release inprocess.vlt
+import { route } from "./src/api";
+import { Store } from "./src/store";
+
+function bench(s: Store, label: string, path: string, query: string, n: i64) {
+  for (let i = 0; i < 20; i++) {
+    route(s, "GET", path, query, "");
+  }
+  const t = performance.now();
+  for (let i: i64 = 0; i < n; i++) {
+    route(s, "GET", path, query, "");
+  }
+  console.log(`${label}: ${((performance.now() - t) / (n as f64)).toFixed(4)} ms`);
+}
+
+function main() {
+  const t = performance.now();
+  const s = Store.seeded(42u32, 5000, 20000);
+  console.log(`seed 5000 products + 20000 orders: ${(performance.now() - t).toFixed(1)} ms`);
+  bench(s, "stats", "/stats", "", 200);
+  bench(s, "list 100, sorted by price", "/products", "limit=100&sort=price", 200);
+  bench(s, "list 100 + serialize", "/products", "limit=100", 2000);
+  bench(s, "product by id", "/products/123", "", 20000);
+}

@@ -40,6 +40,7 @@ pub(super) fn parse_build(
             "--release" => b.release = true,
             "-g" => b.debug_info = true,
             "--locked" => b.locked = true,
+            "--json" if cmd == "build" => b.json = true,
             "-v" | "--verbose" => b.verbose = true,
             "--timings" => {
                 b.verbose = true;
@@ -49,6 +50,14 @@ pub(super) fn parse_build(
                 b.output = Some(PathBuf::from(take_value(inline.as_deref(), &mut it, flag)?))
             }
             "--target" => b.target = Some(take_value(inline.as_deref(), &mut it, flag)?),
+            "--report" => match take_value(inline.as_deref(), &mut it, flag)?.as_str() {
+                "numbers" => b.report_numbers = true,
+                other => {
+                    return Err(format!(
+                        "unknown --report kind `{other}` (expected numbers)"
+                    ))
+                }
+            },
             "--backend" => {
                 b.backend = Some(Backend::parse(&take_value(
                     inline.as_deref(),
@@ -92,7 +101,7 @@ pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
         match arg.to_str() {
             Some("--") => break,
             // An option that takes its value from the next argument.
-            Some("--target" | "--backend") => i += 2,
+            Some("--target" | "--backend" | "--report") => i += 2,
             Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
             _ => break,
         }
@@ -190,6 +199,14 @@ mod tests {
         assert_eq!(b.backend, Some(Backend::Llvm));
         let b = build(&["build", "a.vlt", "--emit=llvm", "--backend=cranelift"]);
         assert_eq!((b.emit, b.backend), (Emit::Llvm, Some(Backend::Cranelift)));
+        let b = build(&["build", "a.vlt", "--report", "numbers"]);
+        assert!(b.report_numbers);
+        assert!(p(&["build", "a.vlt", "--report=speed"]).is_err());
+        assert!(build(&["build", "--json"]).json);
+        assert!(
+            p(&["run", "--json", "a.vlt"]).is_err(),
+            "only `build` prints JSON"
+        );
         let b = build(&["build", "a.vlt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");
         match p(&["run", "--target", "wasm32-wasip1", "a.vlt"]).unwrap() {

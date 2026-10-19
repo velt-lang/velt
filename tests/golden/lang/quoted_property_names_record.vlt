@@ -1,0 +1,9 @@
+// A `Record<string, V>` literal may use any quoted key, also ones Velt reserves in object types
+// (`#…`, `[Symbol.…`; quoted_property_names_reserved_literal).
+
+function main() {
+  const colors: Record<string, string> = { "#main": "red", "[Symbol.foo]": "x", plain: "y" };
+  console.log(colors["#main"], colors["[Symbol.foo]"]);
+  console.log(colors);
+  console.log(JSON.stringify(colors));
+}

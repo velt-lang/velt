@@ -1,0 +1,32 @@
+http_handler_callback_reach.vlt:85:7: error: this handler calls `cb`, which changes `a`; requests run at the same time
+http_handler_callback_reach.vlt:50:5: `a` is changed here
+  = note: fix: const a = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `a.with((v) => v)` and change it with `a.with((v) => { v = … })`
+http_handler_callback_reach.vlt:87:5: error: this handler calls `h.before`, which changes `b`; requests run at the same time
+http_handler_callback_reach.vlt:55:7: `b` is changed here
+  = note: fix: const b = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `b.with((v) => v)` and change it with `b.with((v) => { v = … })`
+http_handler_callback_reach.vlt:61:5: error: an HTTP handler can call this function, which changes `c`; requests run at the same time
+http_handler_callback_reach.vlt:82:21: the handler is passed to `serve` here
+  = note: fix: const c = shared(0)  // one value shared by every request, as in Node
+  = note: then read it with `c.get()` and change it with `c.set(v)` or `c.add(1)`
+http_handler_callback_reach.vlt:66:5: error: an HTTP handler can call this function, which changes `d`; requests run at the same time
+http_handler_callback_reach.vlt:82:21: the handler is passed to `serve` here
+  = note: fix: const d = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+  = note: then read it with `d.with((v) => v.value)` and change it with `d.with((v) => { v.value = … })`
+http_handler_callback_reach.vlt:92:7: error: this handler calls `g`, which changes `e`; requests run at the same time
+http_handler_callback_reach.vlt:71:5: `e` is changed here
+  = note: fix: const e = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `e.with((v) => v)` and change it with `e.with((v) => { v = … })`
+http_handler_callback_reach.vlt:94:5: error: this handler calls `bx.v`, which changes `k`; requests run at the same time
+http_handler_callback_reach.vlt:76:5: `k` is changed here
+  = note: fix: const k = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `k.with((v) => v)` and change it with `k.with((v) => { v = … })`
+http_handler_callback_reach.vlt:95:5: error: this handler calls `setTimeout(…)`, which changes `t`; requests run at the same time
+http_handler_callback_reach.vlt:80:5: `t` is changed here
+  = note: fix: const t = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `t.with((v) => v)` and change it with `t.with((v) => { v = … })`
+http_handler_callback_reach.vlt:41:5: error: this handler calls `onHit`, which changes `hit`; requests run at the same time
+http_handler_callback_reach.vlt:100:5: `hit` is changed here
+  = note: fix: const hit = shared(new Mutex(false))  // one value shared by every request, as in Node
+  = note: then read it with `hit.with((v) => v)` and change it with `hit.with((v) => { v = … })`

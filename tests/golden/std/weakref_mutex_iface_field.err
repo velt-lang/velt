@@ -1,0 +1,1 @@
+`Mutex<Box>`, which holds a weak collection, cannot be shared between threads

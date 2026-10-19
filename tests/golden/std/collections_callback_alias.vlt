@@ -1,0 +1,94 @@
+// Deque, Set and SortedMap `forEach` whose callback changes the collection through another
+// reference while it runs (#564). The values the callback receives stay valid when the
+// collection grows or drops them. Set visits as JS's `Set` does (Node prints the same);
+// Deque and SortedMap visit by position, reading the length again after each call, as a `for`
+// loop over an array does (docs/std/collections).
+
+import { Deque } from "velt:collections/deque";
+import { Set } from "velt:collections/set";
+import { SortedMap } from "velt:collections/sorted_map";
+
+function label(i: number): string {
+  return `value-${i}-with-a-label-long-enough-to-live-on-the-heap`;
+}
+
+function short(s: string): string {
+  return s.slice(0, 8);
+}
+
+function deque() {
+  const d = new Deque<string>();
+  for (let i = 0; i < 4; i++) {
+    d.pushBack(label(i));
+  }
+  const alias = d;
+  const seen: string[] = [];
+  d.forEach((v) => {
+    if (seen.length === 0) {
+      // Grows the ring (the buffer moves), then drops the back and the front elements.
+      for (let i = 0; i < 100; i++) {
+        alias.pushBack(label(100 + i));
+      }
+      while (alias.length > 4) {
+        alias.popBack();
+      }
+      alias.popFront();
+      alias.pushFront("front");
+    }
+    seen.push(`${short(v)}:${v.length}`);
+  });
+  console.log("Deque forEach", d.length, seen.join(","));
+}
+
+function set() {
+  const s = new Set<string>();
+  for (let i = 0; i < 4; i++) {
+    s.add(label(i));
+  }
+  const alias = s;
+  const seen: string[] = [];
+  s.forEach((v) => {
+    if (v === label(0)) {
+      // Grows the map, then deletes the current and a later element. (Deleting before the map
+      // grows compacts it, and the visit then skips an element: #590.)
+      for (let i = 0; i < 20; i++) {
+        alias.add(label(100 + i));
+      }
+      alias.delete(label(0));
+      alias.delete(label(2));
+    }
+    seen.push(`${short(v)}:${v.length}`);
+  });
+  console.log("Set forEach", s.size, seen.length, seen.slice(0, 4).join(","));
+}
+
+function sortedMap() {
+  const m = new SortedMap<string, string>();
+  for (let i = 0; i < 4; i++) {
+    m.set(`k${i}`, label(i));
+  }
+  const alias = m;
+  const seen: string[] = [];
+  m.forEach((v, k) => {
+    if (k === "k1") {
+      // Deletes the current and an earlier entry, adds entries before and after it, and
+      // replaces a later value.
+      alias.delete("k1");
+      alias.delete("k0");
+      for (let i = 0; i < 50; i++) {
+        alias.set(`a${i}`, label(200 + i));
+      }
+      alias.set("z", label(300));
+      alias.set("k3", "replaced");
+    }
+    seen.push(`${k}=${short(v)}:${v.length}`);
+  });
+  console.log("SortedMap forEach", m.size, seen.length, seen.slice(0, 4).join(","));
+  console.log("SortedMap forEach", seen.slice(seen.length - 4).join(","));
+}
+
+function main() {
+  deque();
+  set();
+  sortedMap();
+}

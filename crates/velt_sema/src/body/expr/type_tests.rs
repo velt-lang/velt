@@ -15,7 +15,7 @@ use velt_syntax::ast;
 use crate::body::places::is_place;
 use crate::body::{FnCx, Want};
 use crate::ctx::{Ctx, Item};
-use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, PatKind as P, TyId, TyKind};
 use crate::unions::TYPEOF_TAGS;
 
 /// Result of checking `a == b` where one side is a literal.
@@ -29,13 +29,27 @@ pub(crate) enum LitEq {
 impl FnCx<'_, '_> {
     /// `typeof e` as a string value.
     pub(crate) fn typeof_value(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
+        if let Some(h) = self.global_typeof_value(operand, span) {
+            return h;
+        }
         let s = self.expr(operand, None, Want::Borrow);
+        let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
         let sty = s.ty;
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        if self.cx.dynamic(sty).is_some() {
+            return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+        }
+        if self.cx.maybe_dynamic(sty) {
+            // `any | null`: the `any` it is.
+            if let Some(any) = self.any_ty() {
+                let s = self.coerce(s, any);
+                return self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+            }
+        }
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
             if is_place(&s) {
@@ -53,8 +67,13 @@ impl FnCx<'_, '_> {
             return self.mk(H::Block(block), str_, span);
         }
         let mut arms = vec![];
+        let mut nothings = self.nothing_arms(sty).into_iter();
         for (pat, t) in self.member_patterns(sty, span) {
-            let tag = t.map_or("object", |t| self.cx.typeof_tag(t));
+            let none = match t.is_none().then(|| nothings.next()).flatten() {
+                Some(Nothing::Undefined) => "undefined",
+                _ => "object",
+            };
+            let tag = t.map_or(none, |t| self.cx.typeof_tag(t));
             let body = self.str_lit(tag, span);
             arms.push(hir::Arm {
                 pat,
@@ -69,6 +88,21 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_, span)
     }
 
+    /// A value whose type is a type parameter as an `any` (a share of a variable), so `typeof`
+    /// tells the instantiation's value at run time (#1036); also a `T | undefined` / `T | null`
+    /// (its nothing, or the payload's tag); other values as they are.
+    pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
+        let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        let Some(any) = self
+            .any_ty()
+            .filter(|_| matches!(self.cx.ty.kind(core), TyKind::Param(_)))
+        else {
+            return s;
+        };
+        let s = self.share_if_place(s);
+        self.coerce(s, any)
+    }
+
     /// `typeof e === tag` (`negate`: `!==`).
     pub(crate) fn typeof_test(
         &mut self,
@@ -77,13 +111,54 @@ impl FnCx<'_, '_> {
         negate: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.global_typeof_test(operand, tag, negate, span) {
+            return h;
+        }
         let s = self.expr(operand, None, Want::Borrow);
-        if tag == "undefined" {
+        let s = self.param_as_any(s);
+        if self.cx.dynamic(s.ty).is_some() {
+            let str_ = self.cx.ty.str_;
+            let t = self.intrinsic(hir::Intrinsic::AnyTypeof, vec![s], str_, span);
+            let want = self.str_lit(tag, span);
+            let op = if negate {
+                hir::BinOp::NotEq
+            } else {
+                hir::BinOp::Eq
+            };
+            let b = self.cx.ty.bool_;
+            let kind = H::Binary {
+                op,
+                lhs: Box::new(t),
+                rhs: Box::new(want),
+            };
+            return self.mk(kind, b, span);
+        }
+        // The nothing arm answers `"undefined"` for a `T | undefined` and `"object"` for a
+        // `T | null`.
+        let nothing = self.cx.ty.nothing_of(s.ty);
+        if tag == "undefined" && nothing == Some(crate::hir::Nothing::Null) {
+            // As for `=== undefined` (`null_compare`): its `null` may be JavaScript's `undefined`.
+            let tn = self.cx.display(s.ty);
             self.cx.error(
-                Diagnostic::error("`typeof` never returns \"undefined\" in Velt", span)
-                    .with_note("`undefined` is not part of Velt: test for `null` (`x === null`)"),
+                Diagnostic::error(
+                    format!("`typeof` compared with \"undefined\" on a `{tn}` is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("its `null` may be JavaScript's `undefined` (an absent optional field, `Map.get`, `find`), which later phases of #930 give their own value")
+                .with_note("to test for either, write `== null`"),
             );
             return self.error_expr(span);
+        }
+        if tag == "undefined" {
+            let undef = |n: Nothing| n == Nothing::Undefined;
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &undef, span);
+            return self.negated(test.expr, negate, span);
+        }
+        if tag == "bigint" {
+            // No value is a `bigint` yet (#1088): always false, as for the types TypeScript
+            // allows here.
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, &|_| false, span);
+            return self.negated(test.expr, negate, span);
         }
         if !TYPEOF_TAGS.contains(&tag) {
             let tags: Vec<String> = TYPEOF_TAGS.iter().map(|t| format!("\"{t}\"")).collect();
@@ -94,7 +169,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let test = self.type_test(s, &pred, tag == "object", span);
+        let null_is_object = |n: Nothing| tag == "object" && n == Nothing::Null;
+        let test = self.type_test(s, &pred, &null_is_object, span);
         if let Some(what) = test.never_msg {
             self.cx.err(
                 format!("this `typeof` test is always false: no member of {what} is a \"{tag}\""),
@@ -102,6 +178,127 @@ impl FnCx<'_, '_> {
             );
         }
         self.negated(test.expr, negate, span)
+    }
+
+    /// `#x in o` (an ES brand check): `o instanceof C`, `C` the class whose body declares `#x`
+    /// (and this code is in). In JavaScript the two differ only through prototype changes and
+    /// constructors returning another object, which Velt has neither of.
+    pub(crate) fn private_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        let class = self.brand_class(lhs, true);
+        let s = self.expr(rhs, None, Want::Borrow);
+        let Some(class) = class.filter(|_| !self.cx.ty.is_bottom(s.ty)) else {
+            return self.error_expr(span);
+        };
+        if self.cx.ty.opt_payload(s.ty).is_some() {
+            // TypeScript rejects it (TS18047), and JavaScript throws a `TypeError` for `null`.
+            let tn = self.cx.display(s.ty);
+            let note = match (&lhs.kind, &rhs.kind) {
+                (ast::ExprKind::Ident(x), ast::ExprKind::Ident(o)) => format!(
+                    "test it first: `{o} !== null && {x} in {o}`",
+                    o = o.name,
+                    x = x.name
+                ),
+                _ => "test that it is not null first".to_string(),
+            };
+            self.cx.error(
+                Diagnostic::error(
+                    format!("the right operand of `in` may be null: its type is `{tn}`"),
+                    rhs.span,
+                )
+                .with_note(note),
+            );
+            return self.error_expr(span);
+        }
+        if let Some(p) = self.primitive_member(&s) {
+            // TypeScript rejects it (TS2322: not assignable to `object`), and JavaScript throws
+            // a `TypeError` for a primitive.
+            let (tn, pn) = (self.cx.display(s.ty), self.cx.display(p));
+            self.cx.error(
+                Diagnostic::error(
+                    format!("the right operand of `in` may be a primitive: its type is `{tn}`"),
+                    rhs.span,
+                )
+                .with_note(format!(
+                    "`in` needs an object; JavaScript throws a `TypeError` for a `{pn}`: narrow it to an object first"
+                )),
+            );
+            return self.error_expr(span);
+        }
+        if !self.testable_instance(s.ty) {
+            let tn = self.cx.display(s.ty);
+            self.cx.err(
+                format!("the right operand of `in` must be an object: a class instance, an interface value or a union with class members, found `{tn}`"),
+                rhs.span,
+            );
+            return self.error_expr(span);
+        }
+        self.class_test(s, class, span)
+            .unwrap_or_else(|| self.error_expr(span))
+    }
+
+    /// The class `#x in …` tests for: the class whose body this is, which must declare `#x`
+    /// (a field, method or accessor). `report`: errors for anything else.
+    pub(crate) fn brand_class(&mut self, lhs: &ast::Expr, report: bool) -> Option<DefId> {
+        let ast::ExprKind::Ident(id) = &lhs.kind else {
+            return None;
+        };
+        let Some(owner) = self.name_owner(&id.name).filter(|_| id.is_private_name()) else {
+            if report {
+                self.cx
+                    .err("private names are only allowed in class bodies", id.span);
+            }
+            return None;
+        };
+        let a = self.cx.adt(owner)?;
+        let declared = a
+            .fields
+            .iter()
+            .any(|f| f.name == id.name && f.private_to == Some(owner))
+            || a.methods.contains_key(&id.name)
+            || a.methods
+                .contains_key(&crate::defs::member_key(&id.name, true));
+        if !declared && report {
+            let cn = a.name.clone();
+            self.cx.err(
+                format!("property `{}` does not exist on class `{cn}`", id.name),
+                id.span,
+            );
+        }
+        declared.then_some(owner)
+    }
+
+    /// A primitive member (string, number, boolean, ...) that union value `h` may hold here
+    /// (members a narrowing ruled out don't count).
+    pub(super) fn primitive_member(&mut self, h: &hir::Expr) -> Option<TyId> {
+        let members = self.cx.union_members(h.ty)?;
+        let allowed = self.narrowed_variants(h);
+        let may_hold = |i: usize| allowed.as_ref().is_none_or(|vs| vs.contains(&(i as u32)));
+        let members = members
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| may_hold(*i));
+        members.map(|(_, m)| m).find(|m| {
+            matches!(
+                self.cx.ty.kind(*m),
+                TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Str
+                    | TyKind::Symbol
+                    | TyKind::Unit
+                    | TyKind::Literal(_)
+            )
+        })
+    }
+
+    /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
+    /// union with class members)?
+    fn testable_instance(&mut self, t: TyId) -> bool {
+        let inner = self.cx.ty.core(t).unwrap_or(t);
+        let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
+        candidates.iter().any(|t| {
+            self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
+        })
     }
 
     /// `e instanceof C`.
@@ -112,6 +309,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(e, None, Want::Borrow);
+        if self.is_promise_ctor(ty) {
+            return self.promise_test(s, span);
+        }
         let Some(class) = self.instanceof_class(ty) else {
             return self.error_expr(span);
         };
@@ -119,7 +319,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let testable = |t: &TyId| {
             self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
@@ -134,6 +334,47 @@ impl FnCx<'_, '_> {
         }
         self.class_test(s, class, span)
             .unwrap_or_else(|| self.error_expr(span))
+    }
+
+    /// `Promise` after `instanceof`, when no class of that name is in scope: the built-in
+    /// promise type, which is not a class in Velt.
+    pub(crate) fn is_promise_ctor(&self, ty: &ast::TypeExpr) -> bool {
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return false;
+        };
+        path.len() == 1
+            && path[0].name == "Promise"
+            && args.is_empty()
+            && !self.env.params.contains(&path[0].name)
+            && self.instanceof_class_quiet(ty).is_none()
+    }
+
+    /// `x instanceof Promise`: tests for the promise member of a union (a promise type is
+    /// always one, anything else never).
+    fn promise_test(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        if self.cx.ty.is_bottom(s.ty) {
+            return self.error_expr(span);
+        }
+        let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
+        let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
+        // A value of one type that is not a promise (`5 instanceof Promise`).
+        let single = (self.cx.union_def(inner).is_none() && !pred(self.cx, inner))
+            .then(|| self.cx.display(s.ty));
+        let test = self.type_test(s, &pred, &|_| false, span);
+        if let Some(what) = test.never_msg {
+            self.cx.err(
+                format!(
+                    "this `instanceof` test is always false: no member of {what} is a `Promise`"
+                ),
+                span,
+            );
+        } else if let Some(t) = single {
+            self.cx.err(
+                format!("this `instanceof` test is always false: `{t}` is not a `Promise`"),
+                span,
+            );
+        }
+        test.expr
     }
 
     pub(super) fn class_def_name(&self, d: DefId) -> String {
@@ -210,7 +451,7 @@ impl FnCx<'_, '_> {
             Err(Some(other)) => other,
             Err(None) => self.expr(other_e, None, Want::Borrow),
         };
-        let inner = self.cx.ty.opt_payload(other.ty).unwrap_or(other.ty);
+        let inner = self.cx.ty.core(other.ty).unwrap_or(other.ty);
         if let Some(done) = self.impossible_literal(other_e, inner, &lit, span) {
             return Some(LitEq::Done(done));
         }
@@ -304,7 +545,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if s.ty != inner {
-            p = self.pat(P::Some(Box::new(p)), s.ty, span);
+            p = self.present_pat(p, s.ty, span);
         }
         self.bool_match(s, Some(p), span)
     }
@@ -351,6 +592,7 @@ impl FnCx<'_, '_> {
             }
             ast::Lit::Float { .. } => (find(&|t| ty.is_float(t)), "float"),
             ast::Lit::Null => (vec![], "null"),
+            ast::Lit::Undefined => (vec![], "undefined"),
         };
         match found.as_slice() {
             [i] => Ok((*i as u32, members[*i])),
@@ -367,20 +609,21 @@ impl FnCx<'_, '_> {
     }
 
     /// `match (s) { <members satisfying pred> => true, _ => false }`.
-    fn type_test(
+    pub(super) fn type_test(
         &mut self,
         s: hir::Expr,
         pred: &dyn Fn(&Ctx, TyId) -> bool,
-        null_matches: bool,
+        nothing_matches: &dyn Fn(Nothing) -> bool,
         span: Span,
     ) -> TypeTest {
         let sty = s.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let is_union = self.cx.union_def(inner).is_some();
         let mut alts = vec![];
+        let mut nothings = self.nothing_arms(sty).into_iter();
         for (p, t) in self.member_patterns(sty, span) {
             let yes = match t {
-                None => null_matches,
+                None => nothings.next().is_some_and(nothing_matches),
                 Some(t) => pred(self.cx, t),
             };
             if yes {
@@ -404,13 +647,14 @@ impl FnCx<'_, '_> {
         sty: TyId,
         span: Span,
     ) -> Vec<(hir::Pat, Option<TyId>)> {
-        let (inner, nullable) = match self.cx.ty.opt_payload(sty) {
+        let (inner, nullable) = match self.present_payload(sty) {
             Some(p) => (p, true),
             None => (sty, false),
         };
         let mut out = vec![];
-        if nullable {
-            out.push((self.pat(P::None, sty, span), None));
+        // One arm per nothing, in `nothing_arms` order.
+        for n in self.nothing_arms(sty) {
+            out.push((self.one_nothing_pat(n, sty, span), None));
         }
         let parts: Vec<(hir::Pat, TyId)> = match self.cx.union_def(inner) {
             Some((def, _)) => {
@@ -425,13 +669,22 @@ impl FnCx<'_, '_> {
         };
         for (p, t) in parts {
             let p = if nullable {
-                self.pat(P::Some(Box::new(p)), sty, span)
+                self.present_pat(p, sty, span)
             } else {
                 p
             };
             out.push((p, Some(t)));
         }
         out
+    }
+
+    /// The nothings of `sty`, in the order `member_patterns` gives their arms.
+    pub(crate) fn nothing_arms(&self, sty: TyId) -> Vec<Nothing> {
+        match self.cx.ty.nothing_of(sty) {
+            Some(Nothing::Both) => vec![Nothing::Undefined, Nothing::Null],
+            Some(n) => vec![n],
+            None => vec![],
+        }
     }
 
     /// `Variant(_)` of union `u`.
@@ -502,7 +755,7 @@ impl FnCx<'_, '_> {
 
     /// Hint for using a member of a union (or nullable union) value without narrowing it.
     pub(crate) fn narrowing_note(&self, t: TyId) -> Option<String> {
-        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let inner = self.cx.ty.core(t).unwrap_or(t);
         self.cx.union_def(inner)?;
         Some(format!(
             "`{}` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`",
@@ -516,7 +769,7 @@ impl FnCx<'_, '_> {
 }
 
 /// A built type test and, if it can never be true on a union, the union's name.
-struct TypeTest {
-    expr: hir::Expr,
-    never_msg: Option<String>,
+pub(super) struct TypeTest {
+    pub(super) expr: hir::Expr,
+    pub(super) never_msg: Option<String>,
 }

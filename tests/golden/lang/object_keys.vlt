@@ -8,7 +8,7 @@ enum Res {
 
 class A {
   x = 1;
-  private y = 2;
+  private y: i64 = 2;
   static readonly z = 3;
   m(): i64 {
     return this.y;

@@ -123,7 +123,11 @@ impl<T> Registry<T> {
 
     /// Register a new object; the table holds one reference until [`remove`](Self::remove).
     pub fn insert(&self, obj: T) -> Key<T> {
-        let obj = Arc::new(obj);
+        self.insert_shared(Arc::new(obj))
+    }
+
+    /// [`insert`](Self::insert) for an object the caller keeps a reference to as well.
+    pub fn insert_shared(&self, obj: Arc<T>) -> Key<T> {
         let shard = home_shard();
         let mut t = self.lock(shard).expect("ICE: home shard exists");
         let index = match t.free.pop() {
@@ -169,6 +173,17 @@ impl<T> Registry<T> {
             Some(obj) => start(obj),
             None => closed_leaf::<R>(),
         }
+    }
+
+    /// Every open object (a snapshot; taken one shard lock at a time).
+    pub fn all(&self) -> Vec<Arc<T>> {
+        let mut out = Vec::new();
+        for shard in 0..SHARDS {
+            if let Some(t) = self.lock(shard) {
+                out.extend(t.slots.iter().filter_map(|s| s.obj.clone()));
+            }
+        }
+        out
     }
 
     /// Close the handle: every copy of it is dead afterwards. Returns the table's reference

@@ -1,0 +1,56 @@
+// A sync callback assigning a captured variable, reached by an HTTP handler: a closure the handler makes calls the field (#873).
+import { serve } from "velt:http";
+
+type Fn = (v: string) => void;
+
+class Input {
+  onChange: Fn = (v) => {};
+  fire() {
+    const g = () => {
+      this.onChange("x");
+    };
+    g();
+  }
+  attach(h: Hub) {
+    h.items.push(this);
+  }
+}
+
+class Hub {
+  items: Input[] = [];
+}
+
+class Emitter {
+  listeners: Fn[];
+  constructor(ls: Fn[]) {
+    this.listeners = ls;
+  }
+  on(f: Fn) {
+    this.listeners.push(f);
+  }
+}
+
+class Base {
+  cb: Fn = (v) => {};
+  run() {
+    this.cb("x");
+  }
+}
+class Sub extends Base {}
+
+function fireIt(o: Input) {
+  o.onChange("x");
+}
+
+async function main() {
+  let last = "";
+  const i = new Input();
+  i.onChange = (v: string) => { last = `${v}${last.length}`; };
+  const a = await serve({ port: 0 }, async (req) => {
+    const g = () => { i.onChange("x"); };
+    g();
+    return new Response("ok");
+  });
+  await a.shutdown();
+  console.log(last.length);
+}

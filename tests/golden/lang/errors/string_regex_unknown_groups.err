@@ -1,0 +1,5 @@
+string_regex_unknown_groups.vlt:12:27: error: this function takes more than the match, but the number of groups of the regex is not known while compiling
+string_regex_unknown_groups.vlt:17:39: error: this function takes more than the match, but the number of groups of the regex is not known while compiling
+string_regex_unknown_groups.vlt:18:36: error: this function takes more than the match, but the number of groups of the regex is not known while compiling
+string_regex_unknown_groups.vlt:20:30: error: this function takes more than the match, but the number of groups of the regex is not known while compiling
+  = note: pass a regex literal, or a `const` or `readonly` field initialized with one

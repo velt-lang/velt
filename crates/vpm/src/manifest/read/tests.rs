@@ -258,6 +258,31 @@ fn field_rules_point_at_the_value() {
 }
 
 #[test]
+fn the_toolchain_requirement() {
+    for req in ["0.1", "0.1.3", "=0.1.3", ">=0.1, <0.3"] {
+        let m = read(&with(&format!("velt: \"{req}\"")));
+        assert_eq!(m.toolchain.as_deref(), Some(req));
+        assert_eq!(m.to_json()["velt"], req);
+        assert_eq!(
+            Manifest::read(FILE, &m.to_vlt()).unwrap(),
+            m,
+            "round trip of {req}"
+        );
+    }
+    let without = read(&with("entry: \"src/a.vlt\""));
+    assert_eq!(without.toolchain, None);
+    assert!(without.to_json().get("velt").is_none());
+    let (message, covered) = error(&with("velt: \"latest\""));
+    assert!(
+        message.starts_with("velt `latest` is not a version requirement"),
+        "{message}"
+    );
+    assert_eq!(covered, "\"latest\"");
+    let (message, _) = error(&with("velt: 0.1"));
+    assert_eq!(message, "`velt` must be a string, not a number");
+}
+
+#[test]
 fn syntax_errors_are_reported_as_is() {
     let diags = Manifest::read(FILE, "export const pkg: Package = { name: };").unwrap_err();
     assert!(!diags.is_empty());

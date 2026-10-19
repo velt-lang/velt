@@ -1,0 +1,3 @@
+// Global (loaded when a module names it or holds a regular expression literal): `RegExp`
+// (docs/std/regex.md).
+export { RegExp } from "velt:regex";

@@ -1,0 +1,41 @@
+// The `content-type` a response's body implies reads, changes and iterates like any other
+// header (as in Node), however it is held, and a server sends it unless the handler set one.
+import { serve } from "velt:http";
+
+function entries(h: Headers): string {
+  const parts: string[] = [];
+  for (const [name, value] of h) {
+    parts.push(`${name}=${value}`);
+  }
+  return parts.join(" ");
+}
+
+async function main() {
+  const a = new Response("hi");
+  a.headers.set("x-a", "1");
+  console.log(a.headers.get("content-type"), a.headers.has("Content-Type"));
+  console.log(entries(a.headers));
+  const b = new Response("hi");
+  b.headers.append("content-type", "text/html");
+  console.log(b.headers.get("content-type"));
+  const c = new Response("hi");
+  c.headers.delete("content-type");
+  console.log(c.headers.has("content-type"), entries(c.headers));
+  const d = Response.json([1, 2]);
+  d.headers.set("server", "velt");
+  console.log(new Headers(d.headers).get("content-type"), entries(d.headers));
+
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const res = new Response("hello");
+    res.headers.set("server", "velt");
+    if (req.url.endsWith("/html")) {
+      res.headers.set("content-type", "text/html");
+    }
+    return res;
+  });
+  for (const path of ["/", "/html"]) {
+    const r = await fetch(`http://127.0.0.1:${server.port}${path}`);
+    console.log(path, r.headers.get("content-type"), r.headers.get("server"), await r.text());
+  }
+  server.close();
+}

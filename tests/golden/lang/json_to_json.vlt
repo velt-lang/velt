@@ -1,0 +1,43 @@
+// JSON.stringify writes a class with toJSON() (own or inherited) as what it returns, as Node
+// does: Date and its subclasses as ISO strings, URL as its href, user classes (#616).
+class Stamp extends Date {}
+
+console.log(JSON.stringify(new Stamp(0)));
+console.log(JSON.stringify(new Date(86400000)));
+console.log(JSON.stringify({ at: new Date(0), list: [new Stamp(1000)], bad: new Date(NaN) }));
+console.log(JSON.stringify(new URL("http://example.com/a?b=1")));
+
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  toJSON(): string {
+    return `${this.cents / 100} EUR`;
+  }
+}
+
+class Order {
+  total: Money = new Money(1250);
+  items: Money[] = [new Money(1), new Money(250)];
+}
+
+console.log(JSON.stringify(new Order()));
+
+class Point {
+  x = 1;
+  y = 2;
+  toJSON() {
+    return [this.x, this.y];
+  }
+}
+
+class Point3 extends Point {
+  z = 3;
+  override toJSON() {
+    return [this.x, this.y, this.z];
+  }
+}
+
+const ps: Point[] = [new Point(), new Point3()];
+console.log(JSON.stringify(ps));

@@ -1,0 +1,13 @@
+// An async call cannot initialize a module constant: module state is initialized where
+// nothing could await it (module_const_stored_calls.vlt has the calls that make a constant
+// module state, module_const_throws.vlt one that may throw).
+
+async function later(): Promise<number> {
+  return 1;
+}
+
+const E = later();
+
+function main() {
+  console.log(E);
+}

@@ -44,6 +44,11 @@ pub struct Watcher {
     /// Canonical spellings of the watched files and directories → their keys above
     /// (notifications may name them differently: absolute, through symlinks resolved).
     aliases: HashMap<PathBuf, PathBuf>,
+    /// Directories whose files are written once, before a build reads them (the package cache:
+    /// checksum-verified registry packages), with their canonical spellings. A file there that
+    /// the snapshot doesn't cover is compared from the stamp it has when first watched, never
+    /// counted as saved during the build because it is recent.
+    written_once: Vec<PathBuf>,
     /// When a change was first seen and not yet reported.
     dirty_since: Option<Instant>,
     /// Last time any file changed (for the settle delay).
@@ -122,6 +127,7 @@ impl Watcher {
             appeared: HashMap::new(),
             notifier,
             aliases: HashMap::new(),
+            written_once: Vec::new(),
             dirty_since: None,
             last_change: None,
         }
@@ -131,6 +137,21 @@ impl Watcher {
     #[cfg(test)]
     pub fn notifies(&self) -> bool {
         self.notifier.is_some()
+    }
+
+    /// Files under `dir` are written once, before any build reads them (see `written_once`).
+    pub fn written_once(&mut self, dir: &Path) {
+        self.written_once.extend(canonical(dir));
+        self.written_once.push(dir.to_path_buf());
+    }
+
+    /// Whether `path` is under a directory of files written once.
+    fn is_written_once(&self, path: &Path) -> bool {
+        if self.written_once.is_empty() {
+            return false;
+        }
+        let under = |p: &Path| self.written_once.iter().any(|d| p.starts_with(d));
+        under(path) || canonical(path).is_some_and(|c| under(&c))
     }
 
     /// Watch exactly `paths` from now on, as read by a build that started at `snap`: a file
@@ -155,10 +176,10 @@ impl Watcher {
             let s = match snap.stamp_of(&p) {
                 Some(s) => s,
                 // Not in a directory watched before the build: modified around its start
-                // may mean saved during the build.
+                // may mean saved during the build, unless it is written only once.
                 None => {
                     let s = stamp(&p);
-                    newer |= snap.maybe_saved_since(s);
+                    newer |= !self.is_written_once(&p) && snap.maybe_saved_since(s);
                     s
                 }
             };
@@ -194,9 +215,10 @@ impl Watcher {
             .collect();
         for dir in &wanted {
             if !self.dirs.contains_key(dir) {
+                let exempt = self.is_written_once(dir);
                 let known = snap.listing(dir).unwrap_or_else(|| {
                     let now = sources_in(dir);
-                    newer |= now.iter().any(|f| snap.maybe_saved_since(stamp(f)));
+                    newer |= !exempt && now.iter().any(|f| snap.maybe_saved_since(stamp(f)));
                     now
                 });
                 self.dirs.insert(dir.clone(), known);

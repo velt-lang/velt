@@ -39,6 +39,8 @@ impl FnCx<'_, '_> {
             has_break: false,
             needs_label: false,
             synth_label: format!("<{kind}#{}>", self.f.loop_count),
+            depth: self.f.scopes.len(),
+            break_states: vec![],
         });
     }
 
@@ -86,18 +88,23 @@ impl FnCx<'_, '_> {
         self.unnarrow_assigned_in(s);
         match &s.kind {
             ast::StmtKind::While { cond, body } => {
-                let (when_true, _) = self.narrowing(cond);
+                let (when_true, when_false) = self.narrowing(cond);
                 let c = self.cond(cond);
                 self.enter_loop(label, false);
                 let b = self.block_narrowed(body, &when_true);
-                let label = self.exit_loop().hir_label();
+                let lp = self.exit_loop();
                 let w = S::While {
-                    label,
+                    label: lp.hir_label(),
                     cond: c,
                     body: b,
                     step: None,
                 };
                 Self::push(out, w, span);
+                // Without a `break`, the loop ends only where its condition is false
+                // (`while (y === null) { y = next(); }` narrows `y` after it, #1227).
+                if !lp.has_break {
+                    when_false.iter().for_each(|f| self.narrow(f));
+                }
             }
             ast::StmtKind::DoWhile { body, cond } => self.do_while(body, cond, label, span, out),
             ast::StmtKind::For {
@@ -121,6 +128,11 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
+                let tested = match is_await {
+                    true => None,
+                    false => self.for_in_presence_test(pattern, iter, body),
+                };
+                let body = tested.as_ref().unwrap_or(body);
                 let parts = ForOfParts {
                     kind: *kind,
                     pattern,
@@ -134,7 +146,9 @@ impl FnCx<'_, '_> {
                     true => self.for_await(iter, parts, out),
                     false => {
                         let it = self.for_of_source(iter);
-                        self.for_of(it, parts, out)
+                        if !self.for_of_map(iter, &it, parts, out) {
+                            self.for_of(it, parts, out)
+                        }
                     }
                 }
             }
@@ -263,6 +277,9 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
+            return self.for_of_any(it, p, out);
+        }
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }
@@ -295,9 +312,10 @@ impl FnCx<'_, '_> {
             false => BindCtx::Elem { mutable },
         };
         let binding = self.pattern(p.pattern, elem, ctx);
-        self.note_inferred_bindings(&binding, &it);
+        let numbers = self.std_number_bindings(&binding, &it, true);
         self.enter_loop(p.label, false);
-        let b = self.block(p.body);
+        let mut b = self.block(p.body);
+        b.stmts.splice(0..0, numbers);
         let label = self.exit_loop().hir_label();
         self.pop_scope();
         let f = S::ForOf {

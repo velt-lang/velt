@@ -1,0 +1,76 @@
+// Methods as function values (#746): `obj.method` read as a value is bound to `obj`, and
+// `obj.method.bind(obj)` gives the same function value.
+class P {
+  tag = "t";
+  log(x: number): void {
+    console.log(x);
+  }
+  show(x: number): void {
+    console.log(this.tag, x);
+  }
+}
+
+class Obj {
+  n: number = 0;
+  add(x: number): void {
+    this.n += x;
+  }
+  twice(x: number): number {
+    return x * 2;
+  }
+  greet(name: string, punct: string = "!"): string {
+    return `hi ${name}${punct}`;
+  }
+  adder(): (x: number) => void {
+    return this.add.bind(this);
+  }
+}
+
+class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+  get(): T {
+    return this.value;
+  }
+}
+
+function apply(f: (x: number) => number, x: number): number {
+  return f(x);
+}
+
+function make(): Obj {
+  console.log("make");
+  return new Obj();
+}
+
+function main() {
+  const p = new P();
+  const xs: number[] = [1, 2];
+  xs.forEach(p.log);
+  const o = new Obj();
+  xs.forEach(o.add.bind(o));
+  const f = (x: number) => o.add(x);
+  f(3);
+  console.log(o.n);
+  const t = o.twice;
+  console.log(t(21), apply(o.twice, 4), xs.map(o.twice).join(","));
+  const g = o.greet;
+  console.log(g("ann"), g("bo", "?"));
+  const add = o.adder();
+  add(10);
+  console.log(o.n);
+  const b = new Box<string>("boxed");
+  const get = b.get.bind(b);
+  console.log(get());
+  // The receiver is evaluated once, where the method is read.
+  const m = make().twice;
+  console.log(m(1), m(2));
+  let q = new P();
+  const ql = q.show.bind(q);
+  q = new P();
+  q.tag = "new";
+  ql(7);
+  q.show(8);
+}

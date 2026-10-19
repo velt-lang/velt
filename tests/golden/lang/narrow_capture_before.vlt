@@ -1,0 +1,21 @@
+// check: no leaks
+// A closure created after the last assignment of a variable sees the narrowing the variable has
+// there, as in TypeScript.
+function late(s: string | null): number {
+  let x = s;
+  if (x === null) {
+    x = "fallback";
+  }
+  const f = (): number => x.length;
+  return f();
+}
+
+function declared(): string {
+  const u: string | number = "text";
+  const g = (): string => u.toUpperCase();
+  return g();
+}
+
+function main() {
+  console.log(late(null), late("ab"), declared());
+}

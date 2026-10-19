@@ -2,7 +2,8 @@
 //! outside declarations, they run, in order, in a generated `main` (`async` when one of them
 //! awaits). A top-level `const`/`let` moves into `main` with them, unless a declaration (a
 //! function, class, struct, `extend` block or a module constant that stays) refers to it
-//! (`script_names`): then it stays a module constant, which those declarations can see.
+//! (`script_names`) or a computed key names it (`[KEY]`, a symbol or string constant): then it
+//! stays a module constant, which those declarations can see.
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! reject statements in an imported module (only the root file runs them).
@@ -16,9 +17,9 @@ impl Parser<'_> {
     /// Does the cursor start a declaration (as opposed to a statement)?
     pub(super) fn at_item_start(&mut self) -> bool {
         match self.cur_kw() {
+            Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(
                 Kw::Export
-                | Kw::Import
                 | Kw::Function
                 | Kw::Struct
                 | Kw::Class
@@ -28,10 +29,9 @@ impl Parser<'_> {
                 | Kw::Let
                 | Kw::Declare,
             ) => true,
-            // `import(...)`/`import.meta` are not supported, so `import` always starts an item.
             Some(Kw::Async) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
-            None => self.at_extend(),
+            None => self.at_extend() || self.at_namespace(0) || self.at_var_decl(),
             _ => false,
         }
     }
@@ -76,12 +76,14 @@ impl Parser<'_> {
             throws: None,
             is_async,
             is_generator: false,
+            this_param: None,
             span,
         };
         rest.push(Item {
             kind: ItemKind::Function(FnDecl {
                 sig,
                 body: Block { stmts: body, span },
+                overloads: vec![],
             }),
             exported: false,
             span,
@@ -89,12 +91,24 @@ impl Parser<'_> {
         *items = rest;
     }
 
-    /// Per item: is it a top-level variable that stays at module level? Exported ones do, and
-    /// those a staying declaration refers to (to a fixed point).
+    /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
+    /// [`rest_arrow`] constant, a `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
+    /// symbol or string the module constant holds), and those a staying declaration refers to
+    /// (to a fixed point).
     fn kept_vars(&self, items: &[Item]) -> Vec<bool> {
         let mut keep: Vec<bool> = items
             .iter()
-            .map(|i| !matches!(i.kind, ItemKind::Var(_)) || i.exported)
+            .map(|i| match &i.kind {
+                ItemKind::Var(v) => {
+                    i.exported
+                        || rest_arrow(v)
+                        || (v.kind == VarKind::Const
+                            && bound_names(&v.pattern)
+                                .iter()
+                                .any(|n| self.computed_keys.contains(n)))
+                }
+                _ => true,
+            })
             .collect();
         let free: Vec<_> = items.iter().map(super::script_names::free_names).collect();
         loop {
@@ -132,6 +146,31 @@ impl Parser<'_> {
             !touching && before != Some('.') && !after.is_some_and(ident)
         })
     }
+}
+
+/// `const f = (...xs: T[]) => …` (or a function expression): a non-generic arrow constant with
+/// a rest parameter and typed parameters, which sema checks as the function `function f(...xs:
+/// T[])` at module level (a function value cannot take rest arguments yet), so it stays there
+/// like a function declaration.
+fn rest_arrow(v: &VarDecl) -> bool {
+    let Some(Expr {
+        kind:
+            ExprKind::Arrow {
+                type_params,
+                params,
+                ..
+            },
+        ..
+    }) = &v.init
+    else {
+        return false;
+    };
+    v.kind == VarKind::Const
+        && v.ty.is_none()
+        && matches!(v.pattern.kind, PatternKind::Ident(_))
+        && type_params.is_empty()
+        && params.iter().any(|p| p.rest)
+        && params.iter().all(|p| p.ty.is_some())
 }
 
 /// The names a declaration pattern binds.

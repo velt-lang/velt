@@ -57,6 +57,15 @@ pub const PACKAGE: &[Field] = &[
         doc: "A semantic version, such as `\"0.1.0\"`.",
     },
     Field {
+        key: "velt",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The velt versions that build the package, such as `\"0.1\"`: the newest \
+              installed `0.1.x` (`\"0.1.3\"`: at least `0.1.3`; `\"=0.1.3\"`: exactly). The \
+              velt launcher runs that toolchain, installing it when it is missing.",
+    },
+    Field {
         key: "description",
         kind: Kind::Str,
         ty: "string",
@@ -112,6 +121,16 @@ pub const PACKAGE: &[Field] = &[
         ty: "Jsx",
         required: false,
         doc: "How the package's modules compile JSX.",
+    },
+    Field {
+        key: "define",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "Build-time constants, as Vite's `define`: `{ __DEV__: \"false\" }`. Each value is \
+              the source of a literal (`true`, `false`, `null`, a number, or a quoted string \
+              such as `\"\\\"1.0\\\"\"`); every use of the name as a value is that literal, so \
+              `if (__DEV__)` branches fold. Only the root package's apply.",
     },
     Field {
         key: "native",

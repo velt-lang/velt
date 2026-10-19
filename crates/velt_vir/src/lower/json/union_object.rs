@@ -53,7 +53,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `(name, required)` of each field of object type `t`.
+    /// `(name, required)` of each field of object type `t` a JSON key fills (not one a symbol
+    /// names: `property_order::is_hidden_key`).
     fn object_field_names(&mut self, t: TyId) -> Vec<(String, bool)> {
         let TyKind::Adt(d, _) = self.cx.kind(t) else {
             return vec![];
@@ -69,7 +70,8 @@ impl FnLower<'_, '_> {
         names
             .into_iter()
             .zip(tys)
-            .map(|(n, ft)| (n, !matches!(self.cx.kind(ft), TyKind::Option(_))))
+            .filter(|(n, _)| !velt_sema::property_order::is_hidden_key(n))
+            .map(|(n, ft)| (n, !matches!(self.cx.kind(ft), TyKind::Option(..))))
             .collect()
     }
 

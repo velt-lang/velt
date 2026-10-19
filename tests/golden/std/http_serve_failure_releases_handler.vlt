@@ -3,7 +3,7 @@
 // handler closure it was given, so a captured resource's [Symbol.dispose]() runs. The TLS
 // failure used to leak the closure environment. (A handler runs on several threads at once,
 // so a resource it captures needs a `clone()`: each request gets its own copy.)
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { TEST_CERT } from "./_tls";
 
 class Store {
@@ -27,7 +27,7 @@ async function main() {
   try {
     const bad = await serve(
       { port: 0, tls: { cert: TEST_CERT, key: "nope" } },
-      async (req: Request): Promise<Response> => Response.text(tlsStore.name),
+      async (req: Request): Promise<Response> => new Response(tlsStore.name),
     );
     console.log("unexpected", bad.port);
   } catch (e) {
@@ -36,13 +36,13 @@ async function main() {
 
   const server = await serve(
     { port: 0 },
-    async (req: Request): Promise<Response> => Response.text("first"),
+    async (req: Request): Promise<Response> => new Response("first"),
   );
   const busyStore = new Store("busy");
   try {
     const twice = await serve(
       { port: server.port },
-      async (req: Request): Promise<Response> => Response.text(busyStore.name),
+      async (req: Request): Promise<Response> => new Response(busyStore.name),
     );
     console.log("unexpected", twice.port);
   } catch (e) {

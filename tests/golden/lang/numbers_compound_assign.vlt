@@ -1,6 +1,6 @@
 // check: no leaks
-// Compound assignments adapt integer types like the binary operators do (#421): a length or size
-// (a JS number held as a `usize`) added to a local or field declared from an integer literal.
+// Compound assignments with lengths and sizes (#421): they are numbers, like a local or field
+// declared from a literal; a declared integer takes one with `as`.
 
 class Counter {
   count = 0;
@@ -64,7 +64,7 @@ async function main() {
   console.log(f);
 
   let k: i64 = 5;
-  k -= "abc".length;
+  k -= "abc".length as i64;
   console.log(k);
 
   const small: i32 = 7;

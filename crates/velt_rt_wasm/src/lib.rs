@@ -7,17 +7,20 @@
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
 //!   methods and builders, number formatting, JSON (incl. `json.Value` handles), byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt:hash`'s
-//!   FNV-1a), HTML escaping, math, memory, the fs operations and the `*_sync` fs calls. Their
+//!   FNV-1a), HTML escaping, symbols, math, memory, weak references, the fs operations and the
+//!   `*_sync` fs calls. Their
 //!   `repr(C)` types put a pointer only where an 8-byte field follows, so on wasm32 each pointer
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
 //!   `Target::wide_pointer_slots`): identical layouts, identical behavior.
 //! - **own**: `platform` (host services per target), `entry`, `io`, `localtime` (UTC),
-//!   `memory_usage`, `panic`, `prng`, `process`, `shared` and the current-thread executor in
+//!   `memory_usage`, `panic`, `prng`, `process`, `shared`, `fetch` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.vlt` declares (WebAssembly links only exact
 //!   matches; crates/velt_rt/tests/std_externs.rs checks both runtimes).
 //!
-//! Not provided: TCP, HTTP and child processes (programs using them fail to link, with a note).
+//! Not provided: TCP, the HTTP server and child processes (programs using them fail to link,
+//! with a note). `fetch` links and fails with `ENOTSUP` (`fetch.rs`), so programs that only
+//! build `Response`s run.
 #![allow(clippy::missing_safety_doc)]
 
 #[path = "../../velt_rt/src/bigint.rs"]
@@ -26,11 +29,17 @@ pub mod bigint;
 pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
 pub mod bytes_ops;
+pub mod cell_owner;
+#[path = "../../velt_rt/src/drop_depth.rs"]
+pub mod drop_depth;
 pub mod entry;
+pub mod fetch;
 #[path = "../../velt_rt/src/fmt.rs"]
 pub mod fmt;
 #[path = "../../velt_rt/src/fnv.rs"]
 pub mod fnv;
+#[path = "../../velt_rt/src/freed.rs"]
+pub mod freed;
 pub mod fs;
 #[path = "../../velt_rt/src/handle.rs"]
 pub mod handle;
@@ -58,6 +67,7 @@ pub mod prng;
 pub mod process;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
+pub mod server_request;
 pub mod shared;
 #[path = "../../velt_rt/src/str/mod.rs"]
 pub mod str;
@@ -67,8 +77,12 @@ pub mod str_array;
 pub mod str_ops;
 #[path = "../../velt_rt/src/strbuf.rs"]
 pub mod strbuf;
+#[path = "../../velt_rt/src/symbol.rs"]
+pub mod symbol;
 pub mod task;
 #[path = "../../velt_rt/src/transfer_map.rs"]
 pub mod transfer_map;
+#[path = "../../velt_rt/src/weak/mod.rs"]
+pub mod weak;
 
 pub use crate::str::VeltStr;

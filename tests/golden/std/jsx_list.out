@@ -1,0 +1,19 @@
+<ul><li>a<b>a</b></li><li>b<b>b</b></li></ul>
+<ul><li>a<b>a</b></li><li>b<b>b</b></li></ul>
+threw: no !
+threw: no !
+<div><ul><li>a2<b>r</b></li><li>&lt;b&gt;2<b>r</b></li><li>c&#x27;s2<b>r</b></li></ul></div>
+<div><ul><li>a2<b>r</b></li><li>&lt;b&gt;2<b>r</b></li><li>c&#x27;s2<b>r</b></li></ul></div>
+<ul><li class="row">a</li><li class="row">&lt;b&gt;</li><li class="row">c&#x27;s</li></ul>
+<ul></ul>
+<p>before <i>a</i><i>&lt;b&gt;</i><i>c&#x27;s</i> after 3</p>
+<table><tr><td>1</td><td>2</td></tr><tr><td>-2</td><td>-4</td></tr><tr><td>9007199254740993</td><td>18014398509481986</td></tr></table>
+<div><ul><li>a1</li><li>a-2</li><li>a9007199254740993</li></ul><ul><li>&lt;b&gt;1</li><li>&lt;b&gt;-2</li><li>&lt;b&gt;9007199254740993</li></ul><ul><li>c&#x27;s1</li><li>c&#x27;s-2</li><li>c&#x27;s9007199254740993</li></ul></div>
+<ul><li><b>a</b></li><li><b>&lt;b&gt;</b></li><li><b>c&#x27;s</b></li></ul>
+<ul><li>a</li><li>&lt;b&gt;</li><li>c&#x27;s</li></ul>
+<ul><li title="r1"><b>r1</b>1</li><li title="r2"><b>r2</b>0</li></ul>
+<ul><li>a<b>a</b>a</li><li>&lt;b&gt;<b>&lt;b&gt;</b>&lt;b&gt;</li><li>c&#x27;s<b>c&#x27;s</b>c&#x27;s</li></ul>
+<div><b>a</b><i>a</i><i>&lt;b&gt;</i><i>c&#x27;s</i></div>
+<div><ul><li><b>a</b>a</li><li><b>&lt;b&gt;</b>a</li><li><b>c&#x27;s</b>a</li></ul><ul><li><b>a</b>&lt;b&gt;</li><li><b>&lt;b&gt;</b>&lt;b&gt;</li><li><b>c&#x27;s</b>&lt;b&gt;</li></ul><ul><li><b>a</b>c&#x27;s</li><li><b>&lt;b&gt;</b>c&#x27;s</li><li><b>c&#x27;s</b>c&#x27;s</li></ul></div>
+<p><span>1.5</span><span>0</span><span>1e+21</span><span>Infinity</span><span>NaN</span><span>0.30000000000000004</span></p>
+<p>1.5 1 0 0.30000000000000004</p>

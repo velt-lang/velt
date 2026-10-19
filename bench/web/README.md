@@ -7,7 +7,8 @@ predecessor (plaintext, JSON and an in-memory fortunes page).
 
 ```
 db/init.sql, db/db.sh   Postgres 17 in Docker (container velt-web-pg) with World + Fortune
-velt/server.vlt        std/http + std/postgres (createPool)
+velt/server.vlt        std/http + std/postgres (createPool); the routes are in velt/app.ts
+velt-tsx/server.vlt    the same routes, the fortunes page in TSX (velt:jsx, precompiled)
 node/server.mjs         node:http + pg (Pool); CLUSTER=1: node:cluster, one worker per core
 bun/server.ts           Bun.serve + Bun.SQL (Bun's built-in Postgres client)
 go/main.go              net/http + pgx/v5 (pgxpool)
@@ -49,6 +50,10 @@ reads `DATABASE_URL` (default
 `postgres://benchmarkdbuser:benchmarkdbpass@127.0.0.1:5432/hello_world`) and `DB_POOL`, the
 number of database connections of the process (default **2 × cores** everywhere; `node-cluster`
 splits it between its workers, at least 2 each).
+
+**Many cores (Linux):** `SERVER_CPUS` pins each server to a CPU list and `CLIENT_CPUS` pins wrk
+(`taskset -c`), so the two never share a core; `SERVERS=velt-per-core` runs the Velt server under
+`VELT_SCHEDULER=per-core`. The pinned Azure run is in [RESULTS.md](RESULTS.md).
 
 ## What run.sh does
 

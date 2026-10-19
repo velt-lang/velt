@@ -28,7 +28,7 @@ function g(node: T): i64 {
 function h(rows: T[][]): usize {
   const row = rows[0];
   rows.push([]);
-  return row.length;
+  return row.length as usize;
 }
 
 function k(node: T) {

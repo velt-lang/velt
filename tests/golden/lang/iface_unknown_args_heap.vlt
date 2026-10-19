@@ -1,0 +1,46 @@
+// check: heap blocks at most 7
+// check: no leaks
+// A handler table of generic interface values converted to `unknown` arguments (#1153): looping
+// over it and reading its elements into a `const` share the adapters instead of copying them, so
+// the loop allocates nothing per pass (the blocks are the table, its two objects and their
+// adapters, and the `Date` with its box).
+interface Handler<T = unknown, E = unknown> {
+  name: string;
+  test(value: unknown): boolean;
+  serialize(value: T): E;
+}
+
+class DateHandler implements Handler<Date, number> {
+  name = "date";
+  test(value: unknown): boolean {
+    return value instanceof Date;
+  }
+  serialize(value: Date): number {
+    return value.getTime();
+  }
+}
+
+class NumHandler implements Handler<number, number> {
+  name = "num";
+  test(value: unknown): boolean {
+    return typeof value === "number";
+  }
+  serialize(value: number): number {
+    return value * 2;
+  }
+}
+
+function main(): void {
+  const table: Handler[] = [new DateHandler(), new NumHandler()];
+  const d: unknown = new Date(5);
+  let total = 0;
+  for (let k = 0; k < 1000; k++) {
+    const first = table[0];
+    for (const h of table) {
+      if (h.test(d)) {
+        total += h.name.length + first.name.length;
+      }
+    }
+  }
+  console.log(total, table[0].serialize(d));
+}

@@ -1,0 +1,354 @@
+// Array and Map callback methods whose callback changes the collection through another
+// reference while it runs (#564). The callback's arguments must stay valid when a push moves
+// the array's buffer or a `pop` drops the element they came from, and the methods visit the
+// elements as Node does: the length is read once at the start (pushed elements are not
+// visited) and elements removed meanwhile are skipped. Node prints the same.
+
+class Holder {
+  items: [string, Holder][] = [];
+}
+
+class Wrapper {
+  items: string[];
+  constructor(items: string[]) {
+    this.items = items;
+  }
+  grow() {
+    for (let k = 0; k < 1000; k++) {
+      this.items.push("z".repeat(40));
+    }
+  }
+  shrink() {
+    while (this.items.length > 0) {
+      this.items.pop();
+    }
+  }
+}
+
+class Box {
+  items: string[] = [];
+}
+
+function words(n: number): string[] {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(`element-${i}-with-a-label-long-enough-to-live-on-the-heap`);
+  }
+  return xs;
+}
+
+function grow(ys: string[]) {
+  for (let i = 0; i < 1000; i++) {
+    ys.push(`pushed-${i}`);
+  }
+}
+
+function short(s: string): string {
+  return s.slice(0, 10);
+}
+
+function growing() {
+  let xs = words(4);
+  let ys = xs;
+  let seen: string[] = [];
+  xs.forEach((x, i) => {
+    if (i === 0) {
+      grow(ys);
+    }
+    seen.push(short(x));
+  });
+  console.log("forEach", xs.length, seen.join(","));
+
+  xs = words(4);
+  ys = xs;
+  const mapped = xs.map((x, i) => {
+    if (i === 1) {
+      grow(ys);
+    }
+    return `${short(x)}:${x.length}`;
+  });
+  console.log("map", xs.length, mapped.join(","));
+
+  xs = words(4);
+  ys = xs;
+  const kept = xs.filter((x, i) => {
+    if (i === 0) {
+      grow(ys);
+    }
+    return i % 2 === 0;
+  });
+  console.log("filter", xs.length, kept.map(short).join(","));
+
+  xs = words(4);
+  ys = xs;
+  const some = xs.some((x, i) => {
+    grow(ys);
+    return x.startsWith("pushed");
+  });
+  console.log("some", xs.length, some);
+
+  xs = words(4);
+  ys = xs;
+  const every = xs.every((x, i) => {
+    if (i === 2) {
+      grow(ys);
+    }
+    return x.startsWith("element");
+  });
+  console.log("every", xs.length, every);
+
+  xs = words(4);
+  ys = xs;
+  const found = xs.find((x, i) => {
+    grow(ys);
+    return x.startsWith("element-3");
+  });
+  console.log("find", xs.length, found == null ? "none" : short(found));
+
+  xs = words(4);
+  ys = xs;
+  const at = xs.findIndex((x, i) => {
+    grow(ys);
+    return x.startsWith("pushed");
+  });
+  console.log("findIndex", xs.length, at);
+
+  xs = words(4);
+  ys = xs;
+  const total = xs.reduce((acc, x, i) => {
+    if (i === 0) {
+      grow(ys);
+    }
+    return acc + x.length;
+  }, 0);
+  console.log("reduce", xs.length, total);
+
+  xs = words(4);
+  ys = xs;
+  const last = xs.findLast((x, i) => {
+    grow(ys);
+    return x.startsWith("element-1");
+  });
+  console.log("findLast", xs.length, last == null ? "none" : short(last));
+}
+
+function shrinking() {
+  let xs = words(6);
+  let ys = xs;
+  let seen: string[] = [];
+  xs.forEach((x, i) => {
+    ys.pop();
+    seen.push(`${short(x)}:${x.length}`);
+  });
+  console.log("forEach", xs.length, seen.join(","));
+
+  xs = words(6);
+  ys = xs;
+  const total = xs.reduce((acc, x, i) => {
+    ys.pop();
+    return acc + x.length;
+  }, 0);
+  console.log("reduce", xs.length, total);
+
+  xs = words(6);
+  ys = xs;
+  const kept = xs.filter((x, i) => {
+    ys.pop();
+    return x.length > 0;
+  });
+  console.log("filter", xs.length, kept.map(short).join(","));
+
+  xs = words(6);
+  ys = xs;
+  const every = xs.every((x, i) => {
+    ys.pop();
+    return x.startsWith("element");
+  });
+  console.log("every", xs.length, every);
+
+  xs = words(6);
+  ys = xs;
+  const last = xs.findLastIndex((x, i) => {
+    ys.pop();
+    return x.startsWith("element-0");
+  });
+  console.log("findLastIndex", xs.length, last);
+}
+
+// An element holds the array, so even a callback that captures nothing reaches it.
+function throughElement() {
+  const h = new Holder();
+  for (let i = 0; i < 4; i++) {
+    h.items.push([`element-${i}-with-a-label-long-enough-to-live-on-the-heap`, h]);
+  }
+  const seen: string[] = [];
+  h.items.forEach((e, i) => {
+    if (i === 0) {
+      for (let k = 0; k < 1000; k++) {
+        e[1].items.push([`pushed-${k}`, e[1]]);
+      }
+    }
+    seen.push(`${short(e[0])}:${e[0].length}`);
+  });
+  console.log("element forEach", h.items.length, seen.join(","));
+  const lengths = h.items.map((e, i) => {
+    if (i === 1) {
+      e[1].items.push([`pushed-again`, e[1]]);
+    }
+    return e[0].length;
+  });
+  console.log("element map", h.items.length, lengths.length, lengths[0], lengths[1003]);
+  h.items = [];
+}
+
+function collections() {
+  const m = new Map<string, string>();
+  for (let i = 0; i < 4; i++) {
+    m.set(`k${i}`, `value-${i}-with-a-label-long-enough-to-live-on-the-heap`);
+  }
+  const alias = m;
+  const seen: string[] = [];
+  m.forEach((v, k) => {
+    if (k === "k0") {
+      for (let i = 0; i < 100; i++) {
+        alias.set(`n${i}`, `new-${i}`);
+      }
+      alias.delete("k2");
+      alias.set("k1", "replaced");
+    }
+    seen.push(`${k}=${v.slice(0, 8)}`);
+  });
+  console.log("Map forEach", m.size, seen.length, seen.slice(0, 5).join(","));
+
+}
+
+// The same through a loop of the program's own: the argument is a share of the element.
+function each(xs: string[], f: (x: string, i: number) => void) {
+  for (let i = 0; i < xs.length; i++) {
+    f(xs[i], i);
+  }
+}
+
+function userLoop() {
+  const xs = words(3);
+  const ys = xs;
+  const seen: string[] = [];
+  each(xs, (x, i) => {
+    if (i === 0) {
+      grow(ys);
+      while (ys.length > 3) {
+        ys.pop();
+      }
+    }
+    seen.push(`${short(x)}:${x.length}`);
+  });
+  console.log("own loop", xs.length, seen.join(","));
+  // An array of the same type that nothing else references: borrowed in place.
+  const solo = words(3);
+  let chars = 0;
+  solo.forEach((x) => {
+    chars += x.length;
+  });
+  each(solo, (x) => {
+    chars += x.length;
+  });
+  console.log("unaliased", chars);
+}
+
+// A later argument of the same call creates the second reference to the array.
+function show(x: string, w: Wrapper) {
+  w.grow();
+  w.shrink();
+  console.log("later argument", x.length, x.slice(0, 5));
+}
+
+function wrap(xs: string[]): Box {
+  const b = new Box();
+  b.items = xs;
+  return b;
+}
+
+function showBox(x: string, b: Box) {
+  for (let k = 0; k < 1000; k++) {
+    b.items.push("z".repeat(40));
+  }
+  while (b.items.length > 0) {
+    b.items.pop();
+  }
+  console.log("later argument", x.length, x.slice(0, 5));
+}
+
+// The later argument both creates the reference and changes the array through it before the
+// call starts.
+function wrapAndPop(xs: string[]): Box {
+  const b = new Box();
+  b.items = xs;
+  for (let k = 0; k < 1000; k++) {
+    b.items.push("z".repeat(40));
+  }
+  while (b.items.length > 0) {
+    b.items.pop();
+  }
+  return b;
+}
+
+function laterArgument() {
+  const xs: string[] = ["a".repeat(40), "b".repeat(40)];
+  show(xs[0], new Wrapper(xs));
+  console.log(xs.length);
+  const ys: string[] = ["c".repeat(40), "d".repeat(40)];
+  showBox(ys[0], wrap(ys));
+  console.log(ys.length);
+  const zs: string[] = ["e".repeat(40), "f".repeat(40)];
+  showBox(zs[0], wrapAndPop(zs));
+  console.log(zs.length);
+}
+
+// Tuple elements a callback changes in place: the change is made to the element itself, also
+// when the callback grows the array meanwhile.
+function setFirst(t: [string, string], g: () => void) {
+  g();
+  t[0] = "replaced-" + t[1];
+  console.log("setFirst", t[0].slice(0, 12), t[1].slice(0, 6));
+}
+
+function tupleWrites() {
+  const xs: [string, string][] = [
+    ["a".repeat(40), "c".repeat(40)],
+    ["b".repeat(40), "d".repeat(40)],
+  ];
+  const alias = xs;
+  xs.forEach((t, i) => {
+    t[0] = `replaced-${i}`;
+  });
+  console.log("tuple forEach", alias[0][0].slice(0, 12), alias[1][0].slice(0, 12));
+
+  const ys: [string, string][] = [["a".repeat(40), "b".repeat(40)]];
+  const yalias = ys;
+  setFirst(ys[0], () => {
+    for (let k = 0; k < 1000; k++) {
+      yalias.push(["z".repeat(40), "y".repeat(40)]);
+    }
+  });
+  console.log("setFirst after", ys[0][0].slice(0, 12), ys.length);
+
+  const zs: [string, string][] = [["e".repeat(40), "f".repeat(40)]];
+  const zalias = zs;
+  zs.forEach((t) => {
+    for (let k = 0; k < 1000; k++) {
+      zalias.push(["z".repeat(40), "y".repeat(40)]);
+    }
+    t[0] = "replaced-" + t[1];
+  });
+  console.log("tuple forEach growing", zs[0][0].slice(0, 12), zs.length);
+}
+
+function main() {
+  laterArgument();
+  tupleWrites();
+  growing();
+  shrinking();
+  throughElement();
+  collections();
+  userLoop();
+}

@@ -1,4 +1,4 @@
-//! Builtins: `console.log/error`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
+//! Builtins: `console.log/info/debug/error/warn`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
 //! constructors, the builtin array/`clone` methods, the M3 task builtins (`spawn`, `sleep`,
 //! `yieldNow`, `Promise.all/race/allSettled/any`, `performance.now`, `Date.now`; see `tasks.rs`), and
 //! `__intrinsic_*` (std modules only).
@@ -29,6 +29,18 @@ impl FnCx<'_, '_> {
         match name {
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
             "shared" => {
+                // `shared<i64>(0)`: the written type argument types the value. Without one, an
+                // integer literal is an `i64` (`shared(0)` is an atomic counter).
+                let exp = match (type_args, args) {
+                    ([t], _) => {
+                        let t = self.resolve(t);
+                        Some(self.cx.ty.intern(TyKind::Shared(t)))
+                    }
+                    ([], [a]) if exp.is_none() && super::member::untyped_int(a) => {
+                        Some(self.cx.ty.intern(TyKind::Shared(self.cx.ty.i64)))
+                    }
+                    _ => exp,
+                };
                 let e = self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span);
                 if let H::Call { args: a, .. } = &e.kind {
                     if let [x] = a.as_slice() {
@@ -38,6 +50,7 @@ impl FnCx<'_, '_> {
                 }
                 e
             }
+            "Boolean" => self.boolean_call(args, span),
             "spawn" => self.spawn_call(args, exp, span),
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),
@@ -54,8 +67,8 @@ impl FnCx<'_, '_> {
                 if !self.unknown_namespace_member(name, id.span)
                     && !self.fn_expr_self_ref(name, id.span)
                 {
-                    self.cx
-                        .err(format!("cannot find `{name}` in this scope"), id.span);
+                    let msg = format!("cannot find `{name}` in this scope");
+                    self.cx.not_found(msg, name, id.span);
                 }
                 self.check_args_loose(args);
                 self.error_expr(span)
@@ -117,7 +130,10 @@ impl FnCx<'_, '_> {
         if i == Intrinsic::JsonParse {
             self.json_parse_throws(span);
         }
-        if i == Intrinsic::GeneratorResume {
+        if matches!(
+            i,
+            Intrinsic::GeneratorResume | Intrinsic::GeneratorResumeWith | Intrinsic::GeneratorThrow
+        ) {
             // Resuming throws what the generator's body throws (its `E`).
             if let Some(&e) = ck.type_args.get(1) {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
@@ -169,8 +185,9 @@ impl FnCx<'_, '_> {
             return Some(self.array_from(args, exp, span));
         }
         let intr = match (ns.name.as_str(), prop.name.as_str()) {
-            ("console", "log") => Intrinsic::Print,
-            ("console", "error") => Intrinsic::PrintErr,
+            // Node writes `log`, `info` and `debug` to stdout, `error` and `warn` to stderr.
+            ("console", "log" | "info" | "debug") => Intrinsic::Print,
+            ("console", "error" | "warn") => Intrinsic::PrintErr,
             (n @ ("console" | "process" | "Promise" | "performance" | "Date"), p) => {
                 self.cx
                     .err(format!("no function `{p}` in `{n}`"), prop.span);
@@ -188,10 +205,18 @@ impl FnCx<'_, '_> {
             let h = self.expr(a, None, Want::Borrow);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
+            let h = self.narrowed_for_print(h);
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
-                self.cx
-                    .err(format!("cannot print a value of type `{tn}`"), h.span);
+                let mut d =
+                    Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
+                if let Some(note) = self.in_place_note(a, &h) {
+                    d = d.with_note(note);
+                }
+                if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
+                    d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
+                }
+                self.cx.error(d);
             }
             out.push(h);
         }
@@ -236,7 +261,10 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            constraints: vec![],
             js_numbers: false,
+            positions: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };
@@ -259,6 +287,16 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let many = args.len() != 1
+            || args
+                .iter()
+                .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        if b == BuiltinMethod::Push && many && self.cx.ty.array_elem(recv.ty).is_some() {
+            return self.push_items(recv, args, span);
+        }
+        if b == BuiltinMethod::ToString && !args.is_empty() && self.cx.ty.is_numeric(recv.ty) {
+            return self.number_to_string_radix(recv, args, exp, span);
+        }
         let (i, name) = match b {
             BuiltinMethod::Push => (Intrinsic::ArrayPush, "push"),
             BuiltinMethod::Pop => (Intrinsic::ArrayPop, "pop"),
@@ -282,7 +320,9 @@ impl FnCx<'_, '_> {
                 crate::body::places::set_place_mode(&mut recv, m);
             }
         }
-        if i == Intrinsic::Clone && self.cx.holds_generator(recv.ty) {
+        if i == Intrinsic::Clone
+            && (self.cx.holds_generator(recv.ty) || self.cx.holds_weak(recv.ty))
+        {
             let t = recv.ty;
             self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
         } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
@@ -312,5 +352,46 @@ impl FnCx<'_, '_> {
         let mut all = vec![recv];
         all.extend(ck.args);
         self.intrinsic(i, all, ck.ret, span)
+    }
+    /// `n.toString(radix)` on a number: a call of the prelude's `__f64ToString`, `__i64ToString`
+    /// or `__u64ToString` (by the receiver's type), with the receiver converted to its parameter.
+    fn number_to_string_radix(
+        &mut self,
+        recv: hir::Expr,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let (name, to) = match self.cx.ty.kind(recv.ty) {
+            TyKind::Int(i) if i.is_signed() => ("__i64ToString", self.cx.ty.i64),
+            TyKind::Int(_) => ("__u64ToString", self.cx.ty.u64),
+            _ => ("__f64ToString", self.cx.ty.f64),
+        };
+        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get(name).copied() else {
+            self.cx
+                .err("`toString(radix)` needs the prelude (std/prelude)", span);
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        };
+        let mut c = self.fn_callable(d, "method `toString`".into(), span);
+        c.params.remove(0);
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        let recv_span = recv.span;
+        let recv = if recv.ty == to {
+            recv
+        } else {
+            self.mk(H::Cast(Box::new(recv)), to, recv_span)
+        };
+        let mut call_args = vec![recv];
+        call_args.extend(ck.args);
+        self.mk(
+            H::Call {
+                callee: hir::Callee::Def(d, vec![]),
+                args: call_args,
+            },
+            self.cx.ty.str_,
+            span,
+        )
     }
 }

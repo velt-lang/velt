@@ -1,0 +1,1022 @@
+{
+  "formatVersion": 1,
+  "createdAt": "2026-10-02T10:07:27.594Z",
+  "env": {
+    "node": "v22.22.0",
+    "nodeMajor": 22,
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "cpuCount": 4,
+    "totalMemBytes": 16876515328,
+    "conditions": "production",
+    "infraShape": "",
+    "commit": "6a94345",
+    "dirty": false
+  },
+  "runs": 3,
+  "durationMs": 400,
+  "quick": false,
+  "calibration": {
+    "samples": [
+      184000,
+      240500,
+      370000
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "dispatch/warm-actor",
+      "description": "host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)",
+      "metrics": [
+        {
+          "name": "c=1/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 794446.7677642943,
+          "samples": [
+            525242.977576361,
+            833689.3859102211,
+            794446.7677642943
+          ],
+          "min": 525242.977576361,
+          "max": 833689.3859102211,
+          "spread": 0.38825308485032894
+        },
+        {
+          "name": "c=1/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.0008920000036596321,
+          "samples": [
+            0.001441000000340864,
+            0.0008920000036596321,
+            0.0008250000028056093
+          ],
+          "min": 0.0008250000028056093,
+          "max": 0.001441000000340864,
+          "spread": 0.6905829540448154,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.0026030000008177012,
+          "samples": [
+            0.003440999997110339,
+            0.002179000002797693,
+            0.0026030000008177012
+          ],
+          "min": 0.002179000002797693,
+          "max": 0.003440999997110339,
+          "spread": 0.48482519935313245,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.03329699999449076,
+          "samples": [
+            0.04033700000218232,
+            0.030038000004424248,
+            0.03329699999449076
+          ],
+          "min": 0.030038000004424248,
+          "max": 0.04033700000218232,
+          "spread": 0.3093071447716647,
+          "informational": true
+        },
+        {
+          "name": "c=1/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.2721789999995963,
+          "samples": [
+            8.502707999999984,
+            0.7933300000004238,
+            1.2721789999995963
+          ],
+          "min": 0.7933300000004238,
+          "max": 8.502707999999984,
+          "spread": 6.059978980946869,
+          "informational": true
+        },
+        {
+          "name": "c=64/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 765497.1351222239,
+          "samples": [
+            765497.1351222239,
+            956344.6936406585,
+            751463.5983131491
+          ],
+          "min": 751463.5983131491,
+          "max": 956344.6936406585,
+          "spread": 0.26764449653335004
+        },
+        {
+          "name": "c=64/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.07266800000070361,
+          "samples": [
+            0.11284700000032899,
+            0.07266800000070361,
+            0.06450699999550125
+          ],
+          "min": 0.06450699999550125,
+          "max": 0.11284700000032899,
+          "spread": 0.6652171520388573,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.34627700000055484,
+          "samples": [
+            0.34627700000055484,
+            0.3782130000035977,
+            0.23606499999732478
+          ],
+          "min": 0.23606499999732478,
+          "max": 0.3782130000035977,
+          "spread": 0.4105037296905228,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.4784970000000612,
+          "samples": [
+            1.4784970000000612,
+            1.8600549999973737,
+            0.9511930000007851
+          ],
+          "min": 0.9511930000007851,
+          "max": 1.8600549999973737,
+          "spread": 0.6147202192473511,
+          "informational": true
+        },
+        {
+          "name": "c=64/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 2.8978359999964596,
+          "samples": [
+            4.782509000000573,
+            2.8978359999964596,
+            1.061427000000549
+          ],
+          "min": 1.061427000000549,
+          "max": 4.782509000000573,
+          "spread": 1.2840899208942709,
+          "informational": true
+        },
+        {
+          "name": "c=512/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 708467.0516890329,
+          "samples": [
+            580262.1291988867,
+            722506.6051861299,
+            708467.0516890329
+          ],
+          "min": 580262.1291988867,
+          "max": 722506.6051861299,
+          "spread": 0.2007778281969823
+        },
+        {
+          "name": "c=512/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.6831870000023628,
+          "samples": [
+            1.0445240000008198,
+            0.6831870000023628,
+            0.6057849999997416
+          ],
+          "min": 0.6057849999997416,
+          "max": 1.0445240000008198,
+          "spread": 0.6421945967935,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 2.452367999998387,
+          "samples": [
+            2.7295579999990878,
+            2.452367999998387,
+            1.821101000001363
+          ],
+          "min": 1.821101000001363,
+          "max": 2.7295579999990878,
+          "spread": 0.37044073320085824,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 3.9443389999978535,
+          "samples": [
+            3.9443389999978535,
+            4.306579999996757,
+            2.4927170000009937
+          ],
+          "min": 2.4927170000009937,
+          "max": 4.306579999996757,
+          "spread": 0.4598648848379285,
+          "informational": true
+        },
+        {
+          "name": "c=512/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 4.0680800000009185,
+          "samples": [
+            4.0680800000009185,
+            4.369896999996854,
+            2.5407070000001113
+          ],
+          "min": 2.5407070000001113,
+          "max": 4.369896999996854,
+          "spread": 0.449644549762131,
+          "informational": true
+        },
+        {
+          "name": "gc/pause_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 125.80626000000002,
+          "samples": [
+            125.80626000000002,
+            125.80626000000002,
+            125.80626000000002
+          ],
+          "min": 125.80626000000002,
+          "max": 125.80626000000002,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 140,
+          "samples": [
+            140,
+            140,
+            140
+          ],
+          "min": 140,
+          "max": 140,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/major_collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 0,
+          "samples": [
+            0,
+            0,
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "spread": 0,
+          "informational": true
+        }
+      ]
+    },
+    {
+      "name": "dispatch/warm-actor-deadline",
+      "description": "same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax",
+      "metrics": [
+        {
+          "name": "c=1/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 531504.1949749422,
+          "samples": [
+            521265.2546488292,
+            531504.1949749422,
+            632041.6553702404
+          ],
+          "min": 521265.2546488292,
+          "max": 632041.6553702404,
+          "spread": 0.20842055767148512
+        },
+        {
+          "name": "c=1/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.001330000002781162,
+          "samples": [
+            0.001330000002781162,
+            0.0014650000011897646,
+            0.001282999997783918
+          ],
+          "min": 0.001282999997783918,
+          "max": 0.0014650000011897646,
+          "spread": 0.1368421075377944,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.003334999997605337,
+          "samples": [
+            0.003334999997605337,
+            0.0047950000007404014,
+            0.003206000001227949
+          ],
+          "min": 0.003206000001227949,
+          "max": 0.0047950000007404014,
+          "spread": 0.47646176931136974,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.03643299999748706,
+          "samples": [
+            0.03643299999748706,
+            0.038233999999647494,
+            0.03409000000101514
+          ],
+          "min": 0.03409000000101514,
+          "max": 0.038233999999647494,
+          "spread": 0.11374303513073813,
+          "informational": true
+        },
+        {
+          "name": "c=1/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.8245200000019395,
+          "samples": [
+            0.8245200000019395,
+            1.561478999996325,
+            0.8194730000031996
+          ],
+          "min": 0.8194730000031996,
+          "max": 1.561478999996325,
+          "spread": 0.8999248047244216,
+          "informational": true
+        },
+        {
+          "name": "c=64/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 625934.2689127051,
+          "samples": [
+            625934.2689127051,
+            414134.0148229267,
+            714469.7653138996
+          ],
+          "min": 414134.0148229267,
+          "max": 714469.7653138996,
+          "spread": 0.4798199514026907
+        },
+        {
+          "name": "c=64/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.10095199999705073,
+          "samples": [
+            0.10095199999705073,
+            0.16179099999862956,
+            0.09258499999850756
+          ],
+          "min": 0.09258499999850756,
+          "max": 0.16179099999862956,
+          "spread": 0.6855337190164021,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.3735099999976228,
+          "samples": [
+            0.4239269999998214,
+            0.3735099999976228,
+            0.2811950000032084
+          ],
+          "min": 0.2811950000032084,
+          "max": 0.4239269999998214,
+          "spread": 0.3821370244371541,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.4213390000004438,
+          "samples": [
+            1.5445780000009108,
+            1.4213390000004438,
+            1.030561999999918
+          ],
+          "min": 1.030561999999918,
+          "max": 1.5445780000009108,
+          "spread": 0.3616420853862677,
+          "informational": true
+        },
+        {
+          "name": "c=64/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.6147579999960726,
+          "samples": [
+            2.1786929999980202,
+            1.4395129999975325,
+            1.6147579999960726
+          ],
+          "min": 1.4395129999975325,
+          "max": 2.1786929999980202,
+          "spread": 0.45776518834542734,
+          "informational": true
+        },
+        {
+          "name": "c=512/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 340675.5959786535,
+          "samples": [
+            340675.5959786535,
+            364003.06681203004,
+            309794.6427278784
+          ],
+          "min": 309794.6427278784,
+          "max": 364003.06681203004,
+          "spread": 0.1591203617870776
+        },
+        {
+          "name": "c=512/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.1055449999985285,
+          "samples": [
+            1.1055449999985285,
+            1.1994229999982053,
+            0.9191490000011981
+          ],
+          "min": 0.9191490000011981,
+          "max": 1.1994229999982053,
+          "spread": 0.2535165913620705,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 5.01731700000164,
+          "samples": [
+            5.01731700000164,
+            5.209641000001284,
+            3.8914680000016233
+          ],
+          "min": 3.8914680000016233,
+          "max": 5.209641000001284,
+          "spread": 0.26272467934540106,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 10.242607000000135,
+          "samples": [
+            65.39830900000015,
+            7.294890999997733,
+            10.242607000000135
+          ],
+          "min": 7.294890999997733,
+          "max": 65.39830900000015,
+          "spread": 5.672717697750354,
+          "informational": true
+        },
+        {
+          "name": "c=512/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 10.57650399999693,
+          "samples": [
+            65.4525250000006,
+            7.46845200000098,
+            10.57650399999693
+          ],
+          "min": 7.46845200000098,
+          "max": 65.4525250000006,
+          "spread": 5.482347758769482,
+          "informational": true
+        },
+        {
+          "name": "gc/pause_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 181.54272499999988,
+          "samples": [
+            181.54272499999988,
+            181.54272499999988,
+            181.54272499999988
+          ],
+          "min": 181.54272499999988,
+          "max": 181.54272499999988,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 163,
+          "samples": [
+            163,
+            163,
+            163
+          ],
+          "min": 163,
+          "max": 163,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/major_collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 2,
+          "samples": [
+            2,
+            2,
+            2
+          ],
+          "min": 2,
+          "max": 2,
+          "spread": 0,
+          "informational": true
+        }
+      ]
+    },
+    {
+      "name": "dispatch/fan-out-actors",
+      "description": "host.dispatch() round-robin across 1 000 warm activations",
+      "metrics": [
+        {
+          "name": "c=1/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 672423.3158106416,
+          "samples": [
+            564244.0538969705,
+            672423.3158106416,
+            743709.6673803128
+          ],
+          "min": 564244.0538969705,
+          "max": 743709.6673803128,
+          "spread": 0.2668937992832493
+        },
+        {
+          "name": "c=1/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.0014530000007653143,
+          "samples": [
+            0.0014530000007653143,
+            0.0012920000008307397,
+            0.001715999998850748
+          ],
+          "min": 0.0012920000008307397,
+          "max": 0.001715999998850748,
+          "spread": 0.29181004665979476,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.005760000000009313,
+          "samples": [
+            0.006676999997580424,
+            0.005760000000009313,
+            0.00450000000273576
+          ],
+          "min": 0.00450000000273576,
+          "max": 0.006676999997580424,
+          "spread": 0.3779513879932542,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=1/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.049886000000697095,
+          "samples": [
+            0.049886000000697095,
+            0.07003599999734433,
+            0.043162000001757406
+          ],
+          "min": 0.043162000001757406,
+          "max": 0.07003599999734433,
+          "spread": 0.538708254725001,
+          "informational": true
+        },
+        {
+          "name": "c=1/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.6766479999969306,
+          "samples": [
+            1.6766479999969306,
+            1.8105630000063684,
+            1.3463990000018384
+          ],
+          "min": 1.3463990000018384,
+          "max": 1.8105630000063684,
+          "spread": 0.2768404578691411,
+          "informational": true
+        },
+        {
+          "name": "c=64/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 662999.4998055391,
+          "samples": [
+            662999.4998055391,
+            590733.6365146752,
+            857659.6453623404
+          ],
+          "min": 590733.6365146752,
+          "max": 857659.6453623404,
+          "spread": 0.40260363533600824
+        },
+        {
+          "name": "c=64/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.09186200000112876,
+          "samples": [
+            0.134661000000051,
+            0.09186200000112876,
+            0.07946000000083586
+          ],
+          "min": 0.07946000000083586,
+          "max": 0.134661000000051,
+          "spread": 0.6009122379061728,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.40953000000081374,
+          "samples": [
+            0.40953000000081374,
+            0.47257299999910174,
+            0.14722700000129407
+          ],
+          "min": 0.14722700000129407,
+          "max": 0.47257299999910174,
+          "spread": 0.7944375259374434,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=64/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 1.5320229999997537,
+          "samples": [
+            1.5320229999997537,
+            2.1234419999964302,
+            0.9366029999946477
+          ],
+          "min": 0.9366029999946477,
+          "max": 2.1234419999964302,
+          "spread": 0.7746874557379186,
+          "informational": true
+        },
+        {
+          "name": "c=64/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 2.6109849999993457,
+          "samples": [
+            2.6109849999993457,
+            7.143307999998797,
+            1.2761089999985415
+          ],
+          "min": 1.2761089999985415,
+          "max": 7.143307999998797,
+          "spread": 2.2471209141384287,
+          "informational": true
+        },
+        {
+          "name": "c=512/ops_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 438911.8245798677,
+          "samples": [
+            296770.6194894903,
+            438911.8245798677,
+            678464.0507129385
+          ],
+          "min": 296770.6194894903,
+          "max": 678464.0507129385,
+          "spread": 0.8696357898054132
+        },
+        {
+          "name": "c=512/p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.989676999997755,
+          "samples": [
+            1.2036210000005667,
+            0.9087789999975939,
+            0.989676999997755
+          ],
+          "min": 0.9087789999975939,
+          "max": 1.2036210000005667,
+          "spread": 0.29791740133765016,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 3.953583999995317,
+          "samples": [
+            4.167111999999179,
+            3.953583999995317,
+            3.377770999999484
+          ],
+          "min": 3.377770999999484,
+          "max": 4.167111999999179,
+          "spread": 0.19965201194678797,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "c=512/p999_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 8.95812400000068,
+          "samples": [
+            8.95812400000068,
+            9.489435999996203,
+            6.00680299999658
+          ],
+          "min": 6.00680299999658,
+          "max": 9.489435999996203,
+          "spread": 0.3887681170744409,
+          "informational": true
+        },
+        {
+          "name": "c=512/max_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 9.11377100000027,
+          "samples": [
+            9.11377100000027,
+            9.515545000002021,
+            6.04173499999888
+          ],
+          "min": 6.04173499999888,
+          "max": 9.515545000002021,
+          "spread": 0.3811605536284638,
+          "informational": true
+        },
+        {
+          "name": "gc/pause_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 131.35761400000004,
+          "samples": [
+            131.35761400000004,
+            131.35761400000004,
+            131.35761400000004
+          ],
+          "min": 131.35761400000004,
+          "max": 131.35761400000004,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 111,
+          "samples": [
+            111,
+            111,
+            111
+          ],
+          "min": 111,
+          "max": 111,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/major_collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 2,
+          "samples": [
+            2,
+            2,
+            2
+          ],
+          "min": 2,
+          "max": 2,
+          "spread": 0,
+          "informational": true
+        }
+      ]
+    },
+    {
+      "name": "activation/cold-cycle",
+      "description": "activate a fresh key + deactivate it — Activation.create, storage load, teardown",
+      "metrics": [
+        {
+          "name": "cycles_per_sec",
+          "unit": "ops/s",
+          "direction": "higher",
+          "value": 19679.468703543513,
+          "samples": [
+            24171.572883258887,
+            19679.468703543513,
+            15051.710010001967
+          ],
+          "min": 15051.710010001967,
+          "max": 24171.572883258887,
+          "spread": 0.4634201771725059
+        },
+        {
+          "name": "p50_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.031972000004316214,
+          "samples": [
+            0.02181199999904493,
+            0.031972000004316214,
+            0.04245600000285776
+          ],
+          "min": 0.02181199999904493,
+          "max": 0.04245600000285776,
+          "spread": 0.6456899787634773,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "p99_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 0.1537610000013956,
+          "samples": [
+            0.13574399999924935,
+            0.1537610000013956,
+            0.18486400000256253
+          ],
+          "min": 0.13574399999924935,
+          "max": 0.18486400000256253,
+          "spread": 0.31945681936815806,
+          "noiseFloor": 0.0005
+        },
+        {
+          "name": "gc/pause_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 105.277865,
+          "samples": [
+            105.277865,
+            105.277865,
+            105.277865
+          ],
+          "min": 105.277865,
+          "max": 105.277865,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 14,
+          "samples": [
+            14,
+            14,
+            14
+          ],
+          "min": 14,
+          "max": 14,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/major_collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 2,
+          "samples": [
+            2,
+            2,
+            2
+          ],
+          "min": 2,
+          "max": 2,
+          "spread": 0,
+          "informational": true
+        }
+      ]
+    },
+    {
+      "name": "mem/per-actor-footprint",
+      "description": "heapUsed delta per live activation, tiny vs ~200-row state",
+      "metrics": [
+        {
+          "name": "tiny/bytes_per_actor",
+          "unit": "bytes",
+          "direction": "lower",
+          "value": 5681.3716,
+          "samples": [
+            5681.3716,
+            5681.668,
+            5679.1276
+          ],
+          "min": 5679.1276,
+          "max": 5681.668,
+          "spread": 0.0004471455449243741
+        },
+        {
+          "name": "large/bytes_per_actor",
+          "unit": "bytes",
+          "direction": "lower",
+          "value": 52067.8292,
+          "samples": [
+            52066.668,
+            52069.3664,
+            52067.8292
+          ],
+          "min": 52066.668,
+          "max": 52069.3664,
+          "spread": 0.00005182470714567699
+        },
+        {
+          "name": "gc/pause_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "value": 3787.9725569999996,
+          "samples": [
+            3787.9725569999996,
+            3787.9725569999996,
+            3787.9725569999996
+          ],
+          "min": 3787.9725569999996,
+          "max": 3787.9725569999996,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 140,
+          "samples": [
+            140,
+            140,
+            140
+          ],
+          "min": 140,
+          "max": 140,
+          "spread": 0,
+          "informational": true
+        },
+        {
+          "name": "gc/major_collections",
+          "unit": "count",
+          "direction": "lower",
+          "value": 18,
+          "samples": [
+            18,
+            18,
+            18
+          ],
+          "min": 18,
+          "max": 18,
+          "spread": 0,
+          "informational": true
+        }
+      ]
+    }
+  ]
+}

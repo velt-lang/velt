@@ -164,7 +164,9 @@ fn function_expressions() {
          const d = function (x: i64): i64 { return x; };
          const e = f(function* (): Generator<i64> {}, 2);",
     );
-    let sigs: Vec<(String, bool, bool, usize)> = (0..4)
+    // A function expression that is not a generator is the arrow with its parameters and body.
+    assert!(matches!(&init(&m, 3).kind, ExprKind::Arrow { params, .. } if params.len() == 1));
+    let sigs: Vec<(String, bool, bool, usize)> = (0..3)
         .map(|i| match &init(&m, i).kind {
             ExprKind::Function(f) => (
                 f.sig.name.name.clone(),
@@ -181,7 +183,6 @@ fn function_expressions() {
             ("".into(), true, false, 1),
             ("named".into(), true, false, 0),
             ("".into(), true, true, 0),
-            ("".into(), false, false, 1),
         ]
     );
     assert_eq!(sx(init(&m, 4)), "(call f [(function* (0) {0 stmts}) 2])");
@@ -215,12 +216,15 @@ fn object_literal_methods() {
             vec![(SYMBOL_ITERATOR.into(), true, false)],
             vec![(SYMBOL_ITERATOR.into(), false, false)],
             vec![(SYMBOL_ASYNC_ITERATOR.into(), true, true)],
-            vec![("size".into(), false, false)],
+            vec![],
         ]
     );
     let ExprKind::Object(props) = &init(&m, 3).kind else {
         panic!("object")
     };
+    // A plain method is a property holding an arrow.
+    assert!(matches!(&props[0], ObjectProp::KeyValue(k, v)
+        if k.name == "size" && matches!(v.kind, ExprKind::Arrow { .. })));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "async"));
     assert!(matches!(&props[2], ObjectProp::Shorthand(k) if k.name == "get"));
 }

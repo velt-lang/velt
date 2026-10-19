@@ -4,7 +4,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
 
 impl FnCx<'_, '_> {
@@ -17,6 +17,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let exp = match l {
             ast::Lit::Null => return self.null_lit(exp, span),
+            ast::Lit::Undefined => return self.undefined_lit(exp, span),
             _ => self.hint(exp),
         };
         // A literal expected as a union takes the type of the member it belongs to.
@@ -41,7 +42,7 @@ impl FnCx<'_, '_> {
             }
             ast::Lit::Str(s) => self.str_lit(s, span),
             ast::Lit::Bool(b) => self.mk(H::Lit(hir::Lit::Bool(*b)), self.cx.ty.bool_, span),
-            ast::Lit::Null => unreachable!("ICE: null handled above"),
+            ast::Lit::Null | ast::Lit::Undefined => unreachable!("ICE: nothings handled above"),
         }
     }
 
@@ -71,15 +72,20 @@ impl FnCx<'_, '_> {
         span: Span,
         negated: bool,
     ) -> hir::Expr {
+        // Without a suffix or an integer type expected, a literal is a number (`literal_locals`
+        // may make a local declared from it an integer).
         let ty = match suffix {
             Some(s) => match self.suffix_ty(s, false, span) {
                 Some(t) => t,
                 None => return self.error_expr(span),
             },
             None => exp
-                .filter(|e| self.cx.ty.is_int(*e))
-                .unwrap_or(self.cx.ty.i64),
+                .filter(|e| self.cx.ty.is_numeric(*e))
+                .unwrap_or(self.cx.ty.f64),
         };
+        if suffix.is_none() && ty == self.cx.ty.f64 {
+            self.literal_number_lit(span);
+        }
         if self.cx.ty.is_float(ty) {
             return self.mk(H::Lit(hir::Lit::Float(value as f64)), ty, span);
         }
@@ -123,7 +129,17 @@ impl FnCx<'_, '_> {
 
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        if let Some(h) = exp.and_then(|t| self.nothing_in_member(Nothing::Null, t, span)) {
+            return h;
+        }
         match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => self.dynamic_nothing(Nothing::Null, t, span),
+            Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
+                self.nothing_mismatch("null", t, span)
+            }
+            Some(t) if self.is_three_state(t) && !self.cx.ty.has_error(t) => {
+                self.nothing_value(Nothing::Null, t, span)
+            }
             Some(t)
                 if self
                     .cx
@@ -133,7 +149,12 @@ impl FnCx<'_, '_> {
             {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) if t != self.cx.ty.error && !self.cx.ty.has_error(t) => {
+            // A type argument still to infer (`tag(null)`): `null` alone.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.null_alone();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) if !self.cx.ty.has_error(t) => {
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -150,6 +171,132 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `undefined` takes its `T | undefined` type from context (issue #930). In HIR it is the
+    /// nothing of that option type, `Lit::Null` (hir_encodings.md "Undefined").
+    fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
+        match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => {
+                self.dynamic_nothing(Nothing::Undefined, t, span)
+            }
+            // A type argument still to infer (`tag(undefined)`): `undefined` alone, as below.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
+            Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) => match self.nothing_in_member(Nothing::Undefined, t, span) {
+                Some(h) => h,
+                None => self.nothing_mismatch("undefined", t, span),
+            },
+            // With no type to take, its type is `undefined` alone.
+            None => {
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+        }
+    }
+
+    /// `void operand` as a value: evaluates `operand`, then gives `undefined` (typed from
+    /// context, like the `undefined` literal). As a statement it is `StmtKind::Expr` of the
+    /// operand (`expr_stmt`).
+    pub(crate) fn void_expr(
+        &mut self,
+        operand: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(operand, None, Want::Borrow);
+        let undefined = self.undefined_lit(exp, span);
+        if undefined.ty == self.cx.ty.error {
+            return undefined;
+        }
+        let ty = undefined.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(value),
+                span: operand.span,
+            }],
+            value: Some(Box::new(undefined)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// `e` is given for an optional parameter or field (`slot`): records its span, and those
+    /// of the branches of a conditional (`c ? v : undefined`), for `optional_slot_error`.
+    pub(crate) fn optional_slot(&mut self, e: &ast::Expr, slot: crate::body::OptionalSlot) {
+        self.optional_slots.push((e.span, slot));
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.optional_slot(inner, slot),
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.optional_slot(then, slot);
+                self.optional_slot(els, slot);
+            }
+            _ => {}
+        }
+    }
+
+    /// An `undefined` (a literal, or a value that may be one) at `span`, given for a parameter
+    /// with a default whose type does not allow `undefined`: JavaScript applies the default,
+    /// which calls do not do yet (`true`: reported, issue #930). An optional parameter or field
+    /// is a `T | undefined` and takes it as is. `maybe`: the value only may be `undefined`.
+    pub(crate) fn optional_slot_error(&mut self, span: Span, maybe: bool) -> bool {
+        let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
+            return false;
+        };
+        let (what, note) = match slot {
+            crate::body::OptionalSlot::Param if maybe => (
+                "a value that may be `undefined` passed for a parameter with a default",
+                "JavaScript applies the default where it is `undefined`; test it first, or pass `value ?? default`",
+            ),
+            crate::body::OptionalSlot::Param => (
+                "`undefined` passed for a parameter with a default",
+                "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
+            ),
+            crate::body::OptionalSlot::Field => (
+                "`undefined` as the value of an optional field",
+                "JavaScript keeps a field holding `undefined` apart from a field left out; leave the field out instead",
+            ),
+        };
+        self.cx.error(
+            Diagnostic::error(format!("{what} is not supported yet (#930)"), span).with_note(note),
+        );
+        true
+    }
+
+    /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
+    fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        if what == "undefined" && self.optional_slot_error(span, false) {
+            return self.error_expr(span);
+        }
+        if what == "undefined" && t == self.cx.ty.unit {
+            // TypeScript accepts `undefined` as a `void` value.
+            self.cx.error(
+                Diagnostic::error(
+                    "`undefined` as a `void` value here is not supported yet (#930)",
+                    span,
+                )
+                .with_note("leave the value out: `return;`, or the statement `e;` for `void e`"),
+            );
+            return self.error_expr(span);
+        }
+        let tn = self.cx.display(t);
+        let core = self.cx.ty.core(t).unwrap_or(t);
+        let core = self.cx.display(core);
+        self.cx.error(
+            Diagnostic::error(
+                format!("type `{what}` is not assignable to type `{tn}` (TypeScript's TS2322)"),
+                span,
+            )
+            .with_note(format!("make the type allow it: `{core} | {what}`")),
+        );
+        self.error_expr(span)
     }
 
     pub(crate) fn str_lit(&self, s: &str, span: Span) -> hir::Expr {
@@ -177,6 +324,39 @@ impl FnCx<'_, '_> {
         self.intrinsic(Intrinsic::StrConcat, vec![a, b], self.cx.ty.str_, span)
     }
 
+    /// The operands of `a + b` when one is a string (#740): a number or boolean on the other
+    /// side (or one of those or `null`) is written as `String(x)` writes it, as in JS (`"k" + 1`
+    /// is `"k1"`, `"k" + -0` is `"k0"`). Other operands are left for the mismatch report.
+    pub(crate) fn concat_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let s = self.cx.ty.str_;
+        if l.ty == s && r.ty != s {
+            (l, self.concat_operand(r))
+        } else if r.ty == s && l.ty != s {
+            (self.concat_operand(l), r)
+        } else {
+            (l, r)
+        }
+    }
+
+    /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
+    /// `String(x)` text when it is a number or boolean (or one of those or `null`), or an
+    /// object with a `toString()`, else `x`.
+    pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
+        let h = self.unbrand(h);
+        let h = self.widen_value(h);
+        let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+        // An object with a `toString()` (an error, an error union): what it returns, as in JS.
+        if self.writes_by_to_string(t) {
+            return self.js_text(h, "a string concatenation");
+        }
+        let ty = &self.cx.ty;
+        if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
+            return h;
+        }
+        let (s, span) = (ty.str_, h.span);
+        self.intrinsic(Intrinsic::ToString, vec![h], s, span)
+    }
+
     /// Can values of this type be printed / formatted (`console.log`, `${}`)? Everything but
     /// function values, interface values, `void` and shared values — also nested.
     pub(crate) fn printable(&mut self, t: TyId) -> bool {
@@ -187,11 +367,16 @@ impl FnCx<'_, '_> {
         if depth > 16 {
             return true;
         }
+        if self.cx.dynamic(t).is_some() {
+            // Printed by the glue of the type it holds (hir_encodings.md "any and unknown").
+            return true;
+        }
         let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
             TyKind::FnPtr { .. }
             | TyKind::Closure(_)
             | TyKind::Dyn(..)
             | TyKind::Unit
+            | TyKind::Simd(_)
             | TyKind::Shared(_) => return false,
             // A promise prints its state and, once settled, its value (`void`: `undefined`).
             TyKind::Promise(v, e) => [v, e]
@@ -199,6 +384,11 @@ impl FnCx<'_, '_> {
                 .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
                 .collect(),
             TyKind::Adt(d, args) => {
+                // A class printed through its `__inspect()` shows what that returns.
+                if let Some((_, ret)) = crate::hooks::hook(self.cx, d, &args, crate::hooks::INSPECT)
+                {
+                    return self.printable_depth(ret, depth + 1);
+                }
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
                     crate::defs::DefInfo::Enum(e) => {
@@ -206,15 +396,48 @@ impl FnCx<'_, '_> {
                     }
                     _ => vec![],
                 };
-                tys.into_iter()
-                    .map(|f| self.cx.ty.subst(f, &args))
-                    .collect()
+                tys.into_iter().map(|f| self.cx.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };
         parts
             .into_iter()
             .all(|p| self.printable_depth(p, depth + 1))
+    }
+
+    /// A union local read narrowed to printable members (`typeof v === "number"` on
+    /// `string | i64 | f64 | () => void`, also with `| null`) as the union of just those members,
+    /// so it can be printed; `h` unchanged otherwise.
+    pub(crate) fn narrowed_for_print(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.printable(h.ty) {
+            return h;
+        }
+        let Some(vs) = self.narrowed_variants(&h) else {
+            return h;
+        };
+        // `T | null` with a narrowed union `T` keeps its `null` (`typeof v !== "function"`).
+        let payload = self.cx.ty.opt_payload(h.ty);
+        let Some(members) = self.cx.union_members(payload.unwrap_or(h.ty)) else {
+            return h;
+        };
+        let sub: Vec<TyId> = vs.iter().map(|v| members[*v as usize]).collect();
+        if sub.is_empty() || !sub.iter().all(|t| self.printable(*t)) {
+            return h;
+        }
+        let span = h.span;
+        if payload.is_some() {
+            let target = self.cx.union_of(&sub, true, span);
+            return self
+                .option_to_option_narrowed(h, target, Some(vs))
+                .unwrap_or_else(|h| h);
+        }
+        let target = self.cx.union_of(&sub, false, span);
+        let res = if self.cx.union_def(target).is_some() {
+            self.coerce_to_union(h, target)
+        } else {
+            self.union_to_common(h, target)
+        };
+        res.unwrap_or_else(|h| h)
     }
 
     pub(crate) fn template(
@@ -230,44 +453,97 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.expr(e, None, Want::Borrow);
-                let h = self.own_to_string(h, "toString");
-                let t = h.ty;
-                if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
-                    parts.push(h);
-                } else if self.printable(t) {
-                    let hs = h.span;
-                    parts.push(self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs));
-                } else {
-                    let tn = self.cx.display(t);
-                    self.cx.err(
-                        format!("cannot format a value of type `{tn}` in a template literal"),
-                        h.span,
-                    );
+                if self.reject_symbol_text(&h) {
                     parts.push(self.error_expr(h.span));
+                    continue;
                 }
+                let part = self.implicit_any_text(h, "a template literal");
+                parts.push(self.implicit_text(part));
             }
         }
         self.concat_parts(parts, span)
     }
 
-    /// `h.<method>()` when `h` is a class or struct value with its own `method(): string` (a
-    /// template literal uses `toString()`, as in JS; `console.log` a `__inspect()`), else `h`.
+    /// Template literal part `h` (a [`Self::js_text`]): a `ToString` of a value whose type
+    /// mentions a type parameter becomes a `TemplateToString`, which throws for a symbol as
+    /// JavaScript does (the type may be `symbol` once substituted).
+    fn implicit_text(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if let H::Call {
+            callee: callee @ Callee::Intrinsic(Intrinsic::ToString),
+            args,
+        } = &mut h.kind
+        {
+            if args.len() == 1 && self.cx.mentions_params(args[0].ty) {
+                *callee = Callee::Intrinsic(Intrinsic::TemplateToString);
+            }
+        }
+        h
+    }
+
+    /// `h` as JS's `String(h)` writes it (a template literal part, `String(x)`; `what` names
+    /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
+    pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
+        let h = self.unbrand(h);
+        let h = match self.nullable_text(h, what) {
+            Ok(text) => return text,
+            Err(h) => h,
+        };
+        let h = self.error_union_view(h).unwrap_or_else(|h| h);
+        let h = self.own_to_string(h, "toString");
+        let h = self.narrowed_for_print(h);
+        let t = h.ty;
+        if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
+            h
+        } else if self.reject_js_list(t, what, h.span) {
+            self.error_expr(h.span)
+        } else if self.printable(t) {
+            let hs = h.span;
+            self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs)
+        } else {
+            let tn = self.cx.display(t);
+            self.cx.err(
+                format!("cannot format a value of type `{tn}` in {what}"),
+                h.span,
+            );
+            self.error_expr(h.span)
+        }
+    }
+
+    /// `h.<method>()` when `h` is a class or struct value with its own `method` (a template
+    /// literal uses `toString()`, as in JS; `console.log` a `__inspect()` returning a
+    /// `string`), else `h`. A parameter left out takes its default, and a `toString()` result
+    /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
+    /// reports the shapes this cannot call).
     pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
-        let Some((d, _)) = self.adt_of(h.ty) else {
+        let Some((d, args)) = self.adt_of(h.ty) else {
             return h;
         };
-        let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
+        // Declared by the class or inherited from a base class (`Error.toString`), as in JS.
+        let Some(crate::collect::Found::Class { m, .. }) =
+            crate::collect::lookup_method(self.cx, d, &args, method)
+        else {
             return h;
         };
+        crate::body::param_defaults(self.cx, m.def);
         let f = self.cx.fn_info(m.def);
-        if m.is_static || !f.params.is_empty() || f.ret != self.cx.ty.str_ {
+        let plain = !(f.is_async || f.is_generator || f.is_async_gen);
+        let to_string = method == crate::hooks::TO_STRING;
+        if m.is_static
+            || !plain
+            || f.params.iter().any(|p| p.default.is_none())
+            || (!to_string && f.ret != self.cx.ty.str_)
+        {
             return h;
         }
         let span = h.span;
-        match self.method_call_hir(h.clone(), method, span) {
-            Some(call) => call,
-            None => h,
+        let Some(call) = self.method_call_hir(h.clone(), method, span) else {
+            return h;
+        };
+        if call.ty == self.cx.ty.str_ || !self.printable(call.ty) {
+            return call;
         }
+        let str_ = self.cx.ty.str_;
+        self.intrinsic(Intrinsic::ToString, vec![call], str_, span)
     }
 
     /// The string parts of a template literal joined: a left fold of `StrConcat` (one part that
@@ -281,7 +557,7 @@ impl FnCx<'_, '_> {
             first.kind,
             H::Lit(_)
                 | H::Call {
-                    callee: Callee::Intrinsic(Intrinsic::ToString),
+                    callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::TemplateToString),
                     ..
                 }
         );

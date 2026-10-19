@@ -391,6 +391,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         .iter()
         .map(|(n, t)| Param {
             name: ident(n),
+            pattern: None,
             ty: ty(t),
             default: None,
             optional: false,
@@ -406,12 +407,14 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         throws: None,
         is_async: false,
         is_generator: false,
+        this_param: None,
         span: D,
     };
     Item {
         kind: ItemKind::Function(FnDecl {
             sig,
             body: blk(body),
+            overloads: vec![],
         }),
         exported: false,
         span: D,

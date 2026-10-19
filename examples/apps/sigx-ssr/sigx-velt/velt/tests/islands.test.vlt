@@ -1,0 +1,34 @@
+// Islands: `client:*` directives mark a component; its record goes into __SIGX_BOUNDARIES__.
+// Expected strings from @sigx/ssr-islands 1.0.1 (without "state": see the example's README).
+
+import { component, Renderer } from "../src/lib";
+
+const Clicker = component<{ start: number }>((ctx) => {
+  const count = ctx.signal(ctx.props.start);
+  return () => <b>{count.value}</b>;
+});
+
+export async function test_islands_are_recorded_in_sigx_order() {
+  const r = new Renderer();
+  await r.render(
+    <main>
+      <Clicker client:load start={1} />
+      <Clicker client:media="(min-width: 768px)" start={2} />
+      <Clicker client:only start={3} />
+      <Clicker start={4} />
+    </main>,
+  );
+  assertEq(
+    r.take(),
+    "<main><b>1</b><!--$c:1--><b>2</b><!--$c:2-->" +
+      "<div data-boundary=\"3\" style=\"display:contents;\"></div><!--$c:3--><b>4</b><!--$c:4--></main>",
+  );
+  assertEq(
+    r.boundaryScript(),
+    "window.__SIGX_BOUNDARIES__=Object.assign(Object.create(null),window.__SIGX_BOUNDARIES__,{" +
+      "\"1\":{\"hydrate\":\"load\",\"component\":\"Clicker\",\"props\":{\"start\":1}}," +
+      "\"2\":{\"hydrate\":\"media\",\"media\":\"(min-width: 768px)\",\"component\":\"Clicker\",\"props\":{\"start\":2}}," +
+      "\"3\":{\"flush\":\"skip\",\"hydrate\":\"load\",\"component\":\"Clicker\",\"props\":{\"start\":3}}});",
+  );
+  assertEq(r.boundaryScript(), "");
+}

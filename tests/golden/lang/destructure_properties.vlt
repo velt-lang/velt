@@ -1,0 +1,36 @@
+// Object patterns read properties, as in JS: the length of an array or a string, and getters
+// (#743). Expected output: Node's.
+class Rect {
+  w: number;
+  h: number;
+  constructor(w: number, h: number) {
+    this.w = w;
+    this.h = h;
+  }
+  get area(): number {
+    return this.w * this.h;
+  }
+}
+
+function words(): string[] {
+  return ["a", "bb", "ccc", "dddd"];
+}
+
+function main() {
+  const xs = [1, 2, 3];
+  const { length } = xs;
+  const { length: n } = "abcd";
+  console.log(length, n);
+  xs.push(4);
+  console.log(xs.length, length);
+  const { length: count } = words();
+  let { length: left } = xs;
+  left -= 1;
+  console.log(count, left, length * 2);
+  const r = new Rect(3, 4);
+  const { w, area } = r;
+  console.log(w, area);
+  const s = "hello";
+  const { length: len } = s;
+  console.log(s, len, len + 1);
+}

@@ -1,19 +1,50 @@
 //! Functions: declarations and signatures (shared by methods and `declare function`), parameter
 //! lists, generic parameter lists and arrow functions.
 
-use velt_syntax::ast::{ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Param, TypeExpr};
+use velt_syntax::ast::{
+    ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param, Pattern, TypeExpr,
+};
 
 use super::lists::delimited;
 use super::Printer;
-use crate::doc::{cat, group, indent, join, line, nil, text, Doc};
+use crate::doc::{cat, concat, group, hardline, indent, join, line, nil, text, Doc};
 
 impl<'a> Printer<'a> {
     /// `[async ]<keyword>name<T>(params): R [throws E] { body }` (`keyword` is `function ` or
     /// empty).
     pub(super) fn fn_decl(&mut self, f: &FnDecl, keyword: &str) -> Doc {
+        self.fn_decl_with(f, keyword, "")
+    }
+
+    /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
+    /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
+    pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
+        let mut out = vec![];
+        for (k, o) in f.overloads.iter().enumerate() {
+            let sig = self.fn_sig(o, keyword, o.span.hi);
+            let asyncness = if o.is_async { "async " } else { "" };
+            out.push(cat![mods.to_string(), asyncness, sig, ";"]);
+            // Comments after a signature: on its line, then on lines of their own.
+            let next = f.overloads.get(k + 1).unwrap_or(&f.sig).span.lo;
+            for c in self.comments.take_trailing(self.src, o.span.hi, next, true) {
+                out.push(text(format!(" {}", c.text)));
+            }
+            out.push(hardline());
+            for c in self.comments.take_before(next) {
+                out.push(text(c.text));
+                out.push(hardline());
+            }
+        }
         let asyncness = if f.sig.is_async { "async " } else { "" };
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
-        cat![asyncness, sig, " ", self.block(&f.body)]
+        out.push(cat![
+            mods.to_string(),
+            asyncness,
+            sig,
+            " ",
+            self.block(&f.body)
+        ]);
+        concat(out)
     }
 
     /// Signature without modifiers; `end` bounds the parameter list's comments.
@@ -73,18 +104,23 @@ impl<'a> Printer<'a> {
                     .filter(|m| *m != "...")
                     .map(|m| format!("{m} "))
                     .collect::<String>();
+                let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
-                    return cat![
-                        mods,
-                        param.name.name.clone(),
-                        "?: ",
-                        p.ty_optional(&param.ty)
-                    ];
+                    return cat![mods, name, "?: ", p.ty_optional(&param.ty)];
                 }
                 if param.rest {
-                    return cat![mods, "...", param.name.name.clone(), ": ", p.ty(&param.ty)];
+                    return cat![mods, "...", name, ": ", p.ty(&param.ty)];
                 }
-                let mut doc = cat![mods, param.name.name.clone(), ": ", p.ty(&param.ty)];
+                // `status = 302`: the type comes from the default (it has the default's span).
+                let inferred = param
+                    .default
+                    .as_ref()
+                    .is_some_and(|d| d.span == param.ty.span);
+                let mut doc = if inferred {
+                    cat![mods, name]
+                } else {
+                    cat![mods, name, ": ", p.ty(&param.ty)]
+                };
                 if let Some(default) = &param.default {
                     doc = cat![doc, " = ", p.expr(default)];
                 }
@@ -92,6 +128,14 @@ impl<'a> Printer<'a> {
             },
         );
         delimited("(", list, ")", false)
+    }
+
+    /// A parameter's name, or the pattern it destructures.
+    fn param_binding(&mut self, name: &Ident, pattern: Option<&Pattern>) -> Doc {
+        match pattern {
+            Some(q) => self.pattern(q),
+            None => text(name.name.clone()),
+        }
     }
 
     /// `<T, U extends A & B, E = never>`, or nothing.
@@ -102,11 +146,16 @@ impl<'a> Printer<'a> {
         let docs = generics
             .iter()
             .map(|g| {
+                // `<const T>` (the AST does not keep the `const`).
+                let name = match crate::source::word_before(self.src, g.name.span.lo) {
+                    Some("const") => format!("const {}", g.name.name),
+                    _ => g.name.name.clone(),
+                };
                 let head = if g.bounds.is_empty() {
-                    text(g.name.name.clone())
+                    text(name)
                 } else {
                     let bounds = g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
-                    cat![g.name.name.clone(), " extends ", join(&text(" & "), bounds)]
+                    cat![name, " extends ", join(&text(" & "), bounds)]
                 };
                 match &g.default {
                     Some(d) => cat![head, " = ", self.ty(d)],
@@ -126,6 +175,7 @@ impl<'a> Printer<'a> {
         (ret, throws): (Option<&TypeExpr>, Option<&TypeExpr>),
         body: &ArrowBody,
         is_async: bool,
+        method: Option<Doc>,
     ) -> Doc {
         let body_lo = match body {
             ArrowBody::Block(b) => b.span.lo,
@@ -137,16 +187,19 @@ impl<'a> Printer<'a> {
             |p| {
                 let hi = p.ty.as_ref().map_or(p.name.span.hi, |t| t.span.hi);
                 let hi = p.default.as_ref().map_or(hi, |d| d.span.hi.max(hi));
+                let hi = p.pattern.as_ref().map_or(hi, |q| q.span.hi.max(hi));
                 (p.name.span.lo, hi)
             },
             |p, param| {
+                let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
                     let ty = match &param.ty {
                         Some(ty) => cat![": ", p.ty_optional(ty)],
                         None => nil(),
                     };
-                    return cat![param.name.name.clone(), "?", ty];
+                    return cat![name, "?", ty];
                 }
+                let dots = if param.rest { "..." } else { "" };
                 let ty = match &param.ty {
                     Some(ty) => cat![": ", p.ty(ty)],
                     None => nil(),
@@ -155,13 +208,26 @@ impl<'a> Printer<'a> {
                     Some(d) => cat![" = ", p.expr(d)],
                     None => nil(),
                 };
-                cat![param.name.name.clone(), ty, default]
+                let default = if param.rest { nil() } else { default };
+                cat![dots, name, ty, default]
             },
         );
         let asyncness = if is_async { "async " } else { "" };
         let type_params = self.generic_params(type_params);
         let ret = self.return_type(ret);
         let throws = self.throws_clause(throws);
+        // An object-literal method `name(params) { body }` (parsed as `name: (params) => {}`).
+        if let (Some(name), ArrowBody::Block(b)) = (method, body) {
+            let head = cat![
+                asyncness,
+                name,
+                type_params,
+                delimited("(", list, ")", false),
+                ret,
+                throws
+            ];
+            return cat![head, " ", self.block(b)];
+        }
         let head = cat![
             asyncness,
             type_params,

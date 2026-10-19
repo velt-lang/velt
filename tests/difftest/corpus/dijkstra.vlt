@@ -1,8 +1,8 @@
 // Dijkstra's shortest paths on a small weighted graph (adjacency lists, linear-scan queue).
 class Edge {
-  to: i64;
-  w: i64;
-  constructor(to: i64, w: i64) {
+  to: number;
+  w: number;
+  constructor(to: number, w: number) {
     this.to = to;
     this.w = w;
   }
@@ -29,9 +29,9 @@ function main() {
     adj[e[0] as usize].push(new Edge(e[1], e[2]));
     adj[e[1] as usize].push(new Edge(e[0], e[2]));
   }
-  const dist: i64[] = [];
+  const dist: number[] = [];
   const done: bool[] = [];
-  const prev: i64[] = [];
+  const prev: number[] = [];
   for (let i = 0; i < n; i++) {
     dist.push(1000000);
     done.push(false);

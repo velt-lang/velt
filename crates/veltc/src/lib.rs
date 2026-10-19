@@ -8,11 +8,13 @@
 pub mod backend;
 pub mod cli;
 pub mod commands;
+pub mod debugger;
 pub mod dev;
 pub mod driver;
 pub mod link;
 pub mod loader;
 pub mod native;
+mod numbers_report;
 pub mod playground;
 pub mod style;
 pub mod templates;

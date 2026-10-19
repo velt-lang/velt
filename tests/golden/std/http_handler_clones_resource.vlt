@@ -3,7 +3,7 @@
 // own copy of what it captured: a resource is copied by its `clone()` and each copy released
 // once (a resource without `clone()` is a compile error: errors/http_handler_captures_resource).
 // The original is released when the server shuts down.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class Store {
   name: string;
@@ -50,7 +50,7 @@ async function main() {
   const store = new Store("store", live.clone());
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     await sleep(1);
-    return Response.text(store.name);
+    return new Response(store.name);
   });
   const base = `http://127.0.0.1:${server.port}`;
   const ts: Promise<i64>[] = [];

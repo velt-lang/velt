@@ -1,7 +1,7 @@
 //! Member access rules (docs/reference/classes.md):
 //! - `private` fields, methods and static fields are usable only inside the body of the type
-//!   declaring them (its methods, constructor, field initializers and the closures inside them;
-//!   not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
+//!   declaring them (its methods, constructor, field initializers and the closures, functions
+//!   and classes declared inside them; not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
 //!   use the private members of its own types (one std type builds another's handle, as
 //!   `TcpListener.accept()` builds a `TcpStream`), so no std handle can be built or read by user
 //!   code.
@@ -30,6 +30,10 @@ impl FnCx<'_, '_> {
     /// Report a use of a private member of `private_to` outside that type's body.
     pub(crate) fn check_private(&mut self, private_to: Option<DefId>, name: &str, span: Span) {
         let Some(owner) = private_to else { return };
+        if crate::defs::is_private_key(name) {
+            let name = crate::defs::key_member_name(name).to_string();
+            return self.check_private_name(owner, &name, span);
+        }
         if self.private_allowed(owner) {
             return;
         }
@@ -42,6 +46,64 @@ impl FnCx<'_, '_> {
             Diagnostic::error(format!("`{name}` is private"), span)
                 .with_note(format!("it can only be used inside the body of `{tn}`")),
         );
+    }
+
+    /// TS18013: an ES private name `#x` declared by class `owner` is usable only in that class's
+    /// body (not in subclasses, and with no exemption for std).
+    fn check_private_name(&mut self, owner: DefId, name: &str, span: Span) {
+        if !self.in_body_of(owner) {
+            self.private_name_error(owner, name, "a public getter", span);
+        }
+    }
+
+    /// TS18013 for `#x` of class `owner`; `instead`: what to add to use it elsewhere.
+    fn private_name_error(&mut self, owner: DefId, name: &str, instead: &str, span: Span) {
+        let tn = self
+            .cx
+            .adt(owner)
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        let plain = name.trim_start_matches(ast::PRIVATE_NAME_PREFIX);
+        self.cx.error(
+            Diagnostic::error(
+                format!("property `{name}` is not accessible outside class `{tn}` because it has a private name"),
+                span,
+            )
+            .with_note(format!(
+                "declare it `private {plain}` or add {instead} to use it elsewhere"
+            )),
+        );
+    }
+
+    /// `o.#v` naming a private accessor (`get #v` / `set #v`) of a class whose body this is not
+    /// in: reports TS18013 once for the whole read, write or read-modify-write (`write`: it
+    /// assigns), and returns true.
+    pub(crate) fn private_accessor_outside(
+        &mut self,
+        t: TyId,
+        prop: &ast::Ident,
+        write: bool,
+    ) -> bool {
+        if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return false;
+        }
+        let setter = crate::defs::member_key(&prop.name, true);
+        let owner = [setter.as_str(), prop.name.as_str()]
+            .into_iter()
+            .find_map(|key| {
+                let r = self.resolve_method(t, key)?;
+                self.method_private_to(&r)
+            });
+        let Some(owner) = owner.filter(|&o| !self.in_body_of(o)) else {
+            return false;
+        };
+        let instead = if write {
+            "a public setter"
+        } else {
+            "a public getter"
+        };
+        self.private_name_error(owner, &prop.name, instead, prop.span);
+        true
     }
 
     /// `new` of a class whose constructor `ctor` is `private` or `protected`, outside the bodies
@@ -77,21 +139,113 @@ impl FnCx<'_, '_> {
     /// May this body use the private members of type `owner`: inside `owner`'s body, or
     /// anywhere in the standard library for a std type.
     pub(crate) fn private_allowed(&self, owner: DefId) -> bool {
-        if self.owner == Some(owner) {
+        if self.in_body_of(owner) {
             return true;
         }
         let owner_module = self.cx.adt(owner).map(|a| a.module);
         self.cx.scopes[self.module].is_std && owner_module.is_some_and(|m| self.cx.scopes[m].is_std)
     }
 
+    /// The classes (and structs) whose bodies this body is in, innermost first: the type whose
+    /// method this is, and for a function or class nested in a method, the types around it
+    /// (TypeScript: a nested `function` in a method is inside the class body).
+    pub(crate) fn lexical_classes(&self) -> Vec<DefId> {
+        let mut out = vec![];
+        let mut cur = self.owner.or_else(|| {
+            self.body_def
+                .and_then(|d| self.cx.enclosing_class.get(&d).copied())
+        });
+        while let Some(c) = cur {
+            if out.contains(&c) {
+                break;
+            }
+            out.push(c);
+            cur = self.cx.enclosing_class.get(&c).copied();
+        }
+        out
+    }
+
+    /// Is this body inside the body of class `class`?
+    pub(crate) fn in_body_of(&self, class: DefId) -> bool {
+        self.owner == Some(class) || self.lexical_classes().contains(&class)
+    }
+
+    /// The class whose `#x` a private name `name` in this body means: the innermost enclosing
+    /// class declaring it, else the innermost enclosing class. Any other name: the type whose
+    /// method this is.
+    pub(crate) fn name_owner(&self, name: &str) -> Option<DefId> {
+        if !crate::defs::is_private_key(name) {
+            return self.owner;
+        }
+        let classes = self.lexical_classes();
+        let member = crate::defs::key_member_name(name);
+        classes
+            .iter()
+            .copied()
+            .find(|&c| self.cx.declares_private_name(c, member))
+            .or_else(|| classes.first().copied())
+    }
+
+    /// TS18014: `o.#x` where `o`'s class declares `#x` and this code is in its body, but a class
+    /// nested in it declares its own `#x`, which the name means here. Reports it and returns
+    /// true.
+    pub(crate) fn shadowed_private_name(&mut self, t: TyId, prop: &ast::Ident) -> bool {
+        if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return false;
+        }
+        let Some(inner) = self.name_owner(&prop.name) else {
+            return false;
+        };
+        let classes = self.lexical_classes();
+        let mut cur = self.cx.class_of(t).map(|(c, _)| c);
+        let mut shadowed = None;
+        for _ in 0..64 {
+            let Some(c) = cur else { break };
+            if c != inner && classes.contains(&c) && self.cx.declares_private_name(c, &prop.name) {
+                shadowed = Some(c);
+                break;
+            }
+            cur = self
+                .cx
+                .adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| self.cx.class_of(b))
+                .map(|(c, _)| c);
+        }
+        let Some(outer) = shadowed else {
+            return false;
+        };
+        let name = |s: &Self, d: DefId| s.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        let (tn, inner_name, outer_name) =
+            (self.cx.display(t), name(self, inner), name(self, outer));
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "property `{}` cannot be accessed on type `{tn}` within this class because it is shadowed by another private identifier with the same spelling",
+                    prop.name
+                ),
+                prop.span,
+            )
+            .with_note(format!(
+                "`{inner_name}` declares its own `{}`, which is what the name means in its body; rename one of them to use `{outer_name}`'s",
+                prop.name
+            )),
+        );
+        true
+    }
+
     /// `private` check for field `index` of struct/class values of type `t`.
     pub(crate) fn check_field_private(&mut self, t: TyId, index: u32, name: &ast::Ident) {
-        let private_to = self
-            .adt_of(t)
+        let private_to = self.field_private_to(t, index);
+        self.check_private(private_to, &name.name, name.span);
+    }
+
+    /// The type field `index` of struct/class values of type `t` is private to, if any.
+    pub(crate) fn field_private_to(&mut self, t: TyId, index: u32) -> Option<DefId> {
+        self.adt_of(t)
             .and_then(|(d, _)| self.cx.adt(d))
             .and_then(|a| a.fields.get(index as usize))
-            .and_then(|f| f.private_to);
-        self.check_private(private_to, &name.name, name.span);
+            .and_then(|f| f.private_to)
     }
 
     /// The type a method is private to, if it is `private`.
@@ -137,7 +291,8 @@ impl FnCx<'_, '_> {
             .is_some_and(|r| self.is_getter(&r))
     }
 
-    /// `obj.name` where `name` is a getter: the getter's call; `Err` gives `obj` back otherwise.
+    /// `obj.name` where `name` is a getter (or a field of an interface value): the getter's call;
+    /// `Err` gives `obj` back otherwise.
     pub(crate) fn getter_read(
         &mut self,
         obj: hir::Expr,
@@ -145,13 +300,17 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
         if !self.has_getter(obj.ty, &prop.name) {
-            return Err(obj);
+            // A field read through an interface's getter slot (`iface_write`).
+            return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
     }
 
     /// Assigning to a getter without a setter is an error.
     pub(crate) fn reject_getter_assign(&mut self, t: TyId, prop: &ast::Ident) -> bool {
+        if self.private_accessor_outside(t, prop, true) {
+            return true;
+        }
         if !self.has_getter(t, &prop.name) {
             return false;
         }
@@ -194,5 +353,73 @@ impl FnCx<'_, '_> {
             .and_then(|g| g.src.owner);
         self.check_private(private_to, &prop.name, prop.span);
         Some(self.global_read(g, want, span))
+    }
+
+    /// `static readonly NAME` of class `d` or of its nearest base class declaring it.
+    pub(crate) fn inherited_static_field(
+        &mut self,
+        d: DefId,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let mut cur = d;
+        for _ in 0..64 {
+            if self.cx.adt(cur)?.statics.contains_key(&prop.name) {
+                return self.static_field(cur, prop, want, span);
+            }
+            let base = self.cx.adt(cur)?.base?;
+            cur = self.cx.class_of(base)?.0;
+        }
+        None
+    }
+
+    /// A static method used as a value (`const f = C.kind`): the function, which has no `this`
+    /// (JavaScript calls it with `this` undefined), so one using `this` is an error. `None`:
+    /// class `d` has no static method `prop`.
+    pub(crate) fn static_method_value(
+        &mut self,
+        d: DefId,
+        this_class: DefId,
+        prop: &ast::Ident,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        self.cx.adt(d)?;
+        let (m, owner_generics, owner_args) = self.find_static(d, &prop.name).ok()?;
+        self.cx.rec_ref(prop.span, Target::Def(m.def));
+        let private_to = self.fn_private_to(m.def);
+        self.check_private(private_to, &prop.name, prop.span);
+        let cname = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        let what = format!("{cname}.{}", prop.name);
+        if self.cx.static_this.contains_key(&m.def) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`{what}` uses `this` or `super`, so it cannot be used as a value"),
+                    span,
+                )
+                .with_note("a static method taken as a value has no `this` (JavaScript calls it with `this` undefined)")
+                .with_note(format!("call it as `{what}()`, or wrap the call: `() => {what}()`")),
+            );
+            return Some(self.error_expr(span));
+        }
+        let def = self.static_def_for(m.def, this_class);
+        crate::body::defaults::param_defaults(self.cx, def);
+        // A generator with a dynamic default (`gen_value.rs`), named through the class.
+        if let Some(h) = self.generator_value(def, Some(this_class), exp, span) {
+            return Some(h);
+        }
+        let ret = crate::body::returns::ret_of(self.cx, def, span);
+        let f = self.cx.fn_info(def);
+        let tys: Vec<TyId> = f.params.iter().map(|p| p.ty).chain([ret]).collect();
+        let n = f.generics.len();
+        let mut slots = vec![None; n];
+        for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
+            *slot = Some(a);
+        }
+        for i in self.unused_owner_slots(&tys, owner_generics) {
+            slots[i].get_or_insert(self.cx.ty.unit);
+        }
+        Some(self.fn_ref_slots(def, &what, slots, exp, span))
     }
 }

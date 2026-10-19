@@ -162,3 +162,93 @@ fn a_long_error_union_is_shortened_in_messages() {
     assert!(e.contains("more)`"), "{e}");
     assert!(e.len() < 2000, "{e}");
 }
+
+/// `src` checks without errors, failing the test if checking takes more than a few seconds.
+fn quick_ok(src: &'static str) {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let l = common::programs::load_src(src);
+        let (p, d) = l.check();
+        let errors = d.iter().any(|d| d.is_error());
+        let _ = tx.send(
+            (p.is_some() && !errors)
+                .then(String::new)
+                .unwrap_or(l.render(&d)),
+        );
+    });
+    let e = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("checking a guarded generic recursion did not finish");
+    assert!(e.is_empty(), "unexpected diagnostics:\n{e}");
+}
+
+const IS_PRIMITIVE: &str = "type Primitive = string | number | boolean | null | undefined;
+     function isPrimitive(v: unknown): v is Primitive {
+       return v === null || (typeof v !== \"object\" && typeof v !== \"function\");
+     }";
+
+/// A growing call in the branch of a type predicate that rules out objects, with an object type
+/// as the grown argument (issue #1251): the requirement passes carry what the body needs (JSON
+/// forms, printed and copied values, deferred types) through it to a finite set of types.
+#[test]
+fn growing_recursion_behind_a_primitive_predicate_compiles() {
+    let src: &'static str = Box::leak(
+        format!(
+            "{IS_PRIMITIVE}
+             type Wrapped<T> = T extends object ? T : {{ value: T }};
+             function wrap<T>(x: T): string {{
+               if (isPrimitive(x)) {{
+                 const inner: Wrapped<T> = {{ value: x }} as unknown as Wrapped<T>;
+                 return wrap({{ value: x }}) + String(inner !== null);
+               }}
+               console.log(x);
+               const copy = [x, x];
+               return JSON.stringify(x) + copy.length;
+             }}
+             function main() {{ console.log(wrap(1), wrap(\"a\"), wrap({{ a: 1 }})); }}"
+        )
+        .into_boxed_str(),
+    );
+    quick_ok(src);
+}
+
+/// The guard must be on the parameter that grows, its type must exclude objects, the call must be
+/// in the branch where it holds and the grown argument must be an object type.
+#[test]
+fn growing_recursion_the_predicate_does_not_bound_is_reported() {
+    for (body, call) in [
+        (
+            "if (isPrimitive(x)) return f(x, { value: y });",
+            "f<T, { value: U }>",
+        ),
+        (
+            "if (isPrimitive(x)) return f<T | null, U>(null, y);",
+            "f<T | null, U>",
+        ),
+        (
+            "if (!isPrimitive(x)) return f({ value: x }, y);",
+            "f<{ value: T }, U>",
+        ),
+        (
+            "if (isPrimitive(x)) {} else return f({ value: x }, y);",
+            "f<{ value: T }, U>",
+        ),
+        (
+            "if (isSmall(x)) return f({ value: x }, y);",
+            "f<{ value: T }, U>",
+        ),
+    ] {
+        let src = format!(
+            "{IS_PRIMITIVE}
+             function isSmall(v: unknown): v is number | {{ n: number }} {{ return typeof v === \"number\"; }}
+             function f<T, U>(x: T, y: U): number {{ {body} return 0; }}
+             function main() {{ console.log(f(1, 2)); }}"
+        );
+        let e = quick_errors(Box::leak(src.into_boxed_str()));
+        assert!(
+            e.contains(&format!("instantiating `{call}`")),
+            "{body}\n{e}"
+        );
+        assert!(e.contains("grows without end"), "{body}\n{e}");
+    }
+}

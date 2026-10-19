@@ -1,2 +1,2 @@
 map_entries_not_tuples.vlt:3:21
-expected [_, _][], found i64[]
+expected [_, _][], found f64[]

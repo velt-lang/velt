@@ -1,0 +1,7 @@
+true false true
+Account { balance: 5, owner: 'ann' }
+[ Point { y: 2 } ] { p: Point { y: 4 } }
+11
+{"balance":5,"owner":"ann"} [{"y":2}]
+[ 'y' ]
+{ y: 8 } 5

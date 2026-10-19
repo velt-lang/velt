@@ -1,18 +1,19 @@
-//! Structural equality (`Intrinsic::Eq`, `==` on non-scalar types) and hashing
-//! (`Intrinsic::Hash`). Class objects, interface values and function values compare and hash by
-//! identity (JS reference semantics: an interface value by its data pointer, a function value by
-//! its code and environment); everything else structurally. The prelude `Map` and
-//! `Record` classes are the exception: they compare by content in any key order (Node's
-//! `isDeepStrictEqual`) through `Map.__deepEquals`, and hash their size and keys through
-//! `Map.__deepHash` (std/prelude/map.vlt); a record compares its map. Hashes combine parts
-//! FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`; strings hash their bytes with
-//! `velt_rt_str_hash`.
+//! Structural equality (`Intrinsic::Eq`: `deepEqual`, `assertEq`) and the hash of `Map` and
+//! `Set` keys (`Intrinsic::Hash`). Structural equality compares class objects, interface values
+//! and function values by identity (JS reference semantics: an interface value by its data
+//! pointer, a function value by its code and environment), everything else by content; the
+//! prelude `Map` and `Record` classes compare by content in any key order (Node's
+//! `isDeepStrictEqual`) through `Map.__deepEquals` (std/prelude/map.vlt); a record compares its
+//! map. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
+//! instances, object types, arrays, interface and function values) hash their identity, the rest
+//! by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
+//! strings hash their bytes with `velt_rt_str_hash`.
 //!
-//! `Intrinsic::Eq` (the `Map` key comparison and `deepEqual`) compares floats with JS's
-//! SameValueZero, as JS compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash
-//! agrees: it hashes `-0` as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue
-//! a key comparison calls (`Glue::KeyEq`, built in `key_mode`) is separate from `==`'s
-//! (`Glue::Eq`).
+//! `Intrinsic::Eq` and `Intrinsic::KeyEq` compare floats with JS's SameValueZero, as JS
+//! compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash agrees: it hashes `-0`
+//! as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue these call
+//! (`Glue::KeyEq` / `Glue::KeySame`, built in `key_mode`) is separate from `==`'s (`Glue::Eq` /
+//! `Glue::Same`).
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -41,20 +42,43 @@ impl FnLower<'_, '_> {
 
     /// The equality glue for the current mode.
     fn eq_glue(&self) -> Glue {
-        if self.key_mode {
-            Glue::KeyEq
-        } else {
-            Glue::Eq
+        if self.value_mode {
+            return Glue::SameValue;
+        }
+        match (self.same_mode, self.key_mode) {
+            (false, false) => Glue::Eq,
+            (false, true) => Glue::KeyEq,
+            (true, false) => Glue::Same,
+            (true, true) => Glue::KeySame,
         }
     }
 
     /// SameValueZero of two floats: `x == y || (x != x && y != y)`.
-    fn same_value_zero(&mut self, x: Operand, y: Operand) -> Operand {
+    pub(in crate::lower) fn same_value_zero(&mut self, x: Operand, y: Operand) -> Operand {
         let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
         let nx = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), x));
         let ny = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, y.clone(), y));
         let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nx, ny));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, nans))
+    }
+
+    /// SameValue of two floats (`Object.is`): `x == y && (x != 0 || bits(x) == bits(y))`, or
+    /// both `NaN`.
+    fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
+        let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
+        let zero = Operand::Const(Const::Float(0.0), vt);
+        let nonzero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), zero));
+        let (bx, by) = (
+            self.float_bits(x.clone(), vt),
+            self.float_bits(y.clone(), vt),
+        );
+        let signs = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, bx, by));
+        let not_zeros = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, nonzero, signs));
+        let equal = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, eq, not_zeros));
+        let nx = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), x));
+        let ny = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, y.clone(), y));
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nx, ny));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, equal, nans))
     }
 
     /// `a == b` for values of concrete type `ty` at two places (Bool operand).
@@ -76,12 +100,22 @@ impl FnLower<'_, '_> {
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => {
                 Operand::Const(Const::Bool(true), Ty::Bool)
             }
+            // `any` / `unknown` (generic code over them): by value, as `===` (keys: SameValueZero).
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.key_mode),
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
+            }
+            _ if self.value_mode && vt.is_float() => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.same_value(x, y, vt)
+            }
+            TyKind::Simd(_) => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.simd_same_bits(x, y)
             }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
@@ -106,9 +140,9 @@ impl FnLower<'_, '_> {
                 Operand::Copy(Place::local(r))
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
-            _ if self.dictionary_content(ty) => {
-                let a = self.addr(place.clone());
-                self.call_glue(Glue::Hash, ty, vec![a])
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
+            _ if self.cx.is_object(ty) && !self.cx.is_fn_or_dyn(ty) => {
+                self.identity_hash(place, ty)
             }
             TyKind::Dyn(..) => {
                 self.cx.note_identity(ty);
@@ -129,6 +163,11 @@ impl FnLower<'_, '_> {
                 let x = self.key_float_bits(Operand::Copy(place.clone()), vt);
                 self.fx_combine(cint(0, Ty::U64), x)
             }
+            TyKind::Simd(_) => {
+                let [low, high] = self.simd_halves(Operand::Copy(place.clone()));
+                let h = self.fx_combine(cint(0, Ty::U64), low);
+                self.fx_combine(h, high)
+            }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let x = self.cast_to(Operand::Copy(place.clone()), vt, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), x)
@@ -140,7 +179,24 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The prelude `Map` or `Record` class, which compares and hashes by content.
+    /// Hash of the object of type `ty` at `place` (a class instance, an object type or an array),
+    /// agreeing with `same_values`: its identity. A key must keep it while the map moves it, so
+    /// an object type or array hashed is counted (its pointer is the object); until lowering
+    /// counts it (the next pass), the address of the place stands in.
+    fn identity_hash(&mut self, place: &Place, ty: TyId) -> Operand {
+        if self.cx.copied_object(ty) {
+            self.cx.note_identity(ty);
+            self.cx.note_share(ty);
+        }
+        let x = match self.cx.ty(ty) {
+            Ty::Ptr => Operand::Copy(place.clone()),
+            _ => self.addr(place.clone()),
+        };
+        let x = self.cast_to(x, Ty::Ptr, Ty::U64);
+        self.fx_combine(cint(0, Ty::U64), x)
+    }
+
+    /// The prelude `Map` or `Record` class, which compares by content (`deepEqual`).
     fn is_dictionary(&mut self, ty: TyId) -> bool {
         self.prelude_map(ty).is_some() || self.prelude_record(ty).is_some()
     }
@@ -148,7 +204,7 @@ impl FnLower<'_, '_> {
     /// A `Map` or `Record` (or a nullable one): a pointer that still compares by content.
     fn dictionary_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.is_dictionary(e),
+            TyKind::Option(e, _) => self.is_dictionary(e),
             _ => self.is_dictionary(ty),
         }
     }
@@ -178,13 +234,13 @@ impl FnLower<'_, '_> {
     /// (or a nullable one), whose pointer is only its representation (semantics stage 2).
     fn boxed_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.cx.boxed(e),
+            TyKind::Option(e, _) => self.cx.boxed(e),
             _ => self.cx.boxed(ty),
         }
     }
 
     /// `(rotl(h, 5) ^ x) * K`.
-    fn fx_combine(&mut self, h: Operand, x: Operand) -> Operand {
+    pub(in crate::lower) fn fx_combine(&mut self, h: Operand, x: Operand) -> Operand {
         let l = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::Shl, h.clone(), cint(5, Ty::U64)),
@@ -199,7 +255,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Bits of a float as a key (SameValueZero): `0` for `-0` and one pattern for every `NaN`.
-    fn key_float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
+    pub(in crate::lower) fn key_float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
         let bits = self.float_bits(v.clone(), vt);
         let zero = Operand::Const(Const::Float(0.0), vt);
         let is_zero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, v.clone(), zero));
@@ -298,7 +354,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => self.eq_option(&a, &b, ty, e, no),
+            TyKind::Option(e, _) => self.eq_option(&a, &b, ty, e, no),
             TyKind::Array(e) => {
                 let (ca, cb) = (self.content(&a, ty), self.content(&b, ty));
                 self.eq_array(&ca, &cb, e, no)
@@ -309,6 +365,9 @@ impl FnLower<'_, '_> {
                 let r = self.eq_values(&inner(&a), &inner(&b), e);
                 self.when(r, no);
             }
+            // No value has type `never` (the payload of `null`'s type, `T & object` at
+            // `T = null`): the glue is never called with one.
+            TyKind::Never => {}
             k => crate::lower::ice(format_args!("no equality glue for {k:?}")),
         }
         self.terminate(Terminator::Return(Operand::Const(
@@ -361,12 +420,7 @@ impl FnLower<'_, '_> {
             lw.assign(Place::local(h), Rvalue::Use(n));
         };
         match self.cx.kind(ty) {
-            TyKind::Adt(..) if self.is_dictionary(ty) => {
-                let (map_ty, m) = self.dictionary_map(&place, ty);
-                let v = self.call_map_method(map_ty, "__deepHash", vec![Operand::Copy(m)], Ty::U64);
-                add(self, v);
-            }
-            TyKind::Adt(..) | TyKind::Tuple(_) if !self.is_enum(ty) => {
+            TyKind::Tuple(_) => {
                 for (x, _, t) in self.struct_parts(&place, &place, ty) {
                     let v = self.hash_value(&x, t);
                     add(self, v);
@@ -383,7 +437,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let some = self.option_is_some(&place, ty);
                 let s64 = self.cast_to(some.clone(), Ty::Bool, Ty::U64);
                 add(self, s64);
@@ -394,21 +448,6 @@ impl FnLower<'_, '_> {
                 add(self, v);
                 self.goto(done);
                 self.switch_to(done);
-            }
-            TyKind::Array(e) => {
-                let place = self.content(&place, ty);
-                let len = self.rvalue_temp(
-                    Ty::U64,
-                    Rvalue::Use(Operand::Copy(proj(&place, Proj::Field(1)))),
-                );
-                add(self, len.clone());
-                let k = self.temp(Ty::U64);
-                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-                self.count_loop(k, len, |lw, k| {
-                    let x = lw.elem_place(&place, k, e);
-                    let v = lw.hash_value(&x, e);
-                    add(lw, v);
-                });
             }
             k => crate::lower::ice(format_args!("no hash glue for {k:?}")),
         }

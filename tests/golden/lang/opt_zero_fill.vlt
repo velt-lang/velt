@@ -1,0 +1,131 @@
+// check: no leaks
+// New objects that escape skip their zero fill in release builds when the constructor writes
+// every field first (#560). Fields the constructor leaves to their initializers, reads of a
+// field before it is written, a throw half-way, calls between the stores and a bool next to a
+// number (padding) must all behave as with the fill. So must an overridden method that a base
+// constructor calls, which reads the subclass's fields before their initializers ran (zero and
+// empty, docs/reference/classes.md), and a throw before a string or array field is written.
+class Item {
+  id: number;
+  ok: boolean;
+  weight: number;
+  constructor(id: number, weight: number) {
+    this.id = id;
+    this.ok = id % 2 == 0;
+    this.weight = weight;
+  }
+}
+
+class Tally {
+  count = 0;
+  label: string;
+  last: number;
+  constructor(label: string) {
+    this.label = label;
+    this.last = this.count + 1;
+  }
+}
+
+class Checked {
+  a: number;
+  b: number;
+  constructor(a: number, b: number) {
+    this.a = a;
+    if (b < 0) {
+      throw new Error(`negative ${b}`);
+    }
+    this.b = b;
+  }
+}
+
+class Base {
+  shown: number;
+  constructor() {
+    this.shown = this.show();
+  }
+  show(): number {
+    return -1;
+  }
+}
+
+class Sub extends Base {
+  x: number = 5;
+  label: string = "sub";
+  items: number[] = [1, 2];
+  override show(): number {
+    console.log("show sees", this.x, this.label.length, this.items.length);
+    return this.x;
+  }
+}
+
+class Names {
+  first: string;
+  tags: string[];
+  constructor(first: string, n: number) {
+    if (n < 0) {
+      throw new Error(`bad ${n}`);
+    }
+    this.first = first;
+    this.tags = [first, `${n}`];
+  }
+}
+
+function noted(x: number): number {
+  console.log("noted", x);
+  return x * 10;
+}
+
+class Pair {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = noted(x);
+    this.y = noted(y) + this.x;
+  }
+}
+
+function build(n: number): Item[] {
+  const out: Item[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(new Item(i, i * 1.5));
+  }
+  return out;
+}
+
+function main() {
+  let sum = 0.0;
+  let oks = 0;
+  for (const it of build(9)) {
+    sum += it.id + it.weight;
+    if (it.ok) {
+      oks += 1;
+    }
+  }
+  console.log(sum, oks);
+  const tallies = [new Tally("a"), new Tally("b")];
+  console.log(tallies[0].label, tallies[1].count, tallies[1].last);
+  const kept: Checked[] = [];
+  const bs: number[] = [2, -1, 3];
+  for (const b of bs) {
+    try {
+      kept.push(new Checked(1, b));
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  console.log(kept.length, kept[1].a + kept[1].b);
+  const pairs = [new Pair(1, 2), new Pair(3, 4)];
+  console.log(pairs[0].y, pairs[1].x, pairs[1].y);
+  const sub = new Sub();
+  console.log(sub.shown, sub.x, sub.label, sub.items.length);
+  const named: Names[] = [];
+  const ns: number[] = [1, -2, 3];
+  for (const n of ns) {
+    try {
+      named.push(new Names(`n${n}`, n));
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  console.log(named.length, named[1].first, named[1].tags.join(","));
+}

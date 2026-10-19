@@ -45,9 +45,12 @@ pub(super) fn declare(cx: &mut Ctx) {
             generics: Generics {
                 names: i.generics.names.clone(),
                 bounds: vec![],
+                defaults: vec![],
+                constraints: vec![],
             },
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: HashMap::new(),
             ctor: None,
@@ -137,16 +140,8 @@ pub(super) fn fill(cx: &mut Ctx) {
     for (_, adt) in pairs {
         let a = cx.adt(adt).expect("ICE: adt");
         let module = a.module;
-        let fields: Vec<crate::anon::ShapeField> = a
-            .fields
-            .iter()
-            .map(|f| crate::anon::ShapeField {
-                name: f.name.clone(),
-                ty: f.ty,
-                readonly: f.readonly,
-                optional: f.optional,
-            })
-            .collect();
+        let fields: Vec<crate::anon::ShapeField> =
+            a.fields.iter().map(crate::anon::shape_field).collect();
         let (anon, template) = cx.anon_def_with(&fields, module);
         let (twin, template) = match cx.readonly_twins.get(&anon) {
             Some((plain, None)) => (*plain, template),
@@ -191,6 +186,16 @@ impl Ctx<'_> {
             }
             found.push((index, *ty));
         }
+        let writable = self.writable_fields(iface);
+        let setters = writable
+            .iter()
+            .map(|&k| crate::iface_writes::SetterSrc::Field {
+                d,
+                self_ty: t,
+                index: found[k].0,
+                ty: found[k].1,
+            })
+            .collect();
         let methods = found
             .into_iter()
             .map(|(index, ty)| super::getters::field_getter(self, d, t, index, ty))
@@ -202,6 +207,8 @@ impl Ctx<'_> {
             iface_args: vec![],
             methods,
         });
-        Some(((self.impls.len() - 1) as u32, vec![], t))
+        let index = (self.impls.len() - 1) as u32;
+        self.note_setters(index, setters);
+        Some((index, vec![], t))
     }
 }

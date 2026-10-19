@@ -1,0 +1,32 @@
+// `this` in a static method is the class the method was called on, so an inherited static
+// calls the subclass's statics; `super.f()` in a static method calls the base class's static,
+// with `this` unchanged.
+class A {
+  static readonly NAME: string = "a";
+  static kind(): string { return "A"; }
+  static hello(): string { return "hello " + this.kind() + " " + this.NAME; }
+  static make(n: number): string { return this.kind().repeat(n); }
+  static viaArrow(): string[] { return [1, 2].map((i) => `${this.kind()}${i}`); }
+  static f(): string { return "A.f"; }
+}
+class B extends A {
+  static kind(): string { return "B"; }
+  static f(): string { return super.f() + "+B.f(" + this.kind() + ")"; }
+}
+class C extends B {
+  static kind(): string { return "C"; }
+  static f(): string { return super.f() + "+C.f"; }
+}
+class Box<T> {
+  static kind(): string { return "Box"; }
+  static hello(): string { return "hello " + this.kind(); }
+}
+class NumBox extends Box<number> {
+  static kind(): string { return "NumBox"; }
+}
+console.log(A.hello(), B.hello(), C.hello());
+console.log(B.make(3), C.viaArrow());
+console.log(A.f());
+console.log(B.f());
+console.log(C.f());
+console.log(Box.hello(), NumBox.hello());

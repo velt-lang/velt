@@ -1,0 +1,123 @@
+// check: no leaks
+// One object under two names (the constructor's result and the variable, a variable and an
+// inlined method's `this`), written through one and read through the other. Release builds
+// keep such objects in locals (#558); every write must still be seen under every name.
+class Builder {
+  sum: number;
+  count: number;
+  constructor() {
+    this.sum = 0;
+    this.count = 0;
+  }
+  add(x: number) {
+    this.sum = this.sum + x;
+    this.count = this.count + 1;
+  }
+  build(): number {
+    return this.sum * 100 + this.count;
+  }
+}
+
+class Acc {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  addIn(dx: number, dy: number) {
+    this.x = this.x + dx;
+    this.y = this.y + dy;
+  }
+}
+
+function addInto(dst: Acc, src: Acc) {
+  dst.x = dst.x + src.x;
+  dst.y = dst.y + src.y;
+}
+
+class Cell {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  addY(v: number) {
+    this.y = this.y + v;
+  }
+}
+
+// Written through a parameter and through `this` in a loop, then through the variable.
+function poke(m: Cell, k: number) {
+  m.x = 5;
+  for (let i = 0; i < k; i++) {
+    m.addY(m.x);
+  }
+}
+
+class Two {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function update(first: boolean, a: Two, b: Two) {
+  const q = first ? a : b;
+  a.x = 50;
+  q.y = q.y + q.x;
+}
+
+// Builder-style code: methods write `this`, the caller reads the variable.
+function built(n: number): number {
+  let total = 0.0;
+  for (let i = 0; i < n; i++) {
+    const b = new Builder();
+    b.add(i);
+    b.add(2 * i);
+    b.add(3);
+    total += b.build();
+  }
+  return total;
+}
+
+// A mutable value object updated in place in a loop, then read after it.
+function accumulated(n: number): string {
+  const a = new Acc(1, 2);
+  for (let i = 0; i < n; i++) {
+    a.addIn(i, 1);
+    if (a.x > 20) {
+      a.addIn(-a.x, 0);
+    }
+  }
+  const d = new Acc(10, 20);
+  addInto(d, a);
+  return `${a.x} ${a.y} ${d.x} ${d.y}`;
+}
+
+// Three names for one object (the variable, `poke`'s parameter, `addY`'s `this`), each
+// written; every one sees every write.
+function renamed(k: number): number {
+  const w = new Cell(k, 2);
+  poke(w, k);
+  w.y = w.y + 7;
+  return w.x + w.y;
+}
+
+// `q` holds `a` on one path only: the write through `a` must be seen through `q` there.
+function partial(first: boolean): string {
+  const a = new Two(1, 1);
+  const b = new Two(2, 2);
+  update(first, a, b);
+  return `${a.x} ${a.y} ${b.x} ${b.y}`;
+}
+
+function main() {
+  console.log(built(5));
+  console.log(accumulated(10));
+  console.log(renamed(1), renamed(40));
+  console.log(partial(true), partial(false));
+}

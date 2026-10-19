@@ -132,6 +132,11 @@ impl Target {
         self.triple.starts_with("x86_64")
     }
 
+    /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
+    pub fn has_neon(&self) -> bool {
+        self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")
+    }
+
     /// Whether this is a WebAssembly target.
     pub fn is_wasm(&self) -> bool {
         matches!(self.os, Os::Wasi | Os::WasmBrowser)

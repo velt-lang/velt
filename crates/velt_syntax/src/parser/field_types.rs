@@ -1,6 +1,6 @@
 //! Class fields without a type annotation (`count = 0;`, `done = false;`, TS infers the type):
-//! the parser takes the type from the initializer when it states it plainly — a literal (`0` is
-//! `i64`, `0.5` `f64`, `"a"` / templates `string`, `true` `bool`, a suffix names its type), `new
+//! the parser takes the type from the initializer when it states it plainly — a literal (`0` and
+//! `0.5` are `number`s, `"a"` / templates `string`, `true` `bool`, a suffix names its type), `new
 //! C<T>(…)`, or an array literal of such elements. Anything else needs `name: T = …`.
 
 use super::Parser;
@@ -24,7 +24,7 @@ impl Parser<'_> {
 }
 
 /// The type initializer `e` plainly states (see the module docs).
-fn stated_type(e: &Expr) -> Option<TypeExpr> {
+pub(super) fn stated_type(e: &Expr) -> Option<TypeExpr> {
     let named = |n: &str| TypeExpr {
         kind: TypeExprKind::Named {
             path: vec![Ident {
@@ -36,8 +36,12 @@ fn stated_type(e: &Expr) -> Option<TypeExpr> {
         span: e.span,
     };
     match &e.kind {
-        ExprKind::Lit(Lit::Int { suffix, .. }) => Some(named(suffix.as_deref().unwrap_or("i64"))),
-        ExprKind::Lit(Lit::Float { suffix, .. }) => Some(named(suffix.as_deref().unwrap_or("f64"))),
+        ExprKind::Lit(Lit::Int { suffix, .. }) => {
+            Some(named(suffix.as_deref().unwrap_or("number")))
+        }
+        ExprKind::Lit(Lit::Float { suffix, .. }) => {
+            Some(named(suffix.as_deref().unwrap_or("number")))
+        }
         ExprKind::Lit(Lit::Str(_)) | ExprKind::Template { .. } => Some(named("string")),
         ExprKind::Lit(Lit::Bool(_)) => Some(named("boolean")),
         ExprKind::Unary {

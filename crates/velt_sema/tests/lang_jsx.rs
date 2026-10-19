@@ -1,4 +1,4 @@
-//! JSX lowering (docs/contracts/jsx.md) through the golden test runtimes
+//! JSX lowering (docs/internals/contracts/jsx.md) through the golden test runtimes
 //! (`tests/golden/lang/_jsx_test_provider`: generic; `_jsx_test_precompile`: precompile), and
 //! generic arrow functions.
 
@@ -10,6 +10,14 @@ use velt_sema::hir::{self, Callee, ExprKind as E, Lit, Program};
 
 const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
+const LIST: &str = "// @jsxImportSource ./_jsx_test_list\n";
+const TEMPLATE_STRING: &str = "// @jsxImportSource ./_jsx_test_template_string\n";
+const ESCAPE_STRING: &str = "// @jsxImportSource ./_jsx_test_escape_string\n";
+const NUMERIC_TEXT: &str = "// @jsxImportSource ./_jsx_test_numeric_text\n";
+const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
+const VOID: &str = "// @jsxImportSource ./_jsx_test_void\n";
+const SOLE_PLAIN: &str = "// @jsxImportSource ./_jsx_sole_plain\n";
+const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
 fn load(src: &str) -> Loaded {
     load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src)
@@ -117,7 +125,8 @@ fn precompile_folds_text_and_attributes_into_template_strings() {
     assert_eq!((strs.len(), slots.len()), (1, 0), "no Element slots");
     assert!(matches!(strs[0].kind, E::Call { .. }), "a template literal");
     assert_eq!(runtime_calls(&p, "main", "jsxAttr").len(), 1);
-    assert_eq!(runtime_calls(&p, "main", "jsxEscape").len(), 2);
+    // `{x}` goes through `jsxEscape`; the number `{n}` is written `${n}` (#77).
+    assert_eq!(runtime_calls(&p, "main", "jsxEscape").len(), 1);
     assert!(runtime_calls(&p, "main", "jsx").is_empty());
 }
 
@@ -162,6 +171,378 @@ fn precompile_leaves_keyed_and_spread_elements_to_jsx() {
     let t = runtime_calls(&p, "main", "jsxTemplate");
     assert_eq!(t.len(), 1);
     assert_eq!(strings(&t[0][0]), ["<li>one</li>"]);
+}
+
+/// The string literals in `f`'s body.
+fn str_lits(p: &Program, f: &str) -> Vec<String> {
+    exprs(func(p, f))
+        .into_iter()
+        .filter_map(|e| match &e.kind {
+            E::Lit(Lit::Str(s)) => Some(s.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_separator_goes_between_adjacent_text_parts() {
+    let p = ok(&format!(
+        "{SEPARATOR}function main() {{ const n: i64 = 3; const s = \"ada\"; const a = <p>Count: {{n}}</p>; const b = <p>{{s}}{{n}}</p>; const c = <p>a<span>b</span>c</p>; }}"
+    ));
+    let lits = str_lits(&p, "main");
+    assert!(lits.iter().any(|s| s == "<p>Count: <!--t-->"), "{lits:?}");
+    assert!(lits.iter().any(|s| s == "<!--t-->"), "{lits:?}");
+    assert!(
+        lits.iter().any(|s| s == "<p>a<span>b</span>c</p>"),
+        "markup is a boundary: {lits:?}"
+    );
+    assert!(
+        !exprs(func(&p, "main"))
+            .iter()
+            .any(|e| matches!(e.kind, E::If { .. })),
+        "separators between text of known types are constant"
+    );
+}
+
+#[test]
+fn text_separator_after_a_nullable_or_boolean_value_is_decided_at_run_time() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(m: string | null, f: bool) {{ const a = <p>a{{m}}b</p>; const b = <p>{{f}}c</p>; }}
+        function main() {{ view(null, true); }}"
+    ));
+    let ifs = exprs(func(&p, "view"))
+        .into_iter()
+        .filter(|e| matches!(e.kind, E::If { .. }))
+        .count();
+    assert_eq!(ifs, 2, "one conditional on each side of `m`");
+    let lits = str_lits(&p, "view");
+    assert!(
+        lits.iter().any(|s| s == "c</p>") && !lits.iter().any(|s| s.contains("<!--t-->c")),
+        "a boolean is a boundary: {lits:?}"
+    );
+}
+
+/// Regression (#637 review): an empty string at a slot edge rendered no separator in the
+/// precompile lowering, as the provider only sees the template string's edge.
+#[test]
+fn text_separator_a_string_that_may_be_empty_next_to_a_slot_is_a_slot() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(s: string, n: i64) {{
+            const a = <p>a{{s}}<>{{n}}</>{{s}}</p>;
+            const b = <p>{{n}}<>{{n}}</>{{\"x\"}}</p>;
+        }}
+        function main() {{ view(\"\", 3); }}"
+    ));
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(strings(&t[0][0]), ["<p>a", "", "", "</p>"]);
+    // Each `s` is a `Fragment` slot; `n` and `"x"` (never empty) stay in the strings.
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 4);
+}
+
+/// #77: a template without slots is `jsxTemplateString(html)` when the runtime exports it (std
+/// does): no arrays per call. With slots, or without the export, it stays `jsxTemplate`.
+#[test]
+fn template_without_slots_uses_jsx_template_string() {
+    let p = ok(&format!(
+        "{TEMPLATE_STRING}function Name(): JSX.Element {{ return <span>x</span>; }}
+        function view(s: string) {{ const a = <p>{{s}}</p>; const b = <p><Name /></p>; }}
+        function main() {{ view(\"x\"); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplateString").len(), 1);
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 1);
+    let p = ok(&format!(
+        "{PRECOMPILE}function view(s: string) {{ const a = <p>{{s}}</p>; }}
+        function main() {{ view(\"x\"); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 1);
+}
+
+/// #77: with `jsxEscapeString`, a `string` child (and static text with a `'`) is escaped by it,
+/// without the `Text` union; other text still goes through `jsxEscape`, and so does every
+/// string without the export.
+#[test]
+fn string_children_use_jsx_escape_string() {
+    let src =
+        "function view(s: string, m: string | null, b: bool) { const a = <p>{s} {m} {b} it's</p>; }
+        function main() { view(\"x\", null, true); }";
+    let p = ok(&format!("{ESCAPE_STRING}{src}"));
+    assert_eq!(runtime_calls(&p, "view", "jsxEscapeString").len(), 2);
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 2);
+    let p = ok(&format!("{PRECOMPILE}{src}"));
+    assert!(runtime_calls(&p, "view", "jsxEscapeString").is_empty());
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 4);
+}
+
+/// #759 review: without `jsxEscapeString`, a `string` child goes where it went before: a slot
+/// when the provider's `Text` has no strings (not a type error).
+#[test]
+fn without_jsx_escape_string_a_string_child_follows_text() {
+    let p = ok(&format!(
+        "{NUMERIC_TEXT}function view(s: string, n: i64) {{ const a = <p>{{s}} {{n}}</p>; }}
+        function main() {{ view(\"x\", 1); }}"
+    ));
+    assert!(runtime_calls(&p, "view", "jsxEscape").is_empty());
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
+}
+
+/// #77: `{f.message}` is passed to `jsxEscapeString` where it is (borrowed), not copied out of
+/// `f` for each row.
+#[test]
+fn a_string_field_child_is_borrowed_by_jsx_escape_string() {
+    let p = ok(&format!(
+        "{ESCAPE_STRING}class F {{ constructor(public m: string) {{}} }}
+        function view(f: F) {{ const a = <p>{{f.m}}</p>; }}
+        function main() {{ view(new F(\"x\")); }}"
+    ));
+    let calls = runtime_calls(&p, "view", "jsxEscapeString");
+    assert!(
+        matches!(&calls[0][0].kind, E::Field { mode, .. } if *mode == hir::UseMode::Borrow),
+        "{:?}",
+        calls[0][0].kind
+    );
+}
+
+/// #676 review: providers escape `'` differently (react-dom `&#x27;`, sigx and `escapeHtml`
+/// `&#39;`), so static text and attribute values with one are left to `jsxEscape`/`jsxAttr`.
+#[test]
+fn static_apostrophes_are_escaped_by_the_provider() {
+    let p = ok(&format!(
+        "{PRECOMPILE}function main() {{ const a = <p title=\"a'b\" class=\"x\">it's &amp; <span>ok</span></p>; }}"
+    ));
+    assert!(!str_lits(&p, "main")
+        .iter()
+        .any(|s| s.contains("&#39;") || s.contains("&#x27;")));
+    assert_eq!(runtime_calls(&p, "main", "jsxEscape").len(), 1);
+    assert_eq!(runtime_calls(&p, "main", "jsxAttr").len(), 1);
+    assert!(str_lits(&p, "main")
+        .iter()
+        .any(|s| s.contains(" class=\"x\">")));
+}
+
+/// #77: with `jsxList`, a list whose rows are templates without slots is built from strings:
+/// no element per row.
+#[test]
+fn list_of_slot_free_rows_is_folded_into_the_template() {
+    let p = ok(&format!(
+        "{LIST}function view(xs: string[]) {{ const a = <ul class=\"l\">{{xs.map((x) => <li>{{x}}</li>)}}</ul>; }}
+        function main() {{ view([\"a\"]); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxList").len(), 1);
+    assert_eq!(
+        runtime_calls(&p, "view", "jsxTemplateString").len(),
+        1,
+        "the whole list"
+    );
+    assert!(runtime_calls(&p, "view", "jsxTemplate").is_empty());
+    assert!(runtime_calls(&p, "view", "Fragment").is_empty());
+}
+
+#[test]
+fn lists_that_are_not_folded() {
+    let p = ok(&format!(
+        "{LIST}function Name(): JSX.Element {{ return <span>n</span>; }}
+        class Rows {{ map(f: (x: string) => JSX.Element): JSX.Element {{ return f(\"r\"); }} }}
+        function view(xs: string[], r: Rows) {{
+            const a = <ul>{{xs.map((x) => <li key={{x}}>{{x}}</li>)}}</ul>;
+            const b = <ul>{{xs.map((x) => <li><Name /></li>)}}</ul>;
+            const c = <ul>{{xs.map((x): JSX.Element => <li>{{x}}</li>)}}</ul>;
+            const d = <ul>{{r.map((x) => <li>{{x}}</li>)}}</ul>;
+            const e = <ul>{{xs.map((x) => x == \"\" ? <li /> : <li>{{x}}</li>)}}</ul>;
+        }}
+        function main() {{ view([\"a\"], new Rows()); }}"
+    ));
+    // `key`, a component in the row, a declared return type, a `map` that isn't an array's, and
+    // a body that isn't one element: rows stay elements.
+    assert!(runtime_calls(&p, "view", "jsxList").is_empty());
+    let p = ok(&format!(
+        "{SEPARATOR}function view(xs: string[]) {{ const a = <ul>{{xs.map((x) => <li>{{x}}</li>)}}</ul>; }}
+        function main() {{ view([\"a\"]); }}"
+    ));
+    assert!(
+        runtime_calls(&p, "view", "Fragment").len() == 1,
+        "no jsxList: the separator runtime"
+    );
+}
+
+/// #77 review: a user class's `map` is never folded, even one that takes and returns strings
+/// (it would receive the rows' markup).
+#[test]
+fn a_users_map_is_not_folded() {
+    let r = err(&format!(
+        "{LIST}class Words {{ ws: string[] = []; map(f: (x: string) => string): string[] {{ return this.ws.map(f); }} }}
+        function view(w: Words) {{ const a = <ul>{{w.map((x) => <li>{{x}}</li>)}}</ul>; }}
+        function main() {{ view(new Words()); }}"
+    ));
+    assert!(
+        r.contains("expected string, found Element") || r.contains("not assignable"),
+        "{r}"
+    );
+}
+
+/// #77 review: a list after a slot of its template stays a slot (the rows would otherwise run
+/// before that slot's props), and a list tried inside another try is not tried.
+#[test]
+fn lists_after_a_slot_or_inside_a_try_are_not_folded() {
+    let p = ok(&format!(
+        "{LIST}function Name(): JSX.Element {{ return <span>n</span>; }}
+        function view(xs: string[]) {{ const a = <ul><Name />{{xs.map((x) => <li>{{x}}</li>)}}</ul>; }}
+        function main() {{ view([\"a\"]); }}"
+    ));
+    assert!(runtime_calls(&p, "view", "jsxList").is_empty());
+}
+
+/// The fold checks a row speculatively: an error in it is reported once, as without the fold.
+#[test]
+fn an_error_in_a_list_row_is_reported_once() {
+    let r = err(&format!(
+        "{LIST}function view(xs: string[]) {{ const a = <ul>{{xs.map((x) => <li>{{x.nope}}</li>)}}</ul>; }}
+        function main() {{ view([\"a\"]); }}"
+    ));
+    assert_eq!(r.matches("nope").count(), 1, "{r}");
+}
+
+/// #77: an `i64`/`f64` child is written `${n}`, not through `jsxEscape`.
+#[test]
+fn number_children_are_written_without_jsx_escape() {
+    let p = ok(&format!(
+        "{PRECOMPILE}function view(n: i64, f: f64, s: string) {{ const a = <p>{{n}} {{f}} {{s}}</p>; }}
+        function main() {{ view(1, 1.5, \"s\"); }}"
+    ));
+    assert_eq!(
+        runtime_calls(&p, "view", "jsxEscape").len(),
+        1,
+        "only the string"
+    );
+}
+
+#[test]
+fn no_text_separator_without_the_export() {
+    let p = ok(&format!(
+        "{PRECOMPILE}function view(n: i64, m: string | null) {{ const a = <p>Count: {{n}}{{m}}</p>; }}
+        function main() {{ view(3, null); }}"
+    ));
+    assert!(!str_lits(&p, "view").iter().any(|s| s.contains("<!--t-->")));
+    assert!(!exprs(func(&p, "view"))
+        .iter()
+        .any(|e| matches!(e.kind, E::If { .. })));
+}
+
+/// Regression (#634): `jsxEscape` cannot tell a sole `null` or boolean child from one among
+/// siblings, so a provider that renders them differently (sigx) could not precompile them.
+#[test]
+fn sole_empty_replaces_a_sole_boolean_or_null_child() {
+    let p = ok(&format!(
+        "{SOLE}function view(f: bool, m: string | null) {{ const a = <p>{{false}}</p>; const b = <p>{{f}}a</p>; const c = <p>{{m}}</p>; const d = <p>{{f}}</p>; }}
+        function main() {{ view(true, null); }}"
+    ));
+    // No slots: each element is one `jsxTemplateString`.
+    let t = runtime_calls(&p, "view", "jsxTemplateString");
+    assert!(
+        matches!(&t[0][0].kind, E::Lit(Lit::Str(s)) if s == "<p></p>"),
+        "a sole `false` is the export's string"
+    );
+    assert_eq!(t.len(), 4);
+    // Among siblings `f` is `jsxEscape`'s; `m` may be text: tested at run time, escaped only
+    // when it is.
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 2);
+    let ifs = exprs(func(&p, "view"))
+        .into_iter()
+        .filter(|e| matches!(e.kind, E::If { .. }))
+        .count();
+    assert_eq!(ifs, 1);
+}
+
+#[test]
+fn sole_empty_a_sole_nullable_element_is_a_conditional_slot() {
+    let p = ok(&format!(
+        "{SOLE}function view(e: JSX.Element | null, s: string) {{ const a = <p>{{e}}</p>; const b = <p>{{s}}</p>; }}
+        function main() {{ view(null, \"x\"); }}"
+    ));
+    // `e`: `Fragment([e], null)` or `jsxTemplateString("")`; `s` is always text.
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
+    assert_eq!(
+        runtime_calls(&p, "view", "jsxTemplate").len(),
+        1,
+        "`<p>{{e}}</p>`"
+    );
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplateString").len(), 2);
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+/// Without `jsxTemplateString`, a sole `null`/boolean slot is `jsxTemplate([sole], [])`.
+#[test]
+fn sole_empty_falls_back_to_jsx_template() {
+    let p = ok(&format!(
+        "{SOLE_PLAIN}function view(e: JSX.Element | null) {{ const a = <p>{{e}}</p>; }}
+        function main() {{ view(null); }}"
+    ));
+    // `<p>{e}</p>` and the `null` branch's `jsxTemplate([""], [])`.
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(t.len(), 2);
+    assert!(t.iter().any(|args| strings(&args[0]) == [""]));
+    assert!(runtime_calls(&p, "view", "jsxTemplateString").is_empty());
+}
+
+/// Regression (#634 review): a sole boolean local was not read, so a possibly uninitialized
+/// one was accepted.
+#[test]
+fn sole_empty_still_reads_a_sole_local() {
+    let r = err(&format!(
+        "{SOLE}function main() {{ const x = true; let y: bool; if (x) {{ y = true; }} const a = <p>{{y}}</p>; }}"
+    ));
+    assert!(r.contains("possibly uninitialized variable `y`"), "{r}");
+}
+
+/// #87 review: void elements are the provider's (`jsxVoidElements`); one without the export, like
+/// an RSS provider whose `<link>` has text, accepts children of any tag.
+#[test]
+fn void_children_only_for_the_providers_void_elements() {
+    ok(&format!(
+        "{GENERIC}function main() {{ const a = <p><br>x</br><img src=\"a.png\">y</img></p>; }}"
+    ));
+}
+
+/// #675 review: a provider's `jsxVoidElements` also decides which tags templates write without
+/// an end tag; without the export they use HTML's list.
+#[test]
+fn templates_use_the_providers_void_elements() {
+    let p = ok(&format!(
+        "{VOID}function main() {{ const a = <p><br /><span /><br>x</br></p>; }}"
+    ));
+    let lits = str_lits(&p, "main");
+    assert!(
+        lits.iter().any(|s| s == "<p><br></br><span><br>x</br></p>"),
+        "{lits:?}"
+    );
+    let r = err(&format!(
+        "{VOID}function main() {{ const a = <span>x</span>; }}"
+    ));
+    assert!(r.contains("<span> is a void element"), "{r}");
+    let p = ok(&format!(
+        "{PRECOMPILE}function main() {{ const a = <p><br /><span /></p>; }}"
+    ));
+    assert!(str_lits(&p, "main")
+        .iter()
+        .any(|s| s == "<p><br><span></span></p>"));
+}
+
+#[test]
+fn no_sole_empty_without_the_export() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(f: bool) {{ const a = <p>{{f}}</p>; }}
+        function main() {{ view(true); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+#[test]
+fn sole_empty_must_be_a_string_constant() {
+    let r =
+        err("// @jsxImportSource ./errors/_jsx_bad_sole\nfunction main() { const a = <p>x</p>; }");
+    assert!(
+        r.contains("`jsxSoleEmpty` of the JSX provider") && r.contains("must be a string constant"),
+        "{r}"
+    );
 }
 
 #[test]
@@ -316,7 +697,7 @@ fn custom_elements_and_dashed_attributes_are_not_checked() {
 
 #[test]
 fn jsx_without_a_runtime_is_one_error() {
-    let r = err("function main() { const n = 1; const e = <p>{n + \"x\"}</p>; }");
+    let r = err("function main() { const n = 1; const e = <p>{n + true}</p>; }");
     assert_eq!(r.matches("no JSX runtime was loaded").count(), 1, "{r}");
     assert!(
         r.contains("mismatched types"),

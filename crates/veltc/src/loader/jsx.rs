@@ -1,7 +1,7 @@
-//! The JSX runtime import (docs/contracts/jsx.md "Choosing the provider"): a module containing
-//! JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's
-//! `// @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else
-//! `std/jsx`. A module without JSX loads no runtime.
+//! The JSX runtime import (docs/internals/contracts/jsx.md "Choosing the provider"): a module
+//! containing JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's `//
+//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `std/jsx`. A
+//! module without JSX loads no runtime.
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E, StmtKind as S};
@@ -38,6 +38,8 @@ fn item(it: &ast::Item) -> Option<Span> {
             .find_map(|v| v.discriminant.as_ref().and_then(expr)),
         ast::ItemKind::Var(v) => v.init.as_ref().and_then(expr),
         ast::ItemKind::Extend(x) => x.methods.iter().find_map(|m| block(&m.decl.body)),
+        ast::ItemKind::Augment(a) => a.items.iter().find_map(item),
+        ast::ItemKind::Namespace(n) => n.items.iter().find_map(item),
         ast::ItemKind::Import(_) | ast::ItemKind::TypeAlias(_) | ast::ItemKind::ExternFn(_) => None,
     }
 }

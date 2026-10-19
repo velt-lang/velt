@@ -1,0 +1,137 @@
+// check: no leaks
+// Writing fields through interface values and bounded generics (#1112), as in TypeScript: the
+// write changes the object behind the value, compound forms read and write once each.
+class Dep {
+  label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+}
+
+interface Subscriber {
+  flags: number;
+  name: string;
+  dep: Dep;
+  ownDep?: Dep;
+  readonly id: number;
+  run(): string;
+}
+
+class Effect implements Subscriber {
+  flags: number = 0;
+  name: string = "effect";
+  dep: Dep = new Dep("first dependency with a long label");
+  ownDep?: Dep;
+  readonly id: number = 1;
+  run(): string {
+    return `${this.name}:${this.flags}:${this.dep.label}`;
+  }
+}
+
+class Computed extends Effect {
+  extra: string = "computed";
+}
+
+const QUEUED = 4;
+const DIRTY = 1;
+
+function mark(sub: Subscriber, bit: number): void {
+  const prev = sub.flags;
+  sub.flags = (prev | bit) & ~QUEUED;
+  sub.flags |= QUEUED;
+}
+
+function rename<T extends Subscriber>(sub: T, name: string): void {
+  sub.name = name;
+  sub.name += "!";
+  sub.flags++;
+}
+
+function replaceDep(sub: Subscriber, label: string): Dep {
+  const d = new Dep(label);
+  sub.dep = d;
+  sub.ownDep ??= new Dep("own " + label);
+  return d;
+}
+
+const e = new Effect();
+mark(e, DIRTY);
+console.log(e.run());
+rename(e, "renamed");
+console.log(e.run(), e.flags);
+const kept = replaceDep(e, "second dependency with a long label");
+console.log(e.run(), kept === e.dep, e.ownDep?.label);
+replaceDep(e, "third dependency");
+console.log(e.run(), e.ownDep?.label);
+
+const subs: Subscriber[] = [new Effect(), new Computed()];
+for (let j = 0; j < subs.length; j++) {
+  subs[j].flags = j + 10;
+  subs[j].flags &= ~2;
+}
+for (const s of subs) {
+  const v = (s.flags = s.flags * 2);
+  console.log(s.run(), v, s.id);
+}
+
+// An object literal implementing the interface: plain properties and accessors.
+let stored = 0;
+const lit: Subscriber = {
+  get flags(): number {
+    return stored;
+  },
+  set flags(v: number) {
+    stored = v * 10;
+  },
+  name: "literal",
+  dep: new Dep("literal dependency"),
+  id: 2,
+  run: () => "literal run",
+};
+mark(lit, DIRTY);
+lit.flags++;
+lit.name = "lit";
+replaceDep(lit, "literal replaced");
+console.log(stored, lit.flags, lit.name, lit.dep.label, lit.ownDep?.label);
+
+// A generic interface.
+interface Holder<T> {
+  value: T;
+  describe(): string;
+}
+
+class Cell<T> implements Holder<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+  describe(): string {
+    return `cell(${this.value})`;
+  }
+}
+
+function setValue<T>(h: Holder<T>, v: T): void {
+  h.value = v;
+}
+
+const hs: Holder<string> = new Cell<string>("a string value that lives on the heap");
+setValue(hs, "replaced string value that lives on the heap");
+hs.value += " and more";
+console.log(hs.describe());
+const hn: Holder<number> = new Cell<number>(1);
+hn.value++;
+setValue(hn, hn.value * 21);
+console.log(hn.describe());
+
+// A field-only interface as a bound.
+interface Counter {
+  count: number;
+}
+
+function inc<T extends Counter>(c: T): void {
+  c.count += 1;
+}
+
+const c = { count: 41 };
+inc(c);
+console.log(c.count);

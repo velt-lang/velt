@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` the prelude's `Map<K, V>` (iterated through `entries()`)?
-    fn is_prelude_map(&self, t: TyId) -> bool {
+    pub(super) fn is_prelude_map(&self, t: TyId) -> bool {
         matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if Some(*d) == self.cx.prelude_adt("Map"))
     }
 
@@ -223,7 +223,10 @@ impl FnCx<'_, '_> {
         let (t, e) = (args[0], args[1]);
         let gen_ty = match is_async {
             true => self.cx.async_generator_ty(t, e),
-            false => self.cx.generator_ty(t, e),
+            false => {
+                let n = self.cx.generator_next_ty(call.ty);
+                self.cx.generator_ty_next(t, e, n)
+            }
         };
         self.push_scope_until(span.hi);
         let names = Hidden::new(span);
@@ -416,7 +419,7 @@ impl FnCx<'_, '_> {
             }
             let parents = self.cx.iface(d)?.parents.clone();
             let p = parents.into_iter().find(|p| p.iface == iterator)?;
-            return Some(p.args.iter().map(|a| self.cx.ty.subst(*a, &args)).collect());
+            return Some(p.args.iter().map(|a| self.cx.subst(*a, &args)).collect());
         }
         self.cx.impl_args(t, iterator)
     }

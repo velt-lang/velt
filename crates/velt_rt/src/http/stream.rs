@@ -1,5 +1,5 @@
-//! Streamed response bodies (`Response.stream`, rt_abi_async.md §14.17): a writer that the
-//! handler's producer fills while hyper sends the response.
+//! Streamed response bodies (a `Response` made from a `BodyStream`, rt_abi_async.md §14.17): a
+//! writer that std fills from the stream while hyper sends the response.
 //!
 //! `write` appends to a buffer (like the string builder, §12.1) and never waits; `flush` hands
 //! the buffered text to the body as one chunk through a bounded channel, so a producer that is
@@ -9,18 +9,15 @@
 //! truncated response. Once the client has gone away (hyper dropped the body), writes and flushes
 //! report `false` and discard their data.
 //!
-//! Writers are Copy structs in Velt, so their handles are registry keys (§3.2); `close` and
-//! `abort` release them.
+//! std holds a writer as its key in a registry (§3.2); `close` and `abort` release it.
 
 use super::body::{RespBody, StreamBody};
 use super::response::RespHandle;
 use crate::bytes::VeltBytes;
 use crate::registry::{Key, Registry};
-use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::{Bytes, BytesMut};
-use hyper::header::{HeaderValue, CONTENT_TYPE};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -140,10 +137,9 @@ impl WriterObj {
     }
 }
 
-/// `Response.stream(...)`: makes `r`'s body a stream (default `content-type: text/plain;
-/// charset=utf-8` unless one is set) and returns its writer. A bodiless status (1xx, 204, 304)
-/// keeps its empty body and gets no `content-type`: the writer's body end is dropped at once,
-/// so its writes return 0 as if the client had gone away.
+/// Makes `r`'s body a stream (a `Response` whose body is a `BodyStream`) and returns its
+/// writer. A bodiless status (1xx, 204, 304) keeps its empty body: the writer's body end is
+/// dropped at once, so its writes return 0 as if the client had gone away.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_open(r: RespHandle) -> WriterHandle {
     let (writer, body) = WriterObj::new();
@@ -152,25 +148,12 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_open(r: RespHandle) -> WriterH
             return;
         }
         *r.body_mut() = RespBody::Stream(body);
-        r.headers_mut()
-            .entry(CONTENT_TYPE)
-            .or_insert(HeaderValue::from_static("text/plain; charset=utf-8"));
     });
     WRITERS.insert(writer)
 }
 
-/// `w.write(text)`: buffers a copy of `text`; 0 once the stream ended or the client went away.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_resp_stream_write(
-    w: WriterHandle,
-    text: *const VeltStr,
-) -> u8 {
-    WRITERS
-        .get(w)
-        .is_some_and(|obj| obj.write((*text).text_lossy().as_bytes())) as u8
-}
-
-/// `w.writeBytes(data)`: like `velt_rt_http_resp_stream_write` for a `u8[]`.
+/// Buffers a copy of `data` (a chunk of the stream); 0 once the stream ended or the client went
+/// away.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_write_bytes(
     w: WriterHandle,

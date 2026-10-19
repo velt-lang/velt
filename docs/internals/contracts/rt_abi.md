@@ -39,7 +39,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, units << 32 \| len, 0}` | bitwise copy / nothing |
 | inline, ASCII (≤ 23 bytes) | byte 23 ≥ 0x80, bit 0x40 clear | bytes 0..len hold the text, byte 23 = `0x80 \| len` (units = len) | bitwise copy / nothing |
 | inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len`, plus `0x20` when it may hold lone surrogates | bitwise copy / nothing |
-| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
+| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer; a **slice** has bit 62 of `w2` set and other bits there (below) | count +1 / count −1, free at 0 |
 
 - `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
   in its low 32 bits. A string is shorter than 2 GiB (at most `i32::MAX` bytes): allocating a
@@ -49,14 +49,16 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
   static strings may borrow them (same lifetime).
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
-  byte, and the count is always the 8 bytes before it:
+  byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
+  is always the 8 bytes before the buffer's first byte:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
     `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
     absorbed text from a static string, which has no room to record its count; whoever needs the
     number counts then, and records it: the field is accessed atomically, relaxed); `crumbs` is
     the breadcrumb table (below), null until a position in the string is first translated, and
-    freed with the buffer.
+    freed with the buffer (or the value 1 when there is no table but a thread remembers a
+    position in a slice of the buffer, which makes freeing it bump the epoch, as a table does).
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
   `ptr`, and release, growth and free derive the header from the value. An inline string has
@@ -69,8 +71,58 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   common case pays no atomic read-modify-write: dropping the only reference (count 1) frees
   after a plain load; an increment happens only when a string is copied while its source stays
   alive (the compiler moves instead when the source is dead).
+- A **slice** (#402) is a heap string whose bytes lie inside another heap string's buffer, which
+  it shares through the buffer's count: `{ptr, units << 32 | len, w2}`, with `ptr` at the
+  slice's first byte and `w1` its own counts. `w2` tells the two heap forms apart:
+
+  | bits of `w2` | plain heap string | slice |
+  |---|---|---|
+  | 63 | 0 | 0 |
+  | 62 | 0 | 1 |
+  | 61 | 0 | 1 when the buffer has a header (its text is not ASCII, whatever the slice's is) |
+  | 31..60 | 0 | the byte offset of `ptr` from the buffer's first byte |
+  | 30 | capacity (bits 0..30) | 0 |
+  | 0..29 | capacity | the buffer's capacity |
+
+  For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
+  plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
+- **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`),
+  `velt_rt_str_trim`, `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and
+  `velt_rt_str_split` when its separator is not empty and cannot match half of a surrogate pair.
+  Every other function copies the pieces it returns: `split("")`, a split by a lone surrogate,
+  `velt_rt_str_code_points`, and the regex functions (the pieces of `match`, `exec` and `split`
+  are new strings, `VeltStr::from_vec`). Those four return a slice
+  when the piece is too long to be inline, at least a quarter of the buffer's capacity, and the
+  buffer is below 1 GiB (2^30 bytes); otherwise it copies (inline when short).
+  The whole string is shared as it is (count +1, same value), a piece of a static string
+  borrows it, and a piece that ends between the halves of a surrogate pair is a copy (the half
+  is re-encoded). So live slices pin at most four times their own size (a short piece of a huge
+  string never keeps it alive), and a parser that consumes its input from the front
+  (`rest = rest.slice(n)`) copies at most a third of its buffer's capacity in all: a third of
+  the input when the capacity is its length, up to about two thirds when appends grew the
+  buffer (capacity up to twice the length). Linear either way.
+- **Counts and threads.** A buffer's count counts every string that references it, slices
+  included: a slice retains the buffer when made and releases it when dropped, and the last
+  reference, plain or slice, frees it with the buffer's layout (bit 61 says which for a
+  slice). Counts are atomic, so slices cross threads like any string.
+- **Never written in place.** A slice is never appended to in place, nor moved behind a header:
+  appending to one copies it, even when it holds the buffer's only reference. A plain heap
+  string is appended to in place only when its count is 1, which a live slice of it prevents.
+  So neither a slice nor its parent ever writes bytes the other can see.
+- **Header fields.** A slice has no breadcrumbs of its own: the buffer's describe the whole text,
+  and positions in a non-ASCII slice are translated by scanning from its nearer end and the
+  per-thread cursor (remembering a position in a slice sets the buffer's `crumbs` field to 1
+  unless it has a table, so freeing the buffer bumps the epoch). The buffer's `lone` counts the
+  whole buffer, so a slice reads it only as "none" when it is 0, and otherwise counts its own
+  text when asked, without recording it.
+- **Generated code** needs no change for slices and must not assume more: a slice tests as a
+  heap string (`(int64_t)w2 > 0`), its `w0`/`w1` read as for any heap string, and dropping it
+  calls `velt_rt_str_drop`. `w2` of a heap string is not its capacity, and its count is not at
+  `w0 - 8`: only the runtime finds the buffer.
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
-  place only to an inline string with room or a heap buffer with count 1 (of the right layout).
+  place only to an inline string with room or a plain heap string (not a slice) whose buffer has
+  count 1 (of the right layout).
 - Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including
   `velt_rt_str_append` and the builder's pushes, ends there), which keeps the unit count, the lone
   count and the form in step in O(1) per append (geometric growth), and joins a high surrogate ending the string with a
@@ -136,7 +188,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
-  heap buffers). Release runtimes compile the counters out; to count optimized code, link a
+  heap buffers), then `blocks=<allocated>/<freed>` and `channel leftovers=<n>` (values still
+  queued in channels when `main` returned, dropped by the runtime then; rt_abi_async.md §2.2).
+  Release runtimes compile the counters out; to count optimized code, link a
   release-built program against the debug runtime (`VELT_RT_LIB=<target>/debug/velt_rt.lib`).
 - `VELT_STDOUT_STATS=1` with a **debug** runtime prints `stdout stats: writes=<n>` to stderr at
   exit: how many times buffered stdout was written to the OS. Tests check buffering with it
@@ -168,6 +222,162 @@ an extern parameter or result whose type holds boxed values crosses as an unboxe
 or is boxed after the call (results). Closure environments on the heap are counted blocks too; the
 drop function in their header releases one reference.
 
+**Debug check of captured variables' cells** (#916). A captured variable that a closure assigns
+lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
+transfer glue gives a value crossing to another task cells of its own, and sema rejects the
+shapes that would share one (#901). Debug programs built by a debug compiler (as every debug
+golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
+records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
+which is not a race. The first use by a task other than the owner prints `velt debug-cells:
+captured variable <name> was used by two tasks: …` (both tasks and their threads, and the fix:
+`shared(...)`) to stderr and aborts. A cell made outside any task is claimed by the first task
+that uses it; uses outside any task (runtime clean-up, an HTTP request's set-up) are not checked. Release builds emit none of these
+calls and the cell layout is the same; the release runtime keeps the symbols as empty functions
+(and so does the WebAssembly runtime, which has one thread).
+
+| Symbol | Signature | Emitted |
+|---|---|---|
+| `velt_rt_cell_new` | `(void* cell, const VeltStr* name)` | a new cell of variable `name`: owned by the current task (unowned outside a task) |
+| `velt_rt_cell_use` | `(void* cell)` | before each count change of a cell, and on entry to a closure that assigns the captured variable: claims an unowned cell, aborts if another task owns it |
+| `velt_rt_cell_give` | `(void* cell)` | the transfer glue moves the only reference to another task: unowned until the receiver uses it |
+| `velt_rt_cell_copy` | `(void* cell, void* from)` | the transfer glue's fresh copy of the shared cell `from`: unowned |
+| `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
+
+## Weak references
+`velt_rt` exports these functions (`src/weak/`); the compiler lowers `WeakMap`, `WeakSet` and
+`WeakRef` (std/prelude/weak.vlt, `velt_vir` lower/weak.rs) to them, and `weak T` fields (#11)
+will use them too. Design: [weak-refs.md](../design/weak-refs.md).
+
+- **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
+  held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
+- **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
+  targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if velt_rt_weak_release(obj) { drop;
+  free }` (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release as
+  today.
+- **Trace glue** per counted type that can be a weak key or value, or be reached from one:
+  `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
+  for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
+  retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
+  A trace glue may leave references out (the target then looks referenced from outside and
+  stays alive: a leak at worst) but must never report a word that is not a counted reference
+  `obj` owns, or report one twice: the trial would count it as internal and could free a live
+  object. So the glue of a type whose objects can have more fields than it knows (a class in a
+  hierarchy with a vtable, an interface value, a function value's environment) is null, or
+  dispatches on the object's dynamic type; Velt's is null for those today.
+- **Map values.** A value word of a map with `value_release` is 0 (`null`, `undefined`) or a
+  counted object pointer. The compiler stores a value whose type is a counted object (or
+  `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
+  `bool`) as its bits with no value glue, and any other value (strings, unions, tuples, function
+  values) in a counted box of its own, `[count][value]`, whose glue retains and releases the box
+  (the box is weak-capable) and traces the value in it. The runtime never retains, releases or
+  traces a 0 value.
+- **Threads.** Handles (`MapId`, `RefId`) are nonzero `uint32_t`s (generated code keeps 0 for
+  "not created yet"), valid on every thread until dropped: the side table is one per process,
+  behind a lock the runtime takes only in these functions, so a task that resumes on another
+  worker, or a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps
+  `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer
+  glue panics): a handle is used by one task at a time. Weak-capable types are never atomic. An
+  object with `RC_WEAK` set and no record is an ICE (`velt_rt_weak_release` panics before it
+  changes the count). Trace glue runs with the table locked and must only call `visit`.
+- **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
+  1 (a weakly held object is never unique), and every site that decrements a count directly
+  (`c - 1`: `lower/rc.rs`, `lower/glue/drop_chain.rs`, `lower/glue/transfer.rs`,
+  `lower/glue/transfer_env.rs` in `velt_vir` today) uses the release sequence above instead.
+
+| Symbol | Signature | Semantics |
+|---|---|---|
+| `velt_rt_weakmap_new` | `(TraceFn key_trace, RetainFn value_retain, ReleaseFn value_release, TraceFn value_trace) -> uint32_t` | a new map; null `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a null `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
+| `velt_rt_weakmap_set` | `(uint32_t m, uint8_t* key, uint64_t value)` | takes over the value's reference; the key is not counted; releases a replaced value |
+| `velt_rt_weakmap_get` | `(uint32_t m, uint8_t* key, uint8_t* found) -> uint64_t` | the value, counted (retained with `value_retain`; the caller releases it), or 0; `*found` = 1 if present |
+| `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
+| `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
+| `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
+| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `deref` returns the word as given |
+| `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
+| `velt_rt_weakref_drop` | `(uint32_t r)` | |
+| `velt_rt_weakmap_set_traced` | `(uint32_t m, uint8_t* key, uint64_t value, TraceFn key_trace)` | `velt_rt_weakmap_set` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a null `key_trace`) |
+| `velt_rt_weakref_new_with` | `(uint8_t* obj, uint64_t word) -> uint32_t` | `velt_rt_weakref_new`, keeping `word` with the slot (the descriptor of an `object` target) |
+| `velt_rt_weakref_word` | `(uint32_t r) -> uint64_t` | the word given to `velt_rt_weakref_new_with` (0 for `velt_rt_weakref_new`), also after the target was freed |
+| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
+
+## Symbols [additive]
+
+A `symbol` (HIR `TyKind::Symbol`, VIR `Ptr`) is the address of a record, never null, compared by
+identity (equality, hashing):
+
+```text
+struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }   // 32 bytes
+```
+
+`key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
+(`Symbol.for`), and 2 and up for another read-only record the compiler emits
+(`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
+the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
+registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
+description being the key, in the static string form), and lists them in a read-only table
+(`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
+never freed; one made at run time is one allocation. On wasm32 each table address takes the
+first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
+`string` result through an out pointer):
+- `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
+  (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
+- `velt_rt_symbol_for(key: *const VeltStr, table: *const RegistrySlot) -> *const SymbolRec`: the
+  process-wide registry's record for `key`. On first use of a key it is the record in `table`
+  whose description is `key` (`table` may be null), else a new one; a lookup does not allocate.
+- `velt_rt_symbol_registered(s) -> u8`, `velt_rt_symbol_described(s) -> u8`,
+  `velt_rt_symbol_description(s, out: *mut VeltStr)` (`""` without a description).
+- `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
+  (`console.log`, `String(s)`).
+
+## SIMD [additive]
+
+A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
+8-byte aligned in memory (loads and stores are unaligned), passed and returned by value between
+Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes, as in an array.
+A mask lane is all ones or all zeros.
+
+The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
+them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
+verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
+inline. They never cross the C ABI, so no target's vector calling convention is involved.
+`load` and `store` take the array (a pointer to its header) and an element index, and do not
+check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
+too, below the lane count, and touch only those elements.
+
+## Module state [additive, #76]
+
+```c
+struct ModuleDesc {
+  uint64_t size, align;
+  void (*init)(void *state);
+  void (*drop)(void *state);
+  const char *names;   /* each slot's name, NUL-terminated, in slot order */
+};
+void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
+void velt_rt_module_ready(void *state, uint64_t n);
+```
+
+`velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
+allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
+while `init` runs). `init` calls `velt_rt_module_ready(state, i + 1)` after it stored slot `i`;
+an access to a slot whose initializer has not run yet (through a function an earlier
+initializer calls) prints `Uncaught ReferenceError: Cannot access '<name>' before
+initialization` and exits with code 1. The block is not dropped while the program runs (only at
+exit under the debug runtime's `VELT_RC_STATS=1`, for the leak counters). A call with a
+different descriptor than the block was made with (code swapped in by `velt dev`) gets a block
+of its own.
+
+The call takes the process-wide *module lock* unless the thread holds it: inside a task until
+the end of the poll, and every later poll of that task takes it at its start; outside a task (a
+synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
+calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
+keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
+stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
+thread) there is no lock.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 
@@ -176,7 +386,7 @@ drop function in their header releases one reference.
 | `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` |
 | `velt_rt_write_i64` | `(uint32_t stream, int64_t v)` |
 | `velt_rt_write_u64` | `(uint32_t stream, uint64_t v)` |
-| `velt_rt_write_f64` | `(uint32_t stream, double v)` — JS formatting (`1`, `1.5`, `1e+21`, `NaN`) |
+| `velt_rt_write_f64` | `(uint32_t stream, double v)` — `console.log` formatting (`1`, `1.5`, `1e+21`, `NaN`, `-0`) |
 | `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` |
 | `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — used for `' '` and `'\n'` |
 | `velt_rt_flush` | `(void)` |
@@ -195,10 +405,22 @@ drop function in their header releases one reference.
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):
 blocks carry a header and canaries and start filled with `0xCD`; a free checks for double
 frees, foreign pointers, a size different from the allocation's and overwritten canaries
-(overflow/underflow), fills the block with `0xDD` and keeps it in a quarantine (64 MiB) so a use
-after free reads the poison instead of a reused block; a write after free is detected when the
-block leaves the quarantine. The first violation prints `velt debug-alloc: <what> (block …, size
-…)` to stderr and aborts. Release runtimes don't contain the check.
+(overflow/underflow), fills the block with a poison word and keeps it in a quarantine (64 MiB) so
+a use after free reads the poison instead of a reused block. The poison is an address in the
+middle of 512 MiB of address space the allocator reserved, inaccessible, when it turned on, so a
+read of a freed block aborts with `velt debug-alloc: use after free: <what> (address …)` where
+the value is used: following a pointer read from it (an object field, a string's or an array's
+buffer) faults inside the reservation, which a fault handler reports as `followed a pointer read
+from a freed block`; printing a number read from it, or making a string of it, is `a number
+(an integer) read from a freed block` (the poison reads as a subnormal `f64`, so a
+read-modify-write of a freed number changes its bytes); retaining or releasing a string whose
+buffer was freed is `a string whose buffer was freed`. A value only computed from (or a
+`bool`/32-bit field read from) a freed block goes unnoticed until it reaches one of those. A
+write after free is detected when the block leaves the quarantine, or when the program ends
+(`main` returned or `velt_rt_exit`) for the blocks still in it. If the reservation fails the
+poison is the byte `0xA5` (a tiny `f64` and a non-canonical pointer, which faults without a
+message). Allocation sites are not recorded. The first violation prints `velt debug-alloc: <what>
+(block …, size …)` to stderr and aborts. Release runtimes don't contain the check.
 
 ## Control [M1]
 | Symbol | Signature | Notes |
@@ -227,12 +449,21 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
   `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
   `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
-  `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`.
+  `velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64)`,
+  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
+  `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`,
+  `velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64)` (relative indices).
+- UTF-8 (`std/encoding.vlt`): `velt_rt_bytes_utf8_valid(b: u8[]): bool`.
 - BigInt (`std/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
   `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/bigint.vlt`.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
+  `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
+  omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
+  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
+  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
+  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and

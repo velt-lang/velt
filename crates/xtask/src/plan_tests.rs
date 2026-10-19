@@ -17,7 +17,9 @@ fn graph() -> Graph {
         krate("velt_sema", &["velt_syntax"]),
         krate("velt_fmt", &["velt_syntax"]),
         krate("velt_lsp", &["velt_sema", "velt_fmt"]),
-        krate("vpm", &["velt_fmt"]),
+        krate("velt_toolchain", &["velt_syntax"]),
+        krate("velt_launcher", &["velt_toolchain"]),
+        krate("vpm", &["velt_fmt", "velt_toolchain"]),
         krate("velt_rt", &[]),
         krate("velt_rt_host", &[]),
         krate("velt_rt_shared", &[]),
@@ -73,7 +75,8 @@ fn a_pipeline_crate_runs_its_dependents_and_every_end_to_end_test() {
     assert_eq!(p.goldens, Goldens::All);
     assert_eq!(
         p.filterset().unwrap(),
-        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden)"
+        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden) \
+         - binary_id(veltc::wasm_goldens)"
     );
 }
 
@@ -106,6 +109,23 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
         wasm.veltc,
         Veltc::Some(set(&["playground", "wasm_goldens"]))
     );
+}
+
+#[test]
+fn the_toolchain_crate_runs_with_vpm_on_every_os() {
+    let p = plan(&["crates/velt_toolchain/src/release.rs"]);
+    assert_eq!(p.packages, set(&["velt_launcher", "velt_toolchain", "vpm"]));
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    assert!(binaries.contains("cli_package") && binaries.contains("install_layout"));
+    // It unpacks files and renames directories, which differ by OS.
+    assert!(p.other_os.is_some());
+    // The launcher depends on it but has no veltc tests of its own.
+    let launcher = plan(&["crates/velt_launcher/src/select.rs"]);
+    assert_eq!(launcher.veltc, Veltc::Some(set(&[])));
+    assert_eq!(launcher.goldens, Goldens::None);
+    assert!(launcher.other_os.is_some(), "exec and Ctrl-C differ by OS");
 }
 
 #[test]
@@ -178,7 +198,10 @@ fn the_standard_library_runs_every_test_but_no_clippy() {
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
-    assert_eq!(p.filterset().unwrap(), "all() - binary_id(veltc::golden)");
+    assert_eq!(
+        p.filterset().unwrap(),
+        "all() - binary_id(veltc::golden) - binary_id(veltc::wasm_goldens)"
+    );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
     assert!(p.vlt_fmt);
@@ -211,6 +234,14 @@ fn the_tsc_oracle_runs_the_lint_tests() {
     let p = plan(&["tests/tscompat-oracle/rejected/struct.ts"]);
     assert_eq!(p.packages, set(&["velt_tscompat"]));
     assert_eq!(p.veltc, Veltc::Some(set(&["ts_compat"])));
+    assert_eq!(p.goldens, Goldens::None);
+}
+
+#[test]
+fn the_lldb_script_runs_the_install_layout_and_debugger_tests() {
+    let p = plan(&["editors/lldb/velt_lldb.py"]);
+    assert!(p.packages.is_empty());
+    assert_eq!(p.veltc, Veltc::Some(set(&["install_layout", "debugger"])));
     assert_eq!(p.goldens, Goldens::None);
 }
 
@@ -416,4 +447,180 @@ fn crates_reading_other_crates_sources_run_with_them() {
     assert!(p.packages.contains("velt_rt"), "{:?}", p.packages);
     let p = plan(&["crates/velt_rt/src/str/mod.rs"]);
     assert!(p.packages.contains("velt_rt_wasm") && p.packages.contains("velt_rt_host"));
+}
+
+#[test]
+fn example_apps_run_their_velt_tests() {
+    // An app's tests or sources: its tests (`velt test`) and its goldens (`demo.vlt`).
+    let p = plan(&["examples/apps/chat/tests/room.test.vlt"]);
+    assert_eq!(p.veltc, Veltc::Some(set(&["templates", "example_apps"])));
+    assert_eq!(p.goldens, Goldens::Matching(set(&["examples/apps/"])));
+    assert!(p.filterset().unwrap().contains("binary(example_apps)"));
+    // The compiler, the runtime and the standard library run every `veltc` test binary,
+    // `example_apps` with them.
+    for path in [
+        "crates/velt_sema/src/lib.rs",
+        "crates/velt_rt/src/lib.rs",
+        "std/fs.vlt",
+    ] {
+        assert_eq!(plan(&[path]).veltc, Veltc::All, "{path}");
+    }
+    // Package resolution: `velt test --locked` resolves each app as a package.
+    match plan(&["crates/vpm/src/lib.rs"]).veltc {
+        Veltc::Some(binaries) => assert!(binaries.contains("example_apps")),
+        other => panic!("vpm: {other:?}"),
+    }
+}
+
+#[test]
+fn the_vscode_extension_runs_its_own_tests() {
+    let p = plan(&["editors/vscode/src/debug.ts", "editors/vscode/package.json"]);
+    assert!(!p.full);
+    assert!(p.vscode);
+    assert!(!p.rust && !p.needs_build(), "no workspace build");
+    assert_eq!(p.goldens, Goldens::None);
+    // The templates are read by the `debugger` test, not the extension's.
+    let t = plan(&["editors/vscode/templates/launch.json"]);
+    assert!(!t.vscode);
+    assert_eq!(t.veltc, Veltc::Some(set(&["debugger"])));
+    // Rust changes leave it alone; everything includes it.
+    assert!(!plan(&["crates/velt_syntax/src/lexer.rs"]).vscode);
+    assert!(plan(&["Cargo.lock"]).vscode);
+}
+
+#[test]
+fn the_parser_and_its_dependencies_sweep_every_golden_in_full() {
+    for path in [
+        "crates/velt_syntax/src/parser/expr.rs",
+        "crates/velt_syntax/tests/common/mod.rs",
+        "crates/velt_syntax/Cargo.toml",
+        "crates/velt_common/src/span.rs",
+    ] {
+        let p = plan(&[path, "tests/golden/lang/foo.vlt"]);
+        assert_eq!(p.sweep, Sweep::Full, "{path}");
+        assert_eq!(p.sweep_env(), [("VELT_ROBUSTNESS", "full".to_string())]);
+    }
+}
+
+#[test]
+fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "std/string.vlt",
+        "docs/reference/README.md",
+        ".github/workflows/ci.yml",
+    ] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Sampled(set(&[])), "{path}");
+        assert!(plan(&[path]).sweep_env().is_empty(), "{path}");
+    }
+    let p = plan(&[
+        "tests/golden/lang/foo.vlt",
+        "tests/golden/lang/foo.out",
+        "tests/golden/m1/errors/bar.vlt",
+        "examples/hello.vlt",
+        "crates/velt_sema/src/check.rs",
+    ]);
+    assert_eq!(
+        p.sweep,
+        Sweep::Sampled(set(&[
+            "tests/golden/lang/foo.vlt",
+            "tests/golden/m1/errors/bar.vlt"
+        ]))
+    );
+    assert_eq!(
+        p.sweep_env(),
+        [(
+            "VELT_ROBUSTNESS_FILES",
+            "tests/golden/lang/foo.vlt,tests/golden/m1/errors/bar.vlt".to_string()
+        )]
+    );
+    // A change that selects everything still says which goldens it touched.
+    let p = plan(&["Cargo.lock", "tests/golden/lang/foo.vlt"]);
+    assert!(p.full);
+    assert_eq!(p.sweep, Sweep::Sampled(set(&["tests/golden/lang/foo.vlt"])));
+}
+
+#[test]
+fn comment_only_parser_changes_and_many_goldens() {
+    let paths = vec!["crates/velt_syntax/src/lexer/mod.rs".to_string()];
+    let p = Plan::for_changes(
+        &graph(),
+        &paths,
+        &set(&["crates/velt_syntax/src/lexer/mod.rs"]),
+    );
+    assert_eq!(p.sweep, Sweep::Sampled(set(&[])));
+    let many: Vec<String> = (0..=MAX_SWEPT_GOLDENS)
+        .map(|i| format!("tests/golden/lang/g{i}.vlt"))
+        .collect();
+    assert_eq!(Plan::for_paths(&graph(), &many).sweep, Sweep::Full);
+    assert!(matches!(
+        Plan::for_paths(&graph(), &many[1..]).sweep,
+        Sweep::Sampled(files) if files.len() == MAX_SWEPT_GOLDENS
+    ));
+}
+
+#[test]
+fn the_toolchain_and_the_root_manifest_sweep_in_full() {
+    for path in ["rust-toolchain.toml", "Cargo.toml"] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Full, "{path}");
+    }
+    // A crate's manifest other than the parser's keeps the sample.
+    assert_eq!(
+        plan(&["crates/velt_sema/Cargo.toml"]).sweep,
+        Sweep::Sampled(set(&[]))
+    );
+}
+
+#[test]
+fn unknown_changes_sweep_in_full_but_explicit_full_leaves_it_to_the_environment() {
+    let unknown = Plan::unknown_changes("no base revision");
+    assert!(unknown.full);
+    assert_eq!(unknown.sweep, Sweep::Full);
+    assert_eq!(
+        unknown.sweep_env(),
+        [("VELT_ROBUSTNESS", "full".to_string())]
+    );
+    let full = Plan::everything("--full");
+    assert_eq!(full.sweep, Sweep::Sampled(set(&[])));
+    assert!(full.sweep_env().is_empty());
+}
+
+#[test]
+fn the_webassembly_goldens_run_only_for_webassembly_code() {
+    let skipped = " - binary_id(veltc::wasm_goldens)";
+    for paths in [
+        &["crates/velt_sema/src/check.rs"][..],
+        &["crates/velt_rt/src/http.rs"],
+        &["std/json.vlt"],
+    ] {
+        let p = plan(paths);
+        assert!(!p.wasm, "{paths:?}");
+        assert!(p.filterset().unwrap().ends_with(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: no (nightly"));
+    }
+    for paths in [
+        &[
+            "crates/velt_sema/src/check.rs",
+            "crates/velt_rt_wasm/src/io.rs",
+        ][..],
+        &["crates/velt_link/src/wasm.rs"],
+        &["crates/veltc/tests/wasm_goldens.rs"],
+        &["crates/velt_codegen_llvm/src/target.rs"],
+        &["Cargo.lock"],
+    ] {
+        let p = plan(paths);
+        assert!(p.wasm, "{paths:?}");
+        assert!(!p.filterset().unwrap().contains(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: yes"));
+    }
+    // A changed golden, or the WebAssembly runtime alone, names the binary.
+    for paths in [
+        &["tests/golden/lang/foo.vlt"][..],
+        &["crates/velt_rt_wasm/src/lib.rs"],
+    ] {
+        let filterset = plan(paths).filterset().unwrap();
+        assert!(filterset.contains("binary(wasm_goldens)"), "{filterset}");
+        assert!(!filterset.contains(skipped), "{filterset}");
+    }
+    assert!(Plan::everything("--full").wasm);
 }

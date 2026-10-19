@@ -1,5 +1,5 @@
 // Bit tricks on 32-bit-safe values: popcount, parity, highest bit, gray code.
-function popcount(x: i64): i64 {
+function popcount(x: number): number {
   let n = 0;
   while (x != 0) {
     x &= x - 1;
@@ -8,7 +8,7 @@ function popcount(x: i64): i64 {
   return n;
 }
 
-function highestBit(x: i64): i64 {
+function highestBit(x: number): number {
   let b = -1;
   while (x > 0) {
     x >>= 1;

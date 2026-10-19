@@ -1,0 +1,17 @@
+// A cycle through two functions and a second constant: `A` calls `f`, which calls `g`, which
+// reads `B`, whose initializer calls `h`, which reads `A`.
+
+function f(): number {
+  return g() + 1;
+}
+function g(): number {
+  return B;
+}
+function h(): number {
+  return A;
+}
+const A: number = f();
+const B: number = h();
+function main() {
+  console.log(A, B);
+}

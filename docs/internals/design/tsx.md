@@ -1,6 +1,10 @@
 # Design: TSX for server-side rendering
 
-Status: proposal; planned after semantics stage 2.
+Status: implemented, as described in [the reference](../../reference/tsx.md) and
+[the provider contract](../contracts/jsx.md); open: elements in the props of a component that
+takes ownership of them (after semantics stage 2), class components and `ref`. This note keeps
+the original design and its reasons; where it differs from the reference, the reference is
+right.
 
 TSX in Velt is for **server-side rendering** first: Velt renders HTML on the server and a client
 framework takes over (resumable SSR, streaming, islands). The first intended consumer is
@@ -64,7 +68,11 @@ Two lowerings, chosen by what the provider exports:
    per-node allocation: the server writes constant slices and escaped dynamic values straight
    into the response buffer. It is the default for `velt:jsx`; sigx can implement it for its
    SSR output (and emit its resumability and island markers from `jsx` at component
-   boundaries).
+   boundaries). A provider whose client hydrates text nodes one by one exports
+   `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
+   parts of the template strings (contracts/jsx.md, "Text separator"). One that renders a
+   `null` or boolean child differently when it is its element's only child exports
+   `jsxSoleEmpty` (sigx: `""`) for the compiler to write there (contracts/jsx.md, "Sole child").
 
 Types:
 
@@ -85,7 +93,8 @@ Types:
   the renderer; streaming providers flush finished parts while later ones load (hybrid promises
   make sibling async components run concurrently, as in JavaScript).
 - Children: `children?: JSX.Element | JSX.Element[] | string | number | null` (no `undefined`;
-  `false` and `true` render nothing, as in TypeScript and React).
+  `false` and `true` render nothing in `velt:jsx`, as in TypeScript and React; a provider may
+  render a placeholder of its own instead, as sigx does for hydration).
 - Safety: text and attribute values are **always escaped**; raw HTML only goes through an
   explicit provider API (`velt:jsx`'s `raw(html)`), so cross-site scripting by default can't
   happen.
@@ -94,15 +103,15 @@ Types:
 
 ## `velt:jsx` (the default provider)
 
-`renderToString(el)`, `renderToStream(el, res)` (writes into a `velt:http` response while
-rendering, flushing at async component boundaries), `Fragment`, `raw(html)`, and a full
+`renderToString(el)`, `renderToStream(el)` (a `BodyStream` a `velt:http` response sends while
+rendering, in chunks at async component boundaries), `Fragment`, `raw(html)`, and a full
 `JSX.IntrinsicElements` for HTML. Precompile mode. Goal: the TechEmpower "fortunes" test written
 in TSX at least as fast as the hand-written template (`bench/web`).
 
 ## Sharing components with the client
 
 Velt is TypeScript-shaped, so a component written in the common subset (typed props, no
-`undefined`, no truthiness on numbers or strings, template literals for text) compiles with both
+`undefined`, template literals for text) compiles with both
 `tsc` (for the client) and `velt` (for the server). That makes "write once, render on the server
 in Velt, hydrate in the browser" possible without a second implementation.
 `velt check --ts-compat` ([the CLI](../../tooling/cli.md#code-shared-with-typescript---ts-compat))
@@ -143,8 +152,6 @@ Errors where `tsc` rejects the code:
 | `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |
 | `velt-member` | members TypeScript doesn't have: `xs.isEmpty()`, `m.upsert(…)`, `x.unwrapOr(d)`, `a.compareTo(b)`, `x.clone()`, `JSON.parse<T>(…)`, `Promise.withResolvers()` (ES2024), … | a hint per member | |
 | `map-iter-as-array` | `m.keys()`, `values()`, `entries()` used as an array (a member, an index, a declared type, a return value) | `[...m.keys()]` (a fix) | |
-| `null-into-optional` | `null` for an optional parameter or field (`x?: T`), whose TypeScript type is `T \| undefined` | a fix leaves it out | |
-| `undefined-into-null` | a value that is `undefined` in JavaScript (below) where a `T \| null` is declared: an annotated variable, a return value, an argument, a field | `?? null` (a fix) | |
 | `catch-unknown` | `e.x` in `catch (e)` where `instanceof` doesn't narrow `e` | `if (e instanceof C)` | |
 | `comparable` | `<` on a `T extends Comparable<T>` (the type itself is `velt-global`) | a comparator parameter | Planned |
 
@@ -155,13 +162,9 @@ Accepted by `tsc`, but behaves differently:
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
-| `strict-null-eq` | `=== null` / `!== null` on values that are `undefined` in JS (below) | error (a fix: `==` / `!=`) | |
-| `object-in-template` | `${x}` of an array, tuple, map, object or class instance without its own `toString()`: Velt prints the contents | error | |
+| `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
-| `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
-| `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
-| `unsigned-arith` | `-`, `-=`, `--` with an unsigned result (`xs.length - 1` wraps at zero) | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
 
@@ -188,11 +191,11 @@ Notes on the rules as built, against the issue's first design:
 - `jsx-pragma-comment` reports the pragma Velt uses: the first one in the comments before the
   first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
   comment holding only the pragma; a line comment with other text gets the finding without one.
-- Values that are `undefined` in JavaScript where Velt has `null` (for `strict-null-eq` and
-  `undefined-into-null`): an optional field or parameter (`x?: T`), `Map.get`, `find` /
-  `findLast`, `pop` / `shift`, `at` (arrays and strings), anything after `?.`, and a variable
-  initialized with one of these. `process.env` would be one, but `process` itself is
-  `velt-global` (the baseline has no Node types).
+- `strict-null-eq`, `undefined-into-null` and `nullable-in-template` were removed with #930
+  phase 3: the standard library gives `undefined` where JavaScript does (`Map.get`, `find`,
+  `pop`, `at`, ...), so `velt check` itself reports what they reported (`=== null` on a
+  `T | undefined` warns as always false, a `T | undefined` where a `T | null` is declared is
+  TS2322), and a template prints `undefined` as JavaScript does.
 - `int-division` can only meet integer types that `velt-number-type` reports where they are
   written (or that come from another shared file), and unions of integer literal types
   (`(1 | 3)[]`, whose elements divide as integers). Its fix keeps Velt's quotient
@@ -203,9 +206,9 @@ Notes on the rules as built, against the issue's first design:
   initializer of a variable annotated with one, an argument for an integer parameter, an
   integer field's value, nor in arithmetic or a comparison with any of those or with a declared
   integer, where a fraction wouldn't fit. There it has no fix.
-- `object-in-template` passes enums, primitives and classes that declare `toString()`
-  themselves: Velt calls a class's own `toString()`, as JavaScript does, but not an inherited
-  one, so a subclass that only inherits it is reported.
+- `object-in-template` reports only promises: every other value is written as JavaScript's
+  `String(x)` writes it (#613), through a class's `toString()` (own or inherited, as
+  `Error`'s `"Error: message"`), else `[object Object]`, or `[object Map]` for std's classes.
 - `velt-global` and `velt-member` look only at names that resolve to the prelude or to a
   builtin; a function, class or method the program declares is never one. Every prelude export
   and member is classified as TypeScript-standard or Velt-only
@@ -214,15 +217,13 @@ Notes on the rules as built, against the issue's first design:
   `xs.push`, `Promise.withResolvers`) are listed by hand. `x.clone()` is reported on any
   receiver where it is the compiler's own, that is, wherever the type doesn't declare a
   `clone()` itself.
-- `null-into-optional` covers arguments of functions, methods and constructors the program
-  declares, object literal fields and assignments to fields; its fix removes trailing `null`
-  arguments and `null` properties.
+- `null-into-optional` (`null` for an optional parameter or field) was removed when `x?: T`
+  became `T | undefined` in Velt too (#930 phase 2): `velt check` reports it as TS2322 itself.
 - `catch-unknown` treats `e` as narrowed inside an `if (e instanceof C)` branch, after
   `e instanceof C &&` and in the `?` branch of `e instanceof C ? … : …`; not yet after an early
   exit (`if (!(e instanceof C)) throw e;`).
-- `null-default` skips optional properties (`x?: T`): JavaScript leaves them `undefined`, so the
-  default applies in both. Its fix rewrites the declaration when the destructured value is a
-  variable or a field path, with one `const x = p.x ?? d` per such property.
+- `null-default` (a destructuring default on a `T | null` property, which Velt applied to `null`)
+  was retired with #930: Velt now applies a default only where JavaScript does.
 - Not built: `comparable`'s `<` on a `T extends Comparable<T>` (the bound's type is
   `velt-global`), `implicit-dispose` and `init-order`. Nor `JSON.stringify` of an optional field
   of an object type, which Velt writes as `null` and JavaScript leaves out.

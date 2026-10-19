@@ -1,0 +1,16 @@
+gzip gzip hello gzip
+br br hello br
+deflate deflate hello deflate
+raw deflate hello raw
+deflate, gzip hello twice
+head 200 "" true
+not modified 304 ""
+empty gzip gzip ""
+empty br br ""
+"hi"
+gzip, deflate
+identity
+streamed 3000 true true
+read again: Body is unusable: Body has already been read
+no body 204 true
+bad body: rejected

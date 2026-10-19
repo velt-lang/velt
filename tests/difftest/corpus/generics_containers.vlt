@@ -4,18 +4,18 @@ class Stack<T> {
   push(x: T) {
     this.items.push(x);
   }
-  size(): usize {
+  size(): number {
     return this.items.length;
   }
 }
 
 // Returns an index: assigning an element (`best = x`) would move it out of the array when T
 // isn't Copy, and generic bodies are checked as if it never is.
-function largest<T extends Comparable<T>>(xs: T[]): i64 {
+function largest<T extends Comparable<T>>(xs: T[]): number {
   let best = 0;
-  for (let i: usize = 1; i < xs.length; i++) {
+  for (let i: number = 1; i < xs.length; i++) {
     if (xs[i] > xs[best as usize]) {
-      best = i as i64;
+      best = i as number;
     }
   }
   return best;
@@ -25,7 +25,7 @@ function main() {
   const s = new Stack<string>();
   s.push("a");
   s.push("b");
-  const n = new Stack<i64>();
+  const n = new Stack<number>();
   for (let i = 0; i < 5; i++) {
     n.push(i * i);
   }

@@ -1,0 +1,4 @@
+async_callback_reaches_handler.vlt:13:5: error: this async closure modifies captured `last`, so it must stay on the task that created it
+async_callback_reaches_handler.vlt:20:19: but it is stored in a `((string) => void)[]`, which handles HTTP requests here, which run on several threads
+async_callback_reaches_handler.vlt:18:5: error: this async closure modifies captured `seen`, so it must stay on the task that created it
+async_callback_reaches_handler.vlt:20:19: but it is stored in a `((string) => void)[]`, which handles HTTP requests here, which run on several threads

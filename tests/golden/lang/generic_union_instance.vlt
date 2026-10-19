@@ -1,0 +1,76 @@
+// An instance of a generic union is the union written directly (#350, review #395): `U | string`
+// at `U = i64` is `string | i64`, `A | B` at `A = B = string` is `string`, inside object types and
+// arrays too. Lowering maps the generic union's variants onto the canonical union's.
+type Res<T> = { ok: true; v: T } | { ok: false; e: string };
+type Same<A, B> = { k: A } | { k: B };
+
+function wrapU<U>(x: U): { a: U | string } {
+  return { a: x };
+}
+
+function either<A, B>(x: A): A | B {
+  return x;
+}
+
+function pick<A, B>(flag: bool, a: A, b: B): A | B {
+  if (flag) {
+    return a;
+  }
+  return b;
+}
+
+function ok<T>(v: T): Res<T> {
+  return { ok: true, v: v };
+}
+
+function fail<T>(e: string): Res<T> {
+  return { ok: false, e: e };
+}
+
+function unwrapOr<T>(r: Res<T>, d: T): T {
+  if (r.ok === true) {
+    return r.v;
+  }
+  return d;
+}
+
+function show<T>(r: Res<T>): string {
+  switch (r.ok) {
+    case true:
+      return "ok";
+    case false:
+      return `err ${r.e}`;
+  }
+}
+
+function same<A, B>(x: A): Same<A, B> {
+  return { k: x };
+}
+
+function main() {
+  const o: { a: string | i64 } = wrapU<i64>(3);
+  const o2: { a: string } = wrapU<string>("s");
+  console.log(o.a, JSON.stringify(o), o2.a);
+
+  const one: string = either<string, string>("x");
+  const u: string | i64 = either<i64, string>(1);
+  console.log(one, u);
+  const v: i64 | string = pick<string, i64>(false, "a", 7);
+  const w: string | i64 = pick<string, i64>(true, "a", 7);
+  console.log(v, w, v === 7, w === "a");
+  if (typeof u === "string") {
+    console.log("str", u);
+  } else {
+    console.log("num", u + 1);
+  }
+  const xs: (string | i64)[] = [either<i64, string>(2), pick<i64, string>(false, 1, "b")];
+  console.log(xs);
+
+  const a: Res<i64> = ok(5);
+  const b: { ok: true; v: i64 } | { ok: false; e: string } = fail<i64>("no");
+  console.log(unwrapOr(a, 0), unwrapOr(b, -1), show(a), show(b));
+  const rs: Res<string>[] = [ok("x"), fail<string>("y")];
+  console.log(rs.map((r) => unwrapOr(r, "-")).join(","), JSON.stringify(rs));
+  const s: { k: string } = same<string, string>("z");
+  console.log(s.k);
+}

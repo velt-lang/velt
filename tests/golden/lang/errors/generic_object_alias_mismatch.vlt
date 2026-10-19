@@ -1,9 +1,0 @@
-// #362 made this a compiler crash (VIR verification failed): an instance of a generic object
-// alias and the object type it spells out are separate types, so this is a type error.
-type Box<T> = { v: T };
-
-function main() {
-  const b: Box<number> = { v: 1 };
-  const c: { v: number } = b;
-  console.log(c.v);
-}

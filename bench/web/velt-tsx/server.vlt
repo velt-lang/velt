@@ -1,0 +1,10 @@
+// The Velt server with the fortunes page in TSX (bench/web/README.md): every route from
+// ../velt/app.ts, the page rendered by std/jsx's precompiled templates (fortunes.tsx).
+// Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
+
+import { startApp } from "../velt/app";
+import { fortunesHtml } from "./fortunes";
+
+async function main() {
+  await startApp(fortunesHtml);
+}

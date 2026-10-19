@@ -4,10 +4,10 @@
 function main() {
   const zeros: f64[] = new Array<f64>(4).fill(0.0);
   zeros[2] = 1.5;
-  const squares: i64[] = Array.from({ length: 5 }, (_, i) => i * i);
+  const squares: i64[] = Array.from({ length: 5 }, (_, i) => (i * i) as i64);
   console.log(zeros, squares, zeros.length + squares.length);
   const n = 3;
-  const grid: i64[][] = Array.from({ length: n }, (_, i) => new Array<i64>(n).fill(i));
+  const grid: i64[][] = Array.from({ length: n }, (_, i) => new Array<i64>(n).fill(i as i64));
   grid[1][2] = 9;
   const names = new Array<string>(2).fill("x");
   const xs = [1, 2, 3];

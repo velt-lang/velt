@@ -1,0 +1,68 @@
+// check: no leaks
+// Closures that borrow what they capture (held in a `const`, only called: #444) also keep their
+// environment in the frame (#34). Mixed with closures that own their captures, in loops, and in
+// a constructor and a method capturing `this` or `const me = this` (the class stays uncounted).
+
+class Tally {
+  name: string;
+  hits: number[] = [];
+  sum: number = 0;
+  constructor(name: string) {
+    this.name = name;
+    const record = (v: number) => {
+      this.hits.push(v);
+      this.sum += v;
+    };
+    for (let i: number = 1; i <= 3; i++) {
+      record(i * 10);
+    }
+  }
+
+  report(tag: string): string {
+    const me = this;
+    const prefix = `${tag}/${me.name}`;
+    const line = (k: number): string => `${prefix} #${k}: ${me.sum} over ${me.hits.length}`;
+    const out: string[] = [];
+    for (let k: number = 0; k < 2; k++) {
+      me.sum += k;
+      out.push(line(k));
+    }
+    return out.join("; ");
+  }
+}
+
+function mixed(n: number): number {
+  const words: string[] = [];
+  let count: number = 0;
+  // Borrows `words` and `count`; sees changes made between calls.
+  const add = (w: string) => {
+    words.push(w);
+    count++;
+  };
+  for (let i: number = 0; i < n; i++) {
+    const w = `w${i}`;
+    // Owns its own string (moved in), frame env dropped each iteration.
+    const loud = (): string => w + "!";
+    add(loud());
+    words.push("-");
+  }
+  // Kept escaping by #444 (called inside a loop over what it captures), still only called.
+  const xs: number[] = [1, 2, 3];
+  const grow = (v: number) => {
+    xs.push(v);
+  };
+  for (const x of xs) {
+    if (x == 2) {
+      grow(count);
+    }
+  }
+  console.log(words.join(""), count, xs);
+  return ((k: number): number => k * count)(2);
+}
+
+function main() {
+  const t = new Tally("t");
+  console.log(t.hits, t.sum);
+  console.log(t.report("r"));
+  console.log(mixed(3));
+}

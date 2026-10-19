@@ -9,6 +9,7 @@ import type { Package } from "velt:package";
 export const pkg: Package = {
   name: "hello",
   version: "0.1.0",
+  velt: "0.1",                  // the velt versions that build it: the newest 0.1.x
   dependencies: {
     json: "1.2",                // registry package, semver requirement
     http: { version: "0.3" },   // object form
@@ -46,6 +47,9 @@ file and reports these errors without building anything.
   library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
   package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
   (`velt_rt_…` is the runtime).
+- A name can also be scoped, as on npm: `@scope/name`, each part lowercase words as above
+  (`@sigx/server-renderer`). Registries hold unscoped packages only, so a package with a scoped
+  name is a local (`path`) dependency of others, and can't have [`native`](#native) code yet.
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
   300 characters, no line breaks, no surrounding whitespace.
@@ -61,14 +65,50 @@ file and reports these errors without building anything.
   `src/main.tsx` (`src/lib.ts`, `src/lib.tsx`) work like `src/main.vlt` (`src/lib.vlt`); two of
   them at once are an error.
 
+## `velt`
+
+The velt versions that build the package. `velt new` and `velt init` write the `major.minor` of
+the velt that created the package (a pre-release writes its whole version, such as
+`"0.2.0-rc.1"`), so installing a newer velt doesn't change how it builds: pre-1.0 minors may
+change the language, and a toolchain's standard library and runtime belong to it.
+
+The `velt` on your `PATH`, the launcher, runs the version the package's
+[`velt.lock.json`](#veltlockjson) records when the field accepts it, so every machine builds a
+commit with the same velt; otherwise (no lock yet, or `velt update`) the newest installed version
+the field accepts, installing one first when none is
+([`velt toolchain`](cli.md#velt-toolchain)). A toolchain's
+own `velt` started directly warns when its version is not one the field accepts:
+
+```text
+warning: package.vlt asks for velt "0.2", but this is velt 0.1.0; it may not build the package
+```
+
+| `velt` | builds with |
+|---|---|
+| `"0.1"` | the newest installed `0.1.x` |
+| `"0.1.3"` | `0.1.3` or a newer `0.1.x` |
+| `"=0.1.3"` | exactly `0.1.3` |
+| `">=0.1, <0.3"` | a requirement with an operator means what it means in `dependencies` |
+
+"Builds with" is the choice when the package has no lock yet and on `velt update`; after that,
+the version the lock records, while the field accepts it.
+
+A version without an operator stays within its minor version, also after 1.0: `"1.2"` accepts
+`1.2.5` but not `1.3.0`, unlike the same requirement in `dependencies`. A major version alone
+(`"1"`) accepts any `1.x`. Pre-releases match only
+a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with any velt.
+`velt manifest` and every other command check that the value is a requirement.
+
 ## `dependencies`
 
 `import … from "json"` and `"json/sub"` resolve through `dependencies`: the dependency's
 `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
 import's files). Standard library imports (`"velt:x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
-(`"my-lib": "1.0"`). `velt add` edits this object and keeps your comments. See
-[Packages](packages.md).
+(`"my-lib": "1.0"`, `"@sigx/reactivity": { path: "../reactivity" }`; a scoped dependency needs
+a `path`). `velt add` edits this object and keeps your comments. See
+[Packages](packages.md). A bare import that no dependency (and no `paths` alias) claims looks
+for an [npm package](packages.md#npm-packages).
 
 ## `paths`
 
@@ -91,6 +131,38 @@ The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:
 default), a `paths` alias, or `./dir` relative to the package root. A
 `/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
 reads it from a `//` comment, `tsc` only from a block comment.
+
+## `define`
+
+```ts ignore
+define: { __DEV__: "false", __SIGX_VERSION__: "\"1.0.1\"" },
+```
+
+Build-time constants, as Vite's `define`. Every reference to the name in the build's modules
+(the package's, and those of the npm packages it compiles) that nothing in scope declares is
+the literal, so `if (__DEV__) { … }` becomes `if (false) { … }` and the branch folds away, and
+`{ __DEV__ }` is `{ __DEV__: false }`. A name the code declares keeps its own value, as with
+esbuild's `define`: a parameter, a local, an import, a loop variable, a `catch` parameter or a
+function or class of that name, in its scope. A property (`o.__DEV__`) and a type are left
+alone too. Each value is the
+*source* of a literal, as in Vite: `"true"`, `"false"`, `"null"`, a number (`"3"`), or a string
+in quotes (`"\"1.0.1\""` or `"'1.0.1'"`); other expressions are an error. Only the root
+package's `define` applies.
+
+TypeScript code declares such constants in a declaration file, as sigx's `src/env.d.ts` does:
+
+```ts ignore
+declare const __DEV__: boolean;
+```
+
+Velt reads these ambient declarations (`declare const`, `let` and `var`, also inside
+`declare global { … }`) from modules and from the `.d.ts` files of each package it compiles (in
+the package's directory and below its `src/`). As in TypeScript, a declaration is global only
+in `declare global` or in a file without imports and exports; in a module (such as an
+`index.d.ts` with `export declare const version: string;`) it is the module's own. Velt has no
+global variables, so a declared constant that a module refers to (without declaring the name
+itself) needs a `define`; without one, the declaration is an error that says so. A `define` whose literal is not of the declared type (`boolean`, `string`, `number`)
+is an error too.
 
 ## `native`
 
@@ -157,6 +229,7 @@ $ velt manifest --json
   "entry": "src/main.vlt",
   "name": "hello",
   "paths": {},
+  "velt": "0.1",
   "version": "0.1.0"
 }
 ```
@@ -177,6 +250,11 @@ dependency. It is generated JSON, pretty-printed with a stable key order so diff
 `"version": 1` and a `"packages"` array with one entry per package (`name`, `version`, `source`:
 `"registry"` or `"path+<relative path>"`, `checksum`, `dependencies`, and for a package with
 native code a `"native"` object with the checksum of its prebuilt library for every published
-target). Commit it for applications. `--locked` on `build`, `run`, `test` and `install` fails
-instead of changing it. A package that still has the former `velt.lock` (TOML) gets an error:
+target). In a package with a [`velt` field](#velt), it also records the velt version that builds the
+package, `"velt": "0.2.1"`: the one that created the lock, kept until `velt update` (or until
+the field no longer accepts it). The `velt` on your `PATH` runs that version in the package, installing it
+if needed, so a laptop and CI build a commit with the same compiler even when newer patch
+versions are installed. Commit it for applications. `--locked` on `build`, `run`, `test` and
+`install` fails instead of changing it, and fails when a different velt runs than the lock
+records. A package that still has the former `velt.lock` (TOML) gets an error:
 delete it and run `velt install`.

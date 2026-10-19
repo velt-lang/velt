@@ -1,0 +1,19 @@
+intersection_types.vlt:18:12: error: no field `tag` on type `T & { tag: string }`
+  = note: in generic code, the members of an intersection with a type parameter part are not available yet (#350); callers see them once the type arguments are known
+intersection_types.vlt:25:23: error: missing field `b` in `AB` literal
+intersection_types.vlt:26:35: error: no field `c` on type `AB`
+  = note: objects have a fixed shape; use a `Map<string, V>` for dynamic keys
+intersection_types.vlt:15:18: error: `&` combines object types; `Point` is a class
+  = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
+intersection_types.vlt:5:17: error: no value has type `{ k: string } & { k: f64 }`: field `k` is `string` in one part and `f64` in another
+  = note: a value of an intersection has every part's fields at once
+intersection_types.vlt:6:14: error: no value has type `{ kind: "a"; x: f64 } & { kind: "b" }`: field `kind` is `"a"` in one part and `"b"` in another
+  = note: a value of an intersection has every part's fields at once
+intersection_types.vlt:11:16: error: `&` combines object types; `Point` is a class
+  = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
+intersection_types.vlt:12:15: error: `&` combines object types; `string[]` is an array
+  = note: write the fields as an object type `{ … }`
+intersection_types.vlt:13:18: error: intersections of function types (overloads) are not supported
+  = note: declare one function type with the parameter types every call needs
+intersection_types.vlt:32:28: error: type alias `Tree` refers to itself
+  = note: an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class

@@ -1,9 +1,13 @@
 // Text helpers: slugs, truncation and word frequencies. Everything exported here is the
 // package's public API; `velt doc` turns these comments into HTML docs.
 
-/// A URL-friendly form of `text`: lower case, ASCII letters and digits, words joined by `-`.
-///
-/// `slugify("Hello, World!")` is `"hello-world"`.
+/**
+ * A URL-friendly form of `text`: lower case, ASCII letters and digits, words joined by `-`.
+ *
+ * @param text - the text to turn into a slug
+ * @example
+ * slugify("Hello, World!"); // "hello-world"
+ */
 export function slugify(text: string): string {
   const words: string[] = [];
   let word = "";
@@ -21,7 +25,10 @@ export function slugify(text: string): string {
   return words.join("-");
 }
 
-/// `text` cut to at most `max` characters, ending in `…` when it was cut.
+/**
+ * `text` cut to a `length` of at most `max` (UTF-16 code units, as `length` counts), ending in
+ * `…` when it was cut.
+ */
 export function truncate(text: string, max: usize): string {
   if (text.length <= max) {
     return text;
@@ -34,11 +41,11 @@ export function truncate(text: string, max: usize): string {
 
 type WordCount = { word: string; count: i64 };
 
-/// Counts how often each word occurs, ignoring case and punctuation.
+/** Counts how often each word occurs, ignoring case and punctuation. */
 export class WordCounter {
   private counts: Map<string, i64> = new Map<string, i64>();
 
-  /// Adds every word of `text`.
+  /** Adds every word of `text`. */
   add(text: string) {
     for (const word of slugify(text).split("-")) {
       if (word !== "") {
@@ -47,12 +54,12 @@ export class WordCounter {
     }
   }
 
-  /// How often `word` occurred (0 if never).
+  /** How often `word` occurred (0 if never). */
   count(word: string): i64 {
     return this.counts.get(word.toLowerCase()) ?? 0;
   }
 
-  /// The `n` most frequent words, most frequent first (ties in first-seen order).
+  /** The `n` most frequent words, most frequent first (ties in first-seen order). */
   top(n: usize): string[] {
     const entries: WordCount[] = [];
     for (const [word, count] of this.counts) {

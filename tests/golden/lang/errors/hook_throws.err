@@ -1,0 +1,7 @@
+hook_throws.vlt:3:3: error: `toString` cannot throw (it throws `Error`)
+  = note: `String(x)` and template literals call it, and the error would have nowhere to go
+  = note: catch the error inside `toString` and return a value instead
+
+hook_throws.vlt:8:3: error: `toJSON` cannot throw (it throws `Error`)
+  = note: `JSON.stringify` calls it, and the error would have nowhere to go
+  = note: catch the error inside `toJSON` and return a value instead

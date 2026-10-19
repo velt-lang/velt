@@ -36,6 +36,24 @@ pub trait Visit<'a> {
     fn ty(&mut self, _t: &'a ast::TypeExpr) {}
 }
 
+/// Calls `f` with the path of every type query (`typeof a.b`) in type `t`.
+pub fn type_queries<'a>(t: &'a ast::TypeExpr, f: &mut dyn FnMut(&'a [ast::Ident])) {
+    struct Queries<'f, 'a>(&'f mut dyn FnMut(&'a [ast::Ident]));
+    impl<'a> Visit<'a> for Queries<'_, 'a> {
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Query(path) = &t.kind {
+                (self.0)(path);
+            }
+        }
+    }
+    walk_type(t, &mut Queries(f));
+}
+
+/// Visit type `t` and every type nested in it.
+pub fn walk_type_expr<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
+    walk_type(t, v);
+}
+
 /// Visit every node of `module`.
 pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     for item in &module.items {
@@ -43,7 +61,7 @@ pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     }
 }
 
-fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
+pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
     v.item(item);
     match &item.kind {
         ast::ItemKind::Function(f) => walk_fn(f, v),
@@ -65,6 +83,8 @@ fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
             walk_type(&alias.ty, v);
         }
         ast::ItemKind::ExternFn(sig) => walk_sig_types(sig, v),
+        ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| walk_item(i, v)),
+        ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| walk_item(i, v)),
         ast::ItemKind::Import(_) => {}
     }
 }
@@ -105,6 +125,7 @@ fn walk_interface<'a>(i: &'a ast::InterfaceDecl, v: &mut dyn Visit<'a>) {
     walk_generics(&i.generics, v);
     i.extends.iter().for_each(|e| walk_type(e, v));
     i.fields.iter().for_each(|f| walk_type(&f.ty, v));
+    i.call_sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
     for m in &i.methods {
         walk_sig_types(&m.sig, v);
         if let Some(body) = &m.body {
@@ -115,7 +136,9 @@ fn walk_interface<'a>(i: &'a ast::InterfaceDecl, v: &mut dyn Visit<'a>) {
     }
 }
 
-pub(super) fn walk_fn<'a>(f: &'a ast::FnDecl, v: &mut dyn Visit<'a>) {
+/// Visit a function, method or constructor declaration: its signature's types, its parameters'
+/// defaults and its body.
+pub fn walk_fn<'a>(f: &'a ast::FnDecl, v: &mut dyn Visit<'a>) {
     walk_sig_types(&f.sig, v);
     params(&f.sig, v);
     v.function(&f.sig, &f.body);
@@ -140,7 +163,7 @@ fn walk_block<'a>(b: &'a ast::Block, v: &mut dyn Visit<'a>) {
     }
 }
 
-fn walk_stmt<'a>(s: &'a ast::Stmt, v: &mut dyn Visit<'a>) {
+pub(crate) fn walk_stmt<'a>(s: &'a ast::Stmt, v: &mut dyn Visit<'a>) {
     use ast::StmtKind as S;
     v.stmt(s);
     match &s.kind {

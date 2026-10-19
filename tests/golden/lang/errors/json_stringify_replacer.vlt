@@ -1,0 +1,6 @@
+// `JSON.stringify` takes an array replacer (or `null`) and a number or string `space`; a
+// replacer function is not supported yet.
+const o = { a: 1 };
+console.log(JSON.stringify(o, (k: string, v: number) => v));
+console.log(JSON.stringify(o, null, true));
+console.log(JSON.stringify(o, null, 2, 3));

@@ -7,31 +7,39 @@
 
 use velt_common::Span;
 
+mod blocks;
 mod jsx;
+mod type_level;
+mod type_parts;
 
+pub use blocks::*;
 pub use jsx::*;
+pub use type_level::*;
+pub use type_parts::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
-/// Member name of the computed key `[Symbol.dispose]` (a method declaration
-/// `[Symbol.dispose]() {}` or an access `x[Symbol.dispose]`): an [`Ident`] with this exact
-/// name. No plain identifier can collide with it.
-pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
-
-/// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
-
-/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
-
-/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
-pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
+pub use crate::ast_names::{
+    COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS, OBJECT_GET_FN, OBJECT_SET_FN,
+    SYMBOL_ASYNC_DISPOSE, SYMBOL_ASYNC_ITERATOR, SYMBOL_DISPOSE, SYMBOL_ITERATOR,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: String,
     pub span: Span,
+}
+
+/// The first character of an ES private name (`#x`), kept in [`Ident::name`]: no identifier
+/// can start with it, so `#x` and `x` are different members.
+pub const PRIVATE_NAME_PREFIX: char = '#';
+
+impl Ident {
+    /// Is this an ES private name (`#x`)?
+    pub fn is_private_name(&self) -> bool {
+        self.name.starts_with(PRIVATE_NAME_PREFIX)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +82,14 @@ pub enum ItemKind {
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI).
     ExternFn(FnSig),
+    /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
+    /// global scope or another module (TypeScript's augmentation; interfaces merge into the
+    /// declaration of the same name).
+    Augment(Augment),
+    /// `namespace N { … }` / `declare namespace N { … }`: a scope of types (TypeScript's
+    /// namespace without values). Its members are named `N.T` outside it; `namespace A.B { … }`
+    /// is parsed as `A` holding the exported namespace `B`.
+    Namespace(Namespace),
 }
 
 #[derive(Clone, Debug)]
@@ -102,13 +118,19 @@ pub struct GenericParam {
     pub name: Ident,
     /// `T extends A & B`
     pub bounds: Vec<TypeExpr>,
-    /// `T = Default` (classes, structs, interfaces and type aliases only).
+    /// `T = Default` (used where a call, `new` or type annotation leaves `T` out).
     pub default: Option<TypeExpr>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Param {
+    /// The parameter's name; for a destructured parameter (`pattern`), a name no source can
+    /// spell (`#param0`, by position), which the function's body destructures.
     pub name: Ident,
+    /// `[a, b]: T` / `{ a, b }: T`: a destructured parameter. The function's body starts by
+    /// binding the pattern from the parameter, as `let [a, b] = #param0;` would (defaults inside
+    /// the pattern included).
+    pub pattern: Option<Pattern>,
     /// For an optional parameter, the written type plus `| null`.
     pub ty: TypeExpr,
     /// For an optional parameter, `null`.
@@ -133,6 +155,9 @@ pub struct FnSig {
     pub is_async: bool,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
+    /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
+    /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
+    pub this_param: Option<Box<TypeExpr>>,
     pub span: Span,
 }
 
@@ -140,6 +165,13 @@ pub struct FnSig {
 pub struct FnDecl {
     pub sig: FnSig,
     pub body: Block,
+    /// TypeScript-form overloads: the bodiless signatures written right before this
+    /// implementation (`function f(a: string): A;` `function f(a: number): B;` then
+    /// `function f(a: string | number): A | B { ... }`), in order. Calls choose among them;
+    /// the implementation's own signature is not callable from outside. Empty for a function
+    /// without overloads, and always for function expressions, object-literal methods and
+    /// constructors.
+    pub overloads: Vec<FnSig>,
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +239,8 @@ pub struct InterfaceDecl {
     /// Fields every implementor must have (same name and type).
     pub fields: Vec<Field>,
     pub methods: Vec<InterfaceMethod>,
+    /// Call and construct signatures, as for [`TypeExprKind::Callable`].
+    pub call_sigs: Vec<CallSig>,
 }
 
 /// Interface method: required (`body: None`) or with a default implementation.
@@ -270,37 +304,94 @@ pub enum TypeExprKind {
     Array(Box<TypeExpr>),
     /// `[A, B]`
     Tuple(Vec<TypeExpr>),
+    /// `...T` in a tuple type (a variadic tuple type, `[string, ...A]`): `T`'s elements. Only
+    /// a direct element of [`TypeExprKind::Tuple`].
+    TupleRest(Box<TypeExpr>),
+    /// `T?` / `name?: T` in a tuple type: an element that may be left out (`[A, B?]`). Only a
+    /// direct element of [`TypeExprKind::Tuple`].
+    TupleOptional(Box<TypeExpr>),
     /// `(a: A, b: B) => R`, optionally `=> R throws E` (the function may throw `E`).
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
         throws: Option<Box<TypeExpr>>,
+        /// `(a: A, ...xs: T[]) => R`: the last parameter is a rest parameter.
+        rest: bool,
     },
+    /// `<T>(x: T) => T`: a generic function type (`ty` is the function type).
+    GenericFunction {
+        type_params: Vec<GenericParam>,
+        ty: Box<TypeExpr>,
+    },
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
+    /// function type, generic or not, after `new`).
+    Construct(Box<TypeExpr>),
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
+    /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)
+    /// are [`GenericParam::bounds`] instead.
+    Intersection(Vec<TypeExpr>),
+    /// `T["k"]` (an indexed access type; the key is a string literal type or a union of them).
+    Indexed {
+        object: Box<TypeExpr>,
+        key: Box<TypeExpr>,
+    },
     /// Literal type: `"circle"`, `42`, `-1`, `1.5`, `true`.
     Literal(SignedLit),
     /// Object type `{ kind: "circle"; r: f64 }` (an anonymous object type).
     Object(Vec<ObjectTypeField>),
+    /// An object type with an index signature: `{ [key: string]: T }`, possibly with named
+    /// members (`{ name?: string; [key: string]: string | null }`). An interface whose body has
+    /// an index signature is parsed as a type alias to one.
+    IndexSig {
+        /// The named members, in source order.
+        fields: Vec<ObjectTypeField>,
+        /// The key: `key: string` in `[key: string]`.
+        key: Box<IndexKey>,
+        /// The values' type.
+        value: Box<TypeExpr>,
+        /// `readonly [key: string]: T`
+        readonly: bool,
+    },
+    /// An object type with call or construct signatures (`{ (x: T): R; n: number }`), as
+    /// written; sema gives it TypeScript's type (`velt_sema::call_sigs`).
+    Callable {
+        sigs: Vec<CallSig>,
+        /// The other members: an `Object` (empty when there are none) or an `IndexSig`.
+        members: Box<TypeExpr>,
+    },
+    /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
+    /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof
+    /// import("m")`, `typeof f<T>`); sema resolves it to the error type without a diagnostic.
+    Query(Vec<Ident>),
+    /// `keyof T`: the union of `T`'s keys.
+    KeyOf(Box<TypeExpr>),
+    /// `C extends E ? T : F`: a conditional type (issue #934). `E` may hold `infer X`.
+    Conditional(Box<ConditionalType>),
+    /// `infer X` in the `extends` clause of a conditional type.
+    Infer(Ident),
+    /// `{ readonly [K in S as N]?: V }`: a mapped type (issue #934).
+    Mapped(Box<MappedType>),
+    /// `` `on${K}` ``: a template literal type; `quasis` has one more element than `types`.
+    TemplateLiteral {
+        quasis: Vec<String>,
+        types: Vec<TypeExpr>,
+    },
     /// `null` in type position.
     Null,
+    /// `undefined` in type position (issue #930).
+    Undefined,
     /// `void`
     Void,
-}
-
-/// `name: T` / `name?: T` / `readonly name: T` in an object type.
-#[derive(Clone, Debug)]
-pub struct ObjectTypeField {
-    pub name: Ident,
-    /// For an optional field, the written type plus `| null`.
-    pub ty: TypeExpr,
-    /// `name?: T` — parsed as `name: T | null`; the flag makes it an optional field of the object
-    /// type (left out by `JSON.stringify` while `null`). An object literal may leave out any
-    /// `T | null` field of an object type.
-    pub optional: bool,
-    /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
-    pub readonly: bool,
-    pub span: Span,
+    /// A type predicate as a return type (TypeScript's user-defined type guards):
+    /// `x is T` (the function returns a `boolean` that is `true` when parameter `x` is a `T`),
+    /// `this is T`, `asserts x is T` (the function returns only when `x` is a `T`) and
+    /// `asserts x` (only when `x` is truthy; `ty: None`).
+    Predicate {
+        param: Box<Ident>,
+        ty: Option<Box<TypeExpr>>,
+        asserts: bool,
+    },
 }
 
 // ─────────────────────────── Statements ───────────────────────────
@@ -436,6 +527,8 @@ pub enum Lit {
     Str(String),
     Bool(bool),
     Null,
+    /// `undefined` (issue #930): the nothing of a `T | undefined` type.
+    Undefined,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -446,6 +539,7 @@ pub enum UnaryOp {
     BitNot, // ~x
     TypeOf, // typeof x
     Delete, // delete r[k] (only on `Record`s; sema checks)
+    Void,   // void x: evaluates x, the value is `undefined`
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -456,8 +550,15 @@ pub enum BinaryOp {
     Div,
     Rem,
     Pow,
-    Eq,    // == (same as === in Velt; no coercion)
-    NotEq, // != / !==
+    /// `==`: as `===` in typed code (no coercion), except that `== null` and `== undefined`
+    /// match both nothings.
+    Eq,
+    /// `!=`
+    NotEq,
+    /// `===`
+    StrictEq,
+    /// `!==`
+    StrictNotEq,
     Lt,
     LtEq,
     Gt,
@@ -471,6 +572,28 @@ pub enum BinaryOp {
     Shl,
     Shr,
     UShr,
+    /// `k in o`. `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the
+    /// parser builds one, only here). Otherwise any expression (`"k" in o`, `KEY in o`,
+    /// `Symbol.iterator in o`); in a `for` head before the first `;`, `in` outside parentheses
+    /// is the loop's.
+    In,
+}
+
+impl BinaryOp {
+    /// `===` / `!==` as `==` / `!=` (the same operation unless one side is `null` or
+    /// `undefined`); every other operator unchanged.
+    pub fn loose(self) -> BinaryOp {
+        match self {
+            BinaryOp::StrictEq => BinaryOp::Eq,
+            BinaryOp::StrictNotEq => BinaryOp::NotEq,
+            op => op,
+        }
+    }
+
+    /// `===` / `!==`.
+    pub fn is_strict(self) -> bool {
+        matches!(self, BinaryOp::StrictEq | BinaryOp::StrictNotEq)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -487,7 +610,11 @@ pub enum ArrowBody {
 
 #[derive(Clone, Debug)]
 pub struct ArrowParam {
+    /// The parameter's name; for a destructured parameter, a name no source can spell, as in
+    /// [`Param::name`].
     pub name: Ident,
+    /// `([k, v]) => …` / `({ a, b }: T) => …`: a destructured parameter (see [`Param::pattern`]).
+    pub pattern: Option<Pattern>,
     /// Optional in arrows when inferable from context. For an optional parameter with a
     /// written type, that type plus `| null`.
     pub ty: Option<TypeExpr>,
@@ -496,6 +623,9 @@ pub struct ArrowParam {
     pub default: Option<Expr>,
     /// `(x?: T) => …`, parsed as `(x: T | null = null) => …` (the flag keeps the spelling).
     pub optional: bool,
+    /// `(...xs: T[]) => …` (the last parameter): the remaining arguments as one array, as for
+    /// [`Param::rest`].
+    pub rest: bool,
 }
 
 #[derive(Clone, Debug)]

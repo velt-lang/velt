@@ -1,0 +1,12 @@
+// A sync HTTP handler runs on several threads like an async one, so modifying a captured
+// variable is an error there too.
+import { serve } from "velt:http";
+
+async function main() {
+  let count = 0;
+  const server = await serve({ port: 0 }, (req) => {
+    count++;
+    return new Response(`${count}`);
+  });
+  await server.shutdown();
+}

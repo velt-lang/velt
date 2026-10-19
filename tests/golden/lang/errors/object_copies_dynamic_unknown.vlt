@@ -1,0 +1,10 @@
+// As `object_copies_dynamic`, through `unknown` and `==` in a function (#1240): Node prints
+// `true`.
+type U = { u: number };
+type UV = { u: number; v: number };
+const su: UV = JSON.parse('{"u":1,"v":2}');
+function eqUnknown(x: unknown, y: unknown): boolean {
+  return x == y;
+}
+const vu: U = su;
+console.log(eqUnknown(vu, su));

@@ -175,7 +175,7 @@ function main() {
     console.log("loud", maybe.label);
   }
 
-  const b: Box<i64> = new Labeled(5, "five");
+  const b: Box<i64> = new Labeled<i64>(5, "five");
   if (b instanceof Labeled) {
     console.log(b.label, b.value + 1);
   }

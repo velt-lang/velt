@@ -1,6 +1,6 @@
 jsx_components.vlt:20:20: error: Property 'title' is missing in type '{ count: i64; children: Element }' but required in type 'CardProps'.
 jsx_components.vlt:21:35: error: Property 'titel' does not exist on type 'CardProps'. Did you mean 'title'?
-jsx_components.vlt:22:34: error: Type 'i64' is not assignable to type 'string'.
+jsx_components.vlt:22:34: error: Type 'f64' is not assignable to type 'string'.
 in the props of type 'CardProps'
 jsx_components.vlt:23:39: error: Property 'children' does not exist on type '{ tone: string }'.
 <Badge> does not accept children: its props type has no `children` field

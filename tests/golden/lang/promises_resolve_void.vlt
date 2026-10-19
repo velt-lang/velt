@@ -1,0 +1,26 @@
+// `resolve()` without an argument settles a `Promise<void>`, as in TypeScript: a trailing
+// `void` parameter may be left out.
+async function waitFor(ready: Promise<void>, name: string) {
+  await ready;
+  console.log(name, "ready");
+}
+
+async function main() {
+  const g = Promise.withResolvers<void>();
+  const w = waitFor(g.promise, "first");
+  console.log("resolving");
+  g.resolve();
+  await w;
+
+  await new Promise<void>((resolve) => resolve());
+  console.log("executor resolved");
+
+  let later: () => void = () => {};
+  const p = new Promise<void>((resolve) => {
+    later = () => resolve();
+  });
+  console.log("calling later");
+  later();
+  await p;
+  console.log("stored resolve settled");
+}

@@ -1,0 +1,2 @@
+task: current=task hits=2
+main: current=task hits=2

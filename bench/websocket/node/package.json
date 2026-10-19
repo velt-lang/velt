@@ -1,0 +1,9 @@
+{
+  "name": "velt-bench-websocket-node",
+  "private": true,
+  "type": "module",
+  "description": "Node baseline for bench/websocket (run.sh installs it with npm ci).",
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

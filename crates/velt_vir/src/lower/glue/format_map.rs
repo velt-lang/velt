@@ -1,8 +1,10 @@
 //! Node's `Map(2) { 'a' => 1, 'b' => 2 }` (empty: `Map(0) {}`) for the prelude `Map` class
 //! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
-//! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null).
+//! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null; where
+//! the value type includes null, `map_entry_live` asks the map's `__liveAt`).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
-//! stands for: `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
+//! stands for, in JavaScript's key order (array indices first: the entry positions its
+//! `__positions` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
 //! `Map<T, bool>` in field 0) like node's: `Set(2) { 1, 2 }` (empty: `Set(0) {}`). Past node's
 //! depth limit they print as `[Map]`, `[Object]` and `[Set]`; a `Map` or `Set` shows its first
 //! 100 entries, then `... n more items`, and stops reading there.
@@ -11,6 +13,7 @@ use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::format_array::MAX_ARRAY_LENGTH;
 use crate::lower::glue::literals::inspect_key;
+use crate::lower::json::RecordOrder;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
@@ -35,7 +38,7 @@ enum Entries {
 impl FnLower<'_, '_> {
     /// `(K, V)` if `ty` is the prelude `Map<K, V>` class.
     pub(in crate::lower) fn prelude_map(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
-        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
             return None;
         };
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
@@ -48,12 +51,40 @@ impl FnLower<'_, '_> {
         }
         let tys = self.cx.adt_field_tys(ty);
         match (self.cx.kind(tys[1]), self.cx.kind(tys[2])) {
-            (TyKind::Array(k), TyKind::Array(slot)) => match self.cx.kind(slot) {
-                TyKind::Option(v) => Some((k, v)),
+            // `V` from the type arguments: where it includes null, the slot type `V | null` is
+            // `V` itself, not an option of it.
+            (TyKind::Array(k), TyKind::Array(slot)) => match (self.cx.kind(slot), &args[..]) {
+                (TyKind::Option(..), [_, v]) => Some((k, *v)),
                 _ => None,
             },
             _ => None,
         }
+    }
+
+    /// Whether entry position `i` of the prelude `Map` at `map` (of type `ty`, values of type
+    /// `vt`) is live, with the place of its value: `slot` is the entry's `entryValues` element
+    /// (of type `slot_t`). A null slot is a deleted entry unless `vt` includes null (the slot
+    /// type is then `vt` itself and the slot the value); then the map's `__liveAt` decides
+    /// (std/prelude/map.vlt).
+    pub(in crate::lower) fn map_entry_live(
+        &mut self,
+        map: &Place,
+        ty: TyId,
+        (i, slot, slot_t, vt): (Operand, &Place, TyId, TyId),
+    ) -> (Operand, Place) {
+        if slot_t != vt {
+            let live = self.option_is_some(slot, slot_t);
+            return (live, self.some_payload(slot, slot_t));
+        }
+        let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
+            crate::lower::ice("Map of a non-ADT type")
+        };
+        let def = self.class_method(d, "__liveAt");
+        let f = self.cx.func_for(def, targs);
+        let live = self.temp(Ty::Bool);
+        let args = vec![Operand::Copy(map.clone()), i];
+        self.call(vir::Callee::Func(f), args, Some(Place::local(live)), false);
+        (Operand::Copy(Place::local(live)), slot.clone())
     }
 
     /// `(K, V)` if `ty` is the prelude `Record<K, V>` class (its `Map<K, V>` is field 0).
@@ -76,7 +107,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `(T, bool)` if `ty` is std's `Set<T>` class (a `Map<T, bool>` in field 0).
-    fn std_set(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
+    pub(in crate::lower) fn std_set(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return None;
         };
@@ -126,6 +157,65 @@ impl FnLower<'_, '_> {
             Entries::Record => (None, "[Object]"),
             Entries::Set => (Some("Set"), "[Set]"),
         };
+        let parts = (map, map_ty, kt, vt, entries);
+        if entries == Entries::Record && self.cx.hir.null_proto_records {
+            // A record made by `Object.create(null)` (its map is marked): Node's
+            // `[Object: null prototype] { ... }`, and `[Object: null prototype]` past the depth
+            // limit.
+            let np = self.null_proto_mark(&parts.0, map_ty);
+            let (np_bb, plain_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(np, np_bb, plain_bb);
+            self.switch_to(np_bb);
+            let prefix = "[Object: null prototype] ";
+            let np_cut = "[Object: null prototype]";
+            self.format_entries(buf, obj, ty, depth, parts.clone(), (name, prefix, np_cut));
+            self.goto(done);
+            self.switch_to(plain_bb);
+            self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+            self.goto(done);
+            self.switch_to(done);
+            return true;
+        }
+        self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
+        true
+    }
+
+    /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
+    /// entries (the top bit of its `edits`, std/prelude/map.vlt `__markNullProto`)? A Bool
+    /// operand.
+    fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
+        let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {
+            crate::lower::ice("the prelude `Map` is a class");
+        };
+        let at = self
+            .cx
+            .adt_def(d)
+            .fields
+            .iter()
+            .position(|f| f.name == "edits");
+        let at = at.unwrap_or_else(|| crate::lower::ice("the prelude `Map` has `edits`")) as u32;
+        let edits = Operand::Copy(self.field_place(map, map_ty, at));
+        let bit = cint(0x8000_0000_0000_0000_i128, Ty::U64);
+        let marked = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, edits, bit));
+        self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, marked, cint(0, Ty::U64)),
+        )
+    }
+
+    /// The entries of a collection (`parts`: its `Map`, the map's type, key and value types,
+    /// how they print) in braces, after `prefix` and the collection's `name`; `cut` past node's
+    /// depth limit.
+    fn format_entries(
+        &mut self,
+        buf: &Operand,
+        obj: &Place,
+        ty: TyId,
+        depth: &Operand,
+        parts: (Place, TyId, TyId, TyId, Entries),
+        (name, prefix, cut): (Option<&str>, &str, &str),
+    ) {
+        let (map, map_ty, kt, vt, entries) = parts;
         let mtys = self.cx.adt_field_tys(map_ty);
         let size_ty = mtys[SIZE as usize];
         let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
@@ -137,12 +227,16 @@ impl FnLower<'_, '_> {
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(empty, empty_bb, full_bb);
         self.switch_to(empty_bb);
-        self.push_text(buf, &name.map_or("{}".into(), |n| format!("{n}(0) {{}}")));
+        let shown = name.map_or("{}".into(), |n| format!("{n}(0) {{}}"));
+        self.push_text(buf, &format!("{prefix}{shown}"));
         self.goto(done);
         self.switch_to(full_bb);
         let p = Operand::Copy(obj.clone());
         self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
             lw.format_once(buf, p, |lw| {
+                if !prefix.is_empty() {
+                    lw.push_text(buf, prefix);
+                }
                 if let Some(n) = name {
                     lw.push_text(buf, &format!("{n}("));
                     lw.push_scalar(buf, size.clone(), size_ty);
@@ -150,13 +244,17 @@ impl FnLower<'_, '_> {
                 }
                 lw.push_text(buf, "{ ");
                 let types = (map_ty, kt, vt);
-                lw.format_map_entries(buf, &map, types, entries, size, &child);
+                let order = (entries == Entries::Record).then(|| lw.record_order(obj, ty));
+                let ord = order.as_ref();
+                lw.format_map_entries(buf, &map, types, (entries, ord), size, &child);
+                if let Some(o) = order {
+                    lw.drop_record_order(o);
+                }
                 lw.push_text(buf, " }");
             })
         });
         self.goto(done);
         self.switch_to(done);
-        true
     }
 
     /// A record key: a string at run time, or the text of a literal / string enum member.
@@ -205,13 +303,14 @@ impl FnLower<'_, '_> {
 
     /// The live entries of the `Map` at `obj` (of types `(map, key, value)`) with `size` of
     /// them, comma-separated, each part at node's depth `child`; a `Map` or `Set` stops after
-    /// the first 100 and adds `... n more items`.
+    /// the first 100 and adds `... n more items`. A record's entries come in `order` (its
+    /// `__positions`).
     fn format_map_entries(
         &mut self,
         buf: &Operand,
         obj: &Place,
         (ty, kt, vt): (TyId, TyId, TyId),
-        entries: Entries,
+        (entries, order): (Entries, Option<&RecordOrder>),
         size: Operand,
         child: &Operand,
     ) {
@@ -229,13 +328,15 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(shown), Rvalue::Use(cint(0, Ty::U64)));
         let stop = self.temp(Ty::U64);
         let len = Operand::Copy(proj(&keys, Proj::Field(1)));
+        let len = self.order_len(order, len);
         self.assign(Place::local(stop), Rvalue::Use(len));
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         let n = Operand::Copy(Place::local(shown));
         self.count_loop(k, Operand::Copy(Place::local(stop)), |lw, i| {
+            let i = lw.order_pos(order, i);
             let slot = lw.elem_place(&values, i.clone(), slot_t);
-            let live = lw.option_is_some(&slot, slot_t);
+            let (live, vp) = lw.map_entry_live(obj, ty, (i.clone(), &slot, slot_t, vt));
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
@@ -273,7 +374,6 @@ impl FnLower<'_, '_> {
                 if entries == Entries::Map {
                     lw.push_text(buf, " => ");
                 }
-                let vp = lw.some_payload(&slot, slot_t);
                 lw.format_nested(buf, &vp, vt, child);
             }
             lw.goto(skip);

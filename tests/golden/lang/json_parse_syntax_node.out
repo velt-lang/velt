@@ -1,0 +1,25 @@
+SyntaxError true Expected property name or '}' in JSON at position 1 (line 1 column 2)
+SyntaxError true Unexpected end of JSON input
+SyntaxError true Expected ',' or ']' after array element in JSON at position 5 (line 1 column 6)
+SyntaxError true Unexpected token ']', "[1, 2,]" is not valid JSON
+SyntaxError true Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)
+SyntaxError true Unexpected number in JSON at position 2 (line 1 column 3)
+SyntaxError true Unterminated fractional number in JSON at position 3 (line 1 column 4)
+SyntaxError true No number after minus sign in JSON at position 2 (line 1 column 3)
+SyntaxError true Exponent part is missing a number in JSON at position 4 (line 1 column 5)
+SyntaxError true Unexpected non-whitespace character after JSON at position 4 (line 1 column 5)
+SyntaxError true "NaN" is not valid JSON
+SyntaxError true Unexpected token ']', "[tru]" is not valid JSON
+SyntaxError true Unexpected token 'o', "["é😀", nope]" is not valid JSON
+SyntaxError true Unexpected token 'x', ...", 13, 14, x]" is not valid JSON
+SyntaxError true Expected ',' or ']' after array element in JSON at position 13 (line 4 column 3)
+ok 3
+ok 3
+SyntaxError Expected ',' or '}' after property value in JSON at position 8 (line 1 column 9)
+SyntaxError Expected double-quoted property name in JSON at position 16 (line 1 column 17)
+SyntaxError Expected ':' after property name in JSON at position 5 (line 1 column 6)
+SyntaxError Expected property name or '}' in JSON at position 1 (line 1 column 2)
+SyntaxError Bad escaped character in JSON at position 9 (line 1 column 10)
+SyntaxError Bad Unicode escape in JSON at position 11 (line 1 column 12)
+SyntaxError Bad control character in string literal in JSON at position 10 (line 1 column 11)
+SyntaxError Unterminated string in JSON at position 11 (line 1 column 12)

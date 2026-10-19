@@ -1,0 +1,18 @@
+// Server functions, written in Velt. The server calls them directly while it renders; the
+// browser calls them over HTTP: @sigx/velt's Vite plugin turns `import … from "./api.server"` in
+// browser code into sigx client stubs, and server.vlt registers the same functions.
+// (api.server.d.ts gives TypeScript their types.)
+
+import { delay } from "velt:timers";
+
+export type Stats = { renderer: string; components: number; uptime: string };
+
+// Slow on purpose, so the page streams: the shell first, the stats when they are ready.
+export async function getStats(): Promise<Stats> {
+  await delay(300);
+  return { renderer: "Velt (native)", components: 9, uptime: "since this request" };
+}
+
+export async function greet(name: string): Promise<string> {
+  return `Hello, ${name}, from a Velt server function`;
+}

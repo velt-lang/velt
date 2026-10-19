@@ -9,7 +9,7 @@ import {
   weekdayLong,
 } from "velt:datetime/civil";
 
-// `n` zero-padded to `width` digits (a minus sign goes in front of the padding).
+/** `n` zero-padded to `width` digits (a minus sign goes in front of the padding). */
 export function pad(n: i64, width: i64): string {
   if (n < 0) {
     const digits = `${-n}`;
@@ -18,7 +18,7 @@ export function pad(n: i64, width: i64): string {
   return `${n}`.padStart(width, "0");
 }
 
-// `+01:00` / `-05:30` (`colon` false: `+0100`).
+/** `+01:00` / `-05:30` (`colon` false: `+0100`). */
 export function offsetString(offsetMinutes: i64, colon: bool): string {
   const sign = offsetMinutes < 0 ? "-" : "+";
   const abs = offsetMinutes < 0 ? -offsetMinutes : offsetMinutes;
@@ -33,7 +33,7 @@ function isoYear(y: i64): string {
   return `${y < 0 ? "-" : "+"}${pad(y < 0 ? -y : y, 6)}`;
 }
 
-// `2024-02-29T12:34:56.000Z`, or with a numeric offset when `utcZ` is false.
+/** `2024-02-29T12:34:56.000Z`, or with a numeric offset when `utcZ` is false. */
 export function isoString(t: i64, offsetMinutes: i64, utcZ: bool): string {
   const p = partsOf(t, offsetMinutes);
   const zone = utcZ ? "Z" : offsetString(offsetMinutes, true);
@@ -41,14 +41,14 @@ export function isoString(t: i64, offsetMinutes: i64, utcZ: bool): string {
   return `${date}T${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)}.${pad(p.millisecond, 3)}${zone}`;
 }
 
-// RFC 7231 IMF-fixdate: `Thu, 29 Feb 2024 12:34:56 GMT` (always UTC).
+/** RFC 7231 IMF-fixdate: `Thu, 29 Feb 2024 12:34:56 GMT` (always UTC). */
 export function httpString(t: i64): string {
   const p = partsOf(t, 0);
   const date = `${weekdayShort(p.dayOfWeek)}, ${pad(p.day, 2)} ${monthShort(p.month)} ${pad(p.year, 4)}`;
   return `${date} ${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT`;
 }
 
-// Expands the tokens of `pattern` (documented on `DateTime.format`) for `t` at `offsetMinutes`.
+/** Expands the tokens of `pattern` (documented on `DateTime.format`) for `t` at `offsetMinutes`. */
 export function formatPattern(t: i64, offsetMinutes: i64, pattern: string): string {
   const p = partsOf(t, offsetMinutes);
   const out: string[] = [];

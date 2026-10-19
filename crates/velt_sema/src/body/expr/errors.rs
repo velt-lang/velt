@@ -35,7 +35,10 @@ impl FnCx<'_, '_> {
         out: &mut Vec<hir::Stmt>,
     ) {
         self.f.tries.push(vec![]);
+        let catches = u32::from(catch.is_some());
+        self.f.catch_depth += catches;
         let b = self.block(body);
+        self.f.catch_depth -= catches;
         let srcs = self.f.tries.pop().expect("ICE: try stack");
         let c = match catch {
             Some((pat, blk)) => Some(self.catch_clause(srcs, pat.as_ref(), blk, span)),

@@ -2,6 +2,8 @@
 //! into `node`, so the rest of its block must not modify or move `node.left` or anything that
 //! owns it (`node.left = …`, `node = …`, `node.reset()`), which could free what `x` points to.
 //! Changing `x`'s own contents (`x.v = 1`) or unrelated fields (`node.right = …`) is fine.
+//! `const me = this` names the object itself, which nothing can replace: only using `me`
+//! together with `this` (`super::this_alias`) ends the borrow.
 //! When the block does change it, `x` becomes a share of the value instead (semantics stage 2:
 //! `x` keeps referring to the object, like in JS); only values that cannot be shared (promises)
 //! report the conflict.
@@ -12,6 +14,7 @@ use crate::hir::{Block, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind a
 use crate::visit::{self, VisitMut};
 
 use super::iteration::contains;
+use super::this_alias;
 use super::uses::{Access, Collector};
 
 /// Check every by-reference `const` in function body `body` (nested blocks included).
@@ -108,6 +111,12 @@ fn check_let(
     let at = init.span;
     let text = col.text(init);
     let mut uses = vec![];
+    if let Some(this) = this_local(col, init) {
+        return this_alias::conflict(col, l, this, rest, value).map(|span| {
+            let name = &col.locals[l.0 as usize].name;
+            changed_while_borrowed("this", Access::Unique, span, name, "this", at)
+        });
+    }
     col.nested_stmts(rest, value, &mut uses);
     let hit = uses
         .into_iter()
@@ -116,6 +125,15 @@ fn check_let(
     Some(changed_while_borrowed(
         &hit.text, hit.access, hit.span, name, &text, at,
     ))
+}
+
+/// `this` when `init` is the method's own `this` (`const me = this`, `crate::body::const_borrow`;
+/// no other local can be named `this`).
+fn this_local(col: &Collector, init: &Expr) -> Option<crate::hir::LocalId> {
+    match init.kind {
+        E::Local(l, _) if col.locals[l.0 as usize].name == "this" => Some(l),
+        _ => None,
+    }
 }
 
 /// Turn the by-reference `const` `s` into an owned share of the place it referred to; false

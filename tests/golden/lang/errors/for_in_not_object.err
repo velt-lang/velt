@@ -1,0 +1,2 @@
+for_in_not_object.vlt:5:19
+error: the object of a `for...in` loop must be an object, a class or struct instance or a `Record`, found `f64`

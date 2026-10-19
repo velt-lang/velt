@@ -1,7 +1,7 @@
 //! Type interning helpers, classification, substitution of generic parameters and
 //! pattern matching of generic signatures against concrete types (type-argument inference).
 
-use crate::hir::{FloatTy, IntTy, TyId, TyKind, TyTable};
+use crate::hir::{FloatTy, IntTy, Nothing, TyId, TyKind, TyTable};
 
 pub(crate) struct Types {
     pub table: TyTable,
@@ -15,6 +15,8 @@ pub(crate) struct Types {
     pub u64: TyId,
     pub usize: TyId,
     pub f64: TyId,
+    /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
+    pub bigint_named: bool,
 }
 
 impl Types {
@@ -42,7 +44,14 @@ impl Types {
             u64,
             usize,
             f64,
+            bigint_named: false,
         }
+    }
+
+    /// The type `bigint` names: `never`, since no value is a `bigint` yet (#1088).
+    pub fn bigint(&mut self) -> TyId {
+        self.bigint_named = true;
+        self.never
     }
 
     pub fn intern(&mut self, k: TyKind) -> TyId {
@@ -77,8 +86,22 @@ impl Types {
         t == self.error || t == self.never
     }
 
+    /// `t | null`
     pub fn option(&mut self, t: TyId) -> TyId {
-        self.intern(TyKind::Option(t))
+        self.intern(TyKind::Option(t, Nothing::Null))
+    }
+
+    /// `t | null`, `t | undefined` or both, per `n`.
+    pub fn option_of(&mut self, t: TyId, n: Nothing) -> TyId {
+        self.intern(TyKind::Option(t, n))
+    }
+
+    /// Which nothings option type `t` allows (`None` if `t` is not an option).
+    pub fn nothing_of(&self, t: TyId) -> Option<Nothing> {
+        match self.kind(t) {
+            TyKind::Option(_, n) => Some(*n),
+            _ => None,
+        }
     }
 
     pub fn array(&mut self, t: TyId) -> TyId {
@@ -89,10 +112,30 @@ impl Types {
         self.intern(TyKind::Param(n))
     }
 
-    /// Payload of `T | null`.
+    /// Payload of `T | null` (or `T | undefined`): what `WrapSome` / `UnwrapSome` hold. For
+    /// `T | null | undefined` that is `T | null` (`TyTable::payload`); `core` is `T` itself.
     pub fn opt_payload(&self, t: TyId) -> Option<TyId> {
+        self.table.payload(t)
+    }
+
+    /// `undefined` alone as a type: an option of `never`, so its one value is the option's
+    /// nothing (hir_encodings.md "Undefined").
+    pub fn undefined(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Undefined)
+    }
+
+    /// `null` alone as a type (a field that is always `null` in one member of a discriminated
+    /// union): an option of `never`, like `undefined` alone.
+    pub fn null_alone(&mut self) -> TyId {
+        let never = self.never;
+        self.option_of(never, Nothing::Null)
+    }
+
+    /// `T` of `T | null`, `T | undefined` and `T | null | undefined`.
+    pub fn core(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {
-            TyKind::Option(p) => Some(*p),
+            TyKind::Option(p, _) => Some(*p),
             _ => None,
         }
     }
@@ -153,7 +196,7 @@ impl Types {
         found
     }
 
-    fn visit(&self, t: TyId, f: &mut dyn FnMut(&TyKind)) {
+    pub(crate) fn visit(&self, t: TyId, f: &mut dyn FnMut(&TyKind)) {
         let k = self.kind(t);
         f(k);
         for c in children(k) {
@@ -190,8 +233,11 @@ impl Types {
             TyKind::Error => true,
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
-            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
-            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => any(&[*e]),
+            TyKind::Adt(_, args)
+            | TyKind::Dyn(_, args)
+            | TyKind::Tuple(args)
+            | TyKind::Op(_, args) => any(args),
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
         }
@@ -215,7 +261,7 @@ impl Types {
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
             _ => return t,
@@ -233,10 +279,11 @@ impl Types {
         let nk = match k {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Op(o, args) => TyKind::Op(o, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(m(self, v), m(self, e)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
@@ -272,19 +319,40 @@ impl Types {
             // `boolean` is TypeScript's name, so code can be shared with `tsc` (#353).
             "bool" | "boolean" => TyKind::Bool,
             "string" => TyKind::Str,
+            "symbol" | "unique symbol" => TyKind::Symbol,
             "void" => TyKind::Unit,
             "never" => TyKind::Never,
-            _ => return None,
+            _ => TyKind::Simd(crate::hir::SimdTy::named(name)?),
         };
         Some(self.intern(k))
     }
 }
 
+/// Is `name` one of the built-in type names TypeScript does not have (`i8`..`u64`, `isize`,
+/// `usize`, `f32`, `f64`, `bool`)? A declaration of the program may use it (#1074).
+pub(crate) fn velt_only_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+    )
+}
+
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
-        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
-        TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => vec![*e],
+        TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) | TyKind::Op(_, a) => a.clone(),
+        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
             params,
@@ -350,5 +418,20 @@ pub(crate) fn int_range(i: IntTy) -> String {
         format!("{}..={}", -m, m - 1)
     } else {
         format!("0..={}", (1u128 << bits) - 1)
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

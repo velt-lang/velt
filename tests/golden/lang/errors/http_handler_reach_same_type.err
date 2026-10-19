@@ -1,0 +1,12 @@
+http_handler_reach_same_type.vlt:52:5: error: this handler calls `i.onChange`, which changes `ready`; requests run at the same time
+http_handler_reach_same_type.vlt:46:5: `ready` is changed here
+  = note: fix: const ready = shared(new Mutex(false))  // one value shared by every request, as in Node
+  = note: then read it with `ready.with((v) => v)` and change it with `ready.with((v) => { v = … })`
+http_handler_reach_same_type.vlt:52:5: error: this handler calls `i.onChange`, which changes `local`; requests run at the same time
+http_handler_reach_same_type.vlt:58:5: `local` is changed here
+  = note: fix: const local = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `local.with((v) => v)` and change it with `local.with((v) => { v = … })`
+http_handler_reach_same_type.vlt:52:5: error: this handler calls `i.onChange`, which changes `started`; requests run at the same time
+http_handler_reach_same_type.vlt:28:7: `started` is changed here
+  = note: fix: const started = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `started.with((v) => v)` and change it with `started.with((v) => { v = … })`

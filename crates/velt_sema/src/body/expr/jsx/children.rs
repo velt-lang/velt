@@ -1,7 +1,8 @@
-//! Children (docs/contracts/jsx.md "Children"): text becomes a `string`, `{expr}` and `{...xs}`
-//! are one child each, `{}` / `{/* */}` vanish. Intrinsic elements and fragments pass them to the
-//! runtime as a `JSX.Child[]`; a component gets them in its children props field: one child as
-//! itself, several as an array.
+//! Children (docs/internals/contracts/jsx.md "How the compiler lowers each construct",
+//! "Children"): text becomes a `string`, `{expr}` and `{...xs}` are one child each, `{}` /
+//! `{/* */}` vanish. Intrinsic elements and fragments pass them to the runtime as a
+//! `JSX.Child[]`; a component gets them in its children props field: one child as itself, several
+//! as an array.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -131,7 +132,7 @@ impl FnCx<'_, '_> {
 
     /// The array type `t` is or contains (`T[]`, `T[] | null`, a union with an array member).
     fn array_form(&mut self, t: TyId) -> Option<TyId> {
-        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let t = self.cx.ty.core(t).unwrap_or(t);
         if matches!(self.cx.ty.kind(t), TyKind::Array(_)) {
             return Some(t);
         }

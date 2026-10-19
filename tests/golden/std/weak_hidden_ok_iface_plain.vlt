@@ -1,0 +1,20 @@
+// No false positive: interfaces whose implementers hold no weak collection cross threads,
+// next to an interface with a weak-holding implementer used on one task only.
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
+interface Local { look(): number; }
+class P implements Peek { n: number; constructor(n: number) { this.n = n; } peek(): number { return this.n; } }
+class W implements Local { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } look(): number { const x = this.r.deref(); return x === undefined ? -1 : x.n; } }
+class Box { p: Peek; constructor(p: Peek) { this.p = p; } }
+async function run(p: Peek): Promise<number> { return p.peek(); }
+function lockWith<T, R>(m: shared<Mutex<T>>, f: (v: T) => R): R { return m.with(f); }
+async function main() {
+  const keep = new V(7);
+  const l: Local = new W(new WeakRef(keep));
+  const m = shared(new Mutex<Box>(new Box(new P(1))));
+  m.with((v) => { v.p = new P(2); });
+  const a = m.with((v): Peek => v.p);
+  const b = lockWith(m, (v: Box): number => v.p.peek());
+  const c = await spawn(run(new P(3)));
+  console.log(a.peek(), b, c, l.look());
+}

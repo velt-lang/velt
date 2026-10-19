@@ -1,63 +1,74 @@
 # Velt for TypeScript developers
 
-If you write TypeScript, you already write most of Velt: classes, interfaces, generics, unions
-and narrowing, discriminated unions, closures, `async`/`await`, template literals,
-destructuring, spread, optional chaining, `??`, ES modules, `throw`/`try`/`catch`, `using`.
-This page lists **every place where Velt differs**, and why.
+If you write TypeScript, you already write Velt: classes, interfaces, generics, unions and
+narrowing, discriminated unions, closures, `async`/`await`, template literals, destructuring,
+spread, optional chaining, `??`, ES modules, `throw`/`try`/`catch`, `using`. Velt reads `.ts`
+and `.tsx` files directly (`velt run app.ts`), and they import `.vlt` files and the other way
+round, so an existing project can move over one file at a time.
+
+What you get in return is a native executable: no interpreter or JIT, no garbage collector, and
+your code running on every core instead of one event loop. This page lists **every place where
+Velt differs** from TypeScript, and why.
 
 The differences come from three rules:
 
-1. **Keep TypeScript's syntax and meaning wherever native speed allows it.** When Velt runs
-   your code, it should do what TypeScript would.
-2. **Drop the JavaScript behavior that causes bugs**, even when it means ported code must
-   change. The compiler then says exactly what to write instead, and editors offer it as a
-   quick fix.
+1. **Valid TypeScript runs as it does in Node.** When Velt runs your code, it does what
+   TypeScript would. Velt's TypeScript support grows with every release, and the list below
+   shrinks with it.
+2. **Where JavaScript's behavior is a trap, the compiler stops.** Comparing `1 == "1"` or
+   forgetting an `await` is a compile error, not a silent bug. The message says exactly what to
+   write instead, and editors offer it as a quick fix.
 3. **Add what makes native code faster.** Velt compiles to machine code, not to JavaScript, so
-   it isn't limited to what TypeScript can express. Integer types, `shared` state across threads
-   and `extend` are opt-ins to reach for when you want more speed; code without them still runs
-   as TypeScript would.
+   it isn't limited to what TypeScript can express. Integer types, typed errors, `shared` state
+   across threads and `extend` are there when you want them. Code without them still runs as
+   TypeScript would.
 
 ## Programs are compiled
 
 - A program starts at its root file's top-level statements, as a TS file does, or at
   `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
-  statements run in a generated `main`; only the root file may have them
-  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
-- Module scope holds no mutable state: a top-level variable that functions use stays a module
-  constant, and a module-level `let` that a function uses is an error ("mutable module-level
-  state is not allowed"). *Why*: no hidden global state means request handlers can't race on
-  it, and `velt dev` can hot-swap code without migrating globals.
+  statements run in a generated `main`; an imported module's run once when it is evaluated,
+  in Node's order ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+- A module-level `let` works as in Node: one per process, which every task (spawned tasks,
+  HTTP handlers, tasks on other cores) reads and updates, and code that uses it runs as on
+  Node's single thread between `await`s, so updates are never lost
+  ([module state](../reference/variables.md#module-state)). A module constant that is not a
+  constant value (`new Map()`, a call with effects, a function from a call) is evaluated once
+  per process in the same way
+  ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
-- Semicolons are required (no automatic semicolon insertion).
+- Semicolons are required (no automatic semicolon insertion, except after an overload
+  signature).
 
 ## Numbers
 
-`number` is `f64`, and number literals behave like JavaScript numbers:
+`number` is a JavaScript number, exactly: a double, with `-0`, `NaN` and rounding past 2^53.
 
 ```ts
 const a = 7;
-console.log(a / 2, 0.1 + 0.2);    // 3.5 0.30000000000000004
+console.log(a / 2, 0.1 + 0.2, -a * 0);    // 3.5 0.30000000000000004 -0
 ```
 
-Numbers the standard library gives you behave the same: lengths, `indexOf`, `size`, indexes.
+Numbers the standard library gives you are numbers too: lengths, `indexOf`, `size`, indexes.
 `for (let i = 0; i < xs.length; i++)` works, `xs.length / 2` is `1.5` for three elements, and
 `xs[i]` takes a `number` (a non-whole index panics).
 
 The difference: integer types (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) exist, and you
-opt into them by writing them. Declared integers do integer arithmetic: `/` truncates when both
-sides are declared integers, values wrap at their width instead of losing precision past 2^53,
-and integer division by zero panics. *Why*: integer loops and indexes run at integer speed
-either way (numbers that hold whole values are stored as integers), and you decide where
-integer semantics apply ([Numbers](../reference/types.md#numbers)).
+opt into them by writing them. Declared integers do integer arithmetic: `/` truncates, values
+wrap at their width instead of losing precision past 2^53, and integer division by zero panics.
+*Why*: the compiler already stores a `number` as an integer wherever it proves that gives the
+same result (loop counters, indexes), so integer types are for when you want integer semantics
+or a fixed width ([Numbers](../reference/types.md#numbers)).
 
-Declared types don't convert implicitly; `as` converts between number types:
+`i8` … `i32`, `u8` … `u32` and `f32` convert to `number` implicitly (exactly); the 64-bit types
+need `as number`, and a `number` needs `as T` to become an integer:
 
 ```ts
 const xs = [1, 2, 3];
 console.log(xs.length / 2);       // 1.5
 const n: i64 = 7;
-console.log(n / 2, n as f64 / 2, 300 as u8); // 3 3.5 44 (integers wrap)
+console.log(n / 2, n as number / 2, 300 as u8); // 3 3.5 44 (integers wrap)
 ```
 
 ## Booleans
@@ -69,24 +80,26 @@ accept; compiler messages and editors print `boolean` either way
 
 ## Strings
 
-- **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a
-  template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
-  `"Total: " + a + b` bugs can't happen.
+- `+` with a string and a number or boolean concatenates, as in JS: `"Total: " + 5` is
+  `"Total: 5"`, and `s += n` appends `n` written as `String(n)` writes it (`1e+21`, `NaN`, `0`
+  for `-0`). Other values (arrays, objects) are a compile error next to a string: use a
+  template literal, `` `Total: ${xs.length}` ``.
 - Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
   by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
   `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
   sockets and HTTP bodies need no conversion; `Buffer.byteLength(s)` is the UTF-8 size.
 - Strings are immutable values, as in JS, and cheap to copy.
 
-## `null`, not `undefined`
+## `null` and `undefined`
 
-There is one "nothing": `null`. `undefined` is a compile error with the fix "use `null`", and
-`a?: T` means `T | null`:
+`null` and `undefined` are two values, as in Node: `T | undefined` prints, compares, tests with
+`typeof` and serializes to JSON as in JavaScript ([Null and undefined](../reference/types.md#null-and-undefined)).
+Optional fields and parameters (`a?: T`) are `T | undefined`, as in TypeScript:
 
 ```ts
 class Config {
   host: string = "localhost";
-  port?: i64;                       // T | null, starts as null
+  port?: i64;                       // i64 | undefined, starts as undefined
 }
 
 function connect(c: Config, timeout?: i64): string {
@@ -96,32 +109,38 @@ function connect(c: Config, timeout?: i64): string {
 console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
-*Why*: the `null` vs `undefined` bug class disappears. `JSON.parse` treats an absent key like
-`null`; only `JsonValue` tells them apart.
+The standard library returns `undefined` where TypeScript's lib.d.ts does, and it prints as
+`undefined`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match, `arr.pop()` of
+an empty array, `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 
-Conditions, `!`, `&&` and `||` take `bool` and nullable values. A nullable is true when it is
-not null, so `if (!user) return;` is a null check and narrows `user`. Numbers and strings are
-rejected:
+The same as in JavaScript: conditions, `!`, `&&` and `||` take values of any type, and `0`,
+`-0`, `NaN`, `""`, `null` and `undefined` are falsy (also `0` of `i64`, `u8` and the other
+integer types).
+`||` and `&&` return an operand, typed as TypeScript types them, and `if (!user) return;` is a
+null check that narrows `user`.
 
-```ts error
+```ts
 function main() {
   const count = 0;
-  const port: i64 | null = null;
-  if (count) {                       // error: write `count !== 0`
-    console.log(port || 8080);       // error: use `??` for a default
+  const name = "";
+  const port: number | null = null;
+  console.log(count || 10, name || "anon", port || 8080, port ?? 8080);   // 10 anon 8080 8080
+  if (!count && !name) {
+    console.log("both falsy");
   }
 }
 ```
 
-*Why*: `0`, `""` and `NaN` being false is the source of the `port || 8080` and
-`if (items.length)` class of bugs. Each error names the comparison to write.
+A condition on a number is one comparison in the compiled code, a condition on a string a
+length check.
 
 ## Equality
 
-`==` and `===` are the same operator (as are `!=` and `!==`), and both sides must have the same
-type: `1 == "1"` is a compile error. Strings compare by content; every object (arrays, class
+`==` never coerces, so it is `===` (and `!=` is `!==`) except against `null` and `undefined`,
+where `x == null` matches either and `x === null` only `null`, as in JavaScript. Both sides must
+have the same type: `1 == "1"` is a compile error. Strings compare by content; every object (arrays, class
 instances, structs, object literals) compares by identity, as in JS. `deepEqual(a, b)` compares
 contents.
 
@@ -139,23 +158,37 @@ contents.
   `JSON.stringify` of one that contains itself fails as in JavaScript.
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
-- `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,
-  `==` or a discriminant instead.
+- `as` converts numbers and brands a value (`"u1" as UserId`, below); there are no other type
+  assertions. Narrow with `typeof`, `instanceof`, `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
 - `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types, also through
   generic aliases like `type WithoutChildren<P> = Omit<P, "children">` (not yet on a type
-  parameter inside a generic function, #350). `Required` also strips `null` from `a: T | null`
-  fields, since `a?: T` *is* `T | null`, and `Pick` rejects a key that isn't a field (`Omit`
+  parameter inside a generic function, #350). `Pick` rejects a key that isn't a field (`Omit`
   warns).
-- Not available: `keyof`, mapped and conditional types, template literal types, the other
-  utility types (`Record` aside), index signatures, declaration merging, `namespace`.
+- Intersections `A & B` of object types work as in TypeScript, unions distributing over them,
+  and so do indexed access types (`User["name"]`) and branded primitives
+  (`type UserId = string & { __brand: "UserId" }`, zero-cost). Parts with no value in common
+  are an error instead of `never`; classes, type parameters (#350) and function types
+  (overloads) can't be parts; `A & B` doesn't convert to `A` without a copy (`{ ...ab }`)
+  ([Intersection types](../reference/types.md#intersection-types)).
+- `typeof x` in types, `keyof` of object types, `ReturnType<F>`/`Parameters<F>`, and index
+  signatures without other members (`{ [key: string]: V }`, a `Record<string, V>`) work as in
+  TypeScript ([Type queries](../reference/types.md#type-queries-and-keyof)).
+- Not available: mapped and conditional types, template literal types, the other utility types
+  (`Record` aside), index signatures next to named members, values in a `namespace` (namespaces
+  of types work: [Namespaces](../reference/modules.md#namespaces)). Interfaces merge, and
+  `declare global` / `declare module` blocks augment them
+  ([declaration merging](../reference/classes.md#declaration-merging)); other declarations
+  don't merge.
 
 ## Classes
 
 - Single inheritance; `override` is required on redefined methods; there are no abstract
   classes and no `protected` members (`private` is private to the declaring class); a
-  constructor can be `private` or `protected`, with TypeScript's rules.
+  constructor can be `private` or `protected`, with TypeScript's rules. ES private names
+  (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
+  `Object.keys`, never inherited.
 - `static readonly` constants exist; mutable statics don't.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
   once (also when the base has no constructor), and statements before it cannot use `this`.
@@ -174,7 +207,8 @@ contents.
 
 - No `function` expressions except generators (`const g = function* () { … }`; otherwise use
   arrows), no `this` rebinding, no `arguments`.
-- No overloads. Optional and default parameters work, on arrows too; rest parameters
+- Overloads in TypeScript's form (bodiless signatures before one implementation) work for
+  functions and methods ([Overloads](../reference/functions.md#overloads)). Optional and default parameters work, on arrows too; rest parameters
   (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
   parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
 - Parameter types are required. As in TypeScript, an omitted return type is inferred from the
@@ -220,12 +254,18 @@ surprise ([Error handling](errors.md)).
 - `spawn(f())` runs a task on another core; the runtime is multi-threaded. Data shared between
   tasks must be `shared(...)` or a `Mutex`, and data races are compile errors.
 - A promise's type carries its error type: `Promise<T, E>`.
-- Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
-  to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
+- `then`, `catch` and `finally` work as in Node, callbacks in Node's order
+  ([Async](../reference/async.md#then-catch-and-finally)); `await` is the cheaper way to
+  sequence async code.
+- A value that may or may not be a promise (`View | Promise<View>`) is told apart with
+  `x instanceof Promise` (a thenable check like `typeof x.then === "function"` doesn't apply).
+  An async arrow passed where such a union is returned returns the promise, as in TS, and one
+  passed as a `() => void` callback (an `onClick` handler) starts a promise that runs to
+  completion on its own.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
-  their `clear` functions are globals; the callback returns the promise to run
-  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  their `clear` functions are globals and take any callback (`() => console.log("x")`,
+  `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
   process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
@@ -244,8 +284,8 @@ surprise ([Error handling](errors.md)).
 ## Memory
 
 There is no garbage collector, so no GC pauses and no heap tuning: memory is freed as soon as
-its last reference goes away, and `[Symbol.dispose]()` runs at that moment. You never write
-lifetimes, borrows or `mut`; the compiler infers them. Objects are shared references exactly
+its last reference goes away, and `[Symbol.dispose]()` runs at that moment. Memory is managed
+automatically: you write no annotations, and the compiler works out when each object is freed. Objects are shared references exactly
 like in JS (`const b = a; b.push(1)` changes `a`), and `.clone()` is an explicit deep copy.
 Values with a single owner cost nothing extra; only types the program actually shares get a
 reference count. Reference cycles are not freed (**planned**: `weak` references)
@@ -263,24 +303,24 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 
 ## Not supported
 
-`var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
-decorators, `Symbol` (other
+`var` in nested blocks and loops, `eval`, prototypes, `delete` (other than on a `Record`),
+`with`, getters on object literals, decorators, `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
-method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
+method names), `BigInt` values (the type `bigint` has none yet, [Types](../reference/types.md#bigint); use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([`velt:jsx`](../std/jsx.md)).
+server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 
 ## Quick reference
 
 | TypeScript / JavaScript | Velt today | Coming |
 |---|---|---|
-| `number` is always a float | `number` is `f64`; integer literals are stored as integers but `/` still gives `3.5`; `i64`, `u8`, … are opt-in | — |
-| `"5" + 1 === "51"` | compile error: use a template literal | — |
-| `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
-| `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |
-| `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
+| `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
+| `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
+| `null` and `undefined` | both, as in Node, and `a?: T` is `T \| undefined`, and the standard library gives `undefined` where lib.d.ts does (`Map.get`, `find`, `pop`) | — |
+| `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `\|\|` and `&&` return an operand) | — |
+| `==` coerces | no coercion: `==` is `===` except that `x == null` also matches `undefined`, and the reverse (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
 | structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
@@ -292,13 +332,14 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)).
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
-| top-level statements | run in a generated `main` (root file only) | — |
+| top-level statements | the root file's run in a generated `main`; an imported module's run once when it is evaluated, in Node's order (no top-level `await` there) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
-| `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted); `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |
-| `xs.length = 0` | `xs.truncate(0)`; `length` is read-only (arrays have no holes) | — |
+| `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted), but a chained access reads the changed array as in TypeScript (`xs.sort().join(",")`); other uses of the result are an error with the fix; `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |
+| `xs.length = 0` | the same: setting `length` drops the elements past it; a larger `length` panics (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
-| `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
+| `p.then(f).catch(g)` | the same; `catch(g)` gives the promise's value type | `catch` changing the value type |
+| `p.then(f); p.then(g);`, or `p.then(f)` and later `await p` | a promise has one consumer: the second use is ``use of moved value``; chain the calls or keep the promise `then` returns | shared promises (#212) |
 | `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
 | `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | the same layout, `[runtime, script, ...args]`: the script is the source file under `velt run`, the executable for a built program; each read is a new array, so changing it in place is an error (copy it first) | — |
@@ -306,7 +347,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)).
 | `export default` | named exports only | — |
 | `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit, returning `{ done: true }`); a done result has no `value` (unnarrowed, `r.value` is `T \| null`, so `g().next().value` works); `Iterator<T, E>` carries the error type `next()` throws; `for await` over `AsyncIterable`s, and over arrays of promises | — |
 | generators: `function*`, `yield`, `yield*`, `Generator<T, TReturn, TNext>` | the same, lazy, `Generator<T, E>` (`E`: what the body throws); TS's `Generator<T, void, unknown>` spelling means `Generator<T>`, and a real `TReturn` is an error; no `return value`, `next(value)` (so `yield` has no value) or `throw()`, each an error that says so; a `for...of` over a call allocates nothing; async generators (`AsyncGenerator<T, E>`) likewise, and `yield p` there awaits a promise `p` as in JS | — |
-| arrays, strings, `Map`s and `Set`s are `Iterable`; `a[Symbol.iterator]()` | the same: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds (`sum(xs: Iterable<number>)` takes `[1, 2, 3]`); `x[Symbol.iterator]()` returns an `Iterator<T>`, live for arrays as in JS; map and set iterators see the entries as of the call (JS's are live), and `m.keys()` / `values()` / `entries()` are arrays | — |
+| arrays, strings, `Map`s and `Set`s are `Iterable`; `a[Symbol.iterator]()` | the same: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds (`sum(xs: Iterable<number>)` takes `[1, 2, 3]`); `x[Symbol.iterator]()` returns an `Iterator<T>`, live for arrays as in JS; map and set iterators see the entries as of the call (JS's are live), and `m.keys()` / `values()` / `entries()` are arrays; `for...of` over a map (a variable, field, getter, element or call result, or its `keys()`, `values()`, `entries()`) and `forEach` are live, as in JS | — |
 | `IterableIterator<T>`, `IteratorObject<T>`, `AsyncIterableIterator<T>`, `IteratorResult<T, TReturn>` | the same interfaces (`[Symbol.iterator]()` returns `Iterator<T>`: no covariant returns); generators implement them, and such a value converts to an `Iterable<T>`. `IteratorResult<T, void>` is `IteratorResult<T>`; a real `TReturn` is an error | an `IterableIterator<T>` value converting to `Iterator<T>` (interface values don't convert to the interfaces they extend) |
 | spread, `Array.from`, array destructuring, `new Map` / `new Set` of any iterable (strings, `Map`s, `Set`s, generators) | the same: an iterable is iterated where it stands, destructuring takes only the values it needs and then closes the iterator, and over a direct generator call only the result is allocated | an array-typed spread source is evaluated before the literal's other elements (`[f(), ...g()]` with `g(): T[]` calls `g` first; the elements are still read in place); a nested pattern takes its values after the outer one has taken all of its own |
 | function expressions: `function* () {}`, `async function* () {}`, `function () {}` | generator expressions work, sharing the variables they use as in JS (no recursion through the expression's name); other function expressions are arrows | — |
@@ -315,4 +356,4 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)).
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
-| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |
+| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

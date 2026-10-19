@@ -1,0 +1,27 @@
+// `Set`, `RegExp` (and regex literals), `TextEncoder`, `TextDecoder` and `structuredClone` are
+// globals, as in Node: no import needed (#742). The expected output is Node's.
+function main() {
+  const s = new Set<string>();
+  s.add("a");
+  console.log(s.has("a"), s.size);
+  console.log(/a+/.test("caa"));
+  const re = new RegExp("b+", "g");
+  console.log(re.test("abbb"));
+  console.log(new TextDecoder().decode(new TextEncoder().encode("hi")));
+  const enc = new TextEncoder();
+  const bytes = enc.encode("héllo");
+  console.log(enc.encoding, bytes.length, bytes[1], bytes[2]);
+  const td = new TextDecoder();
+  console.log(td.encoding, td.fatal, td.ignoreBOM, td.decode(enc.encode("\uFEFFok")));
+  const keep = new TextDecoder("UTF8", { ignoreBOM: true });
+  console.log(keep.decode(enc.encode("\uFEFFok")).length);
+  const o = { a: [1, 2] };
+  const c = structuredClone(o);
+  c.a.push(3);
+  console.log(o.a.length, c.a.length);
+  try {
+    new TextDecoder("no-such-encoding");
+  } catch (e) {
+    console.log(e.message);
+  }
+}

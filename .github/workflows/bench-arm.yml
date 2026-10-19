@@ -1,0 +1,273 @@
+# Benchmarks on Linux arm64 (GitHub's ubuntu-24.04-arm runners), for results that need a Linux
+# arm64 machine (#77, #78). Runs only by hand:
+#
+#   gh workflow run bench-arm -f suite=jsx -f ref=<branch|tag|sha> [-f base=main]
+#
+# jsx: bench/jsx/run.sh with release velt (LLVM): the best wall time over 7 runs and the
+#      instructions of one run (valgrind's cachegrind), for the hand-written, precompiled and
+#      generic variants. With `base`, the base ref's compiler, runtime and std build the same
+#      programs (ref's bench/jsx), for an A/B.
+# web: bench/web/run.sh's fortunes test for `velt` and `velt-tsx` (when ref has it), against
+#      Postgres 17 in a service container with bench/web/db's schema and settings.
+#
+# bench/jsx/run.sh comes from this workflow's commit (it has COUNT=valgrind); everything else
+# from `ref`. Each job writes a Markdown summary and uploads its raw output as an artifact. Wall
+# time and req/s on a shared runner are indicative only; instruction counts are the measure.
+name: bench-arm
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Which benchmarks to run.
+        type: choice
+        options: [jsx, web, both]
+        default: jsx
+      ref:
+        description: The branch, tag or commit to measure.
+        type: string
+        default: main
+      base:
+        description: jsx only, optional; a second ref to compare with (its compiler, runtime and std).
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  SUITE: ${{ inputs.suite || 'jsx' }}
+  REF: ${{ inputs.ref || 'main' }}
+  BASE_REF: ${{ inputs.base || '' }}
+
+jobs:
+  jsx:
+    if: (inputs.suite || 'jsx') != 'web'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      # This workflow's run.sh and setup action, whatever `ref` has.
+      - uses: actions/checkout@v4
+        with:
+          path: .bench-arm
+          sparse-checkout: |
+            bench/jsx/run.sh
+            .github/actions/setup
+          sparse-checkout-cone-mode: false
+      - name: bench/jsx/run.sh from this workflow
+        run: |
+          [ -f bench/jsx/main.vlt ] || { echo "::error::$REF has no bench/jsx"; exit 1; }
+          cp .bench-arm/bench/jsx/run.sh bench/jsx/run.sh
+      - uses: ./.bench-arm/.github/actions/setup
+        with:
+          tools: "false"
+      - name: valgrind and clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q valgrind clang
+          echo "VELT_CLANG=$(command -v clang)" >> "$GITHUB_ENV"
+      - name: build velt (release)
+        run: |
+          cargo build --release -q -p veltc -p velt_rt
+          target/release/velt --version
+          target/release/velt doctor
+      - name: build the base's velt (release)
+        if: env.BASE_REF != ''
+        run: |
+          git fetch -q --depth 1 origin "$BASE_REF"
+          mkdir .base
+          git archive FETCH_HEAD | tar -x -C .base
+          echo "BASE_SHA=$(git rev-parse --short FETCH_HEAD)" >> "$GITHUB_ENV"
+          cd .base
+          rustup toolchain install
+          cargo build --release -q -p veltc -p velt_rt
+      - name: bench/jsx/run.sh
+        env:
+          COUNT: valgrind
+          VARIANTS: hand precompiled generic
+        run: |
+          set -o pipefail
+          out="$RUNNER_TEMP/bench-jsx"
+          mkdir -p "$out"
+          {
+            echo "ref=$REF $(git rev-parse --short HEAD)"
+            echo "base=$BASE_REF ${BASE_SHA:-}"
+            echo "machine=$(uname -sm), $(nproc) cpus"
+            echo "clang=$($VELT_CLANG --version | head -n 1)"
+          } > "$out/info.txt"
+          LABEL=ref bench/jsx/run.sh | tee "$out/ref.md"
+          if [ -n "$BASE_REF" ]; then
+            VELT="$PWD/.base/target/release/velt" VELT_STD="$PWD/.base/std" \
+              OUT="$PWD/target/bench-jsx-base" LABEL=base bench/jsx/run.sh | tee "$out/base.md"
+          fi
+      - name: summary
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/bench-jsx"
+          python3 - "$out" >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import os, sys
+          out = sys.argv[1]
+          def table(name):
+              rows = {}
+              path = os.path.join(out, name)
+              if not os.path.exists(path):
+                  return rows
+              for line in open(path):
+                  cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                  if len(cells) == 4 and cells[2].isdigit():
+                      rows[cells[1]] = (int(cells[2]), int(cells[3]) if cells[3].isdigit() else None)
+              return rows
+          info = open(os.path.join(out, "info.txt")).read().splitlines() if os.path.exists(os.path.join(out, "info.txt")) else []
+          ref, base = table("ref.md"), table("base.md")
+          print("### bench/jsx on Linux arm64\n")
+          for line in info:
+              print(f"- {line}")
+          print()
+          if not ref:
+              print("No results (the run stopped before the benchmark finished).")
+              sys.exit()
+          def fmt(n):
+              return "-" if n is None else f"{n:,}".replace(",", " ")
+          if base:
+              print("| variant | base: ms | base: instructions | ref: ms | ref: instructions | Δ instructions |")
+              print("|---|---:|---:|---:|---:|---:|")
+              for v, (ms, instr) in ref.items():
+                  bms, binstr = base.get(v, (None, None))
+                  delta = f"{100 * (instr - binstr) / binstr:+.1f}%" if instr and binstr else "-"
+                  print(f"| {v} | {bms if bms is not None else '-'} | {fmt(binstr)} | {ms} | {fmt(instr)} | {delta} |")
+          else:
+              print("| variant | best ms | instructions |")
+              print("|---|---:|---:|")
+              for v, (ms, instr) in ref.items():
+                  print(f"| {v} | {ms} | {fmt(instr)} |")
+          print()
+          for label, rows in (("base", base), ("ref", ref)):
+              hand = rows.get("hand", (0, None))[1]
+              pre = rows.get("precompiled", (0, None))[1]
+              if hand and pre:
+                  print(f"- {label}: precompiled / hand = {pre / hand:.3f} in instructions")
+          print()
+          print("Instructions are counted by valgrind's cachegrind in one run of each variant and "
+                "are the acceptance measure. Wall time (best of 7) on a shared GitHub runner is "
+                "indicative only.")
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-jsx-arm64
+          path: ${{ runner.temp }}/bench-jsx
+          if-no-files-found: ignore
+
+  web:
+    if: (inputs.suite || 'jsx') != 'jsx'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    # The bench/web/db settings (db.sh) are applied after seeding, with a restart: a service
+    # container can't take postgres' command-line options or mount init.sql before the checkout.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: benchmarkdbuser
+          POSTGRES_PASSWORD: benchmarkdbpass
+          POSTGRES_DB: hello_world
+        ports: ["5432:5432"]
+        options: >-
+          --shm-size=1g --health-cmd "pg_isready -U benchmarkdbuser -d hello_world"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://benchmarkdbuser:benchmarkdbpass@127.0.0.1:5432/hello_world
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: actions/checkout@v4
+        with:
+          path: .bench-arm
+          sparse-checkout: .github/actions/setup
+          sparse-checkout-cone-mode: false
+      - uses: ./.bench-arm/.github/actions/setup
+        with:
+          tools: "false"
+      - name: wrk, psql and clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q wrk postgresql-client clang
+          echo "VELT_CLANG=$(command -v clang)" >> "$GITHUB_ENV"
+      - name: seed the database (bench/web/db)
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f bench/web/db/init.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+            -c "ALTER SYSTEM SET max_connections = 2000" \
+            -c "ALTER SYSTEM SET shared_buffers = '256MB'" \
+            -c "ALTER SYSTEM SET effective_cache_size = '1GB'" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET checkpoint_timeout = '15min'" \
+            -c "ALTER SYSTEM SET max_wal_size = '4GB'" \
+            -c "ALTER SYSTEM SET work_mem = '16MB'" \
+            -c "ALTER SYSTEM SET max_prepared_transactions = 0"
+          docker restart "${{ job.services.postgres.id }}"
+          for _ in $(seq 1 60); do
+            if [ "$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM world' 2>/dev/null)" = 10000 ]; then
+              psql "$DATABASE_URL" -tAc "SELECT version()" -c "SHOW max_connections"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::postgres did not come back"
+          exit 1
+      - name: build velt (release)
+        run: |
+          cargo build --release -q -p veltc -p velt_rt
+          target/release/velt --version
+          target/release/velt doctor
+      - name: bench/web/run.sh (fortunes)
+        run: |
+          set -o pipefail
+          servers=velt
+          if [ -d bench/web/velt-tsx ]; then servers="velt velt-tsx"; fi
+          out="$RUNNER_TEMP/bench-web"
+          mkdir -p "$out"
+          {
+            echo "ref=$REF $(git rev-parse --short HEAD)"
+            echo "machine=$(uname -sm), $(nproc) cpus"
+            echo "servers=$servers"
+          } > "$out/info.txt"
+          SERVERS="$servers" TESTS=fortunes VELT="$PWD/target/release/velt" \
+            OUT="$out/linux-arm64-$(date -u +%Y-%m-%d-%H%M)" bench/web/run.sh 2>&1 | tee "$out/run.log"
+      - name: summary
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/bench-web"
+          {
+            echo "### bench/web fortunes on Linux arm64"
+            echo
+            sed 's/^/- /' "$out/info.txt" 2>/dev/null || true
+            echo
+            jsonl=$(ls "$out"/*.jsonl 2>/dev/null | head -n 1)
+            if [ -n "$jsonl" ]; then
+              echo "Best req/s over the connection levels (bench/web/summarize.py):"
+              echo
+              python3 bench/web/summarize.py "$jsonl"
+              echo
+              echo "Every level:"
+              echo
+              grep '^|' "${jsonl%.jsonl}.md"
+            else
+              echo "No results (the run stopped before the benchmark finished)."
+            fi
+            echo
+            echo "The database, the servers and wrk share one shared GitHub runner: req/s are"
+            echo "indicative only (compare servers within one run, not across runs)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-web-arm64
+          path: ${{ runner.temp }}/bench-web
+          if-no-files-found: ignore

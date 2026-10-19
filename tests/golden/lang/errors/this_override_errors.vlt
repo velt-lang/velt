@@ -1,0 +1,49 @@
+// An override of a method returning `this` must return `this` too (TypeScript's TS2416): a call
+// through the base class's type gives the receiver's class. A written result other than `this`,
+// and an unwritten one whose body returns another object, deeper in the hierarchy or on a
+// generic base.
+class A {
+  name = "A";
+  m(): this {
+    return this;
+  }
+}
+
+class B extends A {
+  big: string[] = ["b1", "b2", "b3"];
+}
+
+class C extends B {
+  override m(): A {
+    return new A();
+  }
+}
+
+class D extends B {
+  override m() {
+    return new A();
+  }
+}
+
+class E extends D {
+  override m(): B {
+    return new B();
+  }
+}
+
+class G<T> {
+  v: T[] = [];
+  add(x: T): this {
+    this.v.push(x);
+    return this;
+  }
+}
+
+class H extends G<number> {
+  override add(x: number): G<number> {
+    return new G<number>();
+  }
+}
+
+const b: B = new C();
+console.log(b.m().big.length);

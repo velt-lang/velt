@@ -1,0 +1,5 @@
+private_names_in_nullable.vlt:9:18: error: the right operand of `in` may be null: its type is `A | null`
+test it first: `o !== null && #x in o`
+private_names_in_nullable.vlt:12:18: error: the right operand of `in` may be null
+private_names_in_nullable.vlt:15:18: error: the right operand of `in` may be null: its type is `A | null`
+test that it is not null first

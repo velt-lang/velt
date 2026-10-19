@@ -1,16 +1,16 @@
 // Minimal HTTP server: `velt run --release examples/http_hello.vlt`, then
 // `oha -z 10s -c 256 http://127.0.0.1:8080/` (or curl). Stops after `VELT_HELLO_SECONDS` if set.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const hits = shared(0);
   const counter = hits.clone();
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     counter.add(1);
-    if (req.path == "/json") {
+    if (new URL(req.url).pathname == "/json") {
       return Response.json({ message: "Hello, World!", hits: counter.get() });
     }
-    return Response.text("Hello, World!");
+    return new Response("Hello, World!");
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);
   const seconds = parseInt(process.env.VELT_HELLO_SECONDS ?? "0", 10);

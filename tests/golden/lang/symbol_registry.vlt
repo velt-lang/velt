@@ -1,0 +1,26 @@
+// A module constant initialized with `Symbol.for("k")` is the registry's symbol for `k`, made
+// while compiling (each use costs no call): `Symbol.for(k)` at run time, with the key known only
+// then, gives the same symbol, and `Symbol.keyFor` finds its key. Expected output from node.
+const R = Symbol.for("app:r");
+const R2 = Symbol.for("app:r");
+const Q = Symbol.for("app:q");
+
+function key(parts: string[]): string {
+  return parts.join(":");
+}
+
+function main() {
+  const k = key(["app", "r"]);
+  console.log(Symbol.for(k) === R, R === R2, R === Q, Q === Symbol.for(key(["app", "q"])));
+  console.log(Symbol.keyFor(R), Symbol.keyFor(Q), R.description, String(Q));
+  const z = Symbol.for(key(["app", "z"]));
+  console.log(z === Symbol.for("app:z"), Symbol.keyFor(z), z === R);
+  const syms = [Symbol("a"), Symbol.for(k), Symbol("c")];
+  let n = 0;
+  for (let i = 0; i < 30; i++) {
+    if (syms[i % 3] === R) {
+      n++;
+    }
+  }
+  console.log(n);
+}

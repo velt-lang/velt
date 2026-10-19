@@ -1,0 +1,73 @@
+// A table is read-only data: what the compiler can't follow, and so could modify it, is an
+// error. That is a function value it is passed to (or passed along with), and a binding that
+// would take it over, however the table is named. `K.slice()` is the copy to use instead.
+import * as lib from "./_module_const_table_escapes_lib";
+
+const K: number[] = [10, 20, 30];
+const L: number[] = [1, 2];
+
+class Limits {
+  static readonly STEPS: u8[] = [1, 2, 4];
+}
+
+function apply(f: (xs: number[]) => void, xs: number[]) {
+  f(xs);
+}
+
+function each(fs: ((xs: number[]) => void)[]) {
+  for (const f of fs) {
+    f(K);
+  }
+}
+
+// Routes that hand the function value something other than the table's name: each moves the
+// table or passes it on (an error; `K ?? L` is `K`, which is never null).
+function pick(c: boolean): number[] {
+  return c ? K : L;
+}
+
+function identity<T>(x: T): T {
+  return x;
+}
+
+interface Sink {
+  put(xs: number[]): void;
+}
+
+class Appender implements Sink {
+  put(xs: number[]) {
+    xs.push(1);
+  }
+}
+
+function feed(s: Sink) {
+  s.put(K);
+}
+
+function main() {
+  const w = (xs: number[]) => {
+    xs[0] = 9;
+    xs.push(10);
+    return xs.length;
+  };
+  console.log(w(K), w(K!), w(lib.T));
+  const fs = [
+    (xs: number[]) => xs.fill(0),
+    (xs: number[]) => {
+      xs.length = 1;
+    },
+  ];
+  fs[0](K);
+  fs.forEach((f) => f(K));
+  apply((xs) => xs.push(1), K);
+  apply(fs[1], K);
+  each(fs);
+  const a = K!;
+  const b = lib.T;
+  const c = Limits.STEPS;
+  a.push(4);
+  console.log(a, b, c);
+  console.log(w(Math.random() > 2 ? K : L), w(K ?? L), w((K as number[])), w(identity(K)));
+  console.log(w(pick(true)));
+  feed(new Appender());
+}

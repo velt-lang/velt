@@ -1,0 +1,22 @@
+// A sync callback assigning a captured variable, held by an object the HTTP handler captures,
+// though nothing reads the field holding it (#873): each request's copy of `w` copies the
+// callback, and those copies share `last` across threads.
+import { serve } from "velt:http";
+
+type Fn = (v: string) => void;
+
+class Widget {
+  name: string = "w";
+  onClick: Fn = (v) => {};
+}
+
+async function main() {
+  let last = "";
+  const w = new Widget();
+  w.onClick = (v: string) => { last = `${v}${last.length}`; };
+  const a = await serve({ port: 0 }, async (req) => {
+    return new Response(w.name);
+  });
+  await a.shutdown();
+  console.log(last.length);
+}

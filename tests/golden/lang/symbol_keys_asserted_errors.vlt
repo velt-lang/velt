@@ -1,0 +1,11 @@
+// A computed key in an asserted literal names a member only when it is a module constant
+// holding a symbol (a `unique symbol`): a `let` has the type `symbol`, which names no member
+// Velt can lay out (#923).
+let KEY = Symbol("k");
+
+type Tagged = { tag: string };
+
+function main() {
+  const t = { tag: "b", [KEY]: 1 } as Tagged;
+  console.log(t);
+}

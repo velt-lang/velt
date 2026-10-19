@@ -32,6 +32,11 @@ impl FnCx<'_, '_> {
             return Ok(Instance::Yes);
         }
         let n = self.cx.adt(class).map_or(0, |a| a.generics.len());
+        // `any` / `unknown` tested for a generic class: its type arguments are known only at
+        // run time, so the value stays dynamic (`dynamic_narrow`).
+        if let Some(any) = self.dynamic_generic_instance(t, n > 0) {
+            return Ok(Instance::Maybe(any));
+        }
         let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let own = self.cx.ty.intern(TyKind::Adt(class, params));
         let pattern = match self.cx.ty.kind(t).clone() {
@@ -65,7 +70,7 @@ impl FnCx<'_, '_> {
         if slots.iter().any(Option::is_none) {
             return Err(());
         }
-        Ok(Instance::Maybe(self.cx.ty.subst_known(own, &slots)))
+        Ok(Instance::Maybe(self.cx.subst_known(own, &slots)))
     }
 
     /// The type of the class `ancestor` in the base chain of class type `t`.
@@ -167,7 +172,7 @@ impl FnCx<'_, '_> {
     /// "this `instanceof` test is always false".
     fn never_instance(&mut self, sty: TyId, class: DefId, span: Span) {
         let cn = self.class_def_name(class);
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let tn = self.cx.display(inner);
         let (msg, note) = if self.cx.union_def(inner).is_some() {
             (
@@ -202,7 +207,7 @@ impl FnCx<'_, '_> {
 
 /// `p` (a member pattern ending in a wildcard) with the wildcard replaced by the test for
 /// `class`.
-fn instance_leaf(p: hir::Pat, class: DefId) -> hir::Pat {
+pub(crate) fn instance_leaf(p: hir::Pat, class: DefId) -> hir::Pat {
     let kind = match p.kind {
         P::Wildcard => P::InstanceOf(class),
         P::Some(inner) => P::Some(Box::new(instance_leaf(*inner, class))),

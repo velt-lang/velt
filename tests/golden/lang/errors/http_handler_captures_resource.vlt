@@ -1,7 +1,7 @@
 // An HTTP handler runs on several threads at once, and each call of it would share what it
 // captured: a resource without `clone()` cannot be captured (its count would be updated from
 // several threads).
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class Store {
   name: string;
@@ -16,7 +16,7 @@ class Store {
 async function main() {
   const store = new Store("store");
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    return Response.text(store.name);
+    return new Response(store.name);
   });
   await server.shutdown();
 }

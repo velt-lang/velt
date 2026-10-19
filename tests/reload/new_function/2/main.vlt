@@ -1,5 +1,5 @@
 // A new function swaps in (it gets its own slot and trampoline).
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 function shout(text: string): string {
   return `${text.toUpperCase()}!`;
@@ -7,7 +7,7 @@ function shout(text: string): string {
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    return Response.text(shout("plain"));
+    return new Response(shout("plain"));
   });
   console.log(`listening on ${server.port}`);
   await sleep(1000000000);

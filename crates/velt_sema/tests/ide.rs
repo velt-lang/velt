@@ -174,7 +174,7 @@ fn members_of_values_and_types() {
         arr_members
             .iter()
             .any(|(n, _, t)| n == "map"
-                && t.starts_with("(f: (arg0: i64, arg1: i64) => U throws E)")),
+                && t.starts_with("(f: (arg0: f64, arg1: i64) => U throws E)")),
         "{arr_members:?}"
     );
 }
@@ -308,7 +308,7 @@ function main() { const e = <a href=\"/x\">x</a>; }";
     assert_eq!(anchor.kind, DefKind::Field);
     assert_eq!(
         ty,
-        "{ href: string | null; class: string | null; title: string | null }"
+        "{ href: string | undefined; class: string | undefined; title: string | undefined }"
     );
     // The tag in the source names the same field, and its attributes are the members.
     let used = a.def_at(file, at(src, "<a", 0, 1)).expect("tag");
@@ -318,7 +318,10 @@ function main() { const e = <a href=\"/x\">x</a>; }";
         .into_iter()
         .map(|(n, _, t)| (n, t))
         .collect();
-    assert_eq!(attrs[0], ("href".to_string(), "string | null".to_string()));
+    assert_eq!(
+        attrs[0],
+        ("href".to_string(), "string | undefined".to_string())
+    );
     assert_eq!(attrs.len(), 3);
     // A file without JSX has no tags.
     let (plain, plain_file) = analyze("function main() {}");
@@ -419,4 +422,28 @@ function main() { const e = <Card title=\"t\"></Other>; }";
         "{found:?}"
     );
     assert!(!a.references(&card).iter().any(|s| s.lo == other));
+}
+
+const INTERSECTION: &str = "type Named = { name: string };
+type Person = Named & { age: i64 };
+function main() {
+  const p: Person = { name: \"a\", age: 3 };
+  console.log(p.name, p.age);
+}
+";
+
+/// A field of an intersection's object type is declared where the first operand that has it
+/// writes it.
+#[test]
+fn def_at_resolves_intersection_fields_to_their_operand() {
+    let (a, file) = analyze(INTERSECTION);
+    let name = a
+        .def_at(file, at(INTERSECTION, "p.name", 0, 2))
+        .expect("name");
+    assert_eq!((name.name.as_str(), name.kind), ("name", DefKind::Field));
+    assert_eq!(name.span.lo, at(INTERSECTION, "name: string", 0, 0));
+    let age = a
+        .def_at(file, at(INTERSECTION, "p.age", 0, 2))
+        .expect("age");
+    assert_eq!(age.span.lo, at(INTERSECTION, "age: i64", 0, 0));
 }

@@ -26,7 +26,13 @@ enum BinTok {
     Op(BinaryOp),
     As,
     InstanceOf,
+    /// `e satisfies T`
+    Satisfies,
 }
+
+/// The prelude function `e satisfies T` is parsed as a call of: `__satisfies<T>(e)` checks `e`
+/// against `T` (with `T` as its context, like an annotated initializer) and returns it.
+pub(crate) const SATISFIES_FN: &str = "__satisfies";
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self) -> PResult<Expr> {
@@ -133,7 +139,7 @@ impl<'a> Parser<'a> {
         }
         let then = match self.skip_speculated_branch(question) {
             Some(skipped) => skipped,
-            None => self.guarded(|p| p.parse_assign())?,
+            None => self.guarded(|p| p.allow_in(|p| p.parse_assign()))?,
         };
         self.expect(Tok::Colon)?;
         let els = self.guarded(|p| p.parse_assign())?;
@@ -176,12 +182,18 @@ impl<'a> Parser<'a> {
             Tok::Pipe => (BitOr, PREC_BITOR, 1),
             Tok::Caret => (BitXor, PREC_BITXOR, 1),
             Tok::Amp => (BitAnd, PREC_BITAND, 1),
-            Tok::EqEq | Tok::EqEqEq => (Eq, PREC_EQ, 1),
-            Tok::BangEq | Tok::BangEqEq => (NotEq, PREC_EQ, 1),
+            Tok::EqEq => (Eq, PREC_EQ, 1),
+            Tok::EqEqEq => (StrictEq, PREC_EQ, 1),
+            Tok::BangEq => (NotEq, PREC_EQ, 1),
+            Tok::BangEqEq => (StrictNotEq, PREC_EQ, 1),
             Tok::Lt => (Lt, PREC_REL, 1),
             Tok::LtEq => (LtEq, PREC_REL, 1),
+            Tok::Kw(Kw::In) if !self.no_in => (In, PREC_REL, 1),
             Tok::Kw(Kw::As) => return Some((BinTok::As, PREC_REL, 1)),
             Tok::Kw(Kw::Instanceof) => return Some((BinTok::InstanceOf, PREC_REL, 1)),
+            Tok::Ident if self.at_word("satisfies") => {
+                return Some((BinTok::Satisfies, PREC_REL, 1))
+            }
             Tok::Shl => (Shl, PREC_SHIFT, 1),
             Tok::Plus => (Add, PREC_ADD, 1),
             Tok::Minus => (Sub, PREC_ADD, 1),
@@ -215,7 +227,11 @@ impl<'a> Parser<'a> {
     /// Binary operators with precedence >= `min_prec`.
     fn parse_binary(&mut self, min_prec: u8) -> PResult<Expr> {
         let lo = self.cur_lo();
-        let mut lhs = self.parse_unary()?;
+        let mut lhs = if self.at(Tok::PrivateName) && self.nth(1) == Tok::Kw(Kw::In) {
+            self.parse_private_in(lo)?
+        } else {
+            self.parse_unary()?
+        };
         while let Some((op, prec, ntoks)) = self.peek_binop() {
             if prec < min_prec {
                 break;
@@ -232,6 +248,23 @@ impl<'a> Parser<'a> {
                     expr: Box::new(lhs),
                     ty: self.parse_instanceof_type()?,
                 },
+                BinTok::Satisfies => {
+                    let callee_span = self.span_from(lo);
+                    let ty = self.parse_cast_type()?;
+                    let callee = self.mk_expr(
+                        ExprKind::Ident(Ident {
+                            name: SATISFIES_FN.into(),
+                            span: callee_span,
+                        }),
+                        callee_span,
+                    );
+                    ExprKind::Call {
+                        callee: Box::new(callee),
+                        type_args: vec![ty],
+                        args: vec![lhs],
+                        optional: false,
+                    }
+                }
                 BinTok::Op(op) => {
                     let next_min = if op == BinaryOp::Pow { prec } else { prec + 1 };
                     let rhs = self.guarded(|p| p.parse_binary(next_min))?;
@@ -246,6 +279,23 @@ impl<'a> Parser<'a> {
             lhs = self.mk_expr(kind, span);
         }
         Ok(lhs)
+    }
+
+    /// `#x in o`: an ES brand check (`in` is a binary operator only after a private name). It
+    /// is a relational operand, so the operators that follow apply to it as usual.
+    fn parse_private_in(&mut self, lo: u32) -> PResult<Expr> {
+        let name = self.take_ident();
+        let span = name.span;
+        let lhs = self.mk_expr(ExprKind::Ident(name), span);
+        self.bump(); // in
+        let rhs = self.guarded(|p| p.parse_binary(PREC_REL + 1))?;
+        let span = self.span_from(lo);
+        let kind = ExprKind::Binary {
+            op: BinaryOp::In,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        };
+        Ok(self.mk_expr(kind, span))
     }
 
     pub(super) fn parse_unary(&mut self) -> PResult<Expr> {
@@ -268,7 +318,7 @@ impl<'a> Parser<'a> {
             {
                 self.delete_expr()?
             }
-            Tok::Kw(Kw::Void) => self.void_expr()?,
+            Tok::Kw(Kw::Void) => self.finish_prefix(UnaryOp::Void)?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
                 op: self.bump_update_op(),
                 prefix: true,

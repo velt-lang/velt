@@ -8,13 +8,13 @@ failing to start the program throws `IoError` (e.g. `ENOENT`).
   `ExecOptions { cwd?; env?: Map; clearEnv?; input? }`.
 - `execShell(command, opts)` / `execShellSync`: run through `sh -c` or `cmd /C`. Never pass
   untrusted text.
-- `ExecResult { code; stdout; stderr; ok }`: `code` is `128 + n` when the process was killed by
+- `ExecResult { code: number; stdout; stderr; ok }`: `code` is `128 + n` when the process was killed by
   signal `n`.
 - `spawn(program, args = [], opts: SpawnOptions = {}): ChildProcess`. `SpawnOptions` has
   `cwd env clearEnv stdin stdout stderr`; the stdio fields take `"pipe"`, `"inherit"` (the
   default) or `"ignore"`. A child that inherits stdout or stderr prints after everything the
   program printed before starting it: `spawn` writes buffered output to the OS first.
-- `ChildProcess { pid }`: a handle like `TcpStream`, released by `close()`.
+- `ChildProcess { pid: number }`: a handle like `TcpStream`, released by `close()`.
   - `write(data)`, `closeStdin()`
   - `readStdout(max = 0)` / `readStderr`: `""` means end of output
   - `readStdoutBytes` / `readStderrBytes`

@@ -1,0 +1,28 @@
+// check: no leaks
+// `Set`s and `Map`s of a single literal type (zero-sized keys or values, #1271 review): built
+// from an `as const` array or a `"a"[]`, added to, iterated, copied and deleted from.
+function main(): void {
+  const a = ["a"] as const;
+  const s = new Set(a);
+  console.log(s, s.size, s.has("a"));
+  const d: "a"[] = ["a", "a"];
+  console.log(new Set(d), new Set(d).size);
+  new Set<"a">().add("a");
+  new Map<"a", number>().set("a", 1);
+  const t = new Set<"a">();
+  t.add("a");
+  t.add("a");
+  t.delete("a");
+  t.add("a");
+  console.log(t, [...t], Array.from(t));
+  for (const x of t) console.log(x);
+  const m = new Map<"a", number>();
+  m.set("a", 1);
+  console.log(m, m.get("a"));
+  const lit = new Map<"a", "b">();
+  lit.set("a", "b");
+  for (const [k, v] of lit) console.log(k, v);
+  console.log([...lit.keys()], [...lit.values()], lit.has("a"));
+  lit.delete("a");
+  console.log(lit.size);
+}

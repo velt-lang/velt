@@ -9,6 +9,7 @@ use velt_vir::vir::{
     Stmt, Terminator, Ty,
 };
 
+use super::flow::Update;
 use super::webs::Webs;
 use super::Allocator;
 use crate::srclocs::{prepend_stmts, push_stmt, rewrite_stmts};
@@ -16,7 +17,13 @@ use crate::sroa::zero;
 use crate::visit::places_mut;
 
 /// Replace the objects of the remaining webs of `func` by locals.
-pub(super) fn apply(aggs: &[AggLayout], allocator: Allocator, func: &mut Function, webs: &Webs) {
+pub(super) fn apply(
+    aggs: &[AggLayout],
+    allocator: Allocator,
+    func: &mut Function,
+    webs: &Webs,
+    updates: &[Update],
+) {
     let mut zeros = Zeros::default();
     let mut objs: Vec<Option<(Local, AggId)>> = vec![None; func.locals.len()];
     let mut entry = Vec::new();
@@ -26,9 +33,11 @@ pub(super) fn apply(aggs: &[AggLayout], allocator: Allocator, func: &mut Functio
         };
         let name = func.locals[i].name.as_ref().map(|n| format!("{n}.obj"));
         let l = Local(func.locals.len() as u32);
+        // The object's fields, not the variable (a pointer): no debug description (only release
+        // builds run this, and they describe none).
         func.locals.push(LocalDecl {
-            ty: Ty::Agg(obj),
-            name,
+            debug: None,
+            ..LocalDecl::new(Ty::Agg(obj), name)
         });
         *slot = Some((l, obj));
         entry.push((l, obj));
@@ -38,14 +47,23 @@ pub(super) fn apply(aggs: &[AggLayout], allocator: Allocator, func: &mut Functio
         .map(|(l, obj)| zeros.assign(aggs, func, l, obj))
         .collect();
     let obj_of = |l: Local| objs.get(l.0 as usize).copied().flatten();
+    let obj_local = |l: Local| obj_of(l).expect("ICE: heap_sroa update outside a web").0;
+    let mut pending = updates.iter().peekable();
     for bi in 0..func.blocks.len() {
-        rewrite_stmts(func, bi, |s, out| match web_stmt(&s, &obj_of) {
-            WebStmt::Copy(dst, src) => {
-                out.push(s);
-                out.push(copy(dst, src));
+        let mut at = 0;
+        rewrite_stmts(func, bi, |s, out| {
+            match web_stmt(&s, &obj_of) {
+                WebStmt::Copy(dst, src) => {
+                    out.push(s);
+                    out.push(copy(dst, src));
+                }
+                WebStmt::Fill(l, obj) => out.push(zeros.fill(l, obj)),
+                WebStmt::Other => out.push(s),
             }
-            WebStmt::Fill(l, obj) => out.push(zeros.fill(l, obj)),
-            WebStmt::Other => out.push(s),
+            while let Some(u) = pending.next_if(|u| (u.block, u.stmt) == (bi, at)) {
+                out.push(copy(obj_local(u.dst), obj_local(u.src)));
+            }
+            at += 1;
         });
         rewrite_term(allocator, func, bi, &obj_of, &zeros);
     }
@@ -162,10 +180,7 @@ impl Zeros {
             })
             .collect();
         let l = Local(func.locals.len() as u32);
-        func.locals.push(LocalDecl {
-            ty: Ty::Agg(id),
-            name: None,
-        });
+        func.locals.push(LocalDecl::new(Ty::Agg(id), None));
         self.inits
             .push(Stmt::Assign(Place::local(l), Rvalue::Aggregate(id, ops)));
         self.locals.insert(id, l);

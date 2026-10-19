@@ -26,10 +26,14 @@ impl FnLower<'_, '_> {
             .enumerate()
             .rev()
             .find_map(|(i, s)| match s.kind {
-                ScopeKind::Try { handler, slot, ty } => Some((i, handler, slot, ty)),
+                ScopeKind::Try { handler, slot, ty } => Some(Some((i, handler, slot, ty))),
+                ScopeKind::Uncaught => Some(None),
                 _ => None,
             });
-        if let Some((depth, handler, slot, ty)) = handler {
+        if let Some(None) = handler {
+            return self.uncaught_error(err, from);
+        }
+        if let Some(Some((depth, handler, slot, ty))) = handler {
             let err = self.widen_error(err, from, ty);
             self.store(Place::local(slot), err);
             self.emit_drops_from(depth + 1);
@@ -47,6 +51,21 @@ impl FnLower<'_, '_> {
         } else {
             self.exit_return(unit());
         }
+    }
+
+    /// An error that leaves a module state initializer (`ScopeKind::Uncaught`): print
+    /// `Uncaught …` and end the process with 1.
+    fn uncaught_error(&mut self, err: Operand, from: TyId) {
+        let vt = self.cx.ty(from);
+        let p = match vt {
+            Ty::Unit => Place::local(self.temp(Ty::U8)),
+            _ => Place::local(self.copy_to_temp(err, vt)),
+        };
+        self.report_uncaught(&p, from);
+        if vt != Ty::Unit {
+            self.drop_glue(p, from);
+        }
+        self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
     }
 
     /// Write `Err(err)` through the out-pointer (`ret_ty` is the declared or implied Result).
@@ -190,6 +209,10 @@ impl FnLower<'_, '_> {
         self.push_scope(ScopeKind::Block);
         match local.and_then(|l| self.local_target(l).map(|p| (l, p))) {
             Some((l, p)) => {
+                if self.info[l.0 as usize].cell && !self.dead() {
+                    // A caught error a closure assigns: a new cell for it (cells.rs).
+                    self.new_cell(l);
+                }
                 self.store(p, Operand::Copy(Place::local(slot)));
                 if self.info[l.0 as usize].droppable && !self.dead() {
                     self.mark_init(l);
@@ -198,6 +221,8 @@ impl FnLower<'_, '_> {
             }
             None => self.drop_glue(Place::local(slot), err_ty),
         }
+        // The handler's statements are lowered here, not through `block`.
+        self.note_scope_ends(handler, false);
         for s in &handler.stmts {
             self.stmt(s);
         }

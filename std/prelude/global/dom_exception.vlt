@@ -1,0 +1,3 @@
+// Global (loaded when a module names it): the WebIDL `DOMException` web APIs throw
+// (docs/std/prelude.md).
+export { DOMException } from "velt:dom_exception";

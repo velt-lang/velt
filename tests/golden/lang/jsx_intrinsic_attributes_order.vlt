@@ -1,0 +1,57 @@
+// @jsxImportSource ./_jsx_attrs
+
+// The attributes of a component element are evaluated in source order, whether they are props,
+// attributes of `JSX.IntrinsicAttributes` or spread sources; then the children, then the key, as
+// TypeScript's `jsx(C, { ... }, key)`. A key after a spread is evaluated in its place, as
+// `createElement(C, { ...o, key })`. The output is Node's for the same source.
+
+import { renderToStringSync } from "velt:jsx";
+
+function Counter(props: { start: number; label: string }): JSX.Element {
+  return (
+    <p>
+      {props.label} {props.start}
+    </p>
+  );
+}
+
+function Box(props: { title: string; children: string }): JSX.Element {
+  return (
+    <section>
+      {props.title} {props.children}
+    </section>
+  );
+}
+
+function s(x: string): string {
+  console.log(`eval ${x}`);
+  return x;
+}
+
+function n(x: number): number {
+  console.log(`eval ${x}`);
+  return x;
+}
+
+function source(name: string): { start: number } {
+  console.log(`eval spread ${name}`);
+  return { start: 5 };
+}
+
+function main() {
+  console.log(renderToStringSync(<Counter label={s("label")} key={s("key")} start={n(1)} />));
+  console.log(
+    renderToStringSync(<Counter client:media={s("media")} start={n(2)} label={s("label")} />),
+  );
+  console.log(
+    renderToStringSync(<Counter label={s("first")} {...source("o")} client:media={s("after")} />),
+  );
+  console.log(renderToStringSync(<Counter {...source("k")} key={s("key")} label={s("label")} />));
+  console.log(
+    renderToStringSync(
+      <Box key={s("box key")} title={s("title")}>
+        {s("child")}
+      </Box>,
+    ),
+  );
+}

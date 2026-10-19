@@ -2,21 +2,22 @@
 // pinned to its version); requests that start after the swap run the new code. `/slow` waits
 // until `/release` (new in version 2) closes the gate, so it is in flight across the swap.
 import { channel } from "velt:channel";
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const gate = channel<bool>();
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    if (req.path == "/slow") {
+    const path = new URL(req.url).pathname;
+    if (path == "/slow") {
       console.log("slow request started");
       await gate.receive();
-      return Response.text("slow v2");
+      return new Response("slow v2");
     }
-    if (req.path == "/release") {
+    if (path == "/release") {
       gate.close();
-      return Response.text("released");
+      return new Response("released");
     }
-    return Response.text("v2");
+    return new Response("v2");
   });
   console.log(`listening on ${server.port}`);
   await sleep(1000000000);

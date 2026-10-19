@@ -1,0 +1,2 @@
+spread_tuple_callee_effects.vlt:27:37
+error: a spread argument of a tuple after a function or receiver with effects must be a variable or a field (not a call or a getter)

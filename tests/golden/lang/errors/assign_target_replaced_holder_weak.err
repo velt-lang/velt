@@ -1,0 +1,2 @@
+assign_target_replaced_holder_weak.vlt:19:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_weak.vlt:33:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

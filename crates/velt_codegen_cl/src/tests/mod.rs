@@ -23,22 +23,8 @@ pub(crate) struct FuncBuilder {
 impl FuncBuilder {
     /// New function; params occupy locals `0..params.len()`.
     pub fn new(symbol: &str, params: &[Ty], ret: Ty, linkage: Linkage) -> Self {
-        let locals = params
-            .iter()
-            .map(|&ty| LocalDecl { ty, name: None })
-            .collect();
         FuncBuilder {
-            f: Function {
-                symbol: symbol.into(),
-                params: params.to_vec(),
-                ret,
-                locals,
-                blocks: vec![],
-                linkage,
-                locs: vec![],
-                param_attrs: vec![],
-                is_poll: false,
-            },
+            f: Function::new(symbol.into(), params.to_vec(), ret, linkage),
         }
     }
     /// New function with internal linkage.
@@ -52,7 +38,7 @@ impl FuncBuilder {
     }
     /// Add a local of type `ty`.
     pub fn local(&mut self, ty: Ty) -> Local {
-        self.f.locals.push(LocalDecl { ty, name: None });
+        self.f.locals.push(LocalDecl::new(ty, None));
         Local(self.f.locals.len() as u32 - 1)
     }
     /// Add a block (terminator defaults to `Unreachable`).
@@ -164,10 +150,7 @@ impl ProgramBuilder {
         let mut pb = ProgramBuilder {
             p: Program {
                 aggs: vec![str_agg()],
-                funcs: vec![],
-                externs: vec![],
-                statics: vec![],
-                files: vec![],
+                ..Default::default()
             },
         };
         use Ty::*;

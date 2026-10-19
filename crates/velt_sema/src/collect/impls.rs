@@ -2,7 +2,9 @@
 //! have I's fields (same name and type) and a method for every interface method without a
 //! default (same parameter and return types). Each pair becomes a `hir::ImplDef` whose
 //! `methods` list the implementation per interface slot (own, inherited, or I's default),
-//! followed by one synthesized getter per interface field ([`getters`](super::getters)).
+//! followed by one synthesized getter per interface field ([`getters`](super::getters)) and,
+//! once the program writes through the interface, a setter per writable field
+//! (`crate::iface_writes`).
 
 use std::collections::HashMap;
 
@@ -14,6 +16,7 @@ use super::shapes::self_type;
 use crate::ctx::Ctx;
 use crate::defs::{Bound, IfaceMethod};
 use crate::hir::{DefId, ImplDef, TyId};
+use crate::iface_writes::SetterSrc;
 
 pub(super) fn build_impls(cx: &mut Ctx) {
     let adts: Vec<DefId> = (0..cx.info.len() as u32)
@@ -24,8 +27,9 @@ pub(super) fn build_impls(cx: &mut Ctx) {
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
-            if let Some(imp) = check_impl(cx, d, &b, &mut getters) {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
                 cx.impls.push(imp);
+                cx.note_setters(cx.impls.len() as u32 - 1, setters);
             }
         }
     }
@@ -45,7 +49,12 @@ struct Pair<'b> {
     span: velt_common::Span,
 }
 
-fn check_impl(cx: &mut Ctx, d: DefId, b: &Bound, cache: &mut Getters) -> Option<ImplDef> {
+fn check_impl(
+    cx: &mut Ctx,
+    d: DefId,
+    b: &Bound,
+    cache: &mut Getters,
+) -> Option<(ImplDef, Vec<SetterSrc>)> {
     let a = cx.adt(d).expect("ICE: adt");
     let (n, span, cname) = (a.generics.len(), a.span, a.name.clone());
     let self_ty = self_type(cx, d, n);
@@ -59,30 +68,32 @@ fn check_impl(cx: &mut Ctx, d: DefId, b: &Bound, cache: &mut Getters) -> Option<
         iname,
         span,
     };
-    let getters = field_getters(cx, &pair, cache);
+    let (getters, setters) = field_getters(cx, &pair, cache);
     let mut methods = vec![];
     for m in &imethods {
         methods.push(impl_method(cx, &pair, m)?);
     }
     methods.extend(getters);
-    Some(ImplDef {
+    let imp = ImplDef {
         ty: self_ty,
         generics: n as u32,
         iface: b.iface,
         iface_args: b.args.clone(),
         methods,
-    })
+    };
+    Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter.
-fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
+/// The class must have every interface field (same type); each gets a getter, and each
+/// writable one a setter source (`crate::iface_writes`).
+fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Vec<SetterSrc>) {
     let ifields = cx
         .iface(p.bound.iface)
         .map(|i| i.fields.clone())
         .unwrap_or_default();
-    let mut getters = vec![];
+    let (mut getters, mut setters) = (vec![], vec![]);
     for f in ifields {
-        let want = cx.ty.subst(f.ty, &p.bound.args);
+        let want = cx.subst(f.ty, &p.bound.args);
         let have = cx
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
@@ -94,6 +105,14 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
             };
             cache.insert((p.d, i), g);
             getters.push(g);
+            if !f.readonly {
+                setters.push(SetterSrc::Field {
+                    d: p.d,
+                    self_ty: p.self_ty,
+                    index: i,
+                    ty,
+                });
+            }
         } else {
             let tn = cx.display(want);
             let (cname, iname) = (&p.cname, &p.iname);
@@ -106,7 +125,7 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
             );
         }
     }
-    getters
+    (getters, setters)
 }
 
 /// The implementation of interface method `m`: the class's own / inherited method (virtual
@@ -177,14 +196,14 @@ fn trampoline(
     let params = params
         .into_iter()
         .map(|mut p| {
-            p.ty = cx.ty.subst(p.ty, &owner_args);
+            p.ty = cx.subst(p.ty, &owner_args);
             p.default = None;
             p
         })
         .collect();
     let ret = match want.filter(|_| super::ret_infer::is_pending(cx, def)) {
         Some(want) => want,
-        None => cx.ty.subst(ret, &owner_args),
+        None => cx.subst(ret, &owner_args),
     };
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let host = Host::adt(cx, d);
@@ -221,13 +240,13 @@ fn check_method_sig(
     };
     let iface_args = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)?;
     let iface_args = &iface_args[..];
-    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.ty.subst(t, owner_args)).collect();
+    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.subst(t, owner_args)).collect();
     let want_ps: Vec<TyId> = m
         .params
         .iter()
-        .map(|p| cx.ty.subst(p.ty, iface_args))
+        .map(|p| cx.subst(p.ty, iface_args))
         .collect();
-    let want_ret = cx.ty.subst(m.ret, iface_args);
+    let want_ret = cx.subst(m.ret, iface_args);
     let name = &m.name;
     let message = format!("method `{name}` has a different signature than required by `{iname}`");
     let ret_ok = if is_generator {
@@ -242,7 +261,7 @@ fn check_method_sig(
         let e = declared.and_then(|t| t.ty);
         let ret = cx.fn_info(def).ret;
         let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
-        cx.ty.subst(ret, owner_args) == want_ret
+        cx.subst(ret, owner_args) == want_ret
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
@@ -314,7 +333,7 @@ fn own_generics_match(
             bs.iter()
                 .map(|b| Bound {
                     iface: b.iface,
-                    args: b.args.iter().map(|t| cx.ty.subst(*t, &args)).collect(),
+                    args: b.args.iter().map(|t| cx.subst(*t, &args)).collect(),
                 })
                 .collect()
         })

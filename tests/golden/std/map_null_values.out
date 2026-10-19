@@ -1,0 +1,62 @@
+3 true null 2 false
+[ 'a', 'b', 'c' ] [ null, 2, null ] [ [ 'a', null ], [ 'b', 2 ], [ 'c', null ] ]
+[ [ 'a', null ], [ 'b', 2 ], [ 'c', null ] ] Map(3) { 'a' => null, 'b' => 2, 'c' => null }
+forEach a null
+forEach b null
+forEach c null
+forEach d 4
+for of a null
+for of b null
+for of c null
+for of d 4
+keys a
+keys b
+keys c
+keys d
+values null
+values null
+values null
+values 4
+entries [ 'a', null ]
+entries [ 'b', null ]
+entries [ 'c', null ]
+entries [ 'd', 4 ]
+true false 3 [ 'b', 'c', 'd' ]
+4 [ 'b', 'c', 'd', 'a' ] null true
+50 [
+  1,  3,  5,  7,
+  9, 11, 13, 15
+] [
+  1,  null, 5,
+  7,  null, 11,
+  13, null
+]
+nulls 17
+5 Map(5) { 91 => 91, 93 => null, 95 => 95, 97 => 97, 99 => null }
+11 [
+  91, 93, 95, 97, 99,
+   0,  1,  2,  3,  4,
+   5
+]
+live p null
+live s 3
+live t null
+3 Map(3) { 'p' => null, 's' => 3, 't' => null }
+2 [ [ 'x', null ], [ 'z', null ] ] Map(2) { 'x' => null, 'z' => null }
+2 [ null, Box { n: 3 } ] null 3
+Map(3) { 'on' => true, 'unknown' => null, 'off' => false } [ 'on', 'unknown', 'off' ]
+2 null null
+Map(2) { 'none' => null, 'some' => Map(2) { 'q' => null, 'r' => 1 } }
+{"x":null,"y":1} [ 'x', 'y' ] null 1 null
+{ x: null, y: null, z: null } 3
+[ 'y', 'z' ] [ null, null ] [ [ 'y', null ], [ 'z', null ] ]
+for in y null
+for in z null
+for in x 5
+{ y: null, z: null, x: 5, w: null } {"y":null,"z":null,"x":5,"w":null}
+{ '1': null, a: null, b: 2, c: null } [ '1', 'a', 'b', 'c' ] {"1":null,"a":null,"b":2,"c":null}
+true
+{ a: null, b: { c: null, d: 'e' } } {"a":null,"b":{"c":null,"d":"e"}}
+{ a: null, b: { c: null, d: 'e' } } [ 'a', 'b' ]
+null 1 null [ 'a', 'b' ]
+{ a: null, b: null } {"a":null,"b":null}

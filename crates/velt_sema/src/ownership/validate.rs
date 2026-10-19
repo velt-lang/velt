@@ -37,10 +37,12 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
             f: &f,
             kinds: &kinds,
+            copy: &copy,
             fixed,
             keeps_fn_params,
             shared: &shared,
@@ -67,10 +69,15 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                         e,
                     ) {
                         Some(err) => errors.push(err),
-                        // An async closure may run on several threads at once (an http
-                        // handler) and counts are not atomic: it copies what it captured.
-                        // (An async generator stays on its thread and shares, like JS.)
-                        None if v.f.is_async && !v.f.is_generator && v.captured(e) => {
+                        // An async closure that may run on several threads at once (an
+                        // http handler) copies what it captured: counts are not atomic. (An
+                        // async generator and a local async closure stay on their task and
+                        // share, like JS.)
+                        None if v.f.is_async
+                            && !v.f.is_generator
+                            && !v.f.shares_captures
+                            && v.captured(e) =>
+                        {
                             deep_copies.push((e.span, e.ty));
                             soft::make_deep_copy(e)
                         }
@@ -144,6 +151,8 @@ struct Validator<'a, 'c, 'm> {
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
     shared: &'a HashMap<DefId, Vec<LocalId>>,
+    /// Per local: is its type copyable?
+    copy: &'a [bool],
     fixed: bool,
     /// See `FnInfo::keeps_fn_params`.
     keeps_fn_params: bool,
@@ -206,9 +215,12 @@ impl Validator<'_, '_, '_> {
                                 )
                             })
                             .flatten();
+                        // A copyable variable the closure assigns: copied, or shared in a cell
+                        // when the assignment must reach it (`crate::moves`, #904).
+                        let copied = self.copy[cap.outer.0 as usize];
                         if let Some(err) = kept {
                             errors.push(err);
-                        } else if !shared.contains(&cap.outer) {
+                        } else if !shared.contains(&cap.outer) && !copied {
                             self.root(cap.outer, None, e.span, errors);
                         }
                     }
@@ -249,6 +261,8 @@ impl Validator<'_, '_, '_> {
                 | E::UnwrapSome(base, _)
                 | E::UnwrapVariant { expr: base, .. }
                 | E::Downcast(base) => cur = base,
+                // A part of a module-level `let`: lowering shares it, as the state keeps it.
+                E::Global(d) if self.cx.global(*d).is_some_and(|g| g.stored) => return,
                 E::Global(_) => {
                     return errors.push(
                         Diagnostic::error("cannot move out of a module constant", e.span)
@@ -304,6 +318,10 @@ impl Validator<'_, '_, '_> {
                 };
                 (msg, format!("{why}; use `{w}.clone()` for an owned copy"))
             }
+            // A mutable element binding is a copy of a copyable element (`for (let x of [1, 2])`,
+            // `body/pattern.rs`), not a borrow of it: a closure capturing it by value (one
+            // assigning it) takes a copy.
+            Some(LocalKind::Elem) if self.f.body.locals[l.0 as usize].mutable => return,
             Some(LocalKind::Elem) => (
                 format!(
                     "cannot move out of `{}`, which borrows an array element",
@@ -375,7 +393,7 @@ fn fn_values(cx: &mut Ctx) {
             .collect();
         let mut found = None;
         for (pname, t) in params {
-            let t = cx.ty.subst(t, &args);
+            let t = cx.subst(t, &args);
             if cx.mentions_params(t) {
                 found = Some((
                     pname,

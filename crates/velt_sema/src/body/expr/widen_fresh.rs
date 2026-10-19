@@ -6,7 +6,9 @@
 //! value or a union is laid out differently from a `C`):
 //! - an array is consumed into a new array, each element converted;
 //! - an object type or a generic class without base class, subclasses or drop hook becomes a new
-//!   object whose fields are shares of the old one's, each converted.
+//!   object whose fields are shares of the old one's, each converted;
+//! - elements of an object type convert to an object type with some of their fields, or the
+//!   same ones in another order, by copying (`object_copy`).
 //!
 //! Anything else (a variable, a field) stays an error with a fix: copy it (`[...xs]`, `map`).
 //! The conversion costs one pass over the value, paid only where a program writes it.
@@ -33,7 +35,7 @@ impl FnCx<'_, '_> {
             return true;
         }
         if let Some(p) = self.cx.ty.opt_payload(to) {
-            let from = self.cx.ty.opt_payload(from).unwrap_or(from);
+            let from = self.cx.ty.core(from).unwrap_or(from);
             return self.converts_to(from, p);
         }
         if let Some(fs) = self.cx.union_members(from) {
@@ -78,7 +80,9 @@ impl FnCx<'_, '_> {
         }
         let both = (self.cx.ty.kind(from).clone(), self.cx.ty.kind(to).clone());
         match both {
-            (TyKind::Array(a), TyKind::Array(b)) => self.converts_to(a, b) || self.widens(a, b),
+            (TyKind::Array(a), TyKind::Array(b)) => {
+                self.converts_to(a, b) || self.widens(a, b) || self.copies_to(a, b)
+            }
             (TyKind::Adt(..), TyKind::Adt(..)) => self.widened_fields(from, to).is_some(),
             _ => false,
         }
@@ -105,7 +109,7 @@ impl FnCx<'_, '_> {
         }
         let mut out = vec![];
         for t in tys {
-            let (f, g) = (self.cx.ty.subst(t, &xs), self.cx.ty.subst(t, &ys));
+            let (f, g) = (self.cx.subst(t, &xs), self.cx.subst(t, &ys));
             if !self.converts_to(f, g) {
                 return None;
             }
@@ -133,6 +137,37 @@ impl FnCx<'_, '_> {
             });
         }
         Ok(self.widen_owned(h, exp))
+    }
+
+    /// A value for a place that only reads it, converted to `exp`: a parameter or variable
+    /// declared with a read-only array type (`xs: readonly string[]`), an `Iterable<T>`
+    /// parameter, or the array `new Set(...)` / `new Map(...)` copy from. An array of a literal
+    /// type, or of a union of `Copy` members, that converts to `exp`'s element (an `as const`
+    /// array of strings for a `readonly string[]`) may be passed as a converted copy: the
+    /// reader cannot write through it, so it cannot tell the copy from the original.
+    pub(crate) fn readonly_array_arg(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        let Some(to) = self.readonly_copy_elem(&h, exp) else {
+            return self.coerce(h, exp);
+        };
+        let (ty, span) = (h.ty, h.span);
+        let shared = self.intrinsic(Intrinsic::Share, vec![h], ty, span);
+        let arr = self.cx.ty.array(to);
+        let copy = self.widen_array(shared, arr, to);
+        self.coerce(copy, exp)
+    }
+
+    /// The element type of the copy `readonly_array_arg` passes for `h` (`None`: `h` converts
+    /// as it is).
+    pub(crate) fn readonly_copy_elem(&mut self, h: &hir::Expr, exp: TyId) -> Option<TyId> {
+        let to = self.cx.ty.array_elem(exp);
+        let to = to.or_else(|| self.cx.iterable_elem(exp))?;
+        let from = self.cx.ty.array_elem(h.ty)?;
+        let copies = from != to
+            && !is_fresh(h)
+            && (self.cx.union_members(from).is_some() || self.cx.lit_value(from).is_some())
+            && self.cx.is_copy(from)
+            && self.converts_to(from, to);
+        copies.then_some(to)
     }
 
     /// A fresh value widened where no body holds the conversion's temporaries (a field
@@ -252,6 +287,7 @@ impl FnCx<'_, '_> {
             def,
             type_args,
             fields: values,
+            converted: hir::Conversion::No,
         };
         let lit = self.mk(lit, exp, span);
         self.with_lets(lets, lit)
@@ -323,7 +359,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The source text of a local or a field path (`h.items`).
-    fn place_text(&self, h: &hir::Expr) -> Option<String> {
+    pub(super) fn place_text(&self, h: &hir::Expr) -> Option<String> {
         match &h.kind {
             H::Local(l, _) => Some(self.f.locals[l.0 as usize].name.clone()),
             H::Field { base, index, .. } => {

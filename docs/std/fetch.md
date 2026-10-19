@@ -3,8 +3,17 @@
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
 connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
-HTTPS, and redirects followed as the standard says. `velt:fetch` exports the same names and
-the option types (`RequestInit`, `ResponseInit`, `HeadersInit`, `BodyInit`).
+HTTPS, and redirects followed as the standard says. A request sent on a *reused* pooled
+connection that the server had closed (it fails before any response) is sent once more, on
+another connection, when its method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`,
+`DELETE`), as Go's client does; `POST` and `PATCH` are never sent twice, and neither is a request
+on a fresh connection (that server got the request and failed). Node fails such a request. A [`velt:http`](http.md) server's handlers
+take and return the same `Request` and `Response`, as in Deno and Bun. The option types of their
+signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
+global too, as in TypeScript, so an init object can be built before the call:
+`const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
+`velt:fetch` exports the same names and [`BodyStream`](#bodystream), a Velt body stream of
+`u8[]` chunks.
 
 ```ts
 type User = { id: number; name: string };
@@ -42,46 +51,98 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 |---|---|---|
 | `method` | `string` | default `"GET"`; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased |
 | `headers` | `Headers \| Record<string, string>` | an object literal works: `{ "content-type": "text/csv" }` |
-| `body` | `string \| u8[] \| URLSearchParams` | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
+| `body` | `string \| Uint8Array \| ArrayBuffer \| DataView \| u8[] \| URLSearchParams` (any typed array) | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
 | `redirect` | `"follow" \| "error" \| "manual"` | default `"follow"` (at most 20); `"manual"` returns the 3xx response |
 | `signal` | `AbortSignal` | cancels the request |
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
 
-Requests send `accept: */*` and `user-agent: velt` unless you set them. Following a redirect
+Requests send `accept: */*`, `user-agent: velt` and, like Node, `accept-encoding: gzip,
+deflate` (`br, gzip, deflate` over HTTPS) unless you set them. Following a redirect
 works as in browsers and Node: a 303 (and a 301 or 302 after a POST) becomes a GET without a
-body, and `authorization` and `cookie` headers are not sent to another origin.
+body, and `authorization`, `cookie` and a `host` you set are not sent to another origin.
 
 HTTPS trusts Mozilla's root certificates (compiled in, so the result does not depend on the
 machine) plus `ca`. An untrusted certificate fails with `IoError`.
 
 ## `Response`
 
-- `status: number`, `ok: bool` (200–299), `statusText` (the server's reason phrase),
-  `headers: Headers`, `url` (the final URL, after redirects), `redirected`, `type` (`"basic"`
-  for a fetched response, `"default"` for one you made, `"error"`), `bodyUsed`.
-- Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD, as in JS),
-  `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS
-  returns an `ArrayBuffer`). A body is read once: a second read throws `IoError`
-  (`Body is unusable: Body has already been read`). A large body is received into one buffer
+- `status: number`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
+  standard one), `headers: Headers`, `url` (the final URL, after redirects), `redirected`,
+  `type` (`"basic"` for a fetched response, `"default"` for one you made, `"error"`),
+  `bodyUsed`.
+- Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
+  mark is dropped, as in JS),
+  `await res.json<T>()`, `await res.bytes(): Uint8Array` and `await res.arrayBuffer():
+  ArrayBuffer` ([typed arrays](typed_array.md)). A body is read once: a second read throws `IoError`
+  (`Body is unusable: Body has already been read`); a response without a body can be read any
+  number of times, as in JS. A large body is received into one buffer
   sized from `content-length`, so `bytes()` copies it once.
 - `json<T>()` decodes the body as `T` and checks it (`JsonError` names what doesn't match),
   so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
   or give the variable one (`const users: User[] = await res.json()`); an untyped
   `res.json()` is a compile error that says so.
-- The status, URL and headers are copied when the head arrives, so they stay readable after
-  the body was read. Dropping a response whose body was not read closes its connection.
-- `new Response(body?: string | u8[] | URLSearchParams | null, init?: ResponseInit { status?;
-  statusText?; headers? })`, `Response.json(data, init?)` (`content-type: application/json`),
-  `Response.error()` and `Response.redirect(url, status = 302)` build responses, e.g. for
-  tests.
+- `res.body` is the body as it arrives, a [`ReadableStream`](streams.md) of `Uint8Array`s:
+  `res.body.getReader()` or `for await (const chunk of res.body)`, so a large download need not
+  be held in memory: each chunk is at most 64 KiB, however much a compressed body expands. It is
+  `null` for a status without a body (101, 103, 204, 205, 304), for a `HEAD` request's response
+  and for a response made without one. Reading it uses the body up, as `text()` does; getting
+  it does not. A `ReadableStream` is not a body yet (`new Response(stream)`, #1129): stream a
+  body with [`BodyStream`](#bodystream).
+- A body the server compressed (`content-encoding: gzip`, `deflate` or `br`, or several of
+  them, such as `deflate, gzip`: up to five) is decoded as it arrives, whichever way you read
+  it; the headers stay as received. A list naming another coding leaves the body as sent, and
+  a response without a body (a `HEAD` request's, a 204 or 304) has nothing to decode; an empty
+  body is `""` in any coding, as in Node. A body
+  that does not decode fails the read with `IoError` (`fetch failed: invalid compressed body:
+  …`).
+- The status text, URL and headers stay readable after the body was read; they are copied out
+  of the runtime the first time you read them, so a response whose headers you never look at
+  costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
+  returns, not the property. Dropping a response whose body was not read closes its
+  connection.
+- `new Response(body?: string | Uint8Array | ArrayBuffer | DataView | u8[] | URLSearchParams |
+  BodyStream | null, init?:
+  ResponseInit { status?; statusText?; headers? })`, `Response.json(data, init?)`
+  (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status =
+  302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
+  in tests. A string body implies `content-type: text/plain;charset=UTF-8` and form fields
+  `application/x-www-form-urlencoded;charset=UTF-8`, unless `headers` set one; a constructed
+  response makes no `Headers` until you read `headers`.
 
 ## `Request`
 
 `new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
 `url`, `method`, `headers`, `redirect`, `signal` (`AbortSignal | null`: JS gives every request
-a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`.
-`fetch(request)` sends it (its body counts as read afterwards); `fetch(request, init)`
-overrides fields of it.
+a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`
+and `body` (a [`ReadableStream`](streams.md) of `Uint8Array`s, `null` without a body). `fetch(request)` sends it
+(its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
+a stream is read whole before the request is sent (**Planned**: streamed uploads).
+
+A [server](http.md#the-request) hands its handler a `Request` for what it received: its `url`
+is absolute, its headers are immutable, and its body is received while it is read.
+
+## `BodyStream`
+
+Velt's body stream of `u8[]` chunks (in JS a body can also be a
+[`ReadableStream`](streams.md) of `Uint8Array`s; Velt doesn't take one yet, #1129): `BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one
+from an async iterable, such as an async generator, for `new Response(stream)`: a server sends
+each chunk as it is made, and `for await (const chunk of stream)` reads it. A stream is read once. An error the iterable throws reaches the reader as
+an `IoError` (`"EIO"`) carrying its text.
+
+```ts
+import { BodyStream } from "velt:fetch";
+import { utf8Encode } from "velt:encoding";
+
+async function* lines(): AsyncGenerator<u8[]> {
+  yield utf8Encode("one ");
+  yield utf8Encode("two");
+}
+
+async function main() {
+  const res = new Response(BodyStream.from(lines()));
+  console.log(await res.text()); // one two
+}
+```
 
 ## `Headers`
 
@@ -90,7 +151,7 @@ Record<string, string>)`, `append(name, value)`, `set`, `delete`, `get(name): st
 (repeated values joined with `", "`), `has`, `getSetCookie(): string[]`, `forEach((value,
 name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the names
 lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values have
-surrounding whitespace removed. Unlike JS, an invalid name or value is not rejected when it is
+surrounding HTTP whitespace (tab, LF, CR, space) removed. Unlike JS, an invalid name or value is not rejected when it is
 added: `fetch` rejects it with `IoError` `"EINVAL"`.
 
 ```ts
@@ -100,6 +161,15 @@ h.append("set-cookie", "b=2");
 for (const [name, value] of h) {
   console.log(name, value); // content-type text/plain, then set-cookie a=1, set-cookie b=2
 }
+```
+
+`console.log` prints a `Response`, `Request`, `Headers`, `AbortSignal` or `AbortController` the
+way Node does, with its public state (never the runtime handle behind it):
+
+```ts
+const res = new Response("hi", { status: 201 });
+console.log(res.headers); // Headers { 'content-type': 'text/plain;charset=UTF-8' }
+console.log(res.status, new Headers({ a: "1" })); // 201 Headers { a: '1' }
 ```
 
 ## Timeouts and cancellation
@@ -132,8 +202,33 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   with a `cause`, and the signal's `AbortError` / `TimeoutError` where Node throws a
   `DOMException` (or the abort reason).
 - `res.json()` needs the type of the data (above).
-- Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
-  without a signal has `signal == null`.
-- **Planned**: `res.body` as a stream of chunks, `clone()`, decoding of `gzip` / `br`
-  responses (no `accept-encoding` is sent today, so servers send them unencoded), and header
-  pairs as an array of `[name, value]` tuples.
+- There is no `Blob` or `FormData`, and a `Request` without a signal has `signal == null`.
+- `res.body` and `req.body` have no `pipeTo()`, `pipeThrough()`, `tee()` or BYOB reader
+  ([streams](streams.md)).
+- Mistakes JS reports with a catchable `RangeError` or `TypeError` stop the program instead,
+  like an index out of bounds: `new Response(body, { status })` outside 200–599,
+  a body with a status that has none (204, 205, 304), `Response.redirect(url, status)` with a
+  status other than 301, 302, 303, 307 or 308, and changing the (immutable) headers of a
+  fetched response or a received request.
+- A compressed body cut off before its stream ends fails the read with `IoError`; Node returns
+  the part that decoded. Silently truncated data is a bug source Velt does not copy.
+- WebAssembly programs have no network: `fetch` rejects with `IoError` `ENOTSUP`.
+- `console.log` shows header names in lowercase, where Node keeps the case a name was first
+  added with (`Headers { 'content-type': … }` for `"Content-Type"`). A printed `Request` shows
+  Node's values for the options Velt does not have (`mode: 'cors'`, `cache: 'default'`, …), and
+  its `url` as it was given (Node normalizes it: `http://a.com/` for `http://a.com`).
+- **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
+
+```ts
+async function download(url: string): Promise<number> {
+  const res = await fetch(url);
+  let size = 0;
+  const body = res.body;
+  if (body != null) {
+    for await (const chunk of body) {
+      size += chunk.length; // or write it to a file
+    }
+  }
+  return size;
+}
+```

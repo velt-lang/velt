@@ -1,0 +1,9 @@
+// Index signatures: a `number` key and named members next to an index signature are not
+// supported yet; a key that is not `string`, `number` or `symbol` is an error as in TypeScript
+// (TS1268). (A value type may include `null`: lang/index_signatures_null.)
+//
+type ByIndex = { [i: number]: string };
+type Meta = { name: string; [key: string]: string };
+type Flags = { [k: boolean]: string };
+
+function main() {}

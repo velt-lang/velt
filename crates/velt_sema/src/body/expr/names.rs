@@ -22,7 +22,44 @@ impl FnCx<'_, '_> {
             let never = self.cx.ty.never;
             return self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span);
         }
-        let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
+        // A narrowed `T | null | undefined` reads as its `T` (both nothings ruled out).
+        let payload = self.present_payload(ty).filter(|_| self.is_narrowed(l));
+        // A variable that a closure assigns is checked again where it is used, and read as it
+        // is where a test checks it (`closure_assigned`).
+        let reassigned = self.closure_assignment(l).is_some();
+        if payload.is_some() && reassigned {
+            if self.raw_read == Some(span) {
+                let mode = self.use_mode(ty, want);
+                return self.mk(H::Local(l, mode), ty, span);
+            }
+            return self.checked_narrowed_read(l, ty, want, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Undefined)
+        {
+            // `x !== undefined` on a `T | null | undefined`: its `T | null`.
+            let mid = self
+                .cx
+                .ty
+                .opt_payload(ty)
+                .expect("ICE: option without a payload");
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let mode = self.use_mode(mid, want);
+            return self.mk(H::UnwrapSome(Box::new(base), mode), mid, span);
+        }
+        if payload.is_none()
+            && !reassigned
+            && want != Want::BorrowMut
+            && self.is_three_state(ty)
+            && self.excludes(l, crate::hir::Nothing::Null)
+        {
+            // `x !== null` on a `T | null | undefined`: its `T | undefined` (#1218).
+            let mode = self.use_mode(ty, want);
+            let base = self.mk(H::Local(l, mode), ty, span);
+            return self.three_state_without_null(base, want == Want::Move);
+        }
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
         if member.is_none() {
             if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
@@ -45,7 +82,7 @@ impl FnCx<'_, '_> {
                 Some(_) => base_mode,
                 None => self.use_mode(p, want),
             };
-            e = self.mk(H::UnwrapSome(Box::new(e), mode), p, span);
+            e = self.unwrap_present(e, mode, span);
         }
         if let Some((variant, m)) = member {
             let mode = self.use_mode(m, want);
@@ -81,7 +118,7 @@ impl FnCx<'_, '_> {
         if let Some(p) = payload {
             let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
             let inner = self.use_mode(p, want);
-            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+            e = self.unwrap_present(base, inner, span);
         }
         self.union_downcast(e, target).ok()
     }
@@ -96,6 +133,15 @@ impl FnCx<'_, '_> {
             return e;
         }
         let span = e.span;
+        if e.ty == target {
+            // `instanceof` of a generic class on an `any`: it stays an `any`.
+            return e;
+        }
+        if self.cx.dynamic(e.ty).is_some() && self.cx.class_of(target).is_none() {
+            // `typeof x === "number"` on an `any`: the value it holds, checked (crate::any).
+            let share = self.share_if_place(e);
+            return self.intrinsic(hir::Intrinsic::AnyTo, vec![share], target, span);
+        }
         self.mk(H::Downcast(Box::new(e)), target, span)
     }
 
@@ -137,6 +183,16 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if self.static_this.is_some() && self.lookup_local("this", span).is_none() {
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` in a static method can only be used to call or read its class's static members",
+                    span,
+                )
+                .with_note("`this` is the class the method was called on: use `this.f()` or `this.NAME`"),
+            );
+            return self.error_expr(span);
+        }
         match self.lookup_local("this", span) {
             Some(l) => {
                 self.rec_local(span, l);
@@ -166,9 +222,14 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         want: Want,
     ) -> hir::Expr {
+        if self.untyped_use(id, false) {
+            return self.error_expr(id.span);
+        }
+        let checks = self.f.late.checks.len();
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
-            return self.local_expr(l, want, id.span);
+            let e = self.local_expr(l, want, id.span);
+            return self.late_checked_read(e, checks);
         }
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => return self.def_value(d, id, exp, want),
@@ -200,7 +261,10 @@ impl FnCx<'_, '_> {
                     id.span,
                 );
             }
-            _ => self.unknown_name(id),
+            _ => match self.browser_global_read(id) {
+                Some(h) => return h,
+                None => self.unknown_name(id),
+            },
         }
         self.error_expr(id.span)
     }
@@ -215,9 +279,12 @@ impl FnCx<'_, '_> {
             return;
         }
         if !self.enclosing_locals.contains(&id.name) {
-            self.cx
-                .err(format!("cannot find `{}` in this scope", id.name), id.span);
+            let msg = format!("cannot find `{}` in this scope", id.name);
+            self.cx.not_found(msg, &id.name, id.span);
             return;
+        }
+        if self.in_kept_nested() {
+            return; // reported by `nested_closures` (recursion, or a use before a local)
         }
         if self.generic_arrow {
             self.cx.error(
@@ -240,10 +307,42 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// Checking a capturing nested function `nested_closures` reported and left a declaration.
+    fn in_kept_nested(&self) -> bool {
+        !self.cx.kept_nested.is_empty()
+            && self
+                .body_def
+                .is_some_and(|d| self.cx.kept_nested.contains(&self.cx.fn_info(d).name_span))
+    }
+
     fn def_value(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>, want: Want) -> hir::Expr {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
-            DefInfo::Fn(_) => self.fn_ref(d, id, exp),
+            DefInfo::Fn(_) => {
+                if self.cx.has_overloads {
+                    if let Some(h) = self.overloaded_fn_value(id, exp) {
+                        return h;
+                    }
+                }
+                if let Some(h) = self.this_fn_value(d, &id.name, span) {
+                    return h;
+                }
+                self.fn_ref(d, id, exp)
+            }
+            // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
+            // compares integers, `N / 3` divides numbers.
+            DefInfo::Global(g)
+                if !g.mutable
+                    && g.src.ann.is_none()
+                    && g.src.init.is_some_and(super::member::untyped_int) =>
+            {
+                let init = g.src.init.expect("ICE: checked above");
+                let h = self.expr(init, exp, want);
+                self.literal_at(h, span)
+            }
+            DefInfo::Global(_) if id.name == ast::IMPORT_META && want == Want::Move => {
+                self.import_meta_copy(d, id)
+            }
             DefInfo::Global(_) => self.global_read(d, want, span),
             _ => {
                 self.cx
@@ -253,11 +352,54 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `import.meta` as a value of its own (`const m = import.meta`, `return import.meta`): a
+    /// copy, `{ url: import.meta.url, … }`, as the module constant cannot be moved out of.
+    fn import_meta_copy(&mut self, d: DefId, id: &ast::Ident) -> hir::Expr {
+        use super::setters::synth;
+        crate::body::driver::ensure_global(self.cx, d);
+        let ty = self.cx.global(d).expect("ICE: global").ty;
+        let span = id.span;
+        let props = ast::IMPORT_META_FIELDS
+            .iter()
+            .map(|f| {
+                let field = ast::Ident {
+                    name: (*f).into(),
+                    span,
+                };
+                let read = ast::ExprKind::Member {
+                    object: Box::new(synth(ast::ExprKind::Ident(id.clone()), span)),
+                    prop: field.clone(),
+                    optional: false,
+                };
+                ast::ObjectProp::KeyValue(field, synth(read, span))
+            })
+            .collect();
+        let copy = synth(ast::ExprKind::Object(props), span);
+        self.expr(&copy, Some(ty), Want::Move)
+    }
+
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
-        let (ty, name) = (g.ty, g.name.clone());
-        if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
+        let (ty, name, mutable) = (g.ty, g.name.clone(), g.stored);
+        if mutable {
+            let read = self.mk(H::Global(d), ty, span);
+            if want == Want::Move && !self.cx.is_copy(ty) {
+                // Another reference to the value the module state keeps, as JS aliases it.
+                return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+            }
+            return read;
+        }
+        if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
+            // A function computed at each use: another reference to it is owned.
+            let read = self.mk(H::Global(d), ty, span);
+            return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+        }
+        if want == Want::Move && crate::body::pure_init::is_table(self.cx, d) {
+            let msg = format!("cannot move out of module constant `{name}`");
+            self.cx
+                .error(crate::body::pure_init::table_escapes(&name, msg, span));
+        } else if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
                     .with_note(format!("use `{name}.clone()` for an owned copy")),
@@ -267,7 +409,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A named function used as a value; generic ones take their type args from `exp`.
-    fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
+    pub(super) fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
         let span = id.span;
         let f = self.cx.fn_info(d);
         if f.kind == FnKind::Extern {
@@ -277,14 +419,31 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let (n, params, is_async) = (
-            f.generics.len(),
+        if let Some(h) = self.generator_value(d, None, exp, span) {
+            return h;
+        }
+        let f = self.cx.fn_info(d);
+        let slots = vec![None; f.generics.len()];
+        self.fn_ref_slots(d, &id.name, slots, exp, span)
+    }
+
+    /// Function `d` (named `name` in messages) used as a value: the type arguments in `slots`,
+    /// the others from `exp`.
+    pub(crate) fn fn_ref_slots(
+        &mut self,
+        d: DefId,
+        name: &str,
+        mut slots: Vec<Option<TyId>>,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let f = self.cx.fn_info(d);
+        let (params, is_async) = (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.is_async,
         );
         let ret = crate::body::returns::ret_of(self.cx, d, span);
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
-        let mut slots = vec![None; n];
         if let Some(e) = self.hint(exp) {
             self.cx.match_ty(fn_ty, e, &mut slots);
         }
@@ -295,13 +454,13 @@ impl FnCx<'_, '_> {
         if slots.iter().any(Option::is_none) {
             self.cx.error(
                 Diagnostic::error(
-                    format!("cannot infer the type arguments of generic function `{}`", id.name),
+                    format!("cannot infer the type arguments of generic function `{name}`"),
                     span,
                 )
                 .with_note("use it where a function type is expected, e.g. `const f: (x: i64) => i64 = ...`"),
             );
         }
-        let ty = self.cx.ty.subst(fn_ty, &args);
+        let ty = self.cx.subst(fn_ty, &args);
         let ty = self.fn_value_errors(d, &args, ty, exp, span);
         self.cx.fn_values.push((d, args.clone(), span));
         self.mk(H::FnRef(d, args), ty, span)
@@ -309,7 +468,13 @@ impl FnCx<'_, '_> {
 
     /// The function type of named function `d` used as a value, with what it is known to throw
     /// (an async function's promise rejects with it).
-    fn fn_value_type(&mut self, d: DefId, params: Vec<TyId>, ret: TyId, is_async: bool) -> TyId {
+    pub(super) fn fn_value_type(
+        &mut self,
+        d: DefId,
+        params: Vec<TyId>,
+        ret: TyId,
+        is_async: bool,
+    ) -> TyId {
         if is_async {
             let ret = self.async_call_ret(d, ret);
             return self.cx.ty.fn_ptr(params, ret);
@@ -332,7 +497,7 @@ impl FnCx<'_, '_> {
     /// A synchronous function value takes the error type the context expects when it throws
     /// less (lowering's function-value thunk converts its errors); the final error type of `d`
     /// is checked against the one used here.
-    fn fn_value_errors(
+    pub(super) fn fn_value_errors(
         &mut self,
         d: DefId,
         args: &[TyId],

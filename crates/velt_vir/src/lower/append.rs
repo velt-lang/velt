@@ -11,9 +11,12 @@
 //! reads `s`, or calls code that could reach it), `s` keeps its old value alive while the text
 //! is evaluated (one count increment), as JS reads `s` before the right-hand side runs.
 
+use std::collections::VecDeque;
+
 use velt_sema::hir::{self, Callee, Intrinsic, LocalId, TyId, TyKind};
 
 use super::rt::Rt;
+use super::sequence::Later;
 use super::template::{flatten, Part};
 use super::{unit, FnLower};
 use crate::vir::{Operand, Place, Ty, STR_AGG};
@@ -80,7 +83,7 @@ impl FnLower<'_, '_> {
         };
         let alone = rest.iter().all(|p| match p {
             Part::Text(_) => true,
-            Part::Str(e) | Part::Format(e) => leaves_alone(e, &target, &is_fn),
+            Part::Str(e) | Part::Format(e, _) => leaves_alone(e, &target, &is_fn),
         });
         Some(match alone {
             true => self.append_now(place, rest, ty),
@@ -149,6 +152,10 @@ impl FnLower<'_, '_> {
     /// into a string of its own, then put the old value back (dropping whatever the text left
     /// there; the count is back to one when it left the target alone) and append.
     fn append_keeping_old(&mut self, place: &hir::Expr, rest: &[Part], ty: TyId) -> Operand {
+        let pin = match place.kind {
+            hir::ExprKind::Local(..) => None,
+            _ => self.pin_target(place, &VecDeque::new(), later_parts(rest)),
+        };
         let first = self.place_expr(place);
         let old = self.share_value(Operand::Copy(first), ty);
         let old = self.own_value(old, ty);
@@ -167,12 +174,24 @@ impl FnLower<'_, '_> {
                 p
             }
             _ => {
-                // Formed again: the text may have replaced objects along the path.
+                // Formed again: the text may have replaced objects along the path. When it
+                // replaced the object the target lies in, the text goes to a string of its
+                // own, dropped with it.
                 let p = self.place_expr(place);
-                let prev = self.copy_to_temp(Operand::Copy(p.clone()), STR);
-                self.store(p.clone(), old);
-                self.drop_glue(Place::local(prev), ty);
-                p
+                let (o, t) = (old.clone(), text.clone());
+                let write = |this: &mut Self, p: Place| {
+                    let prev = this.copy_to_temp(Operand::Copy(p.clone()), STR);
+                    this.store(p.clone(), old);
+                    this.drop_glue(Place::local(prev), ty);
+                    this.append_to(p, text);
+                };
+                let skip = |this: &mut Self| {
+                    let scratch = Place::local(this.copy_to_temp(o, STR));
+                    this.append_to(scratch.clone(), t);
+                    this.drop_glue(scratch, ty);
+                };
+                self.write_pinned(pin, p, write, skip);
+                return unit();
             }
         };
         self.append_to(p, text);
@@ -184,6 +203,16 @@ impl FnLower<'_, '_> {
         let pa = self.addr(p);
         self.call_rt(Rt::StrAppend, vec![pa, text], None);
     }
+}
+
+/// What evaluating the parts of an appended text may do.
+fn later_parts(rest: &[Part]) -> Later {
+    rest.iter()
+        .map(|p| match p {
+            Part::Text(_) => Later::default(),
+            Part::Str(e) | Part::Format(e, _) => Later::of(e),
+        })
+        .fold(Later::default(), Later::or)
 }
 
 /// Is `read` (a string read, possibly shared) the same variable or field path as `place`?
@@ -232,7 +261,13 @@ fn leaves_alone(e: &hir::Expr, t: &Target, is_fn: &dyn Fn(TyId) -> bool) -> bool
         K::Binary { lhs, rhs, .. } => alone(lhs) && alone(rhs),
         K::If { cond, then, els } => alone(cond) && alone(then) && alone(els),
         K::Call {
-            callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::StrConcat | Intrinsic::Share),
+            callee:
+                Callee::Intrinsic(
+                    Intrinsic::ToString
+                    | Intrinsic::TemplateToString
+                    | Intrinsic::StrConcat
+                    | Intrinsic::Share,
+                ),
             args,
         } => all(args),
         // A closure passed along may capture the target without boxing it.
@@ -250,7 +285,7 @@ fn leaves_alone(e: &hir::Expr, t: &Target, is_fn: &dyn Fn(TyId) -> bool) -> bool
 fn may_fail(part: &Part) -> bool {
     match part {
         Part::Text(_) => false,
-        Part::Str(e) | Part::Format(e) => !infallible(e),
+        Part::Str(e) | Part::Format(e, _) => !infallible(e),
     }
 }
 

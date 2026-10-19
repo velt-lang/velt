@@ -7,7 +7,6 @@ use velt_syntax::ast::{BinaryOp, Expr, ExprKind};
 use super::expr::binary_op;
 use super::Printer;
 use crate::doc::{cat, concat, group, indent, line, Doc};
-use crate::source::strict_equality;
 
 impl<'a> Printer<'a> {
     /// A binary expression; `indent_rest` indents the continuation lines when it breaks.
@@ -43,8 +42,8 @@ impl<'a> Printer<'a> {
             return vec![self.expr(e)];
         };
         let mut parts = vec![self.expr(first)];
-        for &(op, lhs, rhs) in spine.iter().rev() {
-            let op_text = self.op_text(op, lhs, rhs);
+        for &(op, _, rhs) in spine.iter().rev() {
+            let op_text = binary_op(op);
             if super::jsx::is_jsx_operand(op, rhs) {
                 parts.push(cat![" ", op_text, " ", self.expr_jsx_parens(rhs)]);
                 continue;
@@ -58,15 +57,6 @@ impl<'a> Printer<'a> {
         }
         parts
     }
-
-    fn op_text(&self, op: BinaryOp, lhs: &Expr, rhs: &Expr) -> &'static str {
-        let strict = strict_equality(self.src, lhs.span.hi, rhs.span.lo);
-        match op {
-            BinaryOp::Eq if strict => "===",
-            BinaryOp::NotEq if strict => "!==",
-            _ => binary_op(op),
-        }
-    }
 }
 
 /// Precedence level (higher binds tighter), as in the parser.
@@ -78,8 +68,8 @@ fn precedence(op: BinaryOp) -> u8 {
         BitOr => 3,
         BitXor => 4,
         BitAnd => 5,
-        Eq | NotEq => 6,
-        Lt | LtEq | Gt | GtEq => 7,
+        Eq | NotEq | StrictEq | StrictNotEq => 6,
+        Lt | LtEq | Gt | GtEq | In => 7,
         Shl | Shr | UShr => 8,
         Add | Sub => 9,
         Mul | Div | Rem => 10,
@@ -96,8 +86,10 @@ fn should_flatten(parent_op: BinaryOp, child_op: BinaryOp) -> bool {
     }
     !matches!(
         (parent_op, child_op),
-        (Pow | Eq | NotEq | Shl | Shr | UShr, _)
-            | (Rem, Mul | Div)
+        (
+            Pow | Eq | NotEq | StrictEq | StrictNotEq | Shl | Shr | UShr,
+            _
+        ) | (Rem, Mul | Div)
             | (Mul | Div, Rem)
             | (Mul, Div)
             | (Div, Mul)

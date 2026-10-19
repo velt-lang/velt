@@ -92,35 +92,30 @@ fn findings_in_the_folders_come_live_with_their_fix() {
     client.shutdown();
 }
 
-/// The rules on types run on the document's analysis too: an error with its fix, then a warning
-/// on the next change.
+/// The rules on types run on the document's analysis too: an error with its fix, then nothing
+/// on the next change. (An optional parameter is `T | undefined` in Velt too, #930, so
+/// `x === null` on one is not a finding; the rules on `undefined` need the standard library.)
 #[test]
 fn typed_findings_come_live() {
     let tmp = package();
     let mut client = Client::start();
-    let text = "export function missing(x?: string): boolean {\n  return x === null;\n}\n";
+    let text = "export function half(x: 1 | 3): string {\n  return `${x / 2}`;\n}\n";
     let doc = uri_in(&tmp, "shared/lookup.ts");
     client.open(&doc, text);
     let diags = published(&mut client, &doc);
-    assert_eq!(sources(&diags), [ts_compat("strict-null-eq")]);
-    let offered = actions(&mut client, &doc, text, "===", &diags);
-    let fixed = apply(
-        text,
-        find(&offered, "compare with `==`, which matches `undefined` too"),
-        &doc,
-    );
-    assert!(fixed.contains("return x == null;"), "{fixed}");
+    assert_eq!(sources(&diags), [ts_compat("int-division")]);
+    let offered = actions(&mut client, &doc, text, "x / 2", &diags);
+    let fixed = apply(text, find(&offered, "divide as numbers: `as number`"), &doc);
+    assert!(fixed.contains("return `${(x as number) / 2}`;"), "{fixed}");
     client.change(&doc, 2, &fixed);
     assert_eq!(published(&mut client, &doc), [] as [Value; 0]);
 
     client.change(
         &doc,
         3,
-        "export type U = { nick?: string };\nexport function label(u: U): string {\n  return `${u.nick}`;\n}\n",
+        "export function missing(x?: string): boolean {\n  return x == null;\n}\n",
     );
-    let diags = published(&mut client, &doc);
-    assert_eq!(sources(&diags), [ts_compat("nullable-in-template")]);
-    assert_eq!(diags[0]["severity"], json!(2));
+    assert_eq!(published(&mut client, &doc), [] as [Value; 0]);
     client.shutdown();
 }
 

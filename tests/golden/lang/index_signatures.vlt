@@ -1,0 +1,53 @@
+// Index signatures in object types and interfaces, as in TypeScript: `{ [key: string]: V }` is
+// `Record<string, V>` (one type: values convert both ways and stay the same object), with any
+// key, insertion-ordered keys, and `delete`. A missing key reads as `null` in Velt (`undefined`
+// in JavaScript), so a read is `V | null`.
+interface Scores {
+  [player: string]: number;
+}
+
+interface Groups<T> {
+  [name: string]: T[];
+}
+
+type Headers = { readonly [name: string]: string };
+
+type Nested = { [id: string]: { label: string; done: boolean } };
+
+function total(s: Scores): number {
+  let sum = 0;
+  for (const [_, v] of Object.entries(s)) {
+    sum += v;
+  }
+  return sum;
+}
+
+function main() {
+  const s: Scores = { bob: 2, alice: 1 };
+  s["carol"] = 3;
+  s.dave = 26;
+  console.log(total(s), Object.keys(s), JSON.stringify(s));
+  const r: Record<string, number> = s;
+  const back: { [k: string]: number } = r;
+  console.log(back.alice, r === s, s.missing ?? "none");
+  delete s.dave;
+  console.log(s, Object.values(s));
+  const more: Scores = { ...s, erin: 5 };
+  console.log(more);
+
+  const g: Groups<string> = {};
+  g.fruit = ["apple"];
+  g.fruit?.push("pear");
+  g["veg"] = [];
+  console.log(g, g.fruit?.length);
+
+  const h: Headers = { "content-type": "text/html", "x-id": "7" };
+  console.log(h["content-type"], h);
+
+  const todo: Nested = { a: { label: "write", done: false } };
+  todo.b = { label: "ship", done: true };
+  for (const k of Object.keys(todo)) {
+    console.log(k, todo[k]?.label, todo[k]?.done);
+  }
+  console.log(JSON.stringify(todo));
+}

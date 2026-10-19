@@ -1,0 +1,12 @@
+export namespace Define {
+  export type Prop<TName extends string, TType> = { name: TName; value: TType };
+  export type Pair<T> = [Prop<"first", T>, Prop<"second", T>];
+}
+
+export interface Shape {
+  kind: string;
+}
+
+export namespace Shape {
+  export type Circle = { kind: "circle"; r: number };
+}

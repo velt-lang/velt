@@ -40,7 +40,7 @@ interface AsyncIterable<T, E = never> {
 
 They live in `std/prelude/iter.vlt`.
 
-- The done case has no `value` (Velt has no `undefined`), and there is no `TReturn`.
+- The done case has no `value` (an `undefined` there is a later phase of #930), and there is no `TReturn`.
   `IteratorResult<T>` is an ordinary discriminated union on a `bool` literal field; `if (r.done)`
   and `if (!r.done)` narrow it (sema `body/narrow.rs`: a member access tested for truthiness on
   a union local whose discriminant values are all `bool` literals), and a union of `bool`
@@ -220,9 +220,10 @@ function* range(n: i64): Generator<i64> {
   like Node. A generator's state cannot be copied, so sema rejects every deep copy of a value
   holding one (`known.rs` `holds_generator`, `body/generators.rs` `no_generator_copy`):
   `clone()`, an argument (or receiver) of a spawned call, a value sent on a std `Channel`, and
-  a capture of an async closure (whose state copies its captures when it runs), each with
-  "a generator cannot be copied" / "... cannot be passed to another task" / "an async closure
-  cannot capture the generator `g`". A generator coerced to an interface value at the spawned
+  a capture of an async closure that may run on another thread (whose state copies its
+  captures when it runs; `ownership/local_async` decides, and a local one shares the
+  generator), each with "a generator cannot be copied" / "... cannot be passed to another
+  task" / "an async closure that may run on another thread cannot capture the generator `g`". A generator coerced to an interface value at the spawned
   call itself (`spawn(sum(gen()))` with `sum(it: Iterable<T>)`) is caught too (the argument's
   `ToDyn` operand). An interface value made earlier is not looked into: one backed by a
   generator that reaches a spawned task still panics at run time (`a generator cannot be
@@ -554,10 +555,12 @@ interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, Async
   `MapIterator<T>` / `SetIterator<T>` / `StringIterator<T>` (an `Iterable` implementation must
   return exactly `Iterator<T, E>`), so its result is not itself iterable; the prelude classes
   `ArrayIterator<T>` and `StringIterator` are the implementations.
-- `Map` and `Set` iterators see the entries as of the call (like `for...of` over a map, which
-  iterates `entries()`); JS's are live. A live map iterator would have to survive the map's
-  compaction of deleted entries, which renumbers them; `Map.keys()` / `values()` / `entries()`
-  stay arrays.
+- `Map` and `Set` iterators see the entries as of the call; JS's are live. `Map.keys()` /
+  `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map (a place, a
+  getter, an element or a call result; or its `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
+  finds its place again by sequence number when a compaction, a pop or a clear renumbers them
+  (std/prelude/map.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`). The loop
+  holds the map in a hidden local from its start, so reassigning the source does not redirect it.
 - `IterableIterator<T>` / `IteratorObject<T>` declare `[Symbol.iterator]()` as returning
   `Iterator<T, E>` (no covariant returns), and are two separate interfaces: a value of one does
   not convert to the other.
@@ -719,7 +722,7 @@ closest workable form is a literal whose *one* member is the iterator method: se
 - Keeping an embedded async generator's state in registers across steps (section 4, Cost).
 - Generators cannot cross tasks; stored `Iterable<T>` values backed by one are checked at run
   time.
-- Live `Map` / `Set` iterators (section 6), and `keys()` / `values()` / `entries()` returning
-  iterators.
+- Live `Map` / `Set` iterator objects (section 6; `for...of` over a map place is live), and
+  `keys()` / `values()` / `entries()` returning iterators.
 - Interface values converting to the interfaces they extend (section 6), which would also let
   an `IterableIterator<T>` value be an `Iterator<T>`.

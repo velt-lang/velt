@@ -27,6 +27,36 @@ pub struct StreamObj {
     utf8: Mutex<Utf8Decoder>,
 }
 
+/// An accepted connection on its way to the task that serves it. With the per-core scheduler a
+/// socket is registered with the I/O driver of the worker that accepted it; when its task runs on
+/// another worker, the socket is detached here and registered again (`attach`) by that task, with
+/// its own worker's driver, so its wakes go there. One registration of a listening socket serves
+/// every accept: per-worker duplicates woke every worker for each connection (3–5× slower
+/// connection churn on a loaded machine) and, on Windows, left losers of an accept race blocked
+/// in `accept` (#993).
+pub(crate) enum Handoff {
+    Here(TcpStream),
+    Detached(std::net::TcpStream),
+}
+
+impl Handoff {
+    /// `moves`: the stream will be used on another worker (detach it from this one's driver).
+    pub(crate) fn new(stream: TcpStream, moves: bool) -> io::Result<Handoff> {
+        if !moves {
+            return Ok(Handoff::Here(stream));
+        }
+        stream.into_std().map(Handoff::Detached)
+    }
+
+    /// The stream, registered with this thread's driver (call it where it will be used).
+    pub(crate) fn attach(self) -> io::Result<TcpStream> {
+        match self {
+            Handoff::Here(s) => Ok(s),
+            Handoff::Detached(s) => TcpStream::from_std(s),
+        }
+    }
+}
+
 /// Opaque listener handle.
 pub type ListenerHandle = Key<TcpListener>;
 /// Opaque stream handle.
@@ -93,9 +123,11 @@ pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltF
 
 /// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
 async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(max.clamp(1, 16 << 20) as usize);
     loop {
+        // The buffer is allocated once there is something to read, so a connection waiting
+        // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
+        let mut buf = Vec::with_capacity(max.clamp(1, 16 << 20) as usize);
         match stream.try_read_buf(&mut buf) {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e),

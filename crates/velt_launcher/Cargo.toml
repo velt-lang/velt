@@ -1,0 +1,28 @@
+[package]
+name = "velt_launcher"
+version.workspace = true
+edition.workspace = true
+# The `velt` on PATH (#948): installed as `<root>/bin/velt`, it runs the toolchain the current
+# package pins (`<root>/toolchains/<version>/bin/velt`), installing it first when it is missing,
+# and implements `velt toolchain`. Kept tiny so each command starts fast: no compiler crates.
+
+[[bin]]
+name = "velt-launcher"
+path = "src/main.rs"
+
+[dependencies]
+velt_toolchain.workspace = true
+semver = "1.0.28"
+
+[target.'cfg(windows)'.dependencies]
+# Leaving Ctrl-C to the toolchain the launcher waits for, and a job object that ends it when the
+# launcher is killed.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[dev-dependencies]
+velt_http = { path = "../velt_http" }
+flate2 = "1.1.10"
+tar = "0.4"
+tempfile = "3.27.0"
+# Signing the fake releases.
+ring = "0.17.14"

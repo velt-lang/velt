@@ -1,5 +1,5 @@
 // Perfect, abundant and deficient numbers; sum of proper divisors.
-function divisorSum(n: i64): i64 {
+function divisorSum(n: number): number {
   if (n < 2) {
     return 0;
   }
@@ -16,7 +16,7 @@ function divisorSum(n: i64): i64 {
 }
 
 function main() {
-  const perfect: i64[] = [];
+  const perfect: number[] = [];
   let abundant = 0;
   let deficient = 0;
   for (let n = 1; n <= 10000; n++) {

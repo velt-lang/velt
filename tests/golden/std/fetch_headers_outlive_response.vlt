@@ -2,7 +2,7 @@
 // A fetched response's `headers` is a `Headers` of its own, copied when the head arrived: it
 // stays readable after the body was read and the response was released (it used to be a view of
 // the runtime response, which stopped the program).
-import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { serve } from "velt:http";
 
 async function headersOf(url: string): Promise<Headers> {
   const res = await fetch(url);
@@ -11,9 +11,9 @@ async function headersOf(url: string): Promise<Headers> {
 }
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
-    const r = ServerResponse.text("ok");
-    r.setHeader("x-kind", "test");
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const r = new Response("ok");
+    r.headers.set("x-kind", "test");
     return r;
   });
   const headers = await headersOf(`http://127.0.0.1:${server.port}/`);

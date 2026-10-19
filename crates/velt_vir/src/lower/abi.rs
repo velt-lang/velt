@@ -3,7 +3,7 @@
 //! out-pointer for aggregate or `Result` returns, hidden env param for closures), allocates VIR
 //! locals for HIR locals and drop flags, then lowers the body.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
@@ -61,16 +61,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
             throws: None,
             div_zero_bbs: vec![],
             ref_bindings: HashSet::new(),
+            scope_ends: HashMap::new(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
+            pending_borrows: vec![],
             share_binds: false,
+            stable_binds: false,
             transfer_args: false,
             transfer_call: false,
+            proxy_recv: None,
+            super_call: false,
             same_mode: false,
+            value_mode: false,
             key_mode: false,
+            init_locals: false,
             ctor_self: None,
             init_stack: vec![],
+            frame_closures: HashSet::new(),
+            direct_siblings: HashMap::new(),
+            self_env: None,
+            in_reflect: false,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -84,6 +95,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Glue(g, t) => Self::build_glue(cx, *g, *t),
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
+            Work::EnvDropFrame(def, targs) => Self::build_frame_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
@@ -92,6 +104,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
             Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
+            Work::GenThrow(def, targs) => Self::build_gen_throw(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -105,6 +118,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
+            Work::ModuleInit => Self::build_module_init(cx),
         }
     }
 
@@ -150,14 +164,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return Self::build_async_new(cx, def, targs);
         }
         let mut lw = FnLower::bare(cx, targs.to_vec());
-        lw.enter_span(f.span);
+        // The prologue (binding params and captures, copying modified params, making cells) has
+        // no source location: a debugger stopping at a function's first located code finds its
+        // params and captures bound. `lower_body` locates the code from there on.
+        lw.loc = None;
         lw.caller_loc = caller;
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
+        lw.in_reflect = f
+            .name
+            .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
+        (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
@@ -167,6 +188,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let abi = lw.cx.ret_abi(ret, lw.throws);
         lw.lower_body(f);
+        lw.describe_locals(f, f.params.len());
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
         if let Some(at) = caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
@@ -233,6 +255,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(self.cx.out_ptr_attrs(out));
         }
         if let Some(env) = env {
+            self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
         }
         self.declare_body_locals(f, info);
@@ -302,6 +325,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
+        self.enter_span(f.span);
+        self.note_scope_ends(&f.body.block, true);
         self.ctor_entry_inits();
         let unit_super = self.unit_super_at(f);
         for (i, s) in f.body.block.stmts.iter().enumerate() {

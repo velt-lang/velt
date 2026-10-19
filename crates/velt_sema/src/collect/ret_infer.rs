@@ -22,7 +22,7 @@ pub(super) fn returns_value(source: Option<FnSource>) -> bool {
     }
 }
 
-fn stmt_returns_value(s: &ast::Stmt) -> bool {
+pub(crate) fn stmt_returns_value(s: &ast::Stmt) -> bool {
     use ast::StmtKind as K;
     let block = |b: &ast::Block| b.stmts.iter().any(stmt_returns_value);
     match &s.kind {
@@ -91,7 +91,7 @@ pub(super) fn impl_ret(
 ) -> bool {
     if !is_pending(cx, def) {
         let have = cx.fn_info(def).ret;
-        return cx.ty.subst(have, owner_args) == want;
+        return cx.subst(have, owner_args) == want;
     }
     let identity = owner_args
         .iter()

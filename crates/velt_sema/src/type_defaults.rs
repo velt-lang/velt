@@ -1,5 +1,6 @@
-//! Type-parameter defaults (`class Box<T, E = never>`, `type Pair<A, B = A>`): checked once, at
-//! the declaration, and stored resolved, in terms of the parameters before each one.
+//! Type-parameter defaults (`class Box<T, E = never>`, `type Pair<A, B = A>`,
+//! `function f<T = string>()`): checked once, at the declaration, and stored resolved, in terms
+//! of the parameters before each one (a function's in its `Generics::defaults`).
 //!
 //! As in TypeScript, a default may only mention the parameters declared before it (not itself,
 //! not a later one), and must not need its own declaration's defaults again (`class S<T = S>`:
@@ -86,7 +87,7 @@ impl Ctx<'_> {
                 Some(d) => d[i].unwrap_or(self.ty.error),
                 None => self.ty.error,
             };
-            let t = self.ty.subst(t, &args);
+            let t = self.subst(t, &args);
             args.push(t);
         }
         args
@@ -150,17 +151,7 @@ impl Ctx<'_> {
                 out.push(None);
                 continue;
             };
-            if let Some(bad) = not_declared_before(d, &gs[i..]) {
-                let msg = match bad.name == g.name.name {
-                    true => format!("the default of type parameter `{}` refers to itself", g.name.name),
-                    false => format!(
-                        "the default of type parameter `{}` refers to `{}`, which is declared after it",
-                        g.name.name, bad.name
-                    ),
-                };
-                self.error(Diagnostic::error(msg, bad.span).with_note(
-                    "a default may only use the type parameters declared before it (as in TypeScript)",
-                ));
+            if !self.declared_before(d, &gs[i..]) {
                 out.push(Some(self.ty.error));
                 continue;
             }
@@ -176,6 +167,49 @@ impl Ctx<'_> {
         }
         self.type_defaults.resolved.insert(key, out.clone());
         Some(out)
+    }
+
+    /// The defaults of a function's own type parameters `gs` (`function f<T, U = T[]>()`),
+    /// resolved in `env` (the owner's parameters, then the function's): per parameter, `None`
+    /// without one, `Error` when invalid (reported).
+    pub(crate) fn fn_param_defaults(
+        &mut self,
+        gs: &[ast::GenericParam],
+        env: &TyEnv,
+    ) -> Vec<Option<TyId>> {
+        let mut out = vec![];
+        for (i, g) in gs.iter().enumerate() {
+            let t = match &g.default {
+                None => None,
+                Some(d) if !self.declared_before(d, &gs[i..]) => Some(self.ty.error),
+                Some(d) => Some(self.resolve_type(d, env)),
+            };
+            out.push(t);
+        }
+        out
+    }
+
+    /// Does default `d` of the first of `rest` use only the parameters declared before it?
+    /// Reported when not.
+    fn declared_before(&mut self, d: &ast::TypeExpr, rest: &[ast::GenericParam]) -> bool {
+        let Some(bad) = not_declared_before(d, rest) else {
+            return true;
+        };
+        let g = &rest[0];
+        let msg = match bad.name == g.name.name {
+            true => format!(
+                "the default of type parameter `{}` refers to itself",
+                g.name.name
+            ),
+            false => format!(
+                "the default of type parameter `{}` refers to `{}`, which is declared after it",
+                g.name.name, bad.name
+            ),
+        };
+        self.error(Diagnostic::error(msg, bad.span).with_note(
+            "a default may only use the type parameters declared before it (as in TypeScript)",
+        ));
+        false
     }
 }
 
@@ -196,17 +230,60 @@ fn not_declared_before<'a>(
             args.iter().find_map(|a| not_declared_before(a, rest))
         }
         K::Array(e) => not_declared_before(e, rest),
-        K::Tuple(ts) | K::Union(ts) => ts.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => {
+            ts.iter().find_map(|a| not_declared_before(a, rest))
+        }
+        K::Indexed { object, key } => {
+            not_declared_before(object, rest).or_else(|| not_declared_before(key, rest))
+        }
         K::Function {
             params,
             ret,
             throws,
+            ..
         } => params
             .iter()
             .chain(std::iter::once(&**ret))
             .chain(throws.as_deref())
             .find_map(|a| not_declared_before(a, rest)),
+        K::GenericFunction { ty, .. }
+        | K::Construct(ty)
+        | K::TupleRest(ty)
+        | K::TupleOptional(ty) => not_declared_before(ty, rest),
         K::Object(fields) => fields.iter().find_map(|f| not_declared_before(&f.ty, rest)),
-        K::Literal(_) | K::Null | K::Void => None,
+        K::IndexSig {
+            fields, key, value, ..
+        } => fields
+            .iter()
+            .map(|f| &f.ty)
+            .chain([&key.ty, &**value])
+            .find_map(|a| not_declared_before(a, rest)),
+        K::Callable { sigs, members } => sigs
+            .iter()
+            .flat_map(|s| {
+                let sig = &s.sig;
+                let bounds = sig
+                    .generics
+                    .iter()
+                    .flat_map(|g| g.bounds.iter().chain(&g.default));
+                bounds
+                    .chain(sig.params.iter().map(|p| &p.ty))
+                    .chain(&sig.ret)
+                    .chain(&sig.throws)
+            })
+            .chain(std::iter::once(&**members))
+            .find_map(|a| not_declared_before(a, rest)),
+        K::KeyOf(t) => not_declared_before(t, rest),
+        K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
+            .into_iter()
+            .find_map(|a| not_declared_before(a, rest)),
+        K::Mapped(m) => std::iter::once(&m.source)
+            .chain(m.name.as_ref())
+            .chain(std::iter::once(&m.value))
+            .find_map(|a| not_declared_before(a, rest)),
+        K::TemplateLiteral { types, .. } => types.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Infer(_) => None,
+        K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => None,
     }
 }

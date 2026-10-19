@@ -147,12 +147,15 @@ async function main() {
 ## Sharing state between tasks
 
 Spawned tasks run in parallel, so the compiler doesn't let them modify captured variables
-("cannot mutate captured variable `n` in a spawned task"), and an object a task captures is
-copied for it (a structured clone) when the rest of the program still uses it. Data races are
-compile errors. Share state explicitly:
+("this async closure modifies captured `n`, so it must stay on the task that created it", with
+the `spawn` it reaches), and an object a task captures is copied for it (a structured clone)
+when the rest of the program still uses it. Data races are compile errors. An async closure that
+never leaves its task (it is only called, stored or returned, never spawned or sent) may change
+what it captured, as in JavaScript. Share state between tasks explicitly:
 
 - `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
-  same value. On 64-bit integers, `add`, `get` and `set` are atomic.
+  same value. On 64-bit integers, `add`, `get` and `set` are atomic, and `add(n)` returns the new
+  value, so `if (pending.add(-1) === 0)` tells the task that took the count to zero.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
   gets the value itself and may return a result (a copy of anything that is part of the value).
   `shared` takes `x` itself: after `shared(new Mutex(o))`, use `o` only through the `shared`
@@ -223,9 +226,9 @@ for other receivers. Your own sources are `async function*` generators
 ## Timers
 
 `sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
-`setTimeout` (with `clear()`), `setImmediate` and `Ticker`, a drift-free interval you iterate
-with `for await (const n of ticker)` or pull with `await ticker.tick()`. There is no global
-`setTimeout`.
+`setImmediate` and `Ticker`, a drift-free interval you iterate with `for await (const n of
+ticker)` or pull with `await ticker.tick()`. `setTimeout` and `setInterval` are globals, as in
+TypeScript.
 
 ## Performance
 

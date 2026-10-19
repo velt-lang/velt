@@ -57,7 +57,7 @@ fn anonymous_objects_share_a_def_per_shape() {
         })
         .collect();
     // The prelude's own object types (e.g. `PromiseSettledResult`) are not this program's.
-    let own: Vec<&&str> = anon.iter().filter(|n| n.contains("x: i64")).collect();
+    let own: Vec<&&str> = anon.iter().filter(|n| n.contains("x: f64")).collect();
     assert_eq!(own.len(), 2, "{anon:?}");
 }
 
@@ -351,11 +351,11 @@ fn generic_functions_infer_and_check_bounds() {
             _ => None,
         })
         .collect();
-    assert_eq!(tys, vec!["Int(I64)", "Str"]);
+    assert_eq!(tys, vec!["Float(F64)", "Str"]);
     let r = err_src(
         "interface N { n(): i64; } function f<T extends N>(x: T): i64 { return x.n(); } function main() { f(5); }",
     );
-    assert!(r.contains("the type `i64` does not implement `N`"), "{r}");
+    assert!(r.contains("the type `f64` does not implement `N`"), "{r}");
     let r = err_src("function f<T>(x: T): i64 { return x.n(); } function main() {}");
     assert!(r.contains("no method named `n` found for type `T`"), "{r}");
     let r = err_src("function mk<T>(): T[] { return []; } function main() { const x = mk(); }");
@@ -382,7 +382,7 @@ fn interface_and_function_values_compare_by_identity() {
         "interface N { n(): i64; } class C implements N { n(): i64 { return 1; } }
          function eqN(a: N, b: N): bool { return a === b; }
          function eqF(f: () => i64, g: () => i64): bool { return f !== g; }
-         function main() { const c: N = new C(); const f = () => 1; console.log(eqN(c, c), eqF(f, f)); }",
+         function main() { const c: N = new C(); const f = (): i64 => 1; console.log(eqN(c, c), eqF(f, f)); }",
     );
     for f in ["eqN", "eqF"] {
         assert!(calls(func(&p, f))
@@ -501,8 +501,46 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    let r = err_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    assert!(r.contains("constant expressions"), "{r}");
+    // A pure call may initialize a module constant (#383); one with effects makes it module
+    // state, evaluated once (#802), and so does an array that is not a table.
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() { console.log(X); }");
+    // An array of number or boolean literals is a table (read-only data).
+    ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
+    ok_src("const X: string[] = [\"a\"]; function main() { X.push(\"b\"); }");
+    ok_src(
+        "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
+    );
+    ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
+    // An initializer that may throw makes the constant module state; one whose type is an
+    // error reports only that error.
+    ok_src("function f(n: i64): i64 { if (n < 0) { throw new Error(\"x\"); } return n; } const D = f(1); function main() { console.log(D); }");
+    let r = err_src("const BAD = JSON.parse(\"{bad\"); function main() { console.log(BAD); }");
+    assert!(r.contains("cannot infer type parameter"), "{r}");
+    assert!(!r.contains("may throw"), "{r}");
+    // A module-level `let` is module state; an imported one is read-only where imported.
+    ok_src("let n = 0; function bump() { n += 1; } function main() { bump(); console.log(n); }");
+    let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
+    assert!(r.contains("module-level constant `X`"), "{r}");
+    let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
+    assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
+    // What the compiler can't follow could write to it: a function value, a binding through `!`.
+    let r = err_src(
+        "const X: u8[] = [1]; function main() { const f = (xs: u8[]) => xs.fill(0); f(X); }",
+    );
+    assert!(
+        r.contains("cannot pass module constant `X` to a function value"),
+        "{r}"
+    );
+    let r = err_src("const X: u8[] = [1]; function main() { const v = X!; v.push(2); }");
+    assert!(r.contains("cannot move out of module constant `X`"), "{r}");
+    let r = err_src(
+        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
+    );
+    assert!(
+        r.contains("cannot move out of module constant `C.X`"),
+        "{r}"
+    );
 }
 
 #[test]
@@ -599,13 +637,21 @@ fn interface_fields_through_values_and_generics() {
         "interface Aged { age: i64; }
          class P { age: i64 = 3; }
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
-         function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4 })); }",
+         function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4i64 })); }",
     );
+    // A writable field is written through the setter slot after the getters (#1112).
+    let p = ok_src(
+        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; }
+         function main() { const x = { age: 2i64 }; f(x); console.log(x.age); }",
+    );
+    assert!(calls(func(&p, "f"))
+        .iter()
+        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
     let r = err_src(
-        "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
+        "interface Aged { readonly age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
     );
     assert!(
-        r.contains("cannot modify `age` through an interface or generic value"),
+        r.contains("cannot assign to `age`: it is a readonly field"),
         "{r}"
     );
 }
@@ -673,7 +719,7 @@ fn array_literal_takes_the_common_base_class() {
 fn reduce_accumulator_follows_the_elements() {
     common::programs::ok_src(
         "function main() { const lens = [\"ab\"].map((w) => w.length);
-           const n: usize = lens.reduce((a, b) => a + b, 0); console.log(n); }",
+           const n: number = lens.reduce((a, b) => a + b, 0); console.log(n); }",
     );
 }
 
@@ -690,7 +736,7 @@ fn reduce_with_a_float_initial_value_accumulates_floats() {
            const b = ns.reduce((acc, n) => acc + 0.5, 0.5);
            const c: f64 = a + b;
            const d = ss.reduce((acc, s) => acc + 1, 0);
-           const e: i64 = d;
+           const e: number = d;
            console.log(`${c}`, e); }",
     );
 }
@@ -699,7 +745,7 @@ fn reduce_with_a_float_initial_value_accumulates_floats() {
 fn assignment_expressions_have_the_assigned_value() {
     common::programs::ok_src(
         "function next(): string | null { return null; }
-         function main() { let line: string | null = null; let n: usize = 0;
+         function main() { let line: string | null = null; let n = 0;
            while ((line = next()) != null) { n += line.length; }
            let x = 0; const y = (x = 5) + 1; console.log(n, x, y); }",
     );
@@ -709,7 +755,7 @@ fn assignment_expressions_have_the_assigned_value() {
 fn literal_unions_use_their_base_members() {
     common::programs::ok_src(
         "type Lvl = \"lo\" | \"mid\";
-         function main() { const l: Lvl = \"mid\"; const n: usize = l.length;
+         function main() { const l: Lvl = \"mid\"; const n = l.length;
            const ls: Lvl[] = [l]; console.log(n, l.toUpperCase(), ls.join(\",\")); }",
     );
 }
@@ -717,7 +763,7 @@ fn literal_unions_use_their_base_members() {
 #[test]
 fn bitwise_operators_convert_floats_like_to_int32() {
     common::programs::ok_src(
-        "function main() { const a = 41; const q = (a / 13) | 0; const n: i64 = q + 1; console.log(n); }",
+        "function main() { const a = 41; const q = (a / 13) | 0; const n: number = q + 1; console.log(n); }",
     );
 }
 
@@ -801,4 +847,14 @@ fn super_runs_exactly_once_before_this() {
     ));
     assert_eq!(r.matches("error").count(), 1, "{r}");
     assert!(r.contains("`t` is a parameter property of `B`"), "{r}");
+}
+
+#[test]
+fn as_types_a_literal_in_the_asserted_context() {
+    ok_src("function main() { const xs = [[\"a\", 1]] as [string, u8][]; console.log(xs[0][1]); }");
+    ok_src("function main() { const xs = [] as string[]; console.log(xs.length); }");
+    let r = err_src("function main() { const xs = [[\"a\", \"b\"]] as [string, u8][]; }");
+    assert!(r.contains("mismatched types"), "{r}");
+    let r = err_src("class A {} class B {} function main() { const b = new A() as B; }");
+    assert!(r.contains("cannot cast `A` as `B`"), "{r}");
 }

@@ -6,8 +6,8 @@
 //! initial handler state for one request (taking ownership of the `VeltReq`), plus the state
 //! machine's `poll`/`drop` and state size. The runtime stores that state inline in the request
 //! future (size classes, like `spawn`), so a request costs no allocation beyond hyper's own and the
-//! request/response objects. The request body is read completely before the handler starts, so
-//! `req.body` is a plain synchronous accessor. The handler's result (state offset 0) is a
+//! request/response objects. The handler starts once the request's head has arrived and receives
+//! the body while it reads it (`req_body.rs`). The handler's result (state offset 0) is a
 //! response key (`response.rs`).
 //!
 //! A server handle is a registry key too (`crate::registry`): after `close()`, `shutdown()` or
@@ -18,9 +18,10 @@
 //! upgrades: a request asking for one parks its `OnUpgrade` (`upgrade.rs`) for std/websocket.
 
 use super::body::RespBody;
+use super::context::{self, Frame};
 use super::handler::Shared;
 pub use super::handler::{InitFn, VeltHandler};
-use super::request::ReqObj;
+use super::request::{Conn, ReqObj};
 use super::response::RespHandle;
 use super::upgrade;
 use crate::net::tcp::text_arg;
@@ -32,7 +33,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use hyper::body::Incoming;
-use hyper::header::UPGRADE;
+use hyper::upgrade::OnUpgrade;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -60,6 +61,8 @@ static SERVERS: Registry<ServerObj> = Registry::new();
 pub struct ServerObj {
     port: u16,
     accept_loop: AbortHandle,
+    /// Closed once the accept loop dropped the listening socket (see [`Bound`]).
+    unbound: watch::Receiver<()>,
     /// Signals (by closing) that the handler was released; see `Shared::released`.
     released: watch::Receiver<()>,
 }
@@ -71,57 +74,84 @@ pub struct ServerObj {
 /// client disconnected, so the cleanup it would do after its next `await` (returning a pooled
 /// connection, committing, `close()`) still happens. That is why the state is boxed: an
 /// unfinished handler must be able to leave the request's future.
+///
+/// Every poll runs in a frame (`context.rs`) that holds the request, so the handler's accessors
+/// and its response skip the registries.
 struct HandlerFut<S: OwnedStore> {
     /// `None` once the handler returned.
     inner: Option<Pin<Box<Compiled<S>>>>,
     /// The request's state borrows the handler's environment, which lives as long as `Shared`
     /// (an HTTP/2 stream's task can outlive its connection's).
     shared: Arc<Shared>,
+    /// The request, as the frame shows it to the handler, and its key.
+    req: Arc<ReqObj>,
+    key: u64,
+    /// A response the handler handed back in a poll that did not finish it.
+    early: Option<Box<Response<RespBody>>>,
+    /// Released when the request's future goes (the handler finished, or its client left).
+    _parked: ParkedUpgrade,
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
-    fn new(shared: &Arc<Shared>, req: Box<ReqObj>) -> Self {
+    fn new(shared: &Arc<Shared>, req: Arc<ReqObj>, parked: ParkedUpgrade) -> Self {
         let d = &shared.handler();
-        let req = super::request::register(req);
+        let key = super::request::register(req.clone());
         let (size, align) = (d.state_size as usize, d.state_align as usize);
         let inner = Compiled::<S>::with_init(d.poll, d.drop, size, align, |st| {
             // SAFETY: generated init writes a fresh state; ownership of the request key (passed
             // in the pointer-sized slot) moves to it.
-            unsafe { (d.init)(d.env, req.bits() as usize as *mut ReqObj, st) }
+            unsafe { (d.init)(d.env, key.bits() as usize as *mut ReqObj, st) }
         });
         HandlerFut {
             inner: Some(Box::pin(inner)),
             shared: shared.clone(),
+            req,
+            key: key.bits(),
+            early: None,
+            _parked: parked,
         }
     }
 }
 
-/// Takes the handler's result (state offset 0) once its poll returned `Ready`.
+/// Takes the handler's result (state offset 0) once its poll returned `Ready`: a response key,
+/// `context::RESPONDED`, or 0.
 ///
 /// # Safety
 /// The handler must have completed and its result must not have been taken yet.
-unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> RespHandle {
-    *(inner.state_ptr() as *const RespHandle)
+unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> u64 {
+    *(inner.state_ptr() as *const u64)
 }
 
 impl<S: OwnedStore> Future for HandlerFut<S> {
-    type Output = Response<RespBody>;
+    type Output = Result<Response<RespBody>, Infallible>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Some(inner) = self.inner.as_mut() else {
-            return Poll::Ready(status_only(StatusCode::INTERNAL_SERVER_ERROR));
+        let this = &mut *self;
+        let Some(inner) = this.inner.as_mut() else {
+            return Poll::Ready(Ok(status_only(StatusCode::INTERNAL_SERVER_ERROR)));
         };
-        if inner.as_mut().poll(cx).is_pending() {
+        let mut frame = Frame::new(this.key, Arc::as_ptr(&this.req));
+        let at: *mut Frame = &mut frame;
+        let ready = context::enter(at, || inner.as_mut().poll(cx).is_ready());
+        let responded = frame.response.take();
+        if !ready {
+            if let Some(r) = responded {
+                this.early = Some(Box::new(r));
+            }
             return Poll::Pending;
         }
-        // SAFETY: the handler completed just now; its result is a response key (0 = none).
-        let resp = unsafe { take_response(inner.as_mut()) };
-        self.inner = None;
-        // Ownership of the response moves back to the runtime; a dead key is a 500.
-        Poll::Ready(
-            super::response::take(resp)
-                .unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR)),
-        )
+        // SAFETY: the handler completed just now; its result was not taken.
+        let result = unsafe { take_response(inner.as_mut()) };
+        this.inner = None;
+        // Ownership of the response moves back to the runtime; none (or a dead key) is a 500.
+        let resp = if result == context::RESPONDED {
+            responded.or_else(|| this.early.take().map(|r| *r))
+        } else {
+            super::response::take(RespHandle::from_bits(result))
+        };
+        Poll::Ready(Ok(
+            resp.unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR))
+        ))
     }
 }
 
@@ -129,18 +159,21 @@ impl<S: OwnedStore> Drop for HandlerFut<S> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             let shared = self.shared.clone();
-            crate::task::runtime::handle().spawn(finish_detached(inner, shared));
+            crate::task::runtime::spawn(finish_detached(inner, shared));
         }
     }
 }
 
-/// Runs a handler whose request was dropped to completion and discards its response.
+/// Runs a handler whose request was dropped to completion and discards its response. Its polls
+/// have no frame, so a response it builds is registered (`velt_rt_http_req_respond`).
 async fn finish_detached<S: OwnedStore>(mut inner: Pin<Box<Compiled<S>>>, _shared: Arc<Shared>) {
     inner.as_mut().await;
     // SAFETY: the handler completed; nobody else takes its result.
     let resp = unsafe { take_response(inner.as_mut()) };
     // A response nobody will send.
-    drop(super::response::take(resp));
+    if resp != context::RESPONDED {
+        drop(super::response::take(RespHandle::from_bits(resp)));
+    }
 }
 
 fn status_only(status: StatusCode) -> Response<RespBody> {
@@ -160,41 +193,51 @@ impl Drop for ParkedUpgrade {
     }
 }
 
-async fn handle<S: OwnedStore>(
-    shared: Arc<Shared>,
+/// The future of one request: its upgrade parked if it asks for one, then its handler. A plain
+/// function returning the handler's future, not an `async fn`, so the request's head moves
+/// once, into its shared allocation (`ReqObj::shared`), instead of through another future's
+/// state first.
+fn handle<S: OwnedStore>(
+    shared: &Arc<Shared>,
+    conn: Conn,
     mut req: Request<Incoming>,
-) -> Result<Response<RespBody>, Infallible> {
-    let parked = ParkedUpgrade(if req.headers().contains_key(UPGRADE) {
+) -> HandlerFut<S> {
+    // hyper sets up an upgrade (an `OnUpgrade` extension) exactly for a request that can have
+    // one (HTTP/1.1 with `upgrade`, or CONNECT): looking for it costs nothing when there is
+    // none, unlike a header lookup.
+    let parked = ParkedUpgrade(if req.extensions().get::<OnUpgrade>().is_some() {
         upgrade::park(hyper::upgrade::on(&mut req))
     } else {
         0
     });
-    let resp = match ReqObj::read(req, parked.0).await {
-        Some(req) => HandlerFut::<S>::new(&shared, req).await,
-        None => status_only(StatusCode::BAD_REQUEST),
-    };
-    drop(parked);
-    Ok(resp)
+    let req = ReqObj::shared(req, parked.0, conn);
+    HandlerFut::new(shared, req, parked)
 }
 
-async fn accept_loop<S: OwnedStore>(
+/// A server's listening socket and, dropped right after it, the signal that the port is free
+/// again: `close()` stops the accept loop (which owns this) asynchronously, so a `serve` or
+/// `listen` on the same port waits for the signal ([`crate::dev::unbinding`]) instead of failing
+/// with "address in use" (#1020).
+struct Bound {
     listener: TcpListener,
-    shared: Arc<Shared>,
-    tls: Option<TlsAcceptor>,
-) {
+    _unbound: watch::Sender<()>,
+}
+
+async fn accept_loop<S: OwnedStore>(bound: Bound, shared: Arc<Shared>, tls: Option<TlsAcceptor>) {
+    let listener = &bound.listener;
     // Dropping this (when `close()` aborts the loop) makes every open connection finish its
     // in-flight requests and close.
     let graceful = GracefulShutdown::new();
     let Some(mut stop) = crate::dev::shutdown::register() else {
-        return accept_connections::<S>(&listener, shared, &graceful, tls).await;
+        return accept_connections::<S>(listener, shared, &graceful, tls).await;
     };
     // Dev mode: on SIGTERM stop accepting (the supervisor keeps the socket, so new connections
     // wait for the next version) and let in-flight requests finish before the process exits.
     {
-        let accept = std::pin::pin!(accept_connections::<S>(&listener, shared, &graceful, tls));
+        let accept = std::pin::pin!(accept_connections::<S>(listener, shared, &graceful, tls));
         futures_util::future::select(accept, std::pin::pin!(stop.requested())).await;
     }
-    drop(listener);
+    drop(bound);
     let _ = tokio::time::timeout(crate::dev::shutdown::DRAIN, graceful.shutdown()).await;
     drop(stop);
 }
@@ -206,8 +249,8 @@ async fn accept_connections<S: OwnedStore>(
     tls: Option<TlsAcceptor>,
 ) {
     loop {
-        let stream = match listener.accept().await {
-            Ok((s, _)) => s,
+        let (stream, remote) = match listener.accept().await {
+            Ok(accepted) => accepted,
             // Per-connection failures and resource exhaustion (EMFILE): back off briefly, go on.
             Err(_) => {
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -215,17 +258,31 @@ async fn accept_connections<S: OwnedStore>(
             }
         };
         let _ = stream.set_nodelay(true);
+        let conn = Conn {
+            remote,
+            local: stream.local_addr().unwrap_or(remote),
+            tls: tls.is_some(),
+        };
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
-        // connection.
-        tokio::spawn(async move {
-            match tls {
-                None => serve_connection::<S, _>(TokioIo::new(stream), shared, watcher).await,
-                Some(acceptor) => {
-                    if let Ok(Ok(s)) =
-                        tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
-                    {
-                        serve_connection::<S, _>(TokioIo::new(s), shared, watcher).await;
+        // connection. Per-core: served where placement puts it; its socket moves there only if
+        // that is another worker.
+        crate::task::runtime::spawn_with(move |moves| {
+            let stream = crate::net::tcp::Handoff::new(stream, moves);
+            async move {
+                let Ok(stream) = stream.and_then(crate::net::tcp::Handoff::attach) else {
+                    return;
+                };
+                match tls {
+                    None => {
+                        serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await
+                    }
+                    Some(acceptor) => {
+                        if let Ok(Ok(s)) =
+                            tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
+                        {
+                            serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
+                        }
                     }
                 }
             }
@@ -234,12 +291,12 @@ async fn accept_connections<S: OwnedStore>(
 }
 
 /// Serves one connection (HTTP/1.1 with upgrades, or HTTP/2) until it closes.
-async fn serve_connection<S, I>(io: I, shared: Arc<Shared>, watcher: Watcher)
+async fn serve_connection<S, I>(io: I, shared: Arc<Shared>, conn: Conn, watcher: Watcher)
 where
     S: OwnedStore,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
-    let svc = hyper::service::service_fn(move |req| handle::<S>(shared.clone(), req));
+    let svc = hyper::service::service_fn(move |req| handle::<S>(&shared, conn, req));
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // pipeline_flush: responses to pipelined requests go out in one write instead of one
     // `writev` each (5× on TechEmpower's pipelined plaintext, bench/web/RESULTS.md).
@@ -256,6 +313,11 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await.and_then(|l| {
             let port = l.local_addr()?.port();
+            let (unbound_tx, unbound) = watch::channel(());
+            let bound = Bound {
+                listener: l,
+                _unbound: unbound_tx,
+            };
             let desc = shared.handler();
             let released = shared.released();
             // Dev mode: a replacement handler may need any state size, so store states on the
@@ -265,14 +327,15 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
             } else {
                 (desc.state_size as usize, desc.state_align as usize)
             };
-            let task = with_state_store!(size, align, |S| tokio::spawn(accept_loop::<S>(
-                l, shared, tls
-            )));
+            let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
+                accept_loop::<S>(bound, shared, tls)
+            ));
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {
                 port,
                 accept_loop: task.abort_handle(),
+                unbound,
                 released,
             })
         });
@@ -347,6 +410,7 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
     s.accept_loop.abort();
+    crate::dev::unbinding(s.port, s.unbound.clone());
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }

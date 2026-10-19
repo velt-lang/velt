@@ -1,5 +1,5 @@
-//! Interned response header values, so a header every response carries (`server: velt`,
-//! `cache-control: no-store`) costs no allocation per response.
+//! Interned response header names and values, so a header every response carries (`server:
+//! velt`, `cache-control: no-store`) costs no allocation or parsing per response.
 //!
 //! `HeaderValue::from_bytes` copies the value into a fresh buffer. Most values a server sets are
 //! the same on every response, so each worker thread remembers the first [`SLOTS`] short values
@@ -7,9 +7,14 @@
 //! never freed). Leaking is bounded by [`LEAK_BUDGET`] bytes per process; once a thread's slots
 //! or the budget are used up, other values take the copying path as before. Slots are never
 //! evicted: the headers a server sets on every response are among the first it sees.
+//!
+//! Names are remembered the same way (the first [`SLOTS`] per thread, as written): parsing a
+//! name (`HeaderName::from_bytes`) matches it against every standard header, and a custom one
+//! is copied; a remembered name is a comparison and a clone. They are owned, not leaked, so
+//! they need no budget.
 
 use bytes::Bytes;
-use hyper::header::{HeaderValue, InvalidHeaderValue};
+use hyper::header::{HeaderName, HeaderValue, InvalidHeaderName, InvalidHeaderValue};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,6 +29,27 @@ static LEAKED: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static VALUES: RefCell<Vec<HeaderValue>> = const { RefCell::new(Vec::new()) };
+    /// Names as written, with what they parse to.
+    static NAMES: RefCell<Vec<(Box<[u8]>, HeaderName)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A header name for `bytes`: a clone of the name this thread parsed from the same bytes before,
+/// else a newly parsed one (remembered if there is room).
+pub fn header_name(bytes: &[u8]) -> Result<HeaderName, InvalidHeaderName> {
+    if bytes.len() > MAX_LEN {
+        return HeaderName::from_bytes(bytes);
+    }
+    NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        if let Some((_, name)) = names.iter().find(|(seen, _)| **seen == *bytes) {
+            return Ok(name.clone());
+        }
+        let name = HeaderName::from_bytes(bytes)?;
+        if names.len() < SLOTS {
+            names.push((bytes.into(), name.clone()));
+        }
+        Ok(name)
+    })
 }
 
 /// A header value for `bytes`: a free clone of an interned value when this thread has seen it
@@ -74,6 +100,27 @@ mod tests {
         let b = header_value(b"velt-test").expect("valid");
         assert_eq!(a, "velt-test");
         assert_eq!(a.as_bytes().as_ptr(), b.as_bytes().as_ptr());
+    }
+
+    #[test]
+    fn names_are_remembered_as_written() {
+        for _ in 0..2 {
+            assert_eq!(header_name(b"X-Velt-Test").expect("valid"), "x-velt-test");
+            assert_eq!(
+                header_name(b"server").expect("valid"),
+                hyper::header::SERVER
+            );
+        }
+        assert!(header_name(b"bad name").is_err());
+        assert!(
+            header_name(b"bad name").is_err(),
+            "an invalid name is not remembered"
+        );
+        let long = vec![b'x'; MAX_LEN + 1];
+        assert_eq!(
+            header_name(&long).expect("valid").as_str().len(),
+            MAX_LEN + 1
+        );
     }
 
     #[test]

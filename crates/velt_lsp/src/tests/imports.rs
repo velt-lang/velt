@@ -19,6 +19,11 @@ export function readFile(path: string): string {
   return path;
 }
 
+/**
+ * Writes `data` to `path`.
+ * @param path - where
+ * @deprecated use `write`
+ */
 export function writeFile(path: string, data: string): string {
   return path + data;
 }
@@ -143,6 +148,54 @@ fn braces_offer_the_std_module_exports_not_yet_listed() {
     client.diagnostics(&doc);
     let items = complete(&mut client, &doc, text, "w }", 1, None);
     assert_eq!(labels(&items), ["writeFile", "IoError", "Mode"]);
+    client.shutdown();
+}
+
+/// Exports offered inside `import { … }` and by auto-import carry their doc comment (the module
+/// need not be part of the program, so it comes with the list) and the deprecated tag.
+#[test]
+fn import_completions_show_doc_comments() {
+    let fx = fixture();
+    let text = "import { readFile,  } from \"velt:fs\";
+";
+    let (mut client, doc, _) = open(&fx, text);
+    let items = complete(&mut client, &doc, text, ",  }", 2, None);
+    let write = item(&items, "writeFile");
+    assert_eq!(write["documentation"]["kind"], json!("markdown"));
+    assert_eq!(
+        write["documentation"]["value"],
+        json!(
+            "Writes `data` to `path`.
+
+**Parameters**
+
+- `path`: where
+
+**Deprecated:** use `write`"
+        )
+    );
+    assert_eq!(write["tags"], json!([1]));
+    assert!(item(&items, "IoError")["documentation"].is_null());
+    let text = "function main() {
+  writeF
+}
+";
+    client.change(&doc, 2, text);
+    client.diagnostics(&doc);
+    let items = complete(
+        &mut client,
+        &doc,
+        text,
+        "writeF
+",
+        6,
+        None,
+    );
+    let write = item(&items, "writeFile");
+    assert_eq!(write["labelDetails"]["description"], json!("velt:fs"));
+    let value = write["documentation"]["value"].as_str().unwrap();
+    assert!(value.starts_with("Writes `data` to `path`."), "{value}");
+    assert_eq!(write["deprecated"], json!(true));
     client.shutdown();
 }
 

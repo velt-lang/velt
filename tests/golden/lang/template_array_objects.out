@@ -1,0 +1,20 @@
+class: [object Object]
+map: [object Map]
+set: [object Set],[object Set]
+object: [object Object]
+union: [object Object],[object Object]
+generic union: [object Object],[object Object]
+generic maps: [object Map],[object Map]
+primitives: 1,two,
+string enum: FAST,SLOW
+tuple: 1,[object Object]
+join: [object Object]-[object Object]
+join default: [object Object]
+join union: [object Object];[object Object]
+nested: [object Object], [object Object]|
+nullable: [object Object], [object Object]+
+join enum: FAST/SLOW
+1,2
+1,,,3
+[]
+true

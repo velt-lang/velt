@@ -23,14 +23,22 @@ fn sandbox() -> Sandbox {
 
 impl Sandbox {
     fn velt(&self, cwd: &str, args: &[&str]) -> Output {
+        self.velt_with(cwd, args, &[])
+    }
+
+    fn velt_with(&self, cwd: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         let cwd = self.dir.join(cwd);
-        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        command
             .args(args)
             .current_dir(&cwd)
             .env("VELT_HOME", self.dir.join("home"))
             .env_remove("VELT_REGISTRY")
-            .output()
-            .unwrap()
+            .env_remove("VELT_LAUNCHER");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().unwrap()
     }
 
     /// Run and assert success; returns stderr (status lines).
@@ -393,6 +401,106 @@ fn test_runner_reports_passes_and_failures() {
     assert!(Path::new(&s.dir.join("app/target/velt/test")).is_dir());
 }
 
+/// `--filter` runs the matching tests; `--no-run --json` builds their harness without running
+/// it and names it, for a debugger ("Debug test" in VS Code).
+#[test]
+fn test_filter_and_no_run() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.write(
+        "app/src/math.test.vlt",
+        "export function test_add() { console.log(\"add ran\"); }\n\
+         export function test_add_more() { assert(1 + 1 == 2); }\n\
+         export function test_bad() { assertEq(1, 2); }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "add"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{stdout}");
+    for want in ["ok test_add", "ok test_add_more", "2 passed; 0 failed"] {
+        assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
+    }
+    assert!(!stdout.contains("test_bad"), "{stdout}");
+
+    let o = s.velt(
+        "app",
+        &[
+            "test",
+            "src/math.test.vlt",
+            "--filter",
+            "test_bad",
+            "--no-run",
+            "--json",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(out["errors"], 0, "{out}");
+    let harnesses = out["harnesses"].as_array().unwrap();
+    assert_eq!(harnesses.len(), 1, "{out}");
+    let h = &harnesses[0];
+    assert_eq!(h["tests"], serde_json::json!(["test_bad"]), "{out}");
+    assert!(
+        h["file"].as_str().unwrap().ends_with("math.test.vlt"),
+        "{out}"
+    );
+    // Built, not run: running it fails the assertion.
+    let exe = Path::new(h["executable"].as_str().unwrap());
+    let run = std::process::Command::new(exe).output().unwrap();
+    assert_eq!(run.status.code(), Some(101));
+    // In a directory of its own, so debugging it doesn't block the next run's link.
+    assert_eq!(
+        exe.parent().and_then(|d| d.file_name()),
+        Some(std::ffi::OsStr::new("debug")),
+        "{out}"
+    );
+    assert!(h["debugInfo"].is_boolean(), "{out}");
+    if !cfg!(windows) {
+        assert_eq!(h["debugInfo"], true, "{out}");
+    }
+
+    // `--exact`: `test_add` alone, not `test_add_more`.
+    let o = s.velt(
+        "app",
+        &[
+            "test", "--filter", "test_add", "--exact", "--no-run", "--json",
+        ],
+    );
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        out["harnesses"][0]["tests"],
+        serde_json::json!(["test_add"]),
+        "{out}"
+    );
+    let o = s.velt("app", &["test", "--filter", "test_add", "--exact"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
+
+    // A test file that does not parse: its errors, with their location, are in the JSON.
+    s.write("app/src/garbled.test.vlt", "export function test_y( {\n");
+    let o = s.velt("app", &["test", "--filter", "test_y", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    let located = out["diagnostics"].as_array().unwrap().iter().any(|d| {
+        d["location"]["file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with("garbled.test.vlt"))
+    });
+    assert!(located, "{out}");
+    std::fs::remove_file(s.dir.join("app/src/garbled.test.vlt")).unwrap();
+
+    // A test that does not build is reported in the JSON.
+    s.write(
+        "app/src/broken.test.vlt",
+        "export function test_x() { const n: number = \"no\"; }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "test_x", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    assert_eq!(out["harnesses"], serde_json::json!([]), "{out}");
+}
+
 #[test]
 fn manifest_json_prints_the_validated_manifest() {
     let s = sandbox();
@@ -519,10 +627,13 @@ fn ts_and_tsx_modules_in_a_package() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     let manifest = s.read("app/package.vlt").replacen(
-        "version: \"0.1.0\"",
-        "version: \"0.1.0\", jsx: { importSource: \"./ui\" }",
+        "{ name: \"app\", ",
+        "{\n  name: \"app\",\n  jsx: { importSource: \"./ui\" },\n  ",
         1,
     );
+    let manifest = manifest
+        .replacen(", velt:", ",\n  velt:", 1)
+        .replacen(" };", ",\n};", 1);
     s.write("app/package.vlt", &manifest);
     s.write(
         "app/src/model.ts",
@@ -637,4 +748,126 @@ fn a_package_written_in_typescript_needs_no_entry() {
         err.contains("more than one `src/main` module: `src/main.vlt`, `src/main.ts`"),
         "{err}"
     );
+}
+
+#[test]
+fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
+    // #948: until the launcher selects toolchains, velt says when a package asks for another.
+    let s = sandbox();
+    std::fs::create_dir_all(s.dir.join("app")).unwrap();
+    s.write(
+        "app/package.vlt",
+        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
+    );
+    let out = s.velt("app", &["manifest"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(
+        err.contains("package.vlt asks for velt \"9.9\", but this is velt"),
+        "{err}"
+    );
+    // Run by the launcher, the choice was made there.
+    let out = s.velt_with("app", &["manifest"], &[("VELT_LAUNCHER", "/x/bin/velt")]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("asks for velt"), "{err}");
+}
+
+#[test]
+fn target_add_from_an_unsigned_release_names_the_way_out() {
+    // A toolchain built from source carries no pack hashes, so `velt target add` needs the
+    // release's signed SHA256SUMS; a release without a signature (v0.1.0) says what to do.
+    let version = env!("CARGO_PKG_VERSION");
+    let target = "x86_64-pc-windows-msvc";
+    let dir = format!("/releases/download/v{version}");
+    let files: std::collections::HashMap<String, Vec<u8>> = [(
+        format!("{dir}/SHA256SUMS"),
+        format!("00  velt-{version}-target-{target}.tar.gz\n").into_bytes(),
+    )]
+    .into_iter()
+    .collect();
+    let handler = std::sync::Arc::new(move |req: velt_http::Request| match files.get(&req.path) {
+        Some(b) => velt_http::Response::bytes(200, "text/plain", b.clone()),
+        None => velt_http::Response::text(404, "not found"),
+    });
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = velt_http::Server::start(listener, handler, 1 << 20).unwrap();
+    let s = sandbox();
+    let base = format!("http://{}", server.addr());
+    let out = s.velt_with(
+        "",
+        &["target", "add", target],
+        &[("VELT_INSTALL_BASE_URL", &base)],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    server.stop();
+    if String::from_utf8_lossy(&out.stdout).contains("is this machine") {
+        return; // a Windows x64 host has no pack to add for itself
+    }
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("SHA256SUMS has no signature"), "{err}");
+    assert!(
+        err.contains(&format!("velt target add {target} --from <file>"))
+            && err.contains("--unverified"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_lock_records_the_toolchain_and_locked_builds_refuse_another() {
+    // #960: velt.lock.json says which velt builds the package; --locked holds to it.
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["install"]);
+    let version = env!("CARGO_PKG_VERSION");
+    let lock = s.read("app/velt.lock.json");
+    assert!(lock.contains(&format!("\"velt\": \"{version}\"")), "{lock}");
+
+    // Another toolchain's lock: a normal build leaves it (another velt ran this one), --locked
+    // refuses, `velt update` moves it to this toolchain.
+    let minor = version.rsplit_once('.').unwrap().0;
+    let other = format!("{minor}.999");
+    s.write("app/velt.lock.json", &lock.replace(version, &other));
+    s.ok("app", &["install"]);
+    assert!(s.read("app/velt.lock.json").contains(&other));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains(&format!(
+            "velt.lock.json pins velt {other}, but this is velt {version}"
+        )),
+        "{err}"
+    );
+    s.ok("app", &["update"]);
+    assert!(s
+        .read("app/velt.lock.json")
+        .contains(&format!("\"velt\": \"{version}\"")));
+
+    // A locked version the pin no longer accepts: --locked says to record this one instead.
+    let pinned = s.read("app/velt.lock.json");
+    s.write("app/velt.lock.json", &pinned.replace(version, "0.0.9"));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains("pins velt 0.0.9, which the package's velt pin")
+            && err.contains(&format!("to record velt {version}")),
+        "{err}"
+    );
+    // Not a version: refused when the lock is read, shown escaped.
+    s.write("app/velt.lock.json", &pinned.replace(version, "../../x"));
+    let err = s.fail("app", &["install"]);
+    assert!(err.contains("not a velt version"), "{err}");
+    s.write("app/velt.lock.json", &pinned);
+
+    // A package without a `velt` pin records none (the launcher only follows a pinned lock).
+    s.ok("", &["new", "unpinned"]);
+    let manifest = s.read("unpinned/package.vlt");
+    let unpinned = manifest.replace(&format!(", velt: \"{minor}\""), "");
+    assert_ne!(unpinned, manifest, "{manifest}");
+    s.write("unpinned/package.vlt", &unpinned);
+    s.ok("unpinned", &["install"]);
+    assert!(!s.read("unpinned/velt.lock.json").contains("\"velt\""));
+
+    // A lock from before the field is fine under --locked, and stays as it is.
+    let old = "{\n  \"version\": 1,\n  \"packages\": []\n}\n";
+    s.write("app/velt.lock.json", old);
+    s.ok("app", &["install", "--locked"]);
+    assert_eq!(s.read("app/velt.lock.json"), old);
 }

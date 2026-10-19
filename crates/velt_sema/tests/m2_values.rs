@@ -22,7 +22,7 @@ fn array_literals_index_and_intrinsics() {
         .any(|e| matches!(&e.kind, E::Index { index, .. } if matches!(index.kind, E::Cast(_)))));
     let r = err_src("function main() { const xs = []; }");
     assert!(r.contains("cannot infer the element type of `[]`"), "{r}");
-    let r = err_src("function main() { const xs = [1, \"a\"]; }");
+    let r = err_src("function main() { const xs: number[] = [1, \"a\"]; }");
     assert!(r.contains("mismatched types"), "{r}");
     let r = err_src("function main() { const xs = [1]; xs[\"a\"]; }");
     assert!(r.contains("array index must be an integer"), "{r}");
@@ -52,24 +52,40 @@ fn for_of_borrows_or_copies_elements() {
     assert!(r.contains("cannot assign to `s`"), "{r}");
     let r = err_src("function main() { for (const s of 5) { } }");
     assert!(
-        r.contains("cannot iterate over a value of type `i64`"),
+        r.contains("cannot iterate over a value of type `f64`"),
         "{r}"
     );
 }
 
 #[test]
 fn for_of_over_a_map_iterates_entries() {
+    // Over a map variable or a call's result: the live cursor loop (`body/for_map.rs`, #877);
+    // over a `new` map: the array of its entries.
     let p = ok_src(
-        "function main() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }",
+        "function make(): Map<string, i64> { return new Map<string, i64>(); }
+         function live() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }
+         function called() { for (const [k, v] of make()) { console.log(k, v); } }
+         function temp() { for (const [k, v] of new Map<string, i64>()) { console.log(k, v); } }
+         function main() { live(); called(); temp(); }",
     );
-    let entries = p
-        .defs
-        .iter()
-        .position(|d| matches!(d, Def::Fn(f) if f.name.ends_with("Map.entries")))
-        .unwrap();
-    assert!(calls(func(&p, "main"))
-        .iter()
-        .any(|(c, _)| matches!(c, Callee::Def(d, _) if d.0 as usize == entries)));
+    let method = |name: &str| {
+        p.defs
+            .iter()
+            .position(|d| matches!(d, Def::Fn(f) if f.name.ends_with(name)))
+            .unwrap()
+    };
+    let calls_method = |f: &str, name: &str| {
+        let m = method(name);
+        calls(func(&p, f))
+            .iter()
+            .any(|(c, _)| matches!(c, Callee::Def(d, _) if d.0 as usize == m))
+    };
+    assert!(calls_method("live", "Map.__advance"));
+    assert!(calls_method("live", "Map.__entryAt"));
+    assert!(!calls_method("live", "Map.entries"));
+    assert!(calls_method("called", "Map.__advance"));
+    assert!(!calls_method("called", "Map.entries"));
+    assert!(calls_method("temp", "Map.entries"));
 }
 
 #[test]
@@ -109,7 +125,7 @@ fn narrowing_by_null_tests() {
     let p = ok_src(
         "function f(x: i64 | null): i64 { if (x == null) return 0; return x + 1; }
          function g(x: i64 | null): i64 { if (x != null && x > 2) { return x; } return x != null ? x : 0; }
-         function h(s: string | null): usize { while (s != null) { return s.length; } return 0; }
+         function h(s: string | null): number { while (s != null) { return s.length; } return 0; }
          function main() { console.log(f(1), g(null), h(\"a\")); }",
     );
     for name in ["f", "g", "h"] {
@@ -135,7 +151,7 @@ fn narrowing_by_null_tests() {
 fn nullish_and_optional_chaining() {
     let p = ok_src(
         "class N { v: i64 = 1; next: N | null = null; get(): i64 { return this.v; } }
-         function main() { const n: N | null = new N(); console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs: i64[] | null = [1]; console.log(xs?.[0]); }",
+         function main() { const n = new N() as N | null; console.log(n?.v ?? 0, n?.get(), n?.next?.v ?? -1); const xs = [1] as i64[] | null; console.log(xs?.[0]); }",
     );
     let main = func(&p, "main");
     let matches = exprs(main)
@@ -143,13 +159,8 @@ fn nullish_and_optional_chaining() {
         .filter(|e| matches!(e.kind, E::Match { .. }))
         .count();
     assert!(matches >= 6, "{matches}");
-    let r = err_src("function main() { const x = 5; console.log(x ?? 1); }");
-    assert!(
-        r.contains("`??` needs a `T | null` value on the left"),
-        "{r}"
-    );
-    let r = err_src("function main() { const x = 5; console.log(x == null); }");
-    assert!(r.contains("is never null"), "{r}");
+    // On a value that is never null, as in TS: the value itself, and `false` (#1203).
+    ok_src("function main() { const x = 5; console.log(x ?? 1, x == null, x != undefined); }");
 }
 
 #[test]
@@ -192,11 +203,11 @@ fn closure_capture_rules() {
     assert!(r.contains("cannot assign twice to const `total`"), "{r}");
     // A closure modifying a param makes the param modified (inferred `BorrowMut`).
     let p = ok_src(
-        "function f(n: i64[]) { [1].forEach((x) => { n.push(x); }); } function main() { f([]); }",
+        "function f(n: number[]) { [1].forEach((x) => { n.push(x); }); } function main() { f([]); }",
     );
     assert_eq!(func(&p, "f").params[0].mode, PassMode::BorrowMut);
     let p = ok_src(
-        "class C { n: i64 = 0; bump() { [1, 2].forEach((x) => { this.n += x; }); } } function main() { let c = new C(); c.bump(); }",
+        "class C { n: number = 0; bump() { [1, 2].forEach((x) => { this.n += x; }); } } function main() { let c = new C(); c.bump(); }",
     );
     let bump = func(&p, "C.bump");
     let closure = p
@@ -249,7 +260,7 @@ fn nested_closures_capture_through_the_middle() {
 fn named_functions_as_values() {
     let p = ok_src(
         "function dbl(x: i64): i64 { return x * 2; } function show<T>(x: T): string { return `${x}`; }
-         function main() { const f = dbl; const g: (x: string) => string = show; console.log([1].map(dbl).length, f(2), g(\"a\")); }",
+         function main() { const f = dbl; const g: (x: string) => string = show; const ones: i64[] = [1]; console.log(ones.map(dbl).length, f(2), g(\"a\")); }",
     );
     assert!(exprs(func(&p, "main"))
         .iter()
@@ -380,11 +391,35 @@ fn shared_values() {
 fn array_constructors() {
     common::programs::ok_src(
         "function main() { const z: f64[] = new Array<f64>(4).fill(0.0);
-           const sq: i64[] = Array.from({ length: 5 }, (_, i) => i * i); console.log(z, sq); }",
+           const sq: number[] = Array.from({ length: 5 }, (_, i) => i * i); console.log(z, sq); }",
     );
     let r = common::programs::err_src("function main() { const a = new Array<i64>(3); }");
     assert!(
         r.contains("`new Array(n)` would hold `n` empty slots"),
         "{r}"
     );
+}
+
+#[test]
+fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
+    // #876: `p.inner` is stored inside `p`; `h` replaces it.
+    let decls = "type Inner = { v: number; name: string }; type Outer = { inner: Inner };";
+    let replaced = "const p: Outer = { inner: { v: 1, name: \"a\" } }; const h = (): number => { p.inner = { v: 2, name: \"b\" }; return 3; };";
+    let r = err_src(&format!(
+        "{decls} function main() {{ {replaced} p.inner.v = h(); console.log(p.inner.v); }}"
+    ));
+    assert!(
+        r.contains("the right-hand side may replace `p.inner`"),
+        "{r}"
+    );
+    assert!(r.contains("const v = h(); p.inner.v = v;"), "{r}");
+    // Computing the value first, a right-hand side that only reads, and a call that replaces no
+    // object of these types compile.
+    ok_src(&format!(
+        "{decls} function two(): number {{ return 2; }} function main() {{ {replaced} const v = h(); p.inner.v = v; p.inner.v = p.inner.v + 1; p.inner.v = two(); }}"
+    ));
+    // Another name refers to `p.inner`: the object is counted, and the write goes to the old one.
+    ok_src(&format!(
+        "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
+    ));
 }

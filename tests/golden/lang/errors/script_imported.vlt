@@ -1,4 +1,5 @@
-// Top-level statements only run in the root file; an imported module's are an error.
-import { double } from "./_script_lib";
+// An imported module's top-level statements run when it is evaluated; top-level `await` is
+// only allowed in the file the program starts from.
+import { double } from "./_script_await_lib";
 
 console.log(double(2));

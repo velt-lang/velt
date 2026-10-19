@@ -14,6 +14,8 @@ use crate::backend::Backend;
 use crate::cli::Emit;
 use crate::loader::{self, LoadOptions};
 
+mod recover;
+
 /// Stack for the pipeline thread (reserved, not committed, until used).
 const PIPELINE_STACK_BYTES: usize = 256 << 20;
 
@@ -38,6 +40,12 @@ pub struct BuildOptions {
     pub emit: Emit,
     /// Code generator; `None` → [`Backend::resolve`] (LLVM for release builds when clang exists).
     pub backend: Option<Backend>,
+    /// `--report numbers`: add the number representation report to [`Session::reports`].
+    pub report_numbers: bool,
+    /// Describe local variables for debuggers in a debug build (`velt build`, `velt dev --exe`).
+    /// Off for builds that only run (`velt run`, `velt test`): the backend also stores each
+    /// assignment of a described variable to a stack slot (+7–15% instructions on benchmarks).
+    pub debug_vars: bool,
 }
 
 impl BuildOptions {
@@ -52,6 +60,31 @@ impl BuildOptions {
     /// source locations).
     pub fn wants_debug_info(&self) -> bool {
         !self.release || self.debug_info
+    }
+
+    /// Whether the program keeps line information for debuggers: debug info was asked for, and
+    /// it reaches the executable. Cranelift's DWARF in Windows objects reaches it only through
+    /// the bundled `lld-link`; MSVC's `link.exe` keeps the sections but cuts their names to 8
+    /// bytes, so with it the build emits none (an object, `--emit obj`, keeps it: whoever links
+    /// it chooses the linker).
+    pub fn has_line_info(&self) -> bool {
+        let target = self.target();
+        let bundled = || {
+            matches!(
+                velt_link::linker_report(&target),
+                Ok(velt_link::LinkerReport::Bundled { .. })
+            )
+        };
+        self.line_info(bundled)
+    }
+
+    /// [`has_line_info`](Self::has_line_info), with `bundled` answering whether the bundled lld
+    /// links for the target.
+    pub fn line_info(&self, bundled: impl FnOnce() -> bool) -> bool {
+        let linked_cranelift_coff = self.target().contains("windows")
+            && self.backend != Some(Backend::Llvm)
+            && self.emit == Emit::Exe;
+        self.wants_debug_info() && (!linked_cranelift_coff || bundled())
     }
 }
 
@@ -103,6 +136,8 @@ pub struct Session {
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
     pub show_details: bool,
+    /// Reports the build was asked for (`--report`), printed after the diagnostics.
+    pub reports: Vec<String>,
 }
 
 impl Session {
@@ -187,6 +222,17 @@ fn load_stage(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<loader::Loaded, BuildError> {
+    let loaded = load_modules(sess, opts, scope)?;
+    sess.stop_if_errors()?;
+    Ok(loaded)
+}
+
+/// Load and parse the program, recovering from syntax errors (they are in the session).
+fn load_modules(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<loader::Loaded, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -206,7 +252,6 @@ fn load_stage(
     )
     .map_err(BuildError::Failed)?;
     sess.record("parse", t);
-    sess.stop_if_errors()?;
     Ok(loaded)
 }
 
@@ -256,13 +301,28 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let t = Instant::now();
     let std_root = loader::std_root();
     let native_inits = crate::native::inits(opts.packages.as_ref());
+    let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
         std_root: std_root.as_deref(),
         native_inits: &native_inits,
+        // A debug compiler links the debug runtime, which checks that no two tasks use one
+        // captured variable's cell (#916); release programs and release compilers skip it.
+        cell_checks: !opts.release && cfg!(debug_assertions),
+        // Variables for debuggers in debug builds made for debugging that keep their line
+        // information (they refer to its files); release builds with `-g` keep line information
+        // only, and their optimizations stay as they are.
+        debug_info: !opts.release && opts.debug_vars && line_info,
     };
-    let mut program = velt_vir::lower_with(&hir, &lower_opts);
-    if !opts.wants_debug_info() {
+    let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
+        Ok(p) => p,
+        Err(diags) => {
+            sess.diagnostics.extend(diags);
+            sess.stop_if_errors()?;
+            return Err(BuildError::Ice("lowering reported no errors".into()));
+        }
+    };
+    if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
         program.funcs.iter_mut().for_each(|f| f.locs.clear());
@@ -299,6 +359,13 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
             errs.join("\n  ")
         )));
     }
+    if opts.report_numbers {
+        sess.reports.push(crate::numbers_report::render(&program));
+        if !line_info {
+            program.files.clear();
+            program.funcs.iter_mut().for_each(|f| f.locs.clear());
+        }
+    }
     Ok(program)
 }
 
@@ -326,7 +393,7 @@ pub fn check_with(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(), BuildError> {
-    on_pipeline_thread(|| check_program(sess, opts, scope).map(drop))
+    on_pipeline_thread(|| recover::check_recovering(sess, opts, scope))
 }
 
 /// [`check_with`] for a lint of the checked modules (`velt check --ts-compat`): the loaded

@@ -3,9 +3,12 @@
 
 mod assists;
 mod client;
+mod doc_comments;
+mod doc_surfaces;
 mod effects;
 mod imports;
 mod jsx;
+mod jsx_attrs;
 mod jsx_more;
 mod jsx_tags;
 mod loader;
@@ -15,6 +18,7 @@ mod modules;
 mod navigation;
 mod protocol;
 mod quick_fixes;
+mod quoted_keys;
 mod refactor;
 mod server_features;
 mod ts_compat;

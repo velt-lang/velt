@@ -59,7 +59,7 @@ function scan(name: string, s: string) {
   let surrogates = 0;
   for (let round = 0; round < 2; round++) {
     for (let i: i64 = 0; i < (s.length as i64); i++) {
-      const c = s.charCodeAt(i);
+      const c = s.charCodeAt(i) as i64;
       h = (h * 31 + c) % 1000000007;
       if (c >= 128) {
         wide++;

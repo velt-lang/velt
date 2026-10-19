@@ -3,8 +3,9 @@
 //! [`VeltStr::byte_to_unit`].
 //!
 //! - ASCII (`units == bytes`): the position is the same number, O(1).
-//! - A non-ASCII string of at most [`STRIDE`] units, or one without a heap header (inline, static
-//!   or borrowed): a scan, forward from the start or backward from the end, whichever is closer
+//! - A non-ASCII string of at most [`STRIDE`] units, or one without breadcrumbs of its own
+//!   (inline, static, borrowed, or a slice, whose buffer's table would describe the whole
+//!   buffer): a scan, forward from the start or backward from the end, whichever is closer
 //!   (`byte_to_unit` counts with the vectorized unit count instead).
 //! - A non-ASCII heap string of more than [`STRIDE`] units: a table of the byte offset of every
 //!   [`STRIDE`]th unit ("breadcrumbs", one `u32` each, 1/16 of the text at most), built by the
@@ -321,12 +322,15 @@ impl VeltStr {
                 };
                 scan_backward(bytes, byte, from, unit)
             }
-            _ if self.is_heap() => {
+            _ if self.has_crumbs() => {
                 let k = unit / STRIDE;
                 let (byte, from) = start_of(Table::entry(self.crumbs(k), k), k);
                 scan_forward(bytes, byte, from, unit)
             }
-            _ => scan_from_nearer_end(bytes, units, unit),
+            _ => {
+                self.mark_remembered();
+                scan_from_nearer_end(bytes, units, unit)
+            }
         };
         recent::remember(self, unit, pos);
         pos
@@ -371,7 +375,7 @@ impl VeltStr {
                 let first = e.unit - e.pos.low_half as usize;
                 first + wtf8::count_units(&bytes[e.pos.byte..byte])
             }
-            _ if self.is_heap() => {
+            _ if self.has_crumbs() => {
                 let entries = Table::entries(self.crumbs(units.div_ceil(STRIDE) - 1));
                 // The last entry at or before `byte`; entry 0 is offset 0.
                 let k = entries
@@ -380,7 +384,10 @@ impl VeltStr {
                 let (from, unit) = start_of(entries[k].load(Ordering::Relaxed), k);
                 unit + wtf8::count_units(&bytes[from..byte])
             }
-            _ => count_from_nearer_end(bytes, units, byte),
+            _ => {
+                self.mark_remembered();
+                count_from_nearer_end(bytes, units, byte)
+            }
         };
         let pos = BytePos {
             byte,
@@ -390,13 +397,19 @@ impl VeltStr {
         unit
     }
 
+    /// Does this string translate through breadcrumbs (a plain heap string; a slice scans)?
+    #[inline]
+    fn has_crumbs(&self) -> bool {
+        self.is_plain_heap()
+    }
+
     /// How far a translation steps forward from a remembered one, when the target is `to_end`
-    /// from the end: `near` in a heap string, whose breadcrumbs are never further back; up to
-    /// the distance from the end in a static one, which otherwise scans from an end. Units for
-    /// `unit_to_byte`, bytes for `byte_to_unit`.
+    /// from the end: `near` in a string with breadcrumbs, which are never further back; up to
+    /// the distance from the end in a static string or a slice, which otherwise scan from an
+    /// end. Units for `unit_to_byte`, bytes for `byte_to_unit`.
     #[inline]
     fn forward_reach(&self, near: usize, to_end: usize) -> usize {
-        if self.is_heap() {
+        if self.has_crumbs() {
             near
         } else {
             to_end.max(near)
@@ -408,14 +421,14 @@ impl VeltStr {
     /// string grew since.
     ///
     /// # Safety
-    /// `self` must be a valid non-ASCII heap string of more than [`STRIDE`] units.
+    /// `self` must be a valid non-ASCII heap string of more than [`STRIDE`] units, not a slice.
     unsafe fn crumbs(&self, k: usize) -> *mut Table {
         let field = heap::crumbs(self.ptr());
-        let current = field.load(Ordering::Acquire) as *mut Table;
+        let current = heap::table_of(field.load(Ordering::Acquire)) as *mut Table;
         if !current.is_null() && k < (*current).len.load(Ordering::Acquire) {
             return current;
         }
-        self.build_crumbs(current)
+        self.build_crumbs()
     }
 
     /// [`Self::crumbs`] when the table is missing or too short: extended in place when it has
@@ -423,11 +436,14 @@ impl VeltStr {
     /// relies on the buffer's count (see the module docs).
     #[cold]
     #[inline(never)]
-    unsafe fn build_crumbs(&self, mut current: *mut Table) -> *mut Table {
+    unsafe fn build_crumbs(&self) -> *mut Table {
         let field = heap::crumbs(self.ptr());
         let (bytes, units) = (self.as_bytes(), self.units());
         let want = units.div_ceil(STRIDE);
+        // The field as read (null, [`heap::REMEMBERED`] or a table), what the swap expects.
+        let mut seen = field.load(Ordering::Acquire);
         loop {
+            let current = heap::table_of(seen) as *mut Table;
             if !current.is_null() && (*current).cap >= want {
                 Table::fill(current, bytes, units);
                 return current;
@@ -440,19 +456,14 @@ impl VeltStr {
             let t = Table::alloc(cap, old);
             Table::fill(t, bytes, units);
             (*t).prev = current;
-            match field.compare_exchange(
-                current as *mut u8,
-                t as *mut u8,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
+            match field.compare_exchange(seen, t as *mut u8, Ordering::AcqRel, Ordering::Acquire) {
                 Ok(_) => return t,
                 Err(won) => {
                     // Another thread published first: drop ours (not its `prev`, which stays
                     // with the published table) and extend theirs.
                     (*t).prev = std::ptr::null_mut();
                     free_chain(t);
-                    current = won as *mut Table;
+                    seen = won;
                 }
             }
         }

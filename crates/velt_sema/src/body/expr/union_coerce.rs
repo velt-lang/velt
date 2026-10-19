@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
     /// `match (h) { V(m) => f(m), ... }` over the variants union value `h` can hold (narrowing
     /// included); `Err(h)` when `f` rejects a member. Literal members are matched without a
     /// binding and passed as their constant.
-    fn map_members(
+    pub(super) fn map_members(
         &mut self,
         h: hir::Expr,
         exp: TyId,
@@ -159,7 +159,12 @@ impl FnCx<'_, '_> {
     }
 
     /// The payload pattern and value of a union member of type `m` in a re-tagging arm.
-    fn member_binding(&mut self, m: TyId, consume: bool, span: Span) -> (hir::Pat, hir::Expr) {
+    pub(super) fn member_binding(
+        &mut self,
+        m: TyId,
+        consume: bool,
+        span: Span,
+    ) -> (hir::Pat, hir::Expr) {
         if self.cx.lit_value(m).is_some() {
             let wild = hir::Pat {
                 kind: P::Wildcard,
@@ -191,6 +196,17 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
+        self.option_to_option_narrowed(h, exp, None)
+    }
+
+    /// [`Self::option_to_option`] for a `T | null` whose union `T` is narrowed to `members`
+    /// (the variants a flow test left): the payload converts as the narrowed union.
+    pub(super) fn option_to_option_narrowed(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+        members: Option<Vec<u32>>,
+    ) -> Result<hir::Expr, hir::Expr> {
         let (Some(hp), Some(ep)) = (self.cx.ty.opt_payload(h.ty), self.cx.ty.opt_payload(exp))
         else {
             return Err(h);
@@ -205,6 +221,9 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let b = self.new_local("<some>", hp, false, span, LocalKind::Bind);
+        if let Some(vs) = members {
+            self.narrow_members(b, vs);
+        }
         let value = self.mk(H::Local(b, mode), hp, span);
         let Ok(converted) = self.try_coerce(value, ep) else {
             return Err(h);
@@ -266,7 +285,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn outer_mode(e: &hir::Expr) -> Option<UseMode> {
+pub(super) fn outer_mode(e: &hir::Expr) -> Option<UseMode> {
     match e.kind {
         H::Local(_, m)
         | H::Field { mode: m, .. }

@@ -28,8 +28,8 @@ use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, T
 
 use super::{
     check_dependency, check_dependency_name, check_description, check_entry, check_import_source,
-    check_keyword, check_name, check_registry, check_version, default_entry, schema, Dependency,
-    DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
+    check_keyword, check_name, check_registry, check_toolchain, check_version, default_entry,
+    schema, Dependency, DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
 };
 
 /// File name of the manifest written in Velt.
@@ -274,10 +274,12 @@ impl Reader<'_> {
                 keywords: vec![],
                 entry: default_entry(),
             },
+            toolchain: None,
             dependencies: BTreeMap::new(),
             paths: BTreeMap::new(),
             native: None,
             jsx: None,
+            define: BTreeMap::new(),
             ts_compat: vec![],
         };
         let Some(fields) = self.object(value, "the manifest") else {
@@ -298,6 +300,12 @@ impl Reader<'_> {
                     if let Some(s) = self.string(v, "version") {
                         self.check(check_version(s).map_err(|e| format!("version {e}")), v.span);
                         manifest.package.version = s.to_string();
+                    }
+                }
+                "velt" => {
+                    if let Some(s) = self.string(v, "velt") {
+                        self.check(check_toolchain(s).map_err(|e| format!("velt {e}")), v.span);
+                        manifest.toolchain = Some(s.to_string());
                     }
                 }
                 "description" => {
@@ -322,6 +330,7 @@ impl Reader<'_> {
                 "dependencies" => manifest.dependencies = self.dependencies(v),
                 "paths" => manifest.paths = self.paths(v),
                 "jsx" => manifest.jsx = self.jsx(v),
+                "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 _ => self.unknown_key(key, schema::PACKAGE),
@@ -331,6 +340,12 @@ impl Reader<'_> {
             if !present {
                 self.error(format!("the manifest is missing `{key}`"), value.span);
             }
+        }
+        if manifest.native.is_some() && super::split_scoped(&manifest.package.name).is_some() {
+            self.error(
+                "a package with a scoped name (`@scope/name`) cannot have `native` code yet",
+                value.span,
+            );
         }
         manifest
     }
@@ -426,6 +441,26 @@ impl Reader<'_> {
                 self.error(format!("alias `{}`: {why}", key.name), key.span.to(v.span));
             }
             out.insert(key.name.clone(), target.to_string());
+        }
+        out
+    }
+
+    fn define(&mut self, value: &Value) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for (key, v) in self.object(value, "`define`").unwrap_or_default() {
+            if !super::is_define_name(&key.name) {
+                self.error(
+                    format!("define `{}`: the name must be an identifier", key.name),
+                    key.span,
+                );
+            }
+            let Some(text) = self.string(v, &key.name) else {
+                continue;
+            };
+            if let Err(why) = super::define_literal(text) {
+                self.error(format!("define `{}`: {why}", key.name), v.span);
+            }
+            out.insert(key.name.clone(), text.to_string());
         }
         out
     }

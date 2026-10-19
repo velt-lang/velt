@@ -1,0 +1,36 @@
+// std/jsx keeps a complete tree as template strings and child nodes rather than copying markup
+// up at every level (#77): lists in fragments and templates, nested templates and async
+// components render the same as the generic lowering, through `renderToString` and
+// `renderToStringSync`. Text escapes quotes in both lowerings (`it&#39;s &quot;quoted&quot;`).
+
+import { renderToString, renderToStringSync } from "velt:jsx";
+import * as precompiled from "./_jsx_tree_page";
+import * as generic from "./_jsx_tree_page_generic";
+
+async function main() {
+  const xs = ["a", "<b>", "c's"];
+  const a = precompiled.cases(xs, 2);
+  const b = generic.cases(xs, 2);
+  a.reverse();
+  b.reverse();
+  while (a.length > 0) {
+    const x = a.pop();
+    const y = b.pop();
+    if (x != null && y != null) {
+      const s = renderToStringSync(x);
+      const t = await renderToString(y);
+      console.log(s == t ? s : `different:\n  ${s}\n  ${t}`);
+    }
+  }
+  // A tree far deeper than any page (an element wrapped in a loop): flattened as it is built,
+  // so rendering does not recurse that deep (#77 review).
+  let deep = precompiled.wrap(precompiled.leaf());
+  for (let i: i64 = 0; i < 60000; i++) {
+    deep = precompiled.wrap(deep);
+  }
+  const html = renderToStringSync(deep);
+  console.log(`${html.length} ${html.slice(0, 15)}…${html.slice(html.length - 12)}`);
+  const p = await renderToString(precompiled.withAsync(xs));
+  const g = await renderToString(generic.withAsync(xs));
+  console.log(p == g ? p : `different:\n  ${p}\n  ${g}`);
+}

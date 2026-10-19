@@ -172,7 +172,7 @@ fn formatting_replaces_the_document() {
 #[test]
 fn bad_requests_get_errors_not_crashes() {
     let mut client = Client::start();
-    let unknown = client.request_raw("textDocument/codeLens", json!({}));
+    let unknown = client.request_raw("textDocument/linkedEditingRange", json!({}));
     assert_eq!(
         unknown.response_result.unwrap_err().code,
         ErrorCode::MethodNotFound as i32

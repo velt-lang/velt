@@ -1,0 +1,28 @@
+// A rest parameter's type may be any array type: `T[]`, `readonly T[]`, or an alias of one.
+type Nums = number[];
+
+function sum(...xs: Nums): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function first(...xs: readonly string[]): string {
+  return xs.length > 0 ? xs[0] : "none";
+}
+
+class Log {
+  lines: string[] = [];
+  add(prefix: string, ...parts: readonly string[]): void {
+    this.lines.push(prefix + parts.join(","));
+  }
+}
+
+console.log(sum(1, 2, 3), sum());
+console.log(first("a", "b"), first());
+const log = new Log();
+log.add("x:", "a", "b");
+log.add("y:");
+console.log(log.lines.join(" "));

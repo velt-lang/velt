@@ -1,0 +1,30 @@
+// check: heap blocks at most 2
+// A method value passed as a callback, read from a `const` local or `this` (#746), is the arrow
+// it stands for: like `(x) => a.add(x)`, it is not allocated per call (the two blocks are
+// `a` and `xs`).
+class Acc {
+  total: number = 0;
+  add(x: number): void {
+    this.total += x;
+  }
+  check(x: number): void {
+    if (x < 0) {
+      console.log("negative", x);
+    }
+  }
+  addAll(xs: number[]): void {
+    xs.forEach(this.add.bind(this));
+    xs.forEach(this.check);
+  }
+}
+
+function main() {
+  const a = new Acc();
+  const xs: number[] = [1, 2, 3];
+  for (let k = 0; k < 1000; k++) {
+    xs.forEach(a.check);
+    xs.forEach(a.add.bind(a));
+    a.addAll(xs);
+  }
+  console.log(a.total);
+}

@@ -1,11 +1,11 @@
-// Matrix multiplication and transpose on nested i64 arrays.
-function multiply(a: i64[][], b: i64[][]): i64[][] {
-  const out: i64[][] = [];
-  for (let i: usize = 0; i < a.length; i++) {
-    const row: i64[] = [];
-    for (let j: usize = 0; j < b[0].length; j++) {
+// Matrix multiplication and transpose on nested number arrays.
+function multiply(a: number[][], b: number[][]): number[][] {
+  const out: number[][] = [];
+  for (let i: number = 0; i < a.length; i++) {
+    const row: number[] = [];
+    for (let j: number = 0; j < b[0].length; j++) {
       let sum = 0;
-      for (let k: usize = 0; k < b.length; k++) {
+      for (let k: number = 0; k < b.length; k++) {
         sum += a[i][k] * b[k][j];
       }
       row.push(sum);
@@ -15,9 +15,9 @@ function multiply(a: i64[][], b: i64[][]): i64[][] {
   return out;
 }
 
-function transpose(m: i64[][]): i64[][] {
-  const out: i64[][] = [];
-  for (let j: usize = 0; j < m[0].length; j++) {
+function transpose(m: number[][]): number[][] {
+  const out: number[][] = [];
+  for (let j: number = 0; j < m[0].length; j++) {
     out.push(m.map((row) => row[j]));
   }
   return out;

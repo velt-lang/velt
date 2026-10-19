@@ -1,0 +1,31 @@
+// `xs.length = n` truncates the array in place, as in TypeScript: the elements from `n` on are
+// dropped, and an alias sees the shorter array. `xs.length -= k`, `xs.length--` and the
+// assignment's value work too. Same output as Node (array_length_grow.vlt: growing panics).
+class Stack {
+  items: string[] = [];
+
+  clear() {
+    this.items.length = 0;
+  }
+}
+
+function main() {
+  const xs = [1, 2, 3, 4, 5];
+  const alias = xs;
+  xs.length = 3;
+  console.log(xs, alias, alias.length);
+  xs.length -= 1;
+  xs.length--;
+  console.log(alias);
+  const n = (xs.length = 0);
+  console.log(n, xs, alias.length);
+  const names = ["a", "b", "c"];
+  names.length = names.length;
+  names.length = 2;
+  console.log(names);
+  const s = new Stack();
+  s.items.push("x");
+  s.items.push("y");
+  s.clear();
+  console.log(s.items.length, s.items);
+}

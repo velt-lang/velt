@@ -1,0 +1,17 @@
+// An HTTP handler whose own closure assigns a variable the handler captured (#913): each
+// request runs on its own copy of `hits`, so the assignment would be lost; this is the error
+// for the handler modifying `hits` itself.
+import { serve } from "velt:http";
+
+async function main() {
+  let hits = 0;
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const g = () => {
+      hits++;
+    };
+    g();
+    return new Response("ok");
+  });
+  await server.shutdown();
+  console.log(hits);
+}

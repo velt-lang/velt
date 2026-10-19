@@ -1,0 +1,11 @@
+// Quoted property names whose text Velt uses internally (`#` private names, `[Symbol.` keys) are
+// rejected in object types, as are quoted interface method names (object literals:
+// quoted_property_names_reserved_literal).
+
+type T = { "#x": number };
+
+type P = { "__proto__": number };
+
+interface I {
+  "go"(): void;
+}

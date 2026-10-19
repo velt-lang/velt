@@ -23,29 +23,33 @@ import { parseIso, parseHttp } from "velt:datetime/parse";
 
 declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
 
-// Calendar fields of a DateTime: `year month(1-12) day hour minute second millisecond
-// dayOfWeek(0 = Sunday) dayOfYear(1-366) offsetMinutes`.
+/**
+ * Calendar fields of a DateTime: `year month(1-12) day hour minute second millisecond
+ * dayOfWeek(0 = Sunday) dayOfYear(1-366) offsetMinutes`.
+ */
 export type DateParts = Parts;
 
-// Thrown by `DateTime.parse` / `parseHttpDate` for malformed or out-of-range input.
+/** Thrown by `DateTime.parse` / `parseHttpDate` for malformed or out-of-range input. */
 export class DateTimeError extends Error {}
 
-// An instant in time: milliseconds since 1970-01-01T00:00:00Z.
+/** An instant in time: milliseconds since 1970-01-01T00:00:00Z. */
 export struct DateTime implements Comparable<DateTime> {
   private ms: i64;
 
-  // The current time (`Date.now()`).
+  /** The current time (`Date.now()`). */
   static now(): DateTime {
     return { ms: Date.now() };
   }
 
-  // The instant `ms` milliseconds after the Unix epoch (negative: before).
+  /** The instant `ms` milliseconds after the Unix epoch (negative: before). */
   static fromEpochMs(ms: i64): DateTime {
     return { ms: ms };
   }
 
-  // A UTC date-time; `month` is 1-12. Out-of-range fields roll over like JS `Date.UTC`
-  // (month 13 is January of the next year, day 0 the last day of the previous month).
+  /**
+   * A UTC date-time; `month` is 1-12. Out-of-range fields roll over like JS `Date.UTC`
+   * (month 13 is January of the next year, day 0 the last day of the previous month).
+   */
   static utc(
     year: i64,
     month: i64,
@@ -58,10 +62,12 @@ export struct DateTime implements Comparable<DateTime> {
     return { ms: epochMsOf(year, month, day, hour, minute, second, ms) };
   }
 
-  // ISO 8601 / RFC 3339: `2024-02-29`, `2024-02`, `2024`, `2024-02-29T12:34`,
-  // `2024-02-29T12:34:56.789Z`, `2024-02-29 12:34:56+02:00` (`t`/space separators, `z`,
-  // `±HH:mm` / `±HHmm` / `±HH` offsets, 1-9 fraction digits, `±YYYYYY` years). No offset means
-  // UTC. Throws `DateTimeError`.
+  /**
+   * ISO 8601 / RFC 3339: `2024-02-29`, `2024-02`, `2024`, `2024-02-29T12:34`,
+   * `2024-02-29T12:34:56.789Z`, `2024-02-29 12:34:56+02:00` (`t`/space separators, `z`,
+   * `±HH:mm` / `±HHmm` / `±HH` offsets, 1-9 fraction digits, `±YYYYYY` years). No offset means
+   * UTC. Throws `DateTimeError`.
+   */
   static parse(s: string): DateTime {
     const t = parseIso(s);
     if (t == null) {
@@ -70,7 +76,7 @@ export struct DateTime implements Comparable<DateTime> {
     return { ms: t };
   }
 
-  // An HTTP date (RFC 7231: IMF-fixdate, RFC 850 or asctime). Throws `DateTimeError`.
+  /** An HTTP date (RFC 7231: IMF-fixdate, RFC 850 or asctime). Throws `DateTimeError`. */
   static parseHttpDate(s: string): DateTime {
     const t = parseHttp(s);
     if (t == null) {
@@ -79,106 +85,108 @@ export struct DateTime implements Comparable<DateTime> {
     return { ms: t };
   }
 
-  // Milliseconds since the Unix epoch.
+  /** Milliseconds since the Unix epoch. */
   toEpochMs(): i64 {
     return this.ms;
   }
 
-  // Whole seconds since the Unix epoch (rounded down).
+  /** Whole seconds since the Unix epoch (rounded down). */
   toEpochSeconds(): i64 {
     return floorDiv(this.ms, MS_PER_SECOND);
   }
 
-  // UTC calendar fields.
+  /** UTC calendar fields. */
   parts(): DateParts {
     return partsOf(this.ms, 0);
   }
 
-  // Local calendar fields (the OS time zone at this instant, DST-aware).
+  /** Local calendar fields (the OS time zone at this instant, DST-aware). */
   localParts(): DateParts {
     return partsOf(this.ms, this.localOffsetMinutes);
   }
 
-  // Minutes added to UTC to get local time at this instant (e.g. 60 for UTC+01:00).
+  /** Minutes added to UTC to get local time at this instant (e.g. 60 for UTC+01:00). */
   get localOffsetMinutes(): i64 {
     return velt_rt_local_offset_minutes(this.ms) as i64;
   }
 
-  // UTC year.
+  /** UTC year. */
   get year(): i64 {
     return this.parts().year;
   }
 
-  // UTC month, 1-12.
+  /** UTC month, 1-12. */
   get month(): i64 {
     return this.parts().month;
   }
 
-  // UTC day of the month, 1-31.
+  /** UTC day of the month, 1-31. */
   get day(): i64 {
     return this.parts().day;
   }
 
-  // UTC hour, 0-23.
+  /** UTC hour, 0-23. */
   get hour(): i64 {
     return floorDiv(this.ms, MS_PER_HOUR) - floorDiv(this.ms, MS_PER_DAY) * 24;
   }
 
-  // UTC minute, 0-59.
+  /** UTC minute, 0-59. */
   get minute(): i64 {
     return floorDiv(this.ms, MS_PER_MINUTE) - floorDiv(this.ms, MS_PER_HOUR) * 60;
   }
 
-  // Second, 0-59.
+  /** Second, 0-59. */
   get second(): i64 {
     return floorDiv(this.ms, MS_PER_SECOND) - floorDiv(this.ms, MS_PER_MINUTE) * 60;
   }
 
-  // Millisecond, 0-999.
+  /** Millisecond, 0-999. */
   get millisecond(): i64 {
     return this.ms - floorDiv(this.ms, MS_PER_SECOND) * MS_PER_SECOND;
   }
 
-  // UTC day of the week: 0 = Sunday … 6 = Saturday.
+  /** UTC day of the week: 0 = Sunday … 6 = Saturday. */
   get dayOfWeek(): i64 {
     return this.parts().dayOfWeek;
   }
 
-  // UTC day of the year, 1-366.
+  /** UTC day of the year, 1-366. */
   get dayOfYear(): i64 {
     return this.parts().dayOfYear;
   }
 
-  // JS `toISOString`: `2024-02-29T12:34:56.000Z` (years outside 0-9999 as `±YYYYYY`).
+  /** JS `toISOString`: `2024-02-29T12:34:56.000Z` (years outside 0-9999 as `±YYYYYY`). */
   toISOString(): string {
     return isoString(this.ms, 0, true);
   }
 
-  // Local time with its offset: `2024-02-29T13:34:56.000+01:00`.
+  /** Local time with its offset: `2024-02-29T13:34:56.000+01:00`. */
   toLocalISOString(): string {
     return isoString(this.ms, this.localOffsetMinutes, false);
   }
 
-  // RFC 7231 HTTP date (JS `toUTCString`): `Thu, 29 Feb 2024 12:34:56 GMT`.
+  /** RFC 7231 HTTP date (JS `toUTCString`): `Thu, 29 Feb 2024 12:34:56 GMT`. */
   toUTCString(): string {
     return httpString(this.ms);
   }
 
-  // Same as `toISOString`.
+  /** Same as `toISOString`. */
   toString(): string {
     return this.toISOString();
   }
 
-  // Formats in UTC. Tokens: `YYYY` `YY` year; `M` `MM` month; `MMM` `Jan`; `MMMM` `January`;
-  // `D` `DD` day; `DDDD` day of year (3 digits); `ddd` `Mon`; `dddd` `Monday`; `H` `HH` hour;
-  // `h` `hh` 12-hour; `A` `AM`/`PM`; `a` `am`/`pm`; `m` `mm` minute; `s` `ss` second; `SSS`
-  // millisecond; `Z` `+01:00`; `ZZ` `+0100`. Text in `[brackets]` and any other run of
-  // letters is copied as is.
+  /**
+   * Formats in UTC. Tokens: `YYYY` `YY` year; `M` `MM` month; `MMM` `Jan`; `MMMM` `January`;
+   * `D` `DD` day; `DDDD` day of year (3 digits); `ddd` `Mon`; `dddd` `Monday`; `H` `HH` hour;
+   * `h` `hh` 12-hour; `A` `AM`/`PM`; `a` `am`/`pm`; `m` `mm` minute; `s` `ss` second; `SSS`
+   * millisecond; `Z` `+01:00`; `ZZ` `+0100`. Text in `[brackets]` and any other run of
+   * letters is copied as is.
+   */
   format(pattern: string): string {
     return formatPattern(this.ms, 0, pattern);
   }
 
-  // `format` in local time.
+  /** `format` in local time. */
   formatLocal(pattern: string): string {
     return formatPattern(this.ms, this.localOffsetMinutes, pattern);
   }
@@ -199,12 +207,12 @@ export struct DateTime implements Comparable<DateTime> {
     return { ms: this.ms + n * MS_PER_HOUR };
   }
 
-  // Adds `n` days of 24 hours (UTC has no DST).
+  /** Adds `n` days of 24 hours (UTC has no DST). */
   addDays(n: i64): DateTime {
     return { ms: this.ms + n * MS_PER_DAY };
   }
 
-  // Adds calendar months, clamping the day to the target month (Jan 31 + 1 month = Feb 28/29).
+  /** Adds calendar months, clamping the day to the target month (Jan 31 + 1 month = Feb 28/29). */
   addMonths(n: i64): DateTime {
     const p = this.parts();
     const m0 = p.month - 1 + n;
@@ -215,32 +223,32 @@ export struct DateTime implements Comparable<DateTime> {
     return { ms: epochMsOf(y, m, d, 0, 0, 0, 0) + timeOfDay };
   }
 
-  // Adds calendar years (Feb 29 + 1 year = Feb 28).
+  /** Adds calendar years (Feb 29 + 1 year = Feb 28). */
   addYears(n: i64): DateTime {
     return this.addMonths(n * 12);
   }
 
-  // Adds a (possibly negative) duration.
+  /** Adds a (possibly negative) duration. */
   add(d: Duration): DateTime {
     return { ms: this.ms + d.toMs() };
   }
 
-  // `this - other` in milliseconds.
+  /** `this - other` in milliseconds. */
   diffMs(other: DateTime): i64 {
     return this.ms - other.ms;
   }
 
-  // `this - other` as a Duration.
+  /** `this - other` as a Duration. */
   since(other: DateTime): Duration {
     return Duration.ofMs(this.ms - other.ms);
   }
 
-  // Midnight UTC of the same day.
+  /** Midnight UTC of the same day. */
   startOfDay(): DateTime {
     return { ms: floorDiv(this.ms, MS_PER_DAY) * MS_PER_DAY };
   }
 
-  // -1, 0 or 1 (`Comparable`: generic code can use `<` on DateTimes).
+  /** -1, 0 or 1 (`Comparable`: generic code can use `<` on DateTimes). */
   compareTo(other: DateTime): i64 {
     return this.ms < other.ms ? -1 : this.ms > other.ms ? 1 : 0;
   }
@@ -258,7 +266,7 @@ export struct DateTime implements Comparable<DateTime> {
   }
 }
 
-// A signed span of time with millisecond precision.
+/** A signed span of time with millisecond precision. */
 export struct Duration implements Comparable<Duration> {
   private ms: i64;
 
@@ -278,7 +286,7 @@ export struct Duration implements Comparable<Duration> {
     return { ms: n * MS_PER_HOUR };
   }
 
-  // `n` days of 24 hours.
+  /** `n` days of 24 hours. */
   static ofDays(n: i64): Duration {
     return { ms: n * MS_PER_DAY };
   }
@@ -287,7 +295,7 @@ export struct Duration implements Comparable<Duration> {
     return this.ms;
   }
 
-  // Fractional seconds.
+  /** Fractional seconds. */
   toSeconds(): f64 {
     return (this.ms as f64) / 1000.0;
   }
@@ -308,7 +316,7 @@ export struct Duration implements Comparable<Duration> {
     return this.ms < other.ms ? -1 : this.ms > other.ms ? 1 : 0;
   }
 
-  // ISO 8601 duration with days as the largest unit: `P1DT2H3M4.005S`, `PT0S`, `-PT1.5S`.
+  /** ISO 8601 duration with days as the largest unit: `P1DT2H3M4.005S`, `PT0S`, `-PT1.5S`. */
   toString(): string {
     const neg = this.ms < 0;
     let rest = neg ? -this.ms : this.ms;

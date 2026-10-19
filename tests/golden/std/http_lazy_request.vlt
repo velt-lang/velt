@@ -1,18 +1,23 @@
 // check: no leaks
-// `Request` reads its properties from the runtime request on access: getters, `header(name)`,
-// `headers`, an empty and a non-empty body. A constant response header (interned by the
-// runtime) and a varying one come back right on every response.
-import { serve, Request, Response } from "velt:http";
+// A handler's `Request` reads its properties from the runtime request on access: `url`,
+// `method`, `headers` (one name looked up, or all of them), an empty and a non-empty body; the
+// second argument says where the request came from. A constant response header (interned by
+// the runtime) and a varying one come back right on every response.
+import { serve, ServeInfo } from "velt:http";
 
 async function main() {
-  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    const accept = req.header("X-Probe") ?? "none";
+  const server = await serve({ port: 0 }, async (req: Request, info: ServeInfo): Promise<
+    Response
+  > => {
+    const url = new URL(req.url);
+    const accept = req.headers.get("X-Probe") ?? "none";
     const all = req.headers;
-    const res = Response.text(
-      `${req.method} ${req.path} q=${req.query} probe=${accept} has=${all.has("x-probe")} body=[${req.body}]`,
+    const from = info.remoteAddr;
+    const res = new Response(
+      `${req.method} ${url.hostname} ${url.pathname} q=${url.search.slice(1)} probe=${accept} has=${all.has("x-probe")} from=${from.hostname} body=[${await req.text()}]`,
     );
-    res.header("server", "velt-golden");
-    res.header("x-path", req.path);
+    res.headers.append("server", "velt-golden");
+    res.headers.append("x-path", url.pathname);
     return res;
   });
   const base = `http://127.0.0.1:${server.port}`;

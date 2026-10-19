@@ -1,0 +1,23 @@
+[package]
+name = "stdport_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+# The crates the runtime uses for the same job (crates/velt_rt/Cargo.toml), and `sha2` for what
+# `velt:crypto` does in Velt.
+[dependencies]
+base64 = "0.22"
+dashu-int = "0.6"
+hex = "0.4"
+itoa = "1"
+memchr = "2"
+ryu = "1"
+sha2 = "0.11"
+url = "2"
+
+[profile.release]
+codegen-units = 1

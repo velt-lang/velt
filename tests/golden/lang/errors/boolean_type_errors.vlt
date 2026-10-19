@@ -7,7 +7,5 @@ function main() {
   const b: boolean = "yes";
   const xs: bool[] = [1];
   const f: (x: bool) => boolean = (x: string) => true;
-  if (5) {
-  }
   console.log(flag(), b, xs, f);
 }

@@ -1,7 +1,8 @@
 // SSR precompile: the same trees built the way the compiler precompiles them (`jsxTemplate`
 // strings with text and attributes folded in through `jsxEscape`/`jsxAttr`, Element slots)
 // and the generic way (`jsx` / `Fragment`) render byte-identical HTML, including escaping,
-// booleans, null, numbers, void elements, arrays, components and async components.
+// booleans, null, numbers, void elements, arrays, components and async components. And
+// `jsxEscapeString`, which the compiler calls for a `string` child, escapes as `jsxEscape`.
 import {
   jsx,
   Fragment,
@@ -9,6 +10,7 @@ import {
   jsxAsyncComponent,
   jsxTemplate,
   jsxEscape,
+  jsxEscapeString,
   jsxAttr,
 } from "velt:jsx/jsx-runtime";
 import { Element, raw, renderToString } from "velt:jsx";
@@ -114,6 +116,14 @@ function pageGeneric(url: string, hidden: bool, count: i64): Element {
 }
 
 async function main() {
+  // Empty, every entity, already escaped text, CJK, an astral character, and a string held as
+  // UTF-16 with a lone surrogate (`fromCharCode` of a high half alone).
+  const lone = `a${String.fromCharCode(0xd800)}b`;
+  for (const s of ["", `&<>"'`, "&amp;", "日本語<b>", "😀&😀", lone]) {
+    const a = jsxEscapeString(s);
+    const b = jsxEscape(s);
+    console.log(`${JSON.stringify(a)} ${a == b ? "==" : "!="} jsxEscape`);
+  }
   for (const hidden of [true, false]) {
     const url = "/q?a=1&b=\"2\"";
     const precompiled = await renderToString(pageTemplate(url, hidden, 42));

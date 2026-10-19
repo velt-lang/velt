@@ -136,12 +136,12 @@ fn generics_inference_bounds_and_interfaces() {
         c,
         Callee::Indirect(_)
     )));
-    // `mapAll([1, 2, 3], (x) => x * 2)` instantiates T = U = i64.
+    // `mapAll([1, 2, 3], (x) => x * 2)` instantiates T = U = number.
     let map_all = def_id(&p, "mapAll");
-    let i64_ = p.types.get(&TyKind::Int(hir::IntTy::I64)).unwrap();
+    let f64_ = p.types.get(&TyKind::Float(hir::FloatTy::F64)).unwrap();
     assert!(calls(main)
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Def(d, ts) if *d == map_all && ts == &vec![i64_, i64_])));
+        .any(|(c, _)| matches!(c, Callee::Def(d, ts) if *d == map_all && ts == &vec![f64_, f64_])));
 }
 
 #[test]
@@ -166,10 +166,11 @@ fn closures_capture_modes() {
         .iter()
         .map(|c| c.captures.iter().map(|x| x.mode).collect())
         .collect();
-    // forEach(total += x), apply(x * factor), greet (moves `name`), map/filter/reduce (none).
+    // forEach(total += x), apply(x * factor), greet (only called: borrows `name`),
+    // map/filter/reduce (none).
     assert!(modes.contains(&vec![PassMode::BorrowMut]));
     assert!(modes.contains(&vec![PassMode::Copy]));
-    assert!(modes.contains(&vec![PassMode::Owned]));
+    assert!(modes.contains(&vec![PassMode::Borrow]));
     let main = func(&p, "main");
     assert!(has_callee(main, |c| matches!(c, Callee::Indirect(_))));
     for c in main_closures {

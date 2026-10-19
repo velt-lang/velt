@@ -16,7 +16,9 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             }
         }
         T::Array(e) => match e.kind {
-            T::Union(_) | T::Function { .. } => format!("({})[]", written(e)),
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("({})[]", written(e))
+            }
             _ => format!("{}[]", written(e)),
         },
         T::Tuple(ts) => format!("[{}]", list(ts, ", ")),
@@ -24,35 +26,145 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             params,
             ret,
             throws,
+            rest,
         } => {
+            let n = params.len();
             let ps: Vec<String> = params
                 .iter()
                 .enumerate()
-                .map(|(i, p)| format!("p{i}: {}", written(p)))
+                .map(|(i, p)| {
+                    let dots = if *rest && i + 1 == n { "..." } else { "" };
+                    format!("{dots}p{i}: {}", written(p))
+                })
                 .collect();
             let th = throws
                 .as_ref()
                 .map_or(String::new(), |e| format!(" throws {}", written(e)));
             format!("({}) => {}{th}", ps.join(", "), written(ret))
         }
+        T::GenericFunction { type_params, ty } => {
+            let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
+            format!("<{}>{}", names.join(", "), written(ty))
+        }
+        T::Construct(ty) => format!("new {}", written(ty)),
+        T::TupleRest(ty) => format!("...{}", written(ty)),
+        T::TupleOptional(ty) => format!("{}?", written(ty)),
         T::Union(ts) => list(ts, " | "),
+        T::Intersection(ts) => ts
+            .iter()
+            .map(|t| match t.kind {
+                T::Union(_) | T::Function { .. } => format!("({})", written(t)),
+                _ => written(t),
+            })
+            .collect::<Vec<_>>()
+            .join(" & "),
+        T::Indexed { object, key } => format!("{}[{}]", written(object), written(key)),
         T::Literal(l) => literal(l),
         T::Object(fs) => {
             let fs: Vec<String> = fs.iter().map(object_field).collect();
             format!("{{ {} }}", fs.join("; "))
         }
+        T::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+        } => {
+            let mut fs: Vec<String> = fields.iter().map(object_field).collect();
+            let ro = if *readonly { "readonly " } else { "" };
+            fs.push(format!(
+                "{ro}[{}: {}]: {}",
+                key.name.name,
+                written(&key.ty),
+                written(value)
+            ));
+            format!("{{ {} }}", fs.join("; "))
+        }
+        T::Callable { sigs, members } => written(&crate::call_sigs::lower(sigs, members, t.span)),
+        T::Query(path) => {
+            let path: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
+            format!("typeof {}", path.join("."))
+        }
+        T::Conditional(c) => format!(
+            "{} extends {} ? {} : {}",
+            written(&c.check),
+            written(&c.extends),
+            written(&c.then),
+            written(&c.else_)
+        ),
+        T::Infer(n) => format!("infer {}", n.name),
+        T::Mapped(m) => {
+            let ro = match m.readonly {
+                ast::MappedModifier::Keep => "",
+                ast::MappedModifier::Add => "readonly ",
+                ast::MappedModifier::Remove => "-readonly ",
+            };
+            let opt = match m.optional {
+                ast::MappedModifier::Keep => "",
+                ast::MappedModifier::Add => "?",
+                ast::MappedModifier::Remove => "-?",
+            };
+            let name = m
+                .name
+                .as_ref()
+                .map_or(String::new(), |n| format!(" as {}", written(n)));
+            format!(
+                "{{ {ro}[{} in {}{name}]{opt}: {} }}",
+                m.param.name,
+                written(&m.source),
+                written(&m.value)
+            )
+        }
+        T::TemplateLiteral { quasis, types } => {
+            let mut out = String::from("`");
+            for (i, q) in quasis.iter().enumerate() {
+                out.push_str(q);
+                if let Some(t) = types.get(i) {
+                    out.push_str(&format!("${{{}}}", written(t)));
+                }
+            }
+            out.push('`');
+            out
+        }
+        T::KeyOf(t) => match t.kind {
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("keyof ({})", written(t))
+            }
+            _ => format!("keyof {}", written(t)),
+        },
         T::Null => "null".into(),
+        T::Undefined => "undefined".into(),
         T::Void => "void".into(),
+        T::Predicate { param, ty, asserts } => {
+            let asserts = if *asserts { "asserts " } else { "" };
+            match ty {
+                Some(t) => format!("{asserts}{} is {}", param.name, written(t)),
+                None => format!("{asserts}{}", param.name),
+            }
+        }
     }
 }
 
 /// A parameter's type as written: `T` for `x?: T` (parsed as `T | null`).
 pub(crate) fn written_param(p: &ast::Param) -> String {
-    match (&p.ty.kind, p.optional) {
-        (T::Union(ts), true) if matches!(ts.last().map(|t| &t.kind), Some(T::Null)) => {
+    match p.optional {
+        true => without_added_undefined(&p.ty),
+        false => written(&p.ty),
+    }
+}
+
+/// The written type of an optional parameter or field (`name?: T`): without the zero-width
+/// `| undefined` the parser adds (`velt_syntax` `or_undefined`).
+fn without_added_undefined(t: &TypeExpr) -> String {
+    match &t.kind {
+        T::Union(ts)
+            if ts
+                .last()
+                .is_some_and(|l| matches!(l.kind, T::Undefined) && l.span.lo == l.span.hi) =>
+        {
             list(&ts[..ts.len() - 1], " | ")
         }
-        _ => written(&p.ty),
+        _ => written(t),
     }
 }
 
@@ -63,11 +175,9 @@ fn list(ts: &[TypeExpr], sep: &str) -> String {
 
 fn object_field(f: &ast::ObjectTypeField) -> String {
     let readonly = if f.readonly { "readonly " } else { "" };
-    let (q, ty) = match (&f.ty.kind, f.optional) {
-        (T::Union(ts), true) if matches!(ts.last().map(|t| &t.kind), Some(T::Null)) => {
-            ("?", list(&ts[..ts.len() - 1], " | "))
-        }
-        _ => ("", written(&f.ty)),
+    let (q, ty) = match f.optional {
+        true => ("?", without_added_undefined(&f.ty)),
+        false => ("", written(&f.ty)),
     };
     format!("{readonly}{}{q}: {ty}", f.name.name)
 }
@@ -84,5 +194,6 @@ fn literal(l: &ast::SignedLit) -> String {
         ast::Lit::Str(s) => format!("{s:?}"),
         ast::Lit::Bool(b) => b.to_string(),
         ast::Lit::Null => "null".into(),
+        ast::Lit::Undefined => "undefined".into(),
     }
 }

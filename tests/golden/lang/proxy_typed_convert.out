@@ -1,0 +1,12 @@
+get label
+get count
+a: 1
+get count
+set count 2
+set label b
+2 b
+true
+get label
+get count
+b: 2
+b: 2

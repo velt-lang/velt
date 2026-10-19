@@ -85,7 +85,7 @@ async function main() {
   console.log(await renderToString(el));
   console.log(
     await renderToString(
-      jsxAsyncComponent((p: { ids: i64[] }) => Feed(p), { ids: [3, 4] }, null, "jsx_async#Feed"),
+      jsxAsyncComponent((p: { ids: i64[] }) => Feed(p), { ids: [3i64, 4] }, null, "jsx_async#Feed"),
     ),
   );
   // An async component inside an array inside a template: the compiler passes a non-text child

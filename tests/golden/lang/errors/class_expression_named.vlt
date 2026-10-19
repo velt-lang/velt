@@ -1,0 +1,6 @@
+// A named class expression bound to a variable must carry the variable's name (the class is
+// declared under that name).
+const K = class Other {
+  x = 1;
+};
+console.log(new K().x);

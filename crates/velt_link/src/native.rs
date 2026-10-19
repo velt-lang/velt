@@ -69,6 +69,15 @@ pub(crate) fn unix_shared_args(native: &[NativeLink]) -> Vec<OsString> {
         .collect()
 }
 
+/// The bundled lld's arguments for the libraries linked as shared libraries.
+pub(crate) fn lld_shared_args(native: &[NativeLink]) -> Vec<OsString> {
+    native
+        .iter()
+        .filter(|n| n.static_obj.is_none())
+        .flat_map(|n| crate::shared::lld_shared_lib_args(&n.shared))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

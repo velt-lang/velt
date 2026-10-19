@@ -1,0 +1,82 @@
+// A `const` initialized with a literal (module-level or local, also captured by a closure) used
+// as a `case` value selects like the literal: it narrows and counts toward exhaustiveness, as in
+// TypeScript (#745). Expected output: Node's.
+const A = "a";
+const ONE = 1;
+const NEG = -2;
+const CIRCLE = "circle";
+
+type K = "a" | "b";
+type N = 1 | 2 | -2;
+
+interface Circle {
+  kind: "circle";
+  r: number;
+}
+
+interface Square {
+  kind: "square";
+  side: number;
+}
+
+type Shape = Circle | Square;
+
+function moduleConst(k: K): number {
+  switch (k) {
+    case A:
+      return 1;
+    case "b":
+      return 2;
+  }
+}
+
+function localConst(k: K): number {
+  const B = "b";
+  switch (k) {
+    case "a":
+      return 1;
+    case B:
+      return 2;
+  }
+}
+
+function numbers(n: N): string {
+  const TWO = 2;
+  switch (n) {
+    case ONE:
+      return "one";
+    case TWO:
+      return "two";
+    case NEG:
+      return "minus two";
+  }
+}
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case CIRCLE:
+      return s.r * s.r * 3;
+    case "square":
+      return s.side * s.side;
+  }
+}
+
+function inClosure(k: K): number {
+  const B = "b";
+  const f = (x: K): number => {
+    switch (x) {
+      case A:
+        return 10;
+      case B:
+        return 20;
+    }
+  };
+  return f(k);
+}
+
+function main() {
+  console.log(moduleConst("a"), moduleConst("b"), localConst("a"), localConst("b"));
+  console.log(numbers(1), numbers(2), numbers(-2));
+  console.log(area({ kind: "circle", r: 2 }), area({ kind: "square", side: 3 }));
+  console.log(inClosure("a"), inClosure("b"));
+}

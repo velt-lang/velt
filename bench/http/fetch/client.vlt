@@ -1,0 +1,83 @@
+// The global `fetch`: the four client scenarios (bench/http/fetch/README.md).
+import { AbortError } from "velt:task";
+import { IoError } from "velt:io";
+import { args } from "velt:process";
+
+struct User {
+  id: i64;
+  name: string;
+  email: string;
+  active: bool;
+  score: f64;
+}
+
+async function worker(base: string, n: i64): Promise<i64, IoError | AbortError> {
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const r = await fetch(`${base}/small`);
+    total += (await r.text()).length as i64;
+  }
+  return total;
+}
+
+async function main() {
+  const argv = args();
+  const base = argv[0];
+  const which = argv.length > 1 ? argv[1] : "all";
+  if (which == "all" || which == "seq") {
+    const t = performance.now();
+    const n = await worker(base, 10000);
+    const s = (performance.now() - t) / 1000;
+    console.log(`seq: ${Math.round(10000 / s)} req/s (${n} bytes) ${s.toFixed(3)}s`);
+  }
+  if (which == "all" || which == "conc") {
+    const t = performance.now();
+    const ps: Promise<i64, IoError | AbortError>[] = [];
+    for (let i = 0; i < 100; i++) {
+      const p: Promise<i64, IoError | AbortError> = spawn(worker(base, 1000));
+      ps.push(p);
+    }
+    const rs = await Promise.all<i64, IoError | AbortError>(ps);
+    let n = 0;
+    for (const x of rs) {
+      n += x;
+    }
+    const s = (performance.now() - t) / 1000;
+    console.log(`conc: ${Math.round(100000 / s)} req/s (${n} bytes) ${s.toFixed(3)}s`);
+  }
+  if (which == "all" || which == "big") {
+    const t = performance.now();
+    const r = await fetch(`${base}/big`);
+    const b = await r.bytes();
+    const s = (performance.now() - t) / 1000;
+    console.log(
+      `big: ${b.length} bytes ${s.toFixed(3)}s ${Math.round(b.length / 1048576 / s)} MB/s`,
+    );
+  }
+  if (which == "all" || which == "json") {
+    const t = performance.now();
+    let n = 0;
+    for (let i = 0; i < 20; i++) {
+      const r = await fetch(`${base}/json`);
+      const users = await r.json<User[]>();
+      n += users.length as i64;
+    }
+    const s = (performance.now() - t) / 1000;
+    console.log(
+      `json: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`,
+    );
+  }
+  if (which == "all" || which == "gzip") {
+    const t = performance.now();
+    let n = 0;
+    for (let i = 0; i < 20; i++) {
+      const r = await fetch(`${base}/json-gzip`);
+      const users = await r.json<User[]>();
+      n += users.length as i64;
+    }
+    const s = (performance.now() - t) / 1000;
+    console.log(
+      `gzip: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`,
+    );
+  }
+}

@@ -1,40 +1,16 @@
-//! `/` on JS numbers held as integers (docs/reference/types.md "Numbers"): float division
-//! unless both operands are declared integers, `/=` on integer places, and `Math.trunc(a / b)`
-//! as integer division. Where a value's integer type comes from is in `numbers`.
+//! `/` (docs/reference/types.md "Numbers"): on numbers it is float division as in JS, on
+//! declared integers integer division (truncating), and `Math.trunc(a / b)` on integers is
+//! integer division too.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 use velt_syntax::ast;
 
-use super::numbers::IntOrigin;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId};
 
 impl FnCx<'_, '_> {
-    /// Is `l / r` on integers integer division? Both operands declared, or only literals in a
-    /// context that expects an integer (`const n: i64 = 7 / 2`).
-    fn int_division(&self, l: &hir::Expr, r: &hir::Expr, hint: Option<TyId>) -> bool {
-        match self.int_origin(l).join(self.int_origin(r)) {
-            IntOrigin::Declared => true,
-            IntOrigin::Literal => hint.is_some_and(|t| self.cx.ty.is_int(t)),
-            IntOrigin::Inferred => false,
-        }
-    }
-
     /// `l / r` of two checked operands of numeric type `t`.
-    pub(crate) fn divide(
-        &mut self,
-        l: hir::Expr,
-        r: hir::Expr,
-        t: TyId,
-        hint: Option<TyId>,
-        span: Span,
-    ) -> hir::Expr {
-        let (l, r, t) = if self.cx.ty.is_int(t) && !self.int_division(&l, &r, hint) {
-            let f = self.cx.ty.f64;
-            (self.int_to_float(l, f), self.int_to_float(r, f), f)
-        } else {
-            (l, r, t)
-        };
+    pub(crate) fn divide(&mut self, l: hir::Expr, r: hir::Expr, t: TyId, span: Span) -> hir::Expr {
         let kind = H::Binary {
             op: BinOp::Div,
             lhs: Box::new(l),
@@ -47,24 +23,8 @@ impl FnCx<'_, '_> {
     pub(crate) fn float_division_note(&self, found: &hir::Expr) -> Option<&'static str> {
         let quotient = matches!(found.kind, H::Binary { op: BinOp::Div, .. });
         (quotient && self.cx.ty.is_float(found.ty)).then_some(
-            "`/` gives a float (like JS) unless both operands are declared with integer types; for integer division write `Math.trunc(a / b)`",
+            "`/` on numbers gives a float (like JS); for integer division write `Math.trunc(a / b)`",
         )
-    }
-
-    /// `x /= y` on an integer place: allowed only when it stays integer division.
-    pub(crate) fn check_int_div_assign(&mut self, place: &hir::Expr, v: &hir::Expr, span: Span) {
-        if self.cx.ty.is_int(place.ty) && !self.int_division(place, v, Some(place.ty)) {
-            self.cx.error(
-                Diagnostic::error(
-                    "`/=` would store a float in an integer variable",
-                    span,
-                )
-                .with_note(
-                    "`/` gives a float (like JS) unless both operands are declared with integer types",
-                )
-                .with_note("for integer division write `x = Math.trunc(x / y)`, or declare the variable as a float (`let x = 0.0`)"),
-            );
-        }
     }
 
     /// `Math.trunc(a / b)` (the prelude's `Math`): integer division when both operands are
@@ -107,8 +67,9 @@ impl FnCx<'_, '_> {
             _ => return None,
         }
         let (l, r) = self.operands(lhs, rhs, None, Want::Borrow);
+        self.literal_use_number(&l);
+        self.literal_use_number(&r);
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = self.mix_ints(l, r);
         let Some(t) = self.check_operands(ast::BinaryOp::Div, l.ty, &r, arg.span) else {
             return Some(self.error_expr(span));
         };
@@ -120,7 +81,7 @@ impl FnCx<'_, '_> {
             };
             return Some(self.mk(kind, t, span));
         }
-        let q = self.divide(l, r, t, None, arg.span);
+        let q = self.divide(l, r, t, arg.span);
         let ty = q.ty;
         Some(self.intrinsic(Intrinsic::Trunc, vec![q], ty, span))
     }

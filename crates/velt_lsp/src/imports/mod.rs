@@ -101,7 +101,11 @@ impl ImportHelp {
                     exports
                         .into_iter()
                         .filter(|e| (!types_only || e.is_type) && seen.insert(e.name.clone()))
-                        .map(|e| crate::sema_query::item(&e.name, e.kind, &e.detail))
+                        .map(|e| {
+                            let mut item = crate::sema_query::item(&e.name, e.kind, &e.detail);
+                            e.document(&mut item);
+                            item
+                        })
                         .collect(),
                 )
             }

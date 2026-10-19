@@ -76,8 +76,11 @@ impl FnCx<'_, '_> {
         let Some((ns, member)) = name.split_once('.') else {
             return false;
         };
-        if !self.cx.scopes[self.module].namespaces.contains_key(ns) {
+        let Some(&t) = self.cx.scopes[self.module].namespaces.get(ns) else {
             return false;
+        };
+        if crate::collect::exports::maybe_dropped(self.cx, t, member) {
+            return true; // its declaration may be one the parser dropped (`Ctx::recovered`)
         }
         self.cx.err(
             format!("namespace `{ns}` has no exported member `{member}`"),

@@ -1,0 +1,42 @@
+// A method value's identity (#746): each read of `w.tick` (or `w.tick.bind(w)`) is a new
+// function, as `bind` makes in JS, so a handler is registered and removed through a `const`.
+class Emitter {
+  handlers: ((n: number) => void)[] = [];
+  on(h: (n: number) => void): void {
+    this.handlers.push(h);
+  }
+  off(h: (n: number) => void): void {
+    this.handlers = this.handlers.filter((x) => x !== h);
+  }
+  emit(n: number): void {
+    for (const h of this.handlers) {
+      h(n);
+    }
+  }
+}
+
+class Watcher {
+  seen: number[] = [];
+  tick(n: number): void {
+    this.seen.push(n);
+  }
+}
+
+function main() {
+  const e = new Emitter();
+  const w = new Watcher();
+  const tick = w.tick.bind(w);
+  e.on(tick);
+  e.emit(1);
+  e.off(tick);
+  e.emit(2);
+  console.log(e.handlers.length, w.seen.join(","));
+  const other = w.tick.bind(w);
+  e.on(other);
+  e.on(tick);
+  e.off(other);
+  e.emit(3);
+  console.log(e.handlers.length, w.seen.join(","));
+  e.off(w.tick.bind(w));
+  console.log(e.handlers.length);
+}

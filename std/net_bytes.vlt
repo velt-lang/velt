@@ -5,7 +5,7 @@ import { IoStatus } from "velt:io";
 
 declare async function velt_rt_tcp_write_bytes(s: u64, data: u8[]): Promise<IoStatus>;
 
-// Writes every byte of `data` to the stream handle `s`.
+/** Writes every byte of `data` to the stream handle `s`. */
 export async function writeBytesTo(s: u64, data: u8[]): Promise<IoStatus> {
   return await velt_rt_tcp_write_bytes(s, data);
 }

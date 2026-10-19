@@ -8,7 +8,9 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
 ## Values and references
 
 - **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), literal and
-  enum types, and unions, tuples and `T | null` of those.
+  enum types, and unions, tuples and `T | null` of those. A tuple is copied when it is
+  assigned or stored, but a function or callback that changes an element of a tuple it was
+  passed (`t[1] = 0`) changes the caller's tuple, as in JS.
 - **Objects are references**, as in JS: class instances, arrays, maps, structs, object types
   (`type P = { x: i64 }`, object literals) and closures. `const b = a;`, passing `a` to a
   function, storing it in a field, an array or a map, returning it and capturing it all refer
@@ -23,6 +25,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   then stored behind a pointer). Freeing is deterministic. An array type iterated through an
   `Iterable<T>` (a value or a bound: `sum(xs)` with `sum(xs: Iterable<i64>)`) counts as shared
   for the whole program, since its iterator holds the array; nothing else about it changes.
+  Naming an object again inside one function does not share it: `const me = this`, or a
+  closure that captures `this` and is only called where it is created
+  ([Captures](functions.md#captures)), refers to the same object without a count (unless a
+  conflict elsewhere in the program makes them share; see [Captures](functions.md#captures)).
 - **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
   nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
@@ -30,12 +36,75 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
+- Dropping a long chain of objects never overflows the stack, however it is linked: a
+  linked list through a `next: Node | null` field or a tree through `left` and `right` is
+  freed in a loop (when the class is not part of a class hierarchy, with no base class and no
+  subclasses, and no field declared after the link can run a `[Symbol.dispose]()`), and any other chain (through arrays, `Map` values, closures,
+  interface values, subclasses, struct values or a recursive object type such as `interface
+  Node { next?: Node }`) is freed in nested steps up to a fixed depth (128 levels of such
+  nesting), with the objects past it freed when the outer drop is done
+  ([order of cleanup](#order-of-cleanup-in-long-chains)).
 - Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
   holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
   or method: the closure refers to the object, the object to the closure); replace the field
   (`this.onChange = () => {}`) when the object is done to free both. **Planned**
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
-  `weak` references and a compile-time warning for reference cycles.
+  `weak` fields and a compile-time warning for reference cycles.
+- `WeakMap`, `WeakSet` and `WeakRef` ([prelude](../std/prelude.md#weakmap-weakset-and-weakref))
+  don't keep their keys and targets alive: an object's entries go when its last reference does,
+  at once (Node waits for a garbage collection). A weak map whose value refers back to its key,
+  such as a cache from an object to a wrapper holding it (`cache.set(raw, new Proxy(raw))`),
+  frees both once nothing else refers to either, like JavaScript
+  ([design](../internals/design/weak-refs.md#the-ephemeron-rule)). Not freed: a value graph of
+  more than 256 objects, a key that is also in an ordinary cycle (`raw.self = raw`), and two
+  maps whose entries keep each other's keys (`m1.set(a, b); m2.set(b, a)`), which stay until an
+  entry is deleted or a map goes.
+  Releasing an object of a type that can be a weak key, or be reached from a weak map's keys and
+  values, costs two more instructions when it frees the object; other types are unaffected.
+- **Evaluation order is JS's**: operands and arguments run left to right, and one read before a
+  later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). The
+  target of an assignment is evaluated before its right-hand side: a call at its root runs
+  once, first (`get().v = f()`, `m.get(k)!.v = f()`). An assignment or compound assignment to
+  a field of a class object, or of an object literal another name refers to (`const keep =
+  o.inner`), reached through a place writes to the object its target named
+  before the right-hand side ran: in `o.inner.v = f()` or `o.inner.v += f()`, when `f`
+  replaces `o.inner`, the old object gets the value and the new one keeps its own, as in JS.
+  This holds however deep the target is (`o.a.b.c.v = f()` when `f` replaces `o.a` and
+  something else still refers to the old `o.a`). An old object nothing else refers to is freed
+  by `f`, and the write is dropped with it. **Known differences:** when `f` frees the old
+  object and then installs a new one at the same place (`o.inner = null; o.inner = new P()`),
+  the allocator may give the new object the freed address; the write then goes to the new
+  object, where Node writes to the unreachable old one
+  ([#825](https://github.com/velt-lang/velt/issues/825)); the same holds for an array
+  element whose array the right-hand side replaces
+  ([#820](https://github.com/velt-lang/velt/issues/820)).
+- **An object literal nothing else refers to is stored inside its holder** (an object
+  literal or a class object), so an assignment into it whose right-hand side may replace it
+  is an error
+  ([#876](https://github.com/velt-lang/velt/issues/876)): in `o.inner.v = f()` with
+  `o = { inner: { v: 1 } }`, where `f` (or a function it calls) assigns a new object to
+  `o.inner` or to `o`, and no other name refers to an object of that type, Node writes to the
+  old object, which nothing can see any more, and Velt would write to the new one. The fix
+  computes the value first, which runs the same in TypeScript: `const v = f(); o.inner.v = v;`.
+  The check looks at what the right-hand side may run: reads, arithmetic and new values
+  compile as written, and so do calls that assign neither the field holding the object (that
+  field of that object type: assigning `b.vel` does not replace `b.pos`) nor one holding a
+  holder above it. A callback written in the call (`rows.map((r) => r.n)`) or held in a
+  constant counts as itself, `null` as nothing, and a function's own callback parameter as
+  what its callers pass, unless the function is itself used as a value (`fs.map((f) => f())`);
+  any other function value counts as any function the program uses as a value. A method call
+  through a base class or interface counts as every method of that name, and an `await` as
+  anything in the program. A generic function's field of type `T` counts as the type the call
+  passes for `T`, or, where that is not known, as any type the program passes as a type
+  argument. Code that runs without being called counts as called: a class's `toString()`,
+  `toJSON()`, `__inspect()` and own `clone()` when the right-hand side formats, serialises or
+  copies a value that may hold that class (`String(x)`, `[x].join()`, `JSON.stringify`,
+  `console.log`, `x.clone()`), its `[Symbol.dispose]()` wherever such a value is dropped, the
+  body of any generator in the program at each `next()`, `for...of` or spread over a
+  generator, and initializers evaluated where they are used. A variable of the function that
+  no closure captures (not a parameter) is replaced only by an assignment in the right-hand
+  side itself, so a function that reassigns a variable of its own (`s = apply(s, t)`) does not
+  count.
 
 ```ts
 class Box {
@@ -211,6 +280,44 @@ async function ping(addr: string): Promise<string> {
   await using conn = new Conn(addr);     // closed at the end of the block
   return conn.request("PING");
 }
+```
+
+### Order of cleanup in long chains
+
+When an object goes away, its `[Symbol.dispose]()` runs first, then its fields are released in
+declaration order, each completely (an object a field held is disposed with everything it
+holds) before the next. A chain through the class's own field (`next: Node | null`) keeps
+exactly this order at any length (each node is disposed before the rest of the chain) when that
+field is declared after every field whose drop can run a `[Symbol.dispose]()`, and the class
+is not part of a class hierarchy (no base class and no subclasses); otherwise it is released in nested steps like the chains below. In a chain
+or tree that nests through other values (arrays, `Map` values, closures, interfaces, recursive
+object types), an object more than 128 such levels below the one being released is set aside
+and released, in the order it was reached, once the outer release has finished everything
+else. Every hook still
+runs exactly once, and a chain is still disposed from its head on; only a branch deeper than
+128 levels is disposed after the shallower objects that come after it.
+
+```ts
+class Step {
+  name: string;
+  next: Step[] = [];
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+{
+  const a = new Step("a");
+  const b = new Step("b");
+  b.next.push(new Step("c"));
+  a.next.push(b);
+  a.next.push(new Step("d"));
+}                               // dispose a, dispose b, dispose c, dispose d
 ```
 
 Not supported yet: the `Disposable` / `AsyncDisposable` interfaces and `DisposableStack` (a

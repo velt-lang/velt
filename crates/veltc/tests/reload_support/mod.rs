@@ -53,7 +53,13 @@ pub struct Dev {
 impl Dev {
     /// `velt dev <mode flags> main.vlt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
+        Dev::start_with_env(dir, mode, &[])
+    }
+
+    /// [`Dev::start`] with extra environment variables.
+    pub fn start_with_env(dir: &Path, mode: &[&str], env: &[(&str, &str)]) -> Dev {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.envs(env.iter().copied());
         cmd.arg("dev")
             .args(mode)
             .arg("main.vlt")
@@ -157,6 +163,26 @@ impl Dev {
         Ok(found.unwrap_or_else(Instant::now))
     }
 
+    /// Wait for a stderr line after `mark` for which `matches` holds (`what` describes it).
+    #[allow(dead_code)]
+    pub fn wait_stderr_where(
+        &self,
+        mark: Mark,
+        what: &str,
+        matches: impl Fn(&str) -> bool,
+    ) -> Result<Instant, String> {
+        let mut found = None;
+        self.wait(|log| {
+            found = log.stderr[mark.stderr..]
+                .iter()
+                .find(|(_, l)| matches(l))
+                .map(|(at, _)| *at);
+            found.is_some()
+        })
+        .map_err(|log| format!("no {what} on stderr:\n{log}"))?;
+        Ok(found.unwrap_or_else(Instant::now))
+    }
+
     /// The stderr lines after `mark`.
     #[allow(dead_code)]
     pub fn stderr_since(&self, mark: Mark) -> Vec<String> {
@@ -190,6 +216,20 @@ impl Dev {
     }
 
     /// Poll the log until `done` holds; on timeout return the whole log.
+    /// Everything `velt dev` printed so far, for a failure message.
+    #[allow(dead_code)]
+    pub fn transcript(&self) -> String {
+        let log = self.log.lock().unwrap();
+        format!(
+            "--- stdout ---
+{}
+--- stderr ---
+{}",
+            text(&log.stdout),
+            text(&log.stderr)
+        )
+    }
+
     fn wait(&self, mut done: impl FnMut(&Log) -> bool) -> Result<(), String> {
         let deadline = Instant::now() + TIMEOUT;
         loop {

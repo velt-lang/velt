@@ -5,7 +5,7 @@
 by `close()`.
 
 - `bindUdp(addr): Promise<UdpSocket>`: port 0 picks a free port.
-- `UdpSocket { port }`:
+- `UdpSocket { port: number }`:
   - `sendTo(data: u8[], addr): Promise<i64>`, `sendTextTo(text, addr)`
   - `recvFrom(max = 0): Promise<Datagram>`
   - `setBroadcast(on)`, `close()`

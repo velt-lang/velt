@@ -48,7 +48,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let shorthand_ok = self.at_ident_like();
-            let key = self.parse_prop_name()?;
+            let key = self.parse_prop_key()?;
             let pat = if self.eat(Tok::Colon) {
                 self.parse_binding_pattern()?
             } else if shorthand_ok {

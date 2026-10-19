@@ -15,6 +15,7 @@ pub(crate) fn cl_type(ty: Ty) -> Option<ir::Type> {
         Ty::I64 | Ty::U64 | Ty::Ptr => types::I64,
         Ty::F32 => types::F32,
         Ty::F64 => types::F64,
+        Ty::V128 => types::I8X16,
         Ty::Unit | Ty::Agg(_) => return None,
     })
 }
@@ -80,10 +81,10 @@ pub(crate) fn size_align(program: &vir::Program, ty: Ty) -> CodegenResult<(u32, 
             Ok((layout.size, layout.align))
         }
         Ty::Unit => Ok((0, 1)),
-        scalar => {
-            let n = scalar.scalar_size().unwrap_or(0);
-            Ok((n, n))
-        }
+        scalar => Ok((
+            scalar.scalar_size().unwrap_or(0),
+            scalar.scalar_align().unwrap_or(1),
+        )),
     }
 }
 

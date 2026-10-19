@@ -10,6 +10,7 @@ use crate::hir::{
     self, AdtDef, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
     InterfaceMethodDef, VariantDef,
 };
+use crate::hooks;
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
     let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
@@ -58,6 +59,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                     ty: g.ty,
                     init,
                     span: g.span,
+                    slot: None,
                 })
             }),
         };
@@ -65,7 +67,8 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
     }
 }
 
-/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods).
+/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods, and
+/// setter slots after those when the program writes through `d`, `crate::iface_writes`).
 fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
     let n = cx.iface(d).map_or(0, |i| i.methods.len());
     // The dispatch group's flag, not the method's own return type: one implementation may
@@ -80,6 +83,11 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
         .zip(&promise)
         .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
         .collect();
+    let hidden = cx.hidden_keys();
+    let setters = match cx.iface_written(d) {
+        true => cx.writable_fields(d),
+        false => vec![],
+    };
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -93,6 +101,8 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 default: None,
                 optional: f.optional,
                 private: false,
+                presence: false,
+                hidden: hidden.contains(&f.name),
             })
             .collect(),
         methods: i
@@ -108,6 +118,12 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             })
             .chain(i.fields.iter().map(|f| InterfaceMethodDef {
                 name: format!("<{}>", f.name),
+                default: None,
+                promise: false,
+                throws: None,
+            }))
+            .chain(setters.iter().map(|&k| InterfaceMethodDef {
+                name: format!("<set {}>", i.fields[k].name),
                 default: None,
                 promise: false,
                 throws: None,
@@ -160,7 +176,7 @@ fn field_defaults(
     if let Some((bd, bargs)) = base.and_then(|b| cx.class_of(b)) {
         for mut e in field_defaults(cx, bd, memo).into_iter().take(start) {
             if let Some(e) = &mut e {
-                crate::visit::map_expr_types(e, &mut |t| cx.ty.subst(t, &bargs));
+                crate::visit::map_expr_types(e, &mut |t| cx.subst(t, &bargs));
             }
             out.push(e);
         }
@@ -171,6 +187,32 @@ fn field_defaults(
     out
 }
 
+/// `AdtDef::inherited_inits` of class `d`: its base classes' (with the base's type args), then
+/// its own (`AdtInfo::redefined`).
+fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (base, own) = (a.base, a.redefined.clone());
+    let (mut out, depth) = match base.and_then(|b| cx.class_of(b)) {
+        Some((bd, bargs)) => {
+            let (mut inits, depth) = inherited_inits(cx, bd);
+            for i in &mut inits {
+                crate::visit::map_expr_types(&mut i.init, &mut |t| cx.subst(t, &bargs));
+            }
+            (inits, depth + 1)
+        }
+        None => (vec![], 0),
+    };
+    out.extend(own.into_iter().filter_map(|r| {
+        Some(hir::FieldInit {
+            field: r.field as u32,
+            depth,
+            at: r.at as u32,
+            init: r.init?,
+        })
+    }));
+    (out, depth)
+}
+
 fn adt_def(
     cx: &mut Ctx,
     d: DefId,
@@ -178,9 +220,18 @@ fn adt_def(
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
+    let inherited_inits = inherited_inits(cx, d).0;
+    let hidden = cx.hidden_keys();
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
-    let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
+    let private_fields = a
+        .fields
+        .iter()
+        .any(|f| f.private_to.is_some() && !cx.plain_private(f.private_to, &f.name));
+    let opaque = a.fields.iter().any(|f| {
+        f.private_to.is_some_and(|o| cx.declared_in_std(o))
+            && !cx.plain_private(f.private_to, &f.name)
+    });
     let fields = a
         .fields
         .iter()
@@ -191,6 +242,8 @@ fn adt_def(
             default,
             optional: f.optional,
             private: f.private_to.is_some(),
+            presence: crate::anon::has_presence(&cx.ty, a.kind, f),
+            hidden: hidden.contains(&f.name),
         })
         .collect();
     let (name, kind, base, ctor, vtable, span) = (
@@ -207,6 +260,9 @@ fn adt_def(
         Some(f @ crate::collect::Found::Class { .. }) if !f.is_static() => Some(f.def()),
         _ => None,
     };
+    let to_string = hooks::final_hook(cx, d, &self_args, hooks::TO_STRING).map(|h| h.0);
+    let to_json = hooks::final_hook(cx, d, &self_args, hooks::TO_JSON).map(|h| h.0);
+    let inspect = hooks::final_hook(cx, d, &self_args, hooks::INSPECT).map(|h| h.0);
     AdtDef {
         name,
         kind,
@@ -214,10 +270,15 @@ fn adt_def(
         fields,
         is_copy: cx.is_copy(st),
         private_fields,
+        opaque,
         assigned,
         base,
+        inherited_inits,
         ctor,
         dispose,
+        to_string,
+        to_json,
+        inspect,
         vtable,
         span,
     }

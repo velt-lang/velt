@@ -1,0 +1,28 @@
+// A tuple returned by a call, spread into a method of a receiver with effects that is not a
+// call itself (`holder().adder`): JS evaluates the receiver first, then the spread. Velt reads
+// such a tuple into a hidden temporary before the call, which would change that order, so it
+// asks to store it in a variable first. (A receiver that is a call, `mk().add(...pair())`, is
+// held in a temporary before it, which keeps the order.)
+class Adder {
+  add(a: number, b: number): number {
+    return a + b;
+  }
+}
+
+class Holder {
+  adder = new Adder();
+}
+
+function holder(): Holder {
+  console.log("holder");
+  return new Holder();
+}
+
+function pair(): [number, number] {
+  console.log("pair");
+  return [1, 2];
+}
+
+function main() {
+  console.log(holder().adder.add(...pair()));
+}

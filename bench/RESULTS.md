@@ -671,6 +671,51 @@ debug runtime) to 34 KB.
 command incl. process start, std and the prelude, best of 5): chat 24 ms, log-pipeline 24 ms,
 notes-cli 25 ms, todo-api 30 ms (target < 100 ms).
 
+## Debug links on macOS and Windows; the bundled linker (#45, #803, 2026-10-09)
+
+The installed toolchain (`scripts/package.*`: release `velt` and runtimes, the bundled lld 23.1.3
+and the host's link kit), `bench/compile/run.sh 5 1000 <prefix>/bin/velt` (`run.ps1 -Runs 5 -Units
+1000 -Velt …` on Windows) once with `VELT_LINKER=system` and once with `VELT_LINKER=bundled`.
+Second table of the script, best of 5, ms; the "check" columns do not link and differ only by
+noise.
+
+**macOS**: Apple M4 (10 cores), macOS 27.0.1; system linker: `cc` → Apple `ld` (ld-1267).
+
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 30.1 | 39.3 | 38.8 | 85.5 | 0.2 |
+| http_hello | **bundled** | 25.6 | 32.7 | **7.1** | **53.1** | 0.2 |
+| all_std | system | 32.3 | 42.4 | 38.7 | 83.6 | 0.1 |
+| all_std | **bundled** | 29.2 | 38.1 | **6.4** | **42.2** | 0.1 |
+| units_1000 | system | 171.2 | 188.9 | 58.9 | 91.8 | 3.1 |
+| units_1000 | **bundled** | 194.2 | 218.3 | **47.5** | **72.7** | 2.9 |
+
+The shared-runtime link with the system linker is mostly the `cc` driver (a process that starts
+`ld`); lld runs directly.
+
+**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V74, 4 vCPUs), Windows Server 2025, the
+toolchain archive of the release workflow; system linker: `link.exe` of Visual Studio 18 (MSVC
+14.51). `pwsh bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt <prefix>\bin\velt.exe -LinkOnly`
+(the front-end table needs more memory for `long_main_4000` than the runner has).
+
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 72.6 | 94.3 | 55.6 | 230.8 | 0.3 |
+| http_hello | **bundled** | 63.6 | 80.0 | **38.0** | **169.3** | 0.7 |
+| all_std | system | 72.0 | 89.4 | 42.4 | 229.2 | 0.2 |
+| all_std | **bundled** | 69.4 | 86.0 | **37.1** | **165.8** | 0.6 |
+| units_1000 | system | 452.8 | 501.6 | 76.9 | 261.1 | 2.3 |
+| units_1000 | **bundled** | 438.2 | 488.6 | **71.5** | **198.0** | 2.9 |
+
+A rebuild with nothing changed checks which linker would link (the link stamp includes it); with
+the bundled one that opens the kit, a fraction of a millisecond. **Defender:** real-time
+protection is off on the runners, so the table does not show what scanning costs on a desktop.
+There, Defender scans `lld.exe` (56 MB) when it is new: on the runner its first start after a
+fresh copy took 216 ms, later ones 9–10 ms. On a desktop with real-time protection, a debug
+link with `rust-lld` (122 MB) in a checkout took 1.6–2.5 s against 0.4–0.5 s with `link.exe`
+(#853 review): measure the bundled `lld.exe` there too, and link with `VELT_LINKER=system`
+when Build Tools are installed and that is faster.
+
 ## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
 
 Machine: cloud VM, x86_64 Linux (Ubuntu 24.04), 4 × Intel Xeon @ 2.10 GHz, 15 GB; clang 18.1.3
@@ -1155,3 +1200,71 @@ program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64
   ms, objects by a number field 53 → 78 ms, so about 35 and 25 ns per sort. The 1M-number sort
   of the table measured in the same session: Velt 93 ms, Rust `sort_by` 69 ms, Node 1216 ms
   (the machine was busier than for the numbers above).
+
+## Callbacks that change their array through an alias (#564, 2026-10-07)
+
+Array callback methods now pass the callback a share of the element when the array may be
+reached through another reference (an alias, an object holding it), and their loops re-check
+the length after each callback in that case; `__intrinsic_may_alias(this)` folds to false when
+no other reference to an array of that type can exist, and then the plain loop of `main` is
+all that is compiled. Instructions (valgrind cachegrind, Linux in WSL2) of programs compiled
+on Windows with LLVM `--release --target x86_64-unknown-linux-gnu` and linked against one
+Linux runtime (the change does not touch `velt_rt`); before is `main` at 8d8ea5bf (compiler
+and std). Sharing right away when a later argument runs code (`f(xs[0], wrapAndPop(xs))`)
+changed none of these: the callback methods' later arguments are an index and a cast.
+
+Each micro program has 2000 elements and runs 1000 rounds of `xs.forEach((x, i) => …)` plus
+`xs.map((x, i) => …)`: 4M callback calls. "Alias" means `const ys = xs` exists; "field" is a
+`string[]` field of an object that two variables hold. The type decides, so each row is its
+own program.
+
+| elements | main | branch | change | per call |
+|---|---:|---:|---:|---:|
+| `string[]`, no alias | 89.63M | 89.63M | 0 (same machine code) | 0 |
+| `string[]`, alias | 125.64M | 315.65M | **2.5×** | +47.5 |
+| `string[]` in a field of a shared object | 125.66M | 305.67M | **2.4×** | +45.0 |
+| `number[]`, no alias | 36.85M | 36.85M | 0 (same machine code) | 0 |
+| `number[]`, alias | 42.97M | 56.97M | +32.6% | +3.5 |
+| `[string, number][]`, no alias | 89.64M | 89.64M | 0 (same machine code) | 0 |
+| `[string, number][]`, alias (tuples now counted) | 125.66M | 147.77M | +17.6% | +5.5 |
+| objects, no alias | 89.73M | 89.73M | 0 (same machine code) | 0 |
+| objects, alias | 127.77M | 147.78M | +15.7% | +5.0 |
+
+- **Callbacks over an aliased `string[]` cost about 2.5× the instructions.** Each call shares
+  the string for the callback and drops the share afterwards (two count updates, plus the
+  fallback when the count check fails), about 45 instructions per call. That is the price of
+  the argument staying valid when the callback pushes or pops through the alias; on `main`
+  the same program reads freed memory. #592 is the follow-up: pin the buffer once per method
+  call instead of sharing per callback call.
+- Elements that are not shared (numbers, objects, whose count already keeps them alive) pay
+  only for the loop that re-reads the length after each callback: 3.5 to 5 instructions per
+  call. Counted tuples add about 0.5.
+- **Without an alias the code is unchanged**: the four unaliased programs compile to identical
+  machine code (disassembly with addresses stripped), and so do 21 of the 26 `bench/` and
+  `bench/typical` programs.
+
+The suite (same method):
+
+| program | main | branch | change |
+|---|---:|---:|---:|
+| hashmap | 551.6M | 541.7M | −1.80% |
+| typical/chains | 2111.9M | 2113.9M | +0.10% |
+| typical/keys | 589.5M | 590.0M | +0.09% |
+| typical/graph | 333.9M | 333.9M | −0.01% |
+| the other 22 | | | within ±0.005% |
+
+`hashmap` and `keys` change through Map's `edits` counter (`upsert` and `getOrInsert` look the
+key up again after a callback that changed the map); `chains` has no alias, and the
+difference is an inlining decision (`map` is now inlined into `main`), not the aliased loop,
+which is folded away. `hashmap` is faster although `upsert` does more: its longer body made
+LLVM stop inlining the string map's `append` into `main`, so the 50,000 new words pay for a
+call (+8.9M in `append`), and the word count's loop, without `append`'s code in it, runs about
+19 fewer instructions on each of its 1M `upsert`s (−18.8M in `main`; cg_annotate per function).
+
+## TSX fortunes (bench/jsx)
+
+The TechEmpower fortunes page rendered by hand-written template literals, by precompiled TSX and
+by generic TSX: [bench/jsx/README.md](jsx/README.md) (`bench/jsx/run.sh`, with
+`BASE=<ref>` for an A/B of std/jsx). macOS arm64, 100 000 renders, instructions retired:
+hand 2.48 G, precompiled TSX 2.67 G (#676: 3.34 G; origin/main's std: 4.02 G), generic TSX
+9.87 G.

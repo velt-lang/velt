@@ -21,7 +21,7 @@
 mod equiv;
 mod facts;
 mod memory;
-mod region;
+pub(crate) mod region;
 #[cfg(test)]
 mod tests;
 

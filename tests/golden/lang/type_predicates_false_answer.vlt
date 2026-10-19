@@ -1,0 +1,16 @@
+// A type predicate that answers wrongly (TypeScript does not check its body): the narrowing it
+// implies would read a value as a type it does not have, so the call checks the value at run
+// time and throws a TypeError instead. (Node reads the string as a number here and prints
+// `long string1`; Velt's types are the values' representation, so it stops.)
+function isString(v: string | number): v is string {
+  return typeof v === "number" && false;
+}
+function show(v: string | number): string {
+  if (isString(v)) {
+    return "string " + v.length;
+  } else {
+    return "number " + (v + 1);
+  }
+}
+console.log(show(2));
+console.log(show("long string"));

@@ -1,11 +1,12 @@
 # velt:net
 
 `import { listen, connect } from "velt:net"`. TCP. `TcpListener` and `TcpStream` are
-structs around a handle, like file descriptors. Release each handle exactly once with `close()`.
+structs around a handle, like file descriptors. Release each handle with `close()`.
 
-- `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port.
+- `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port. The listen
+  backlog is the OS maximum (a burst of connects waits to be accepted).
   `connect(addr): Promise<TcpStream>`.
-- `TcpListener { port }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
+- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
 - `TcpStream`:
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
@@ -36,7 +37,8 @@ async function main() {
 }
 ```
 
-Notes: an unclosed handle leaks until the process exits, and closing it twice (also through a
-copy handed to another task) is a double free. **Planned**
+Notes: an unclosed handle leaks until the process exits. After `close()` through any copy
+(also one handed to another task), every copy's operations throw `IoError` `EBADF` and closing
+again does nothing; operations already in flight finish first. **Planned**
 ([semantics stage 2 §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)):
 these structs become disposable classes with `using` support.

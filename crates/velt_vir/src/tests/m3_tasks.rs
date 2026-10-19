@@ -2,7 +2,7 @@
 //! counter, `Promise.all` over join handles, `shared(new Mutex(...))` with `with`, and spawned
 //! async closure literals that own a cloned `shared` value. Plus `with` on a scalar value.
 
-use velt_sema::hir::{BinOp as B, Intrinsic as I};
+use velt_sema::hir::{BinOp as B, Capture, Intrinsic as I, PassMode};
 
 use super::builder::*;
 use super::builder_m2::*;
@@ -61,4 +61,66 @@ fn mutex_with_updates_scalar_value() {
     pb.add_main(f.build(body));
     let out = run(&pb.finish());
     assert_eq!(out.stdout, "42\n");
+}
+
+/// `const xs = ["a"]; const f = async () => { console.log(xs.length); }; const s = shared(f);`
+/// with `f` a local async closure (`FnDef::shares_captures`, which sema never sets for a closure
+/// that reaches `shared`): its calls would share the counted `xs` from several threads, so the
+/// many-threads check panics (glue/transfer_env.rs). The same closure copying its captures per
+/// call is fine.
+#[test]
+fn shared_local_async_closure_panics() {
+    for shares in [true, false] {
+        let mut pb = PB::new();
+        let t = pb.t;
+        let sa = pb.arr(t.str);
+        let pv = pb.promise(t.unit);
+        let fty = pb.fn_ty(vec![], pv);
+        let sf = pb.shared(fty);
+        let mut f = FB::new("main", pv);
+        let xs = f.local("xs", sa);
+        let g = f.local("g", fty);
+        let s_ = f.local("s", sf);
+        let clo = {
+            let mut c = FB::new("main::{closure#0}", pv);
+            let xin = c.param("xs", sa, PassMode::Owned);
+            c.captures.push(Capture {
+                outer: xs,
+                inner: xin,
+                mode: PassMode::Owned,
+                share: true,
+            });
+            let body = vec![se(print(
+                vec![intr(I::ArrayLen, vec![c.bw(xin)], t.usize)],
+                t,
+            ))];
+            let mut d = c.build_async(body);
+            d.shares_captures = shares;
+            pb.add_fn(d)
+        };
+        let body = vec![
+            let_(xs, array(vec![s("a", t)], sa)),
+            let_(g, closure(clo, fty)),
+            let_(s_, intr(I::SharedNew, vec![f.mv(g)], sf)),
+            se(print(vec![intr(I::ArrayLen, vec![f.bw(xs)], t.usize)], t)),
+        ];
+        pb.add_main(f.build_async(body));
+        let out = run(&pb.finish());
+        if shares {
+            assert_eq!(out.code, 101, "{}", out.stderr);
+            assert!(
+                out.stderr
+                    .contains("an async closure that changes or shares what it captured"),
+                "{}",
+                out.stderr
+            );
+        } else {
+            assert_eq!(
+                (out.stdout.as_str(), out.code),
+                ("1\n", 0),
+                "{}",
+                out.stderr
+            );
+        }
+    }
 }

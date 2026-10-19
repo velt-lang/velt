@@ -19,19 +19,29 @@ fn boxed(p: &velt_sema::hir::Program, f: &str, name: &str) -> bool {
 #[test]
 fn assigning_after_an_escaping_capture_makes_a_cell() {
     let p = ok_src(
-        "function main() { let k = 1; const f = (x: i64): i64 => x + k; k = 5;
-           console.log(f(1), k); }",
+        "function main() { let k = 1; const fs = [(x: i64): i64 => x + k]; k = 5;
+           console.log(fs[0](1), k); }",
     );
     assert!(boxed(&p, "main", "k"));
     let p = ok_src(
-        "function main() { let n = 0; const h = () => n;
-           [1, 2].forEach((x) => { n += x; }); console.log(h()); }",
+        "function main() { let n = 0; const hs = [() => n];
+           [1, 2].forEach((x) => { n += x; }); console.log(hs[0]()); }",
     );
     assert!(boxed(&p, "main", "n"));
     let p = ok_src(
-        "function main() { let c = 0; const inc = () => { c += 1; }; inc(); console.log(c); }",
+        "function keep(f: () => void): () => void { return f; }
+         function main() { let c = 0; const inc = keep(() => { c += 1; }); inc(); console.log(c); }",
     );
     assert!(boxed(&p, "main", "c"));
+    // A `const` closure that is only called borrows instead (`ownership::local_closures`): no
+    // cell, and it sees the variable's current value.
+    for src in [
+        "function main() { let k = 1; const f = (x: i64): i64 => x + k; k = 5; console.log(f(1), k); }",
+        "function main() { let c = 0; const inc = () => { c += 1; }; inc(); console.log(c); }",
+    ] {
+        let p = ok_src(src);
+        assert!(!func(&p, "main").body.locals.iter().any(|l| l.boxed), "{src}");
+    }
     // The closure is the only user afterwards: it keeps its own copy, no cell.
     let p = ok_src(
         "function make(): () => i64 { let n = 0; return () => { n += 1; return n; }; }
@@ -42,14 +52,21 @@ fn assigning_after_an_escaping_capture_makes_a_cell() {
 
 #[test]
 fn async_closures_keep_their_own_copies() {
+    // One that may run on another thread (spawned) keeps its own copy.
     let r = err_src(
         "async function main() { let k = 1; const f = async (): Promise<i64> => k; k = 5;
-           console.log(await f(), k); }",
+           console.log(await spawn(f()), k); }",
     );
     assert!(
         r.contains("cannot assign to `k` after a stored closure captured it"),
         "{r}"
     );
+    // One that stays on its task shares the variable, in a cell (#208).
+    let p = ok_src(
+        "async function main() { let k = 1; const f = async (): Promise<i64> => k; k = 5;
+           console.log(await f(), k); }",
+    );
+    assert!(boxed(&p, "main", "k"));
 }
 
 #[test]

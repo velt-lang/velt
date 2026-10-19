@@ -33,7 +33,43 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
         let name = self.parse_binding_ident()?;
-        let generics = self.parse_type_generic_params()?;
+        self.parse_type_decl_rest(name, is_class)
+    }
+
+    /// At `const K = class` / `let K = class`: a class expression bound to a variable.
+    pub(super) fn at_class_binding(&mut self) -> bool {
+        Self::is_ident_like(self.nth(1))
+            && self.nth(2) == Tok::Eq
+            && self.nth(3) == Tok::Kw(Kw::Class)
+    }
+
+    /// `const K = class [K] … { … };`: the class `K`. A class expression's own name, if any,
+    /// must be the variable's (it names the class, also in `console.log`).
+    pub(super) fn parse_class_binding(&mut self) -> PResult<TypeDecl> {
+        self.bump(); // const / let
+        let name = self.parse_binding_ident()?;
+        self.bump(); // =
+        self.bump(); // class
+        if self.at_ident_like() && !self.at_kw(Kw::Extends) && !self.at_kw(Kw::Implements) {
+            let own = self.take_ident();
+            if own.name != name.name {
+                self.error(
+                    format!(
+                        "a named class expression must have the name of the variable it initializes: declare `class {} {{ … }}`, or write `const {} = class {{ … }}`",
+                        own.name, name.name
+                    ),
+                    own.span,
+                );
+            }
+        }
+        let decl = self.parse_type_decl_rest(name, true)?;
+        // The `;` after the class body may be left out, as after a declaration.
+        self.eat(Tok::Semi);
+        Ok(decl)
+    }
+
+    fn parse_type_decl_rest(&mut self, name: Ident, is_class: bool) -> PResult<TypeDecl> {
+        let generics = self.parse_generic_params()?;
         let extends = self.parse_class_extends(is_class)?;
         let mut implements = Vec::new();
         if self.eat_kw(Kw::Implements) {
@@ -51,6 +87,9 @@ impl<'a> Parser<'a> {
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;
+            if !is_class {
+                p.reject_private_name(member_name(&member));
+            }
             p.add_type_member(&mut decl, member);
             Ok(())
         })?;
@@ -103,6 +142,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// TS18016: an ES private name outside a class body (a struct, an interface, an `extend`
+    /// block, an object literal).
+    pub(super) fn reject_private_name(&mut self, name: &Ident) {
+        if name.is_private_name() {
+            self.error("private names are only allowed in class bodies", name.span);
+        }
+    }
+
     /// `A, B<T>, C` (no unions).
     fn parse_type_list(&mut self) -> PResult<Vec<TypeExpr>> {
         let mut out = vec![self.parse_type_no_union()?];
@@ -113,10 +160,11 @@ impl<'a> Parser<'a> {
     }
 
     /// `interface Name<T> extends A, B { field: T; method(): R; withDefault(): R { ... } }`
-    pub(super) fn parse_interface(&mut self) -> PResult<InterfaceDecl> {
+    pub(super) fn parse_interface(&mut self) -> PResult<ItemKind> {
+        let lo = self.cur_lo();
         self.bump(); // interface
         let name = self.parse_ident()?;
-        let generics = self.parse_type_generic_params()?;
+        let generics = self.parse_generic_params()?;
         let mut extends = Vec::new();
         if self.eat_kw(Kw::Extends) {
             extends = self.parse_type_list()?;
@@ -127,9 +175,83 @@ impl<'a> Parser<'a> {
             extends,
             fields: vec![],
             methods: vec![],
+            call_sigs: vec![],
         };
-        self.parse_members(|p| p.parse_interface_member(&mut decl))?;
-        Ok(decl)
+        let mut index = None;
+        self.parse_members(|p| {
+            let lo = p.cur_lo();
+            let readonly = p.at(Tok::Kw(Kw::Readonly))
+                && p.nth(1) == Tok::LBracket
+                && Self::is_name(p.nth(2))
+                && p.nth(3) == Tok::Colon;
+            if readonly {
+                p.bump();
+            }
+            if p.at_index_signature() {
+                let sig = p.parse_index_signature(lo, readonly)?;
+                p.add_index_signature(&mut index, sig);
+                return p.expect_member_end();
+            }
+            if let Some(sig) = p.parse_call_signature()? {
+                decl.call_sigs.push(sig);
+                return p.expect_member_end();
+            }
+            p.parse_interface_member(&mut decl)
+        })?;
+        let Some(index) = index else {
+            return Ok(ItemKind::Interface(decl));
+        };
+        // An interface with an index signature is the object type it spells out (a type alias):
+        // with methods or `extends` that is not supported yet.
+        if !decl.methods.is_empty() || !decl.extends.is_empty() {
+            self.error(
+                format!(
+                    "an interface with an index signature and {} is not supported yet (#937)",
+                    if decl.extends.is_empty() {
+                        "methods"
+                    } else {
+                        "`extends`"
+                    }
+                ),
+                index.span,
+            );
+            return Ok(ItemKind::Interface(decl));
+        }
+        let fields = decl
+            .fields
+            .into_iter()
+            .map(|f| ObjectTypeField {
+                name: f.name,
+                // An object type's optional field has the `| undefined` an interface's leaves out.
+                ty: if f.optional {
+                    super::types::or_undefined(f.ty)
+                } else {
+                    f.ty
+                },
+                optional: f.optional,
+                readonly: f.readonly,
+                span: f.span,
+            })
+            .collect();
+        let span = self.span_from(lo);
+        let mut ty = TypeExpr {
+            kind: index.into_type(fields),
+            span,
+        };
+        if !decl.call_sigs.is_empty() {
+            ty = TypeExpr {
+                kind: TypeExprKind::Callable {
+                    sigs: decl.call_sigs,
+                    members: Box::new(ty),
+                },
+                span,
+            };
+        }
+        Ok(ItemKind::TypeAlias(TypeAlias {
+            name: decl.name,
+            generics: decl.generics,
+            ty,
+        }))
     }
 
     /// Is the cursor at an `extend` block? `extend` is contextual: a type name or `<` must follow.
@@ -141,11 +263,18 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_extend(&mut self) -> PResult<ExtendDecl> {
         self.bump(); // extend
         let generics = self.parse_generic_params()?;
+        if let Some(d) = generics.iter().find_map(|g| g.default.as_ref()) {
+            self.error(
+                "an `extend` block's type parameters cannot have defaults",
+                d.span,
+            );
+        }
         let target = self.parse_type_no_union()?;
         let mut methods = Vec::new();
         self.parse_members(|p| {
             let span = match p.parse_member()? {
                 Member::Method(m) => {
+                    p.reject_private_name(&m.decl.sig.name);
                     methods.push(m);
                     return Ok(());
                 }
@@ -205,5 +334,14 @@ impl<'a> Parser<'a> {
             discriminant,
             span,
         })
+    }
+}
+
+/// The name a member declares (a constructor's is `constructor`).
+fn member_name(m: &Member) -> &Ident {
+    match m {
+        Member::Field(f) => &f.name,
+        Member::Method(m) => &m.decl.sig.name,
+        Member::Constructor(c, _, _) => &c.sig.name,
     }
 }

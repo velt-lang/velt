@@ -43,9 +43,16 @@ function main() {
   const empty: u8[] = [];
   // `i64 | null` is Copy, so one null works for several calls.
   const none: i64 | null = null;
-  ins.runWith({ i: 9223372036854775807, f: 0.1, t: "tab\tquote\"é😀", b: bytes, n: "x", ok: true });
-  ins.runWith({ i: -9007199254740993, f: 1e21, t: "", b: empty, n: none, ok: false });
-  ins.runWith({ i: 0, f: -2.5e-7, t: "line\nbreak", b: [7u8], n: none, ok: true });
+  ins.runWith({
+    i: 9223372036854775807i64,
+    f: 0.1,
+    t: "tab\tquote\"é😀",
+    b: bytes,
+    n: "x",
+    ok: true,
+  });
+  ins.runWith({ i: -9007199254740993i64, f: 1e21, t: "", b: empty, n: none, ok: false });
+  ins.runWith({ i: 0i64, f: -2.5e-7, t: "line\nbreak", b: [7u8], n: none, ok: true });
 
   const rows: Value[] = db.prepare("SELECT * FROM v ORDER BY rowid").all();
   for (const r of rows) {

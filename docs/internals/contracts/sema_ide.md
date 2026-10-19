@@ -51,8 +51,9 @@ nothing; after that each call is a hash lookup, so a tool can ask once per AST n
 | `def_of(span) -> Option<DefRef>` | The definition named by the name whose span is exactly `span` (a use or a declaration; no covering or nearest match, unlike `def_at`); `None` when no name with that span was recorded. Where several were, the first recorded wins, as with `def_at`. |
 | `type_of(span) -> Option<TypeRef>` | The type of the checked expression (or declared local) whose span is exactly `span` (no covering or nearest match); `None` when nothing with that span was checked. Where a desugaring checks synthetic expressions with the span of the one they stand for (`const { a = 1 } = p` reads `p.a` at `p`'s span), the first record, the original's, wins. The type is the expression's own, before any conversion to the expected type (`m.get(k)` is `V \| null` even where a `V \| null` is wrapped again). |
 | `view(&TypeRef) -> TypeView` | One level of its structure (below). |
-| `fields(&TypeRef) -> Vec<FieldView>` | Fields of a class (inherited ones first), struct, interface or object type, with the type's arguments substituted: `FieldView { name, ty: TypeRef, optional }`. `optional` is `name?: T` in a class, struct or interface; an object type doesn't keep it (`{ a?: T }` is `{ a: T \| null }`). Empty for other types. |
+| `fields(&TypeRef) -> Vec<FieldView>` | Fields of a class (inherited ones first), struct, interface or object type, with the type's arguments substituted: `FieldView { name, ty: TypeRef, optional }`. `optional` is `name?: T` in a class, struct or interface; an object type doesn't keep it (`{ a?: T }` is `{ a: T \| undefined }` there). Empty for other types. |
 | `declares_method(&TypeRef, name) -> bool` | The class or struct declares instance method `name` itself (inherited methods don't count), or the interface has it. |
+| `is_error(&TypeRef) -> bool` | The type is the prelude's `Error` or a class that extends it (at any depth). |
 | `show_type(&TypeRef) -> String` | As `type_at` spells types, arguments substituted. |
 
 `TypeRef` is an opaque handle (`Clone`); generic arguments travel in it and are substituted when
@@ -63,7 +64,7 @@ viewed, so recursive types are fine. `TypeView`, `NamedKind` and `LiteralKind` a
 pub enum TypeView {
     Int(hir::IntTy), Float(hir::FloatTy), Bool, Str, Literal(LiteralKind /* Str|Int|Float|Bool */),
     Void, Never,
-    Nullable(TypeRef),            // T | null
+    Nullable(TypeRef),            // T | null, and T | undefined (issue #930, phase 1)
     Array(TypeRef), Tuple(Vec<TypeRef>),
     Map(TypeRef, TypeRef),        // the prelude's Map
     Set(TypeRef),                 // velt:collections/set
@@ -99,6 +100,9 @@ throw ends with ` throws E`, its declared or inferred error type), `(method) Use
 `interface Named`, `enum Color { Red, Green = 5 }`, `Color.Green = 5`, `type Id`, `let x: i64` / `const x: i64`,
 `(parameter) p: string`. Two `DefRef`s for the same definition may differ in `detail` (inherited
 members spelled with different type arguments): compare with `same_def`.
+
+A field of an intersection's object type (`A & { b: T }`) is declared where the first operand
+that has it writes it: its `DefRef.span` is that field's name.
 
 ## Known limits (POC)
 - Locals of a closure are scoped like any block; `this` is a local named `this` whose declaring

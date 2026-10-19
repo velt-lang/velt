@@ -208,6 +208,13 @@ For the build target (`InstallOptions::target`):
 | `--release` | `static/<p>.o` after the program's objects: self-contained | as debug (no partial link with MSVC) |
 | `velt dev` (JIT) | `dlopen` (RTLD_NOW, RTLD_LOCAL), exports and init given to the JIT | `LoadLibraryW` |
 
+The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same libraries
+(`-rpath <dir>` instead of `-Wl,-rpath,<dir>`); a static musl executable
+(`--target <arch>-unknown-linux-musl`) takes only `static/<p>.o`, so its native packages need a
+`--release` build. The kits' system libraries cover what the runtime imports and, on Windows and
+Linux, every export of those system libraries; a native library that needs another system
+library links with `VELT_LINKER=system`.
+
 The link stamp hashes every native file (path, size, modification time). A statically linked
 (musl) `velt` cannot load libraries into its JIT host and says to use `velt dev --exe`.
 `velt dev` watches the crate sources of libraries built from source and restarts (never swaps)

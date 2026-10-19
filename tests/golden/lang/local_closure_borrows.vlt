@@ -1,0 +1,164 @@
+// check: no leaks
+// A closure held in a `const` and only called borrows what it captures (it does not escape),
+// so it sees every later change and does not make `this` shared. Closures that are passed on,
+// or called while a reference into what they capture is held, keep their own copies.
+
+class Counter {
+  items: number[] = [];
+  label: string;
+  total: number = 0;
+  count: number = 0;
+  constructor(label: string) {
+    this.label = label;
+    const add = (n: number) => {
+      this.items.push(n);
+      this.total += n;
+    };
+    add(1);
+    add(2);
+    const size = (): number => this.items.length;
+    this.count = size();
+  }
+
+  bump(by: number): number {
+    const step = (k: number) => {
+      this.total += k;
+    };
+    step(by);
+    step(by);
+    const describe = () => `${this.label}: ${this.total}`;
+    console.log(describe());
+    return this.total;
+  }
+}
+
+class Node2 {
+  v = 0;
+  next: Node2 | null = null;
+  constructor() {
+    const me = this;
+    me.v = 3;
+  }
+
+  link(a: Node2, b: Node2) {
+    a.v += b.v;
+  }
+
+  twice(): number {
+    const me = this;
+    this.link(me, this);
+    return me.v;
+  }
+}
+
+function seesLaterChanges() {
+  let k = 1;
+  const get = () => k;
+  k = 2;
+  console.log(get());
+
+  let xs = [1];
+  const len = () => xs.length;
+  xs = [1, 2, 3];
+  console.log(len());
+
+  let s = "a";
+  const shout = () => s + "!";
+  s = "b";
+  console.log(shout());
+
+  let n = 0;
+  const inc = () => {
+    n++;
+  };
+  inc();
+  n += 10;
+  inc();
+  console.log(n);
+
+  // A Copy tuple changed through an element after the closure is created.
+  let t: [number, number] = [1, 2];
+  const f = (): number => t[0] + t[1];
+  t[0] = 10;
+  console.log(f());
+
+  let q: [number, number] = [1, 2];
+  const h = (): number => q[1];
+  q[1] = 7;
+  console.log(h());
+}
+
+function aliasesAndMoves() {
+  const xs = [1];
+  const len = () => xs.length;
+  const ys = xs;
+  ys.push(2);
+  console.log(len(), xs, ys);
+
+  const words: string[] = [];
+  const add = (w: string) => {
+    words.push(w);
+  };
+  for (let i = 0; i < 3; i++) {
+    add(`w${i}`);
+  }
+  const all = words;
+  console.log(all.join(","), words.length);
+}
+
+function inLoops() {
+  const out: number[] = [];
+  for (let i: number = 0; i < 3; i++) {
+    const sq = () => i * i;
+    out.push(sq());
+  }
+  let sum: number = 0;
+  for (const x of out) {
+    const addX = () => {
+      sum += x;
+    };
+    addX();
+  }
+  console.log(out, sum);
+}
+
+function heldReferences() {
+  // Called inside a loop over the array it changes: the closure keeps the array shared.
+  const xs: number[] = [1, 2, 3];
+  const grow = (v: number) => {
+    xs.push(v);
+  };
+  for (const x of xs) {
+    if (x == 2) {
+      grow(9);
+    }
+  }
+  console.log(xs);
+  // Evaluated next to an argument borrowing what it changes.
+  const ys = [5];
+  const pop = () => {
+    ys.pop();
+    return 1;
+  };
+  console.log(ys.length, pop(), ys.length);
+  const zs: number[] = [1, 2];
+  const more = (): number => {
+    zs.push(3);
+    return 10;
+  };
+  zs[0] += more();
+  console.log(zs);
+}
+
+function main() {
+  const c = new Counter("c");
+  console.log(c.items, c.total, c.count);
+  console.log(c.bump(5));
+  const n = new Node2();
+  console.log(n.v);
+  console.log(n.twice());
+  seesLaterChanges();
+  aliasesAndMoves();
+  inLoops();
+  heldReferences();
+}

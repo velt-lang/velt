@@ -1,0 +1,20 @@
+// A method value read from a `let` local holds the object it was read from: in `shared(...)`,
+// every thread's call would share it, so a resource without `clone()` cannot be in it.
+class Store {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  get(): string {
+    return this.name;
+  }
+  [Symbol.dispose]() {
+    console.log("disposed");
+  }
+}
+
+function main() {
+  let store = new Store("store");
+  const h = store.get;
+  const s = shared(h);
+}

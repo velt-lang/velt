@@ -38,6 +38,8 @@ fn lower_located(p: &Program, sm: &SourceMap) -> crate::vir::Program {
         source_map: Some(sm),
         std_root: None,
         native_inits: &[],
+        cell_checks: false,
+        debug_info: false,
     };
     let v = crate::lower_with(p, &opts);
     if let Err(errs) = crate::verify(&v) {
@@ -140,6 +142,10 @@ fn uncaught_error_names_the_throw() {
     let out = interp::run(&lower_located(&p, &source_map()));
     assert_eq!(
         (out.stdout.as_str(), out.stderr.as_str(), out.code),
-        ("before\n", "Uncaught BadThing: oh no at dir/t.vlt:2:3\n", 1)
+        (
+            "before\n",
+            "Uncaught BadThing { message: 'oh no' } at dir/t.vlt:2:3\n",
+            1
+        )
     );
 }

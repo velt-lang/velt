@@ -70,7 +70,8 @@ fn async_basic_shapes() {
     assert!(main.is_async);
     assert!(p.entry.is_some());
     assert_eq!(awaits(main), 5);
-    let used = intrinsics(main);
+    let mut used = intrinsics(main);
+    used.extend(intrinsics(func(&p, "threeSleeps")));
     for i in [
         Intrinsic::PromiseAll,
         Intrinsic::Sleep,
@@ -160,8 +161,8 @@ fn async_call_arguments_used_again_are_cloned() {
 #[test]
 fn borrowed_places_passed_to_async_functions_are_cloned() {
     let p = ok_src(
-        "async function take(s: string): Promise<usize> { return s.length; }
-         function start(s: string): Promise<usize> { return take(s); }
+        "async function take(s: string): Promise<number> { return s.length; }
+         function start(s: string): Promise<number> { return take(s); }
          async function main() { console.log(await start(\"abc\")); }",
     );
     let start = func(&p, "start");

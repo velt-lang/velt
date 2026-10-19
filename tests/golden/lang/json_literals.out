@@ -10,7 +10,7 @@ expected one of "low", "normal", "high" at $.tags[1]
 expected one of "red", "green" at $.color
 expected one of 10, 20 at $.level
 expected one of "low", "normal", "high" at $.due
-invalid JSON at $.priority: unexpected character 'l' (byte 38)
+Unexpected token 'l', ..."priority":lo}" is not valid JSON
 [ 'auto', 0, 1.5, false ]
 expected one of "auto", 0, 1.5, false at $
 42 true red
@@ -21,6 +21,6 @@ null null null {"x":null,"ab":null,"n":null}
 x null "x" null
 a null "a" null
 [ 'x', null, 'x' ] ["x",null,"x"]
-null t {"v":1} {"tag":"t","v":2}
+undefined t {"v":1} {"tag":"t","v":2}
 expected "x" at $.x
 expected "x" at $

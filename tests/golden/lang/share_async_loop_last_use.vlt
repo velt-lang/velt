@@ -19,7 +19,7 @@ async function use(b: Box): Promise<void> {}
 
 async function useLen(b: Box): Promise<usize> {
   await sleep(1);
-  return b.name.length;
+  return b.name.length as usize;
 }
 
 async function main() {

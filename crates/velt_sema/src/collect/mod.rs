@@ -7,7 +7,8 @@
 //!    variants, interface members, `implements` lists.
 //! 3. [`sigs`]: function / method / constructor / `extend` / interface-default signatures;
 //!    [`iface_extends`] flattens interface inheritance.
-//! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules.
+//! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules;
+//!    [`static_this`]: copies of the static methods using `this` per subclass.
 //! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
 //!    defining `compareTo` implement the builtin `Comparable<T>`; [`iterable`]: those defining
 //!    `[Symbol.iterator](): Iterator<T, E>` implement `Iterable<T, E>`.
@@ -22,9 +23,10 @@ mod classes;
 mod comparable;
 mod constants;
 mod declare;
-mod exports;
+pub(crate) mod exports;
+mod extend_shadow;
 mod field_only;
-mod forwarders;
+pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
 mod iface_extends;
@@ -33,9 +35,10 @@ mod imports;
 mod iterable;
 mod lookup;
 mod nested;
-mod ret_infer;
+pub(crate) mod ret_infer;
 pub(crate) mod shapes;
-mod sigs;
+pub(crate) mod sigs;
+pub(crate) mod static_this;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
@@ -54,6 +57,9 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    // Before any type is resolved: `any | null` is `any` (crate::unions).
+    crate::any::add_impl(cx);
+    cx.name_symbol_keys();
     field_only::declare(cx);
     crate::type_defaults::check_all(cx);
     shapes::resolve_shapes(cx, &items);
@@ -63,8 +69,12 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     iface_extends::flatten_all(cx);
     field_only::fill(cx);
     classes::check_classes(cx);
+    extend_shadow::check(cx);
+    static_this::copy_statics(cx);
     impls::build_impls(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
+    cx.bodies_ok = true;
+    sigs::fill_deferred(cx);
     items
 }

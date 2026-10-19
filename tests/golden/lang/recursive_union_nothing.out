@@ -1,0 +1,11 @@
+4 0 0
+undefined null object number object
+undefined null [
+  'a',
+  1,
+  null,
+  undefined,
+  [ true, VNode { type: 'p' }, [ '', [Array] ] ]
+]
+3 [ undefined, null, 's' ] [null,null,"s"]
+["a",1,null,null,[true,{"type":"p"},["",[2]]]] {"b":null,"c":["a",1,null,null,[true,{"type":"p"},["",[2]]]]}

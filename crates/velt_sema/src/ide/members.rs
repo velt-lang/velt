@@ -3,7 +3,7 @@
 //! generic space — inherited ones substituted —, static members, `extend` blocks) and displayed
 //! for a concrete receiver type at query time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::{FileId, Span};
 
@@ -81,6 +81,8 @@ pub(super) struct Members {
     /// Declaration span of each type definition (for `DefRef` → `DefId`).
     by_span: HashMap<Span, DefId>,
     extensions: Vec<Extension>,
+    /// The prelude's `Error` and the classes that extend it.
+    pub errors: HashSet<DefId>,
 }
 
 /// A type definition's raw members: instance, static, and what it is.
@@ -90,6 +92,7 @@ type RawType = (DefId, Vec<Raw>, Vec<Raw>, TypeKind, bool);
 pub(super) struct RawMembers {
     types: Vec<RawType>,
     extensions: Vec<(TyId, usize, Vec<Raw>)>,
+    errors: HashSet<DefId>,
 }
 
 pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
@@ -156,7 +159,18 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
             .collect();
         extensions.push((target, n, raws));
     }
-    RawMembers { types, extensions }
+    let errors = match cx.prelude_adt("Error") {
+        Some(error) => (0..cx.info.len() as u32)
+            .map(DefId)
+            .filter(|d| cx.class_extends(*d, error))
+            .collect(),
+        None => HashSet::new(),
+    };
+    RawMembers {
+        types,
+        extensions,
+        errors,
+    }
 }
 
 fn method_raw(cx: &mut Ctx, name: String, def: DefId, owner_args: &[TyId]) -> Raw {
@@ -166,7 +180,7 @@ fn method_raw(cx: &mut Ctx, name: String, def: DefId, owner_args: &[TyId]) -> Ra
         if owner_args.is_empty() {
             t
         } else {
-            cx.ty.subst(t, owner_args)
+            cx.subst(t, owner_args)
         }
     };
     let ps = f
@@ -378,6 +392,7 @@ impl RawMembers {
             types,
             by_span,
             extensions,
+            errors: self.errors,
         }
     }
 }
@@ -466,7 +481,7 @@ fn show_shape(an: &Analysis, s: &Shape, param: &dyn Fn(u32) -> String) -> String
 /// `T | null` and `shared<T>` offer the members of `T`.
 fn strip(table: &TyTable, ty: TyId) -> TyId {
     match table.kind(ty) {
-        TyKind::Option(t) | TyKind::Shared(t) => strip(table, *t),
+        TyKind::Option(t, _) | TyKind::Shared(t) => strip(table, *t),
         _ => ty,
     }
 }
@@ -486,7 +501,7 @@ fn bind(table: &TyTable, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) ->
             None => false,
         },
         (TyKind::Array(p), TyKind::Array(a))
-        | (TyKind::Option(p), TyKind::Option(a))
+        | (TyKind::Option(p, _), TyKind::Option(a, _))
         | (TyKind::Shared(p), TyKind::Shared(a)) => bind(table, *p, *a, slots),
         (TyKind::Map(p1, p2), TyKind::Map(a1, a2))
         | (TyKind::Promise(p1, p2), TyKind::Promise(a1, a2))

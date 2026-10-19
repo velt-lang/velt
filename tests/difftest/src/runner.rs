@@ -31,7 +31,7 @@ pub fn run(cfg: &Config, paths: &[PathBuf], jobs: usize, out: &Path) -> Result<u
     let mut tally = std::collections::BTreeMap::<&str, usize>::new();
     for (f, v) in files.iter().zip(&verdicts) {
         *tally.entry(kind(v)).or_default() += 1;
-        if v.is_bug() || matches!(v, Verdict::VeltRejected(_)) {
+        if v.is_bug() || matches!(v, Verdict::VeltRejected { .. }) {
             report::write_case(out, f, v)?;
         }
         bugs += usize::from(v.is_bug());
@@ -67,7 +67,7 @@ fn kind(v: &Verdict) -> &'static str {
         Verdict::Agree => "agree",
         Verdict::NodeRejected(_) => "node-rejected",
         Verdict::OracleTimeout => "oracle-timeout",
-        Verdict::VeltRejected(_) => "velt-rejected",
+        Verdict::VeltRejected { .. } => "velt-rejected",
         Verdict::CompilerCrash { .. } => "CRASH",
         Verdict::Mismatch { .. } => "MISMATCH",
     }

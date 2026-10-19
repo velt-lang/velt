@@ -6,3 +6,4 @@ export { Element, RenderError } from "velt:jsx/node";
 export type { Child, AttrValue } from "velt:jsx/node";
 export type { IntrinsicElements, ElementChildrenAttribute } from "velt:jsx/intrinsic";
 export { jsx, Fragment, jsxComponent, jsxAsyncComponent } from "velt:jsx/factory";
+export { jsxVoidElements } from "velt:jsx/void_elements";

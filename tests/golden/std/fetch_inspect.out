@@ -1,0 +1,151 @@
+Response {
+  status: 200,
+  statusText: '',
+  headers: Headers { 'content-type': 'text/plain;charset=UTF-8' },
+  body: ReadableStream { locked: false, state: 'readable', supportsBYOB: true },
+  bodyUsed: false,
+  ok: true,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Response {
+  status: 200,
+  statusText: '',
+  headers: Headers {},
+  body: null,
+  bodyUsed: false,
+  ok: true,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Response {
+  status: 404,
+  statusText: 'Not Found',
+  headers: Headers { 'x-a': '1', b: 'two' },
+  body: null,
+  bodyUsed: false,
+  ok: false,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Response {
+  status: 0,
+  statusText: '',
+  headers: Headers {},
+  body: null,
+  bodyUsed: false,
+  ok: false,
+  redirected: false,
+  type: 'error',
+  url: ''
+}
+Response {
+  status: 301,
+  statusText: '',
+  headers: Headers { location: 'http://example.com/x' },
+  body: null,
+  bodyUsed: false,
+  ok: false,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Response {
+  status: 200,
+  statusText: '',
+  headers: Headers { 'content-type': 'application/json' },
+  body: ReadableStream { locked: false, state: 'readable', supportsBYOB: true },
+  bodyUsed: false,
+  ok: true,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Headers {
+  'content-type': 'text/plain',
+  'x-long-header-name-number-one': 'aaaaaaaaaaaaaaaaaaaaaaaa',
+  'x-long-header-name-number-two': 'bbbbbbbbbbbbbbbbbbbbbbbbbbb'
+}
+Headers {}
+Headers { a: "it's" }
+Headers { 'set-cookie': 'a=1, b=2', x: '1, 2' }
+Request {
+  method: 'GET',
+  url: 'http://example.com/a',
+  headers: Headers {},
+  destination: '',
+  referrer: 'about:client',
+  referrerPolicy: '',
+  mode: 'cors',
+  credentials: 'same-origin',
+  cache: 'default',
+  redirect: 'follow',
+  integrity: '',
+  keepalive: false,
+  isReloadNavigation: false,
+  isHistoryNavigation: false,
+  signal: AbortSignal { aborted: false }
+}
+Request {
+  method: 'POST',
+  url: 'http://example.com/a',
+  headers: Headers { a: 'b', 'content-type': 'text/plain;charset=UTF-8' },
+  destination: '',
+  referrer: 'about:client',
+  referrerPolicy: '',
+  mode: 'cors',
+  credentials: 'same-origin',
+  cache: 'default',
+  redirect: 'follow',
+  integrity: '',
+  keepalive: false,
+  isReloadNavigation: false,
+  isHistoryNavigation: false,
+  signal: AbortSignal { aborted: false }
+}
+[ Headers { a: '1' } ]
+x Headers { a: '1' }
+Headers {
+  'content-type': 'text/plain',
+  'x-long-header-name-number-one': 'aaaaaaaaaaaaaaaaaaaaaaaa',
+  'x-long-header-name-number-two': 'bbbbbbbbbbbbbbbbbbbbbbbbbbb'
+}
+ReadableStream { locked: true, state: 'closed', supportsBYOB: true } true
+ReadableStream { locked: false, state: 'readable', supportsBYOB: true }
+AbortSignal { aborted: false } AbortController { signal: AbortSignal { aborted: false } }
+AbortSignal { aborted: true }
+Request {
+  method: 'GET',
+  url: 'http://a.com/',
+  headers: Headers {},
+  destination: '',
+  referrer: 'about:client',
+  referrerPolicy: '',
+  mode: 'cors',
+  credentials: 'same-origin',
+  cache: 'default',
+  redirect: 'manual',
+  integrity: '',
+  keepalive: false,
+  isReloadNavigation: false,
+  isHistoryNavigation: false,
+  signal: AbortSignal { aborted: true }
+}
+{
+  r: Response {
+    status: 200,
+    statusText: '',
+    headers: Headers {
+      'a-very-long-header-name-to-force-a-break': 'value value value value'
+    },
+    body: null,
+    bodyUsed: false,
+    ok: true,
+    redirected: false,
+    type: 'default',
+    url: ''
+  }
+}

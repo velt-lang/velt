@@ -1,0 +1,37 @@
+// `#x in o` is a brand check: `o instanceof C`, `C` the class declaring `#x`. It narrows like
+// `instanceof`, on a union and on a value that is statically an instance.
+class Meters {
+  #value: number;
+  constructor(value: number) {
+    this.#value = value;
+  }
+  static describe(o: Meters | Feet | string): string {
+    if (typeof o === "string") {
+      return `text ${o}`;
+    }
+    if (#value in o) {
+      return `meters ${o.#value}`;
+    }
+    return `feet ${o.inMeters()}`;
+  }
+  equals(o: Meters): boolean {
+    return #value in o && this.#value === o.#value;
+  }
+}
+
+class Feet {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  inMeters(): number {
+    return this.n * 0.3048;
+  }
+}
+
+class Km extends Meters {}
+
+function main() {
+  console.log(Meters.describe(new Meters(2)), Meters.describe(new Feet(10)), Meters.describe("x"));
+  console.log(Meters.describe(new Km(3)), new Meters(1).equals(new Km(1)));
+}

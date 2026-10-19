@@ -9,6 +9,59 @@ Raw data: `results/*.jsonl`; the tables come from `summarize.py` (each cell is t
 over the measured connection levels, with that level's p99 and the server's peak RSS during the
 test; ratios are to Rust).
 
+**Linux arm64: run the bench-arm workflow** (`gh workflow run bench-arm -f suite=web -f
+ref=<branch>`): the fortunes test for `velt` and `velt-tsx` on a GitHub `ubuntu-24.04-arm` runner
+(4 cores shared by Postgres 17 in a service container, the servers and wrk), with the summary in
+the run and the raw `.jsonl`/`.md` as the `bench-web-arm64` artifact. Its req/s compare the
+servers within one run; they are not comparable with the tables below.
+
+## Azure D48ads_v5, pinned — 2026-10-10
+
+AMD EPYC 7763; each server pinned to 8 physical cores (`SERVER_CPUS`), Postgres to 4 cores with
+their SMT siblings, wrk to the rest (`CLIENT_CPUS`); 10 s runs, `DB_POOL=16`. Raw rows and table:
+`results/azure-d48ads_v5-pinned-20261010.*`. *velt-shards* there is the prototype of the per-core
+scheduler, run today as `SERVERS=velt-per-core` (`VELT_SCHEDULER=per-core`).
+
+- **JSON, 64 connections:** velt-shards 556k req/s, velt 345k, Rust/axum 346k, Node cluster 243k,
+  Go 229k, Bun 63k, Node 30k. The per-core scheduler is worth +61 % here (#717).
+- **Plaintext, pipelined:** velt 3.27–3.34M, Rust 737k, Go 399k.
+- **Database tests** are bound by the 16-connection pool's round trips (Postgres at 3.5–3.9 of its
+  8 vCPUs): single query velt 51k against Go and Rust 54k (about 5 % more latency per query in
+  the driver), fortunes 46k against 51k, queries×20 33k (Go 31k, Rust 15k).
+
+## Fortunes in TSX (`velt-tsx`, #78)
+
+The `velt-tsx` server is `velt` with the fortunes page written in TSX (`velt-tsx/fortunes.tsx`,
+precompiled by `velt:jsx`, with the list fold of #682) instead of template literals. Both pass
+`measure.py`'s byte-exact fortunes check (the TSX page writes `'` as `&#x27;`, as react-dom
+does). Run 1: `SERVERS="velt velt-tsx" TESTS=fortunes bench/web/run.sh`; run 2:
+`SERVERS="velt-tsx velt" TESTS=fortunes bench/web/run.sh`; against the local Homebrew Postgres 17
+(not Docker), Apple M-series, 10 cores; measured on 2026-10-08 at 12:52 and 12:55 on the branch
+as it was then, before `app.ts` took #671's `Request`/`Response` and #685's numbers (first
+committed in 69ebe90b); best req/s over the levels 16/64/256/512:
+
+| run | velt (template literals) | velt-tsx (TSX) | velt-tsx / velt |
+|---|---:|---:|---:|
+| 1 (velt first) | 91 427 (64 conn) | 90 273 (256 conn) | 0.99 |
+| 2 (velt-tsx first) | 88 296 (512 conn) | 91 150 (64 conn) | 1.03 |
+
+Within noise of each other: the server that runs second is a little slower either way. The test
+is bound by the database (rendering the page takes about 1.3 µs of about 110 µs per request per
+core), so it shows that TSX costs nothing measurable here, not how fast it renders:
+[bench/jsx](../jsx/README.md) measures the rendering itself. The `velt` server now also goes
+through `startApp(render)`; its rows in the tables below predate that. Raw data:
+`results/macos-tsx-2026-10-08-*.jsonl`.
+
+**Linux arm64** (the bench-arm workflow, run 37930235610 of be741dcd: `gh workflow run bench-arm
+-f suite=web -f ref=bench-web-tsx`; GitHub `ubuntu-24.04-arm`, 4 cores shared by Postgres 17, the
+servers and wrk; both servers verified), best req/s over the levels 16/64/256/512:
+
+| velt (template literals) | velt-tsx (TSX) | velt-tsx / velt |
+|---:|---:|---:|
+| 16 515 (16 conn) | 16 284 (16 conn) | 0.99 |
+
+Within noise on a shared runner. Raw data: `results/linux-arm64-tsx-2026-10-09-1232.jsonl`.
+
 ## Lazy `Request` and Postgres batches — not re-run yet
 
 The lazy Request and Postgres batch changes were measured while they were written, but the full suite has

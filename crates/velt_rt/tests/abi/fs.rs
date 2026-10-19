@@ -169,3 +169,70 @@ fn sync_roundtrip() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn typed_listing() {
+    let dir = temp_dir("fs_typed");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    unsafe {
+        let mut got = ok(sync(|o| {
+            velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "")), o)
+        }));
+        assert_eq!(got.kinds.as_bytes(), [kind::FILE, kind::FILE, kind::DIR]);
+        velt_rt_bytes_drop(&mut got.kinds);
+        assert_eq!(names(got.names), ["a.txt", "b.txt", "sub"]);
+        let mut got = ok(block_on_fut::<IoResult<VeltDirents>>(
+            velt_rt_fs_read_dir_typed(&arg(&path(&dir, "sub"))),
+        ));
+        assert_eq!(got.names.len, 0);
+        velt_rt_bytes_drop(&mut got.kinds);
+        velt_rt_str_array_drop(&mut got.names);
+        err(
+            sync(|o| velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "nope")), o)),
+            code::NOT_FOUND,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Symlinks need Developer Mode or administrator rights on Windows: without them this test
+/// checks nothing (the `fs_symlinks` golden is skipped there too).
+#[test]
+fn symlinks() {
+    let dir = temp_dir("fs_links");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("f.txt"), "hello").unwrap();
+    let (f, link) = (path(&dir, "f.txt"), path(&dir, "link"));
+    unsafe {
+        let made = sync(|o| velt_rt_fs_symlink_sync(&arg("f.txt"), &arg(&link), o));
+        if made.err.code == code::PERMISSION_DENIED && cfg!(windows) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        ok(made);
+        let l = ok(block_on_fut::<IoResult<VeltStat>>(velt_rt_fs_lstat(&arg(
+            &link,
+        ))));
+        assert_eq!((l.is_symlink, l.is_file, l.is_dir), (1, 0, 0));
+        let s = ok(sync(|o| velt_rt_fs_stat_sync(&arg(&link), o)));
+        assert_eq!((s.is_symlink, s.is_file, s.size), (0, 1, 5));
+        let target = ok(block_on_fut::<IoResult<VeltStr>>(velt_rt_fs_readlink(
+            &arg(&link),
+        )));
+        assert_eq!(take_string(target), "f.txt");
+        err(
+            sync(|o| velt_rt_fs_readlink_sync(&arg(&f), o)),
+            code::INVALID_INPUT,
+        );
+        let mut got = ok(sync(|o| {
+            velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "")), o)
+        }));
+        assert_eq!(got.kinds.as_bytes(), [kind::FILE, kind::SYMLINK]);
+        velt_rt_bytes_drop(&mut got.kinds);
+        velt_rt_str_array_drop(&mut got.names);
+        ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&f), o)));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

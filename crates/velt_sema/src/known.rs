@@ -53,6 +53,14 @@ impl Ctx<'_> {
     }
 
     /// An ADT exported by the prelude under `name`.
+    /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
+    /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
+    /// keep their JSON form (written without it, as Node leaves out a `name` from the
+    /// prototype; decoded with its default).
+    pub(crate) fn plain_private(&self, private_to: Option<DefId>, name: &str) -> bool {
+        name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
+    }
+
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
@@ -157,6 +165,118 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `d` the prelude's `WeakMap`, `WeakSet` or `WeakRef` class, or a subclass of one
+    /// (`class Cache extends WeakMap<K, V>` is the same runtime handle with fields of its own)?
+    pub fn is_weak_class(&self, d: DefId) -> bool {
+        ["WeakMap", "WeakSet", "WeakRef"]
+            .iter()
+            .filter_map(|n| self.prelude_adt(n))
+            .any(|w| self.class_extends(d, w))
+    }
+
+    /// The `WeakMap<K, V>`, `WeakSet<T>` or `WeakRef<T>` that the class type `t` is or extends
+    /// (the base class with `t`'s type arguments substituted), and that class's name.
+    pub fn weak_root(&mut self, t: TyId) -> Option<(TyId, &'static str)> {
+        let mut cur = t;
+        for _ in 0..64 {
+            let (d, _) = self.class_of(cur)?;
+            let own = ["WeakMap", "WeakSet", "WeakRef"]
+                .into_iter()
+                .find(|n| self.prelude_adt(n) == Some(d));
+            if let Some(name) = own {
+                return Some((cur, name));
+            }
+            cur = self.base_of(cur)?;
+        }
+        None
+    }
+
+    /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
+    /// or payload)? They belong to the task that made them (a copy would share the runtime
+    /// handle), so such values cannot be copied or passed to another task. This looks at the
+    /// written type only: an interface value, a base-class value that may be a subclass, and a
+    /// type parameter are looked into by the whole-program check of the values crossing
+    /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
+    pub fn holds_weak(&mut self, t: TyId) -> bool {
+        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
+    }
+
+    /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
+    /// one when its interface or class is in `hiding` (some class converted to it holds one).
+    pub(crate) fn holds_weak_with(
+        &mut self,
+        t: TyId,
+        hiding: &std::collections::HashSet<DefId>,
+    ) -> bool {
+        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+    }
+
+    fn holds_weak_in(
+        &mut self,
+        t: TyId,
+        hiding: Option<&std::collections::HashSet<DefId>>,
+        seen: &mut std::collections::HashSet<TyId>,
+    ) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Adt(d, _) if self.is_weak_class(d) => return true,
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) if hiding.is_some_and(|h| h.contains(&d)) => {
+                return true
+            }
+            TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
+            TyKind::Dyn(_, args) if hiding.is_some() => args,
+            TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.holds_weak_in(p, hiding, seen))
+    }
+
+    /// Does a value of type `t` hold a function value (in a field, element or payload)?
+    /// Interface and `shared` values are not looked into.
+    pub fn holds_fn(&mut self, t: TyId) -> bool {
+        self.holds_fn_in(t, &mut std::collections::HashSet::new())
+    }
+
+    fn holds_fn_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => return true,
+            TyKind::Shared(_) | TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_fn_in(p, seen))
+    }
+
     /// Does a value of type `t` hold a generator object (`Generator`, `AsyncGenerator`; in a
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.
@@ -181,7 +301,7 @@ impl Ctx<'_> {
                         .collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };
@@ -193,7 +313,7 @@ impl Ctx<'_> {
         let Some((d, mut args)) = self.generator_result(t) else {
             return t;
         };
-        if args.len() != 2 {
+        if args.len() < 2 {
             return t;
         }
         args[1] = e;
@@ -203,11 +323,43 @@ impl Ctx<'_> {
         }
     }
 
-    /// `Generator<t, e>`.
-    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+    /// `Generator<t, e, n>`: `n` is the type of `next(value)`'s argument (`never`: none).
+    pub fn generator_ty_next(&mut self, t: TyId, e: TyId, n: TyId) -> TyId {
         match self.generator_class() {
-            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e, n])),
             None => self.ty.error,
+        }
+    }
+
+    /// The type arguments of class `d` as diagnostics show them: a `Generator<T, E, never>` is
+    /// `Generator<T, E>`.
+    pub(crate) fn shown_args<'a>(&self, d: DefId, args: &'a [TyId]) -> &'a [TyId] {
+        match args {
+            [_, _, n] if Some(d) == self.generator_class() && *n == self.ty.never => &args[..2],
+            _ => args,
+        }
+    }
+
+    /// Are `a` and `b` `Generator<T, E, N>` types that differ only in `N`, one of them `never`?
+    pub(crate) fn generator_next_differs(&self, a: TyId, b: TyId) -> bool {
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Adt(da, x), TyKind::Adt(db, y))
+                if da == db && Some(*da) == self.generator_class() && x.len() == 3 =>
+            {
+                x[..2] == y[..2] && (x[2] == self.ty.never || y[2] == self.ty.never)
+            }
+            _ => false,
+        }
+    }
+
+    /// The `next(value)` type `N` of a `Generator<T, E, N>` value type (`never`: none, also
+    /// for any other type).
+    pub fn generator_next_ty(&self, t: TyId) -> TyId {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() && args.len() == 3 => {
+                args[2]
+            }
+            _ => self.ty.never,
         }
     }
 
@@ -276,7 +428,7 @@ impl Ctx<'_> {
                         .collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };
@@ -320,7 +472,7 @@ impl Ctx<'_> {
                         .collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };

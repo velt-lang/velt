@@ -161,6 +161,28 @@ fn first_build(notify: bool) {
     touch(&main, old);
     w.set([main.clone()], &snap);
     assert!(wait(&mut w, Duration::from_secs(5)), "seeded directory");
+
+    // A lockfile saved just before `velt dev` started (`velt add`, `velt run`) and seeded: it
+    // was not saved during the build, so no second build follows the first (#733).
+    let lock = dir.path().join("velt.lock.json");
+    std::fs::write(&lock, "{}").unwrap();
+    touch(&main, old);
+    let mut w = Watcher::new(notify);
+    w.seed([dir.path().to_path_buf()]);
+    w.seed_files([lock.clone()]);
+    let snap = w.snapshot();
+    w.set([main.clone(), lock.clone()], &snap);
+    assert!(!wait(&mut w, SETTLE * 3), "seeded lockfile unchanged");
+    // Saved during the build, it still is a change.
+    let mut w = Watcher::new(notify);
+    w.seed_files([lock.clone()]);
+    let snap = w.snapshot();
+    std::fs::write(&lock, "{ \"changed\": true }").unwrap();
+    w.set([main.clone(), lock.clone()], &snap);
+    assert!(
+        wait(&mut w, Duration::from_secs(5)),
+        "seeded lockfile saved"
+    );
 }
 
 #[test]

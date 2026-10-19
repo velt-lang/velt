@@ -1,0 +1,1 @@
+module_const_impure.vlt:9:11: error: `later` cannot initialize module constant `E`: it is async

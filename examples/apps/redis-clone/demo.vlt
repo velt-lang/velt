@@ -1,0 +1,70 @@
+// A client session against the server running in this process (golden: demo.out): commands
+// one at a time, then a pipeline of them in one write, with the raw RESP replies shown.
+import { connect, TcpStream } from "velt:net";
+import { exit } from "velt:process";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { Db } from "./src/db";
+import { serve, start } from "./src/server";
+
+function encode(argv: string[]): string {
+  let s = `*${argv.length}\r\n`;
+  for (const a of argv) {
+    s += `$${Buffer.byteLength(a)}\r\n${a}\r\n`;
+  }
+  return s;
+}
+
+function show(raw: string): string {
+  return raw.replaceAll("\r\n", "\\r\\n");
+}
+
+/// Reads until `count` CRLF-terminated lines have arrived (enough for these small replies).
+async function readLines(conn: TcpStream, count: i64): Promise<string> {
+  let text = "";
+  while (text.split("\r\n").length - 1 < count) {
+    text += utf8DecodeLossy(await conn.read());
+  }
+  return text;
+}
+
+async function call(conn: TcpStream, lines: i64, ...argv: string[]) {
+  await conn.writeBytes(utf8Encode(encode(argv)));
+  console.log(`> ${argv.join(" ")}`);
+  console.log(`< ${show(await readLines(conn, lines))}`);
+}
+
+async function main() {
+  const listener = await start("127.0.0.1:0");
+  spawn(serve(listener, shared(new Mutex<Db>(new Db()))));
+  const conn = await connect(`127.0.0.1:${listener.port}`);
+
+  await call(conn, 1, "PING");
+  await call(conn, 1, "SET", "greeting", "hello", "EX", "60");
+  await call(conn, 2, "GET", "greeting");
+  await call(conn, 1, "EXISTS", "greeting", "nope");
+  await call(conn, 1, "TTL", "nope");
+  await call(conn, 1, "INCRBY", "visits", "41");
+  await call(conn, 1, "INCR", "visits");
+  await call(conn, 1, "RPUSH", "queue", "a", "b", "c");
+  await call(conn, 7, "LRANGE", "queue", "0", "-1");
+  await call(conn, 1, "HSET", "user:1", "name", "Ada", "lang", "velt");
+  await call(conn, 5, "HGETALL", "user:1");
+  await call(conn, 1, "ZADD", "board", "3", "c", "1", "a", "2", "b");
+  await call(conn, 7, "ZRANGE", "board", "0", "-1", "WITHSCORES");
+  await call(conn, 1, "GET", "queue");
+  await call(conn, 1, "INCR", "greeting");
+  await call(conn, 1, "NOSUCH", "x");
+
+  // A pipeline: three commands in one write, three replies in one read.
+  const pipeline = encode(["SET", "n", "1"]) + encode(["INCR", "n"]) + encode(["GET", "n"]);
+  await conn.writeBytes(utf8Encode(pipeline));
+  console.log("> SET n 1 | INCR n | GET n (pipelined)");
+  console.log(`< ${show(await readLines(conn, 4))}`);
+
+  await call(conn, 1, "DBSIZE");
+  await call(conn, 1, "QUIT");
+  conn.close();
+  // `listener.close()` doesn't wake the accept loop's pending accept() (#715), so the server
+  // would keep the process alive: end it here.
+  exit(0);
+}

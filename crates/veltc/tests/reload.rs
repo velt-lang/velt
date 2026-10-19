@@ -246,7 +246,11 @@ impl Run<'_> {
             match get(port, path) {
                 Ok(got) if got == *body => return Ok(()),
                 other if Instant::now() > deadline => {
-                    return Err(format!("GET {path}: want `{body}`, got {other:?}"))
+                    let log = self.dev.transcript();
+                    return Err(format!(
+                        "GET {path}: want `{body}`, got {other:?}:
+{log}"
+                    ));
                 }
                 _ => std::thread::sleep(Duration::from_millis(20)),
             }
@@ -350,7 +354,7 @@ fn spare_host_is_discarded() {
     let mark = dev.mark();
     write(
         main.replace("1000000000", "1000000001")
-            .replace("Response.text", "Response.txt"),
+            .replace("new Response(", "Response.txt("),
     );
     ok(dev.wait_stderr(mark, "velt dev: build failed"));
     std::thread::sleep(Duration::from_millis(300));
@@ -371,13 +375,43 @@ fn spare_host_is_discarded() {
     assert_eq!(get(port, "/"), Ok("v2".to_string()));
 }
 
+/// A host that crashes while it takes a change is reported as such, not as an ordinary reload,
+/// and a new host runs the change (#880: a crash during a hot swap printed `reloaded`).
+#[test]
+fn crash_during_reload_is_reported() {
+    let dir = TestDir::new();
+    let case = root().join("tests/reload/hello_server/1");
+    apply(&case, dir.path());
+    let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
+    let dev = Dev::start_with_env(dir.path(), &[], &[("VELT_DEV_CRASH_ON_RELOAD", "1")]);
+    let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
+    ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
+    let mark = dev.mark();
+    save(&dir.path().join("main.vlt"), main.replace("v1", "v2"));
+    let crashed = "velt dev: the running program crashed during the reload (";
+    ok(dev.wait_stderr(mark, crashed));
+    let lines = dev.stderr_since(mark);
+    let line = lines.iter().find(|l| l.contains(crashed)).unwrap();
+    assert!(line.contains("); restarted it in "), "{line}");
+    assert!(
+        !lines.iter().any(|l| l.contains("velt dev: reloaded")),
+        "{lines:?}"
+    );
+    let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while get(port, "/").ok().as_deref() != Some("v2") {
+        assert!(Instant::now() < deadline, "the new host does not serve v2");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// A host started with `VELT_DEV_QUIET` (a spare) prints nothing about its build; without it
 /// the same failed build prints its diagnostics.
 #[test]
 fn quiet_host_prints_no_diagnostics() {
     let dir = TestDir::new();
     let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
-    let bad = main.unwrap().replace("Response.text", "Response.txt");
+    let bad = main.unwrap().replace("new Response(", "Response.txt(");
     save(&dir.path().join("main.vlt"), bad);
     let host = |quiet: bool| {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
@@ -405,9 +439,9 @@ fn quiet_host_prints_no_diagnostics() {
 ///
 /// The program is stopped (SIGSTOP) before the first SIGTERM, so it cannot drain and exit by
 /// itself; only a SIGKILL ends it. `velt dev`'s graceful stop sends that too, but only after
-/// its stop grace (1.5 s), and then reaps the program itself: the second SIGTERM follows the
-/// first one's delivery within milliseconds, so the program ends as a SIGKILLed zombie handed
-/// on to the test process, and only the second-interrupt path produces that.
+/// its stop grace (set to a minute here, so a loaded machine cannot delay the second SIGTERM
+/// past it), and then reaps the program itself: the program ends as a SIGKILLed zombie handed
+/// on to the test process only through the second-interrupt path.
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
@@ -415,7 +449,7 @@ fn second_interrupt_kills_the_program() {
     apply(&root().join("tests/reload/hello_server/1"), dir.path());
     // Before `Dev`: dropped after it, so it reaps the program `Dev`'s drop kills.
     let mut reaper = Subreaper::become_one();
-    let mut dev = Dev::start(dir.path(), &[]);
+    let mut dev = Dev::start_with_env(dir.path(), &[], &[("VELT_DEV_STOP_GRACE_MS", "60000")]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
     started.unwrap_or_else(|e| panic!("{e}"));
     let port = dev.port().unwrap_or_else(|e| panic!("{e}"));

@@ -1,6 +1,6 @@
-//! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, system
-//! linker, WebAssembly linker, clang and the vpm home directory. Each returns a [`Check`] with a
-//! fix hint when something is missing.
+//! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, linker
+//! (bundled or system), installed target packs, WebAssembly linker, clang, the vpm home
+//! directory and the selected toolchain version. Each returns a [`Check`] with a fix hint when something is missing.
 
 use std::path::Path;
 
@@ -19,10 +19,61 @@ pub fn environment() -> Vec<Check> {
         shared_runtime_lib(&host),
         std_lib(),
         linker(&host),
+        targets(&host),
         wasm_linker(),
         clang(),
+        lldb_script(),
         velt_home(),
+        toolchain(),
     ]
+}
+
+/// Which toolchain version runs, and why, as the launcher told it (#948).
+fn toolchain() -> Check {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    toolchain_from(
+        var("VELT_LAUNCHER")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+        var("VELT_TOOLCHAIN_SELECTED").map(|s| s.to_string_lossy().into_owned()),
+    )
+}
+
+/// [`toolchain`] with `$VELT_LAUNCHER` and `$VELT_TOOLCHAIN_SELECTED`.
+fn toolchain_from(launcher: Option<&Path>, selected: Option<String>) -> Check {
+    const LABEL: &str = "toolchain";
+    let Some(launcher) = launcher else {
+        return Check::ok(LABEL, "started directly, not by the velt launcher");
+    };
+    let selected = selected.unwrap_or_else(|| "?".into());
+    let default = match velt_toolchain::Root::of_launcher(launcher).map(|r| r.default()) {
+        Some(Ok(Some(t))) => format!("default {t}"),
+        Some(Ok(None)) => "no default".into(),
+        Some(Err(e)) => e,
+        None => "no toolchain root".into(),
+    };
+    Check::ok(
+        LABEL,
+        format!("{selected}; launcher {}, {default}", launcher.display()),
+    )
+}
+
+/// The LLDB formatters are optional: without them the debugger shows Velt values as raw words.
+fn lldb_script() -> Check {
+    const LABEL: &str = "debugger scripts";
+    match crate::debugger::lldb_script() {
+        Some(path) => Check::ok(LABEL, path.display().to_string()),
+        None => Check::bad(
+            LABEL,
+            Status::Warn,
+            format!("{} not found", crate::debugger::LLDB_SCRIPT),
+            format!(
+                "an installed toolchain keeps it in <prefix>/share/velt/lldb/{}; reinstall, or \
+                 set $VELT_SHARE to the directory holding `lldb/`",
+                crate::debugger::LLDB_SCRIPT
+            ),
+        ),
+    }
 }
 
 fn runtime_lib(host: &str) -> Check {
@@ -94,10 +145,53 @@ fn std_lib() -> Check {
     }
 }
 
+/// The bundled lld with its link kit when the toolchain has both, else the system linker (with
+/// why the bundled one is not used).
 fn linker(host: &str) -> Check {
-    match velt_link::find_linker(host) {
-        Ok(path) => Check::ok("linker", path.display().to_string()),
-        Err(msg) => Check::bad("linker", Status::Fail, "no usable system linker", msg),
+    match velt_link::linker_report(host) {
+        Ok(velt_link::LinkerReport::Bundled { lld, kit }) => Check::ok(
+            "linker",
+            format!("bundled {} (kit {})", lld.display(), kit.display()),
+        ),
+        Ok(velt_link::LinkerReport::System { program, why: None }) => {
+            Check::ok("linker", format!("system {}", program.display()))
+        }
+        Ok(velt_link::LinkerReport::System {
+            program,
+            why: Some(why),
+        }) => Check::ok(
+            "linker",
+            format!(
+                "system {} (bundled linker not used: {})",
+                program.display(),
+                why.lines().next().unwrap_or_default()
+            ),
+        ),
+        Err(msg) => Check::bad("linker", Status::Fail, "no usable linker", msg),
+    }
+}
+
+/// The other targets `velt build --target` can build for (installed target packs).
+fn targets(host: &str) -> Check {
+    const LABEL: &str = "other targets";
+    let installed: Vec<String> = velt_link::kit::targets_dir()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .map(|entries| {
+            let mut names: Vec<String> = entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().join(velt_link::kit::STAMP).is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                // `.<triple>.<pid>`: a `velt target add` in progress.
+                .filter(|t| !t.starts_with('.') && !velt_link::same_target(t, host))
+                .collect();
+            names.sort();
+            names
+        })
+        .unwrap_or_default();
+    if installed.is_empty() {
+        Check::ok(LABEL, "none (`velt target add <triple>` to cross-compile)")
+    } else {
+        Check::ok(LABEL, installed.join(", "))
     }
 }
 
@@ -171,6 +265,25 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_toolchain_line_says_what_the_launcher_selected() {
+        let direct = toolchain_from(None, None);
+        assert!(
+            direct.detail.contains("started directly"),
+            "{}",
+            direct.detail
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let launcher = tmp.path().join("bin").join("velt");
+        let selected = "0.1.2 (velt: \"0.1\" in /p/package.vlt:3)".to_string();
+        let check = toolchain_from(Some(&launcher), Some(selected.clone()));
+        assert!(check.detail.starts_with(&selected), "{}", check.detail);
+        assert!(check.detail.ends_with("no default"), "{}", check.detail);
+        std::fs::write(tmp.path().join("default"), "0.1.2\n").unwrap();
+        let check = toolchain_from(Some(&launcher), Some(selected));
+        assert!(check.detail.ends_with("default 0.1.2"), "{}", check.detail);
+    }
 
     #[test]
     fn writable_probe() {

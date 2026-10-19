@@ -1,0 +1,17 @@
+hook_shapes.vlt:4:3: error: parameter `radix` of `toString` needs a default value
+  = note: `String(x)` and template literals call `toString()` without arguments; give `radix` a default value
+
+hook_shapes.vlt:9:3: error: the parameter of `toJSON` is the property key, a `string`
+  = note: declare it `key: string` (`JSON.stringify` passes `""` for the top value)
+
+hook_shapes.vlt:14:3: error: parameter `extra` of `toJSON` needs a default value
+  = note: `JSON.stringify` passes `toJSON` only the key; give `extra` a default value
+
+hook_shapes.vlt:19:9: error: `toString` cannot be async or a generator
+  = note: make `toString` a plain method that returns its result
+
+hook_shapes.vlt:24:3: error: `toString` returns `void`, which has no string form
+  = note: return a `string`
+
+hook_shapes.vlt:27:3: error: `toString` cannot have type parameters of its own
+  = note: remove the type parameters of `toString`

@@ -37,6 +37,18 @@ fn expressions() {
 }
 
 #[test]
+fn quoted_property_names() {
+    holds(
+        "type H = { \"content-type\": string; readonly 'x-y'?: number; plain: boolean };
+interface A { \"data-id\": string; \"aria-label\"?: string }
+function f(h: H) {
+  const { \"content-type\": ct, plain, 'x-y': n = 0 } = h;
+  const v = h[\"content-type\"];
+}",
+    );
+}
+
+#[test]
 fn resource_management() {
     holds(
         "class R { [Symbol.dispose]() {} async   [Symbol.asyncDispose]() {} }
@@ -113,6 +125,9 @@ enum E { A, B = 2, }
 enum Dir { Up = \"UP\", Down = 'DOWN' }
 type Lit = \"a\" | 'b' | -1 | 2.5 | true | 1u8;
 type Obj = { kind: \"a\"; x: i64, y: { z: string } } | {};
+type Both = & A & { b: i64 } | (C | D) & E;
+type Id = string & { __brand: \"Id\" };
+type K = Both[\"b\"] | Obj[\"kind\" | \"x\"][];
 extend Foo { static make(): Foo { return new Foo(); } }
 class P { private a: i64; static readonly PI: f64 = 3.14; private static h(): i64 { return 1; } get n(): i64 { return 1; } set n(v: i64) { this.a = v; } set(k: i64) {} }
 interface Q { get area(): f64; get x(): i64 { return 1; } set area(v: f64); }",
@@ -206,6 +221,46 @@ fn for_comma_lists() {
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
 
+/// `for...in` is parsed as a loop over `Object.keys(o)` and printed back as written.
+#[test]
+fn for_in_prints_as_written() {
+    let src = "function f(o: { a: number }) {
+  for (const k in o) {
+    console.log(k);
+  }
+  for (let k of Object.keys(o)) {}
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
+/// Overload signatures print before their implementation, with the comments between them.
+#[test]
+fn overloads_print_as_written() {
+    let src = "// head
+export function f(a: string): string; // one
+// between
+export function f(a: number): number;
+export function f(a: string | number): string | number {
+  return a;
+}
+
+class C {
+  static m(): void;
+  // mid
+  static m(x?: number): void {}
+  async n(): Promise<void>;
+  async n(x?: number): Promise<void> {}
+}
+
+async function g(): Promise<void>;
+async function g(x?: number): Promise<void> {}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
 /// `bool` and `boolean` name the same type; the formatter keeps the spelling written (#353).
 #[test]
 fn bool_and_boolean_keep_their_spelling() {
@@ -224,4 +279,85 @@ fn readonly_fields_in_object_types() {
     holds("type User = { readonly id: number; readonly email?: string; readonly: bool };\n");
     let out = velt_fmt::format_source("type U = {readonly   id : i64};\n").unwrap();
     assert_eq!(out, "type U = { readonly id: i64 };\n");
+}
+
+#[test]
+fn a_written_null_of_an_optional_field_stays() {
+    // `a?: T | null` keeps an absent key apart from a present `null`: it is not `a?: T`.
+    holds(
+        "type U = { a?: string | null; b?: string; c: string | null };
+",
+    );
+    holds(
+        "interface I {
+  deletedAt?: string | null;
+}
+",
+    );
+    let out = velt_fmt::format_source(
+        "type U = {a?:string|null};
+",
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        "type U = { a?: string | null };
+"
+    );
+}
+
+#[test]
+fn private_names() {
+    holds(
+        "class A {
+  #x = 1;
+  static readonly #K: i64 = 2;
+  #m(): i64 { return this.#x + A.#K; }
+  get #v(): i64 { return this.#x; }
+  set #v(n: i64) { this.#x = n; }
+  has(o: A | null): boolean { return o != null && #x in o && o.#x > 0; }
+}",
+    );
+}
+
+#[test]
+fn an_optional_function_field_keeps_its_unparenthesized_form() {
+    // `get?: (t: any) => any` is valid TypeScript (lib.es2015.proxy.d.ts writes it so).
+    holds(
+        "type H = {
+  get?: (target: any, p: string, receiver: any) => any;
+  has?: (target: any, p: string) => boolean;
+  f?: (() => void) | null;
+};
+",
+    );
+    holds("function f(cb?: (x: i64) => void) {}\n");
+    let out = velt_fmt::format_source("type H = { g?: ((x: i64) => i64) };\n").unwrap();
+    assert_eq!(out, "type H = { g?: (x: i64) => i64 };\n");
+}
+
+/// `p?: T | null | undefined` and `p?: T | null` keep their written `null` (#930): without it the
+/// parameter would be a `T | undefined`.
+#[test]
+fn optional_parameters_with_both_nothings() {
+    holds(
+        "function f(p?: string | null | undefined, q?: number | undefined, r?: number | null) {}
+const g = (p?: string | null | undefined) => p;",
+    );
+}
+
+/// String and template escapes keep their spelling (#1265): `"\d"` is `"d"` once cooked, but the
+/// source still says `\d`, and a line continuation stays where it was written.
+#[test]
+fn string_escapes_keep_their_spelling() {
+    let src = r#"const a = "b(\d)\q\ \x41\u{42}";
+const b = 'it\'s \d';
+const c = `\d${a}\q\
+z`;
+const d = "one \
+two";
+"#;
+    let out = velt_fmt::format_source(src).unwrap();
+    assert_eq!(out, src.replace(r"'it\'s \d'", r#""it's \d""#));
+    holds(src);
 }

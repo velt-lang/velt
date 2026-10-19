@@ -5,7 +5,8 @@ type Sh = { kind: "pt"; x: i64 } | { kind: "box"; w: i64 };
 
 function f(u: string | null): i64[] {
   if (u != null) {
-    return [1, 2].map((x) => x + u.indexOf("b"));
+    const ys: i64[] = [1, 2];
+    return ys.map((x) => x + (u.indexOf("b") as i64));
   }
   return [];
 }

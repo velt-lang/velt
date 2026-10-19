@@ -1,0 +1,9 @@
+<ul><li>a</li><li>&lt;b&gt;</li><li>c&#x27;s</li></ul>
+<b>a</b><b>&lt;b&gt;</b><b>c&#x27;s</b>
+a<i>a</i><i>&lt;b&gt;</i><i>c&#x27;s</i>b2
+<ol><li title="a">a</li><li title="&lt;b&gt;">&lt;b&gt;</li><li title="c&#x27;s">c&#x27;s</li><li>end</li></ol>
+<section><table><tr><td>a</td><td>2</td></tr><tr><td>&lt;b&gt;</td><td>2</td></tr><tr><td>c&#x27;s</td><td>2</td></tr></table></section>
+<div><!-- raw --><p>it&#x27;s &quot;quoted&quot; a</p></div>
+<div><p>one</p><span>a</span><span>&lt;b&gt;</span><span>c&#x27;s</span></div>
+660025 <div><div><div>…</div></div>
+<main><ul><li>a</li><li>&lt;b&gt;</li><li>c&#x27;s</li></ul><em>late 3</em><p>a;&lt;b&gt;;c&#x27;s;</p></main>

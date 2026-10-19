@@ -13,6 +13,7 @@ async function main() {
     const task = spawn(failing(20));
     console.log("dropping the handle");
   }
-  await sleep(500);
+  // A hang guard: the rejection ends the process long before.
+  await sleep(60000);
   console.log("unreachable");
 }

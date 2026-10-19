@@ -1,0 +1,62 @@
+// check: no leaks
+// `?.` reads that are the last use of the object they read from (#657): `rec?.etag` on a local
+// record took the string out of a payload it only borrowed, and the record released it too (a
+// write after free, then a crash in the actors example). Each shape runs often enough that a
+// premature free is reused, so a double release shows up as wrong output.
+type Inner = { name: string };
+type Rec = { state: string; etag: string; inner: Inner | null };
+
+function long(what: string, i: number): string {
+  return `${what} number ${i}, long enough to live on the heap`;
+}
+
+function make(i: number): Rec {
+  return { state: long("state", i), etag: long("etag", i), inner: { name: long("name", i) } };
+}
+
+function lastUse(m: Map<string, Rec>): string {
+  const rec = m.get("k");
+  const etag = rec?.etag;
+  return etag ?? "none";
+}
+
+function withDefault(m: Map<string, Rec>): string {
+  const rec = m.get("k");
+  return rec?.etag ?? "";
+}
+
+function nested(m: Map<string, Rec>): string {
+  const rec = m.get("k");
+  const name = rec?.inner?.name;
+  return name ?? "none";
+}
+
+function element(recs: (Rec | null)[], i: number): string {
+  const s = recs[i]?.state;
+  return s ?? "none";
+}
+
+function fromCall(m: Map<string, Rec>): string {
+  return m.get("k")?.state ?? "none";
+}
+
+function main() {
+  const m = new Map<string, Rec>();
+  const recs: (Rec | null)[] = [null];
+  let n = 0;
+  for (let i = 0; i < 1500; i++) {
+    m.set("k", make(i));
+    recs.push(make(i));
+    const want = long("etag", i);
+    if (lastUse(m) == want && withDefault(m) == want) {
+      n += 1;
+    }
+    if (nested(m) == long("name", i) && element(recs, i + 1) == long("state", i)) {
+      n += 1;
+    }
+    if (fromCall(m) == long("state", i) && element(recs, 0) == "none") {
+      n += 1;
+    }
+  }
+  console.log(n, lastUse(m), nested(m));
+}

@@ -42,10 +42,9 @@ fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process:
         .expect("run velt")
 }
 
-/// `velt login <url>` (or `logout`) with `token` on stdin.
-fn velt_login(home: &Path, sub: &str, url: &str, token: &str) -> std::process::Output {
-    use std::io::Write;
-    let mut child = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+/// `velt <sub> <url>` (`login` or `logout`) with stdin, stdout and stderr piped.
+fn spawn_login(home: &Path, sub: &str, url: &str) -> Child {
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args([sub, url])
         .env("VELT_HOME", home)
         .env_remove("VELT_REGISTRY_TOKEN")
@@ -53,17 +52,39 @@ fn velt_login(home: &Path, sub: &str, url: &str, token: &str) -> std::process::O
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("run velt");
+        .expect("run velt")
+}
+
+/// `velt login <url>` (or `logout`) with `token` on stdin.
+fn velt_login(home: &Path, sub: &str, url: &str, token: &str) -> std::process::Output {
+    use std::io::Write;
+    let mut child = spawn_login(home, sub, url);
     let mut stdin = child.stdin.take().expect("stdin");
-    stdin
-        .write_all(
-            format!(
-                "{token}
-"
-            )
-            .as_bytes(),
-        )
-        .expect("token");
+    let line = format!("{token}\n");
+    match stdin.write_all(line.as_bytes()) {
+        // A `velt` that exits without reading stdin closes the pipe; its status and output
+        // tell the callers what happened.
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        written => written.expect("token"),
+    }
+    drop(stdin);
+    child.wait_with_output().expect("run velt")
+}
+
+/// `velt login <url>` that must refuse without reading the token: it exits while stdin is
+/// still open and nothing has been written to it. The deadline only guards against a hang (a
+/// `velt` waiting for the token).
+fn velt_login_refused(home: &Path, url: &str) -> std::process::Output {
+    let mut child = spawn_login(home, "login", url);
+    let stdin = child.stdin.take().expect("stdin");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while child.try_wait().expect("velt login").is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("velt login {url} waits for a token instead of refusing");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     drop(stdin);
     child.wait_with_output().expect("run velt")
 }
@@ -216,7 +237,8 @@ fn share_a_package_through_the_registry_server() {
 fn tokens_never_travel_over_plain_http_to_another_machine() {
     let tmp = test_dir::TestDir::new();
     let home = tmp.path().join("home");
-    let refused = velt_login(&home, "login", "http://registry.example.com", "secret");
+    // `velt login` refuses before it reads the token: it never asks for one it would not send.
+    let refused = velt_login_refused(&home, "http://registry.example.com");
     assert!(!refused.status.success());
     assert!(
         text(&refused).contains("refusing to send a registry token"),

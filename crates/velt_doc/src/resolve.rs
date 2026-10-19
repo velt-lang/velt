@@ -175,6 +175,7 @@ fn stubs(r: &ReExport) -> Vec<DocItem> {
         name: name.to_string(),
         signature,
         doc: String::new(),
+        deprecated: None,
         members: vec![],
         generics: vec![],
         origin: None,
@@ -246,11 +247,11 @@ mod tests {
                 "export { Circle, area as circleArea } from \"./circle\";\nexport * from \"./square\";\n\
                  export { readFile } from \"velt:fs\";\nexport * from \"other\";\n\
                  import { helper } from \"./square\";\nexport { helper as help, local };\n\
-                 // Local.\nfunction local() {}\nexport function side(): i64 { return 1; }\n",
+                 /** Local. */\nfunction local() {}\nexport function side(): i64 { return 1; }\n",
             ),
             extract(
                 "pkg/circle",
-                "// A circle.\nexport class Circle {}\nexport function area(c: Circle): f64 { return 0.0; }\n",
+                "/** A circle. */\nexport class Circle {}\nexport function area(c: Circle): f64 { return 0.0; }\n",
             ),
             extract(
                 "pkg/square",

@@ -1,9 +1,11 @@
 //! Cycles in printed object graphs (`console.log`, `${x}`): node prints a reference back to an
 //! object being printed as `[Circular *N]` and prefixes that object with `<ref *N> `, numbering
 //! once per top-level value. The format glue reports each class instance or recursive object
-//! it starts and finishes printing (`velt_rt_strbuf_inspect_enter` / `_leave`).
+//! it starts and finishes printing (`velt_rt_strbuf_inspect_enter` / `_leave`). The same
+//! per-value state keeps the text custom inspects wrote (`velt_rt_strbuf_inspect_atom`).
 
 use crate::strbuf::VeltStrBuf;
+use std::ops::Range;
 
 /// Objects being printed (`console.log`), innermost last.
 struct Printing {
@@ -14,11 +16,15 @@ struct Printing {
     /// value: node numbers once per `console.log` argument, so an object keeps its number and
     /// the next cycle gets the next one, also between the elements of an array or object.
     numbered: Vec<(usize, u32)>,
+    /// Text a class's custom inspect wrote (`velt_rt_strbuf_inspect_atom`): the builder's
+    /// address and the byte range, which `inspect_layout` keeps as one piece. Cleared with the
+    /// numbering, so a range never outlives the value it was written for.
+    atoms: Vec<(usize, Range<usize>)>,
 }
 
 thread_local! {
     static PRINTING: std::cell::RefCell<Printing> = const {
-        std::cell::RefCell::new(Printing { stack: Vec::new(), numbered: Vec::new() })
+        std::cell::RefCell::new(Printing { stack: Vec::new(), numbered: Vec::new(), atoms: Vec::new() })
     };
 }
 
@@ -32,6 +38,36 @@ pub extern "C" fn velt_rt_strbuf_inspect_begin() {
         // continues its numbering.
         if p.stack.is_empty() {
             p.numbered.clear();
+            p.atoms.clear();
+        }
+    })
+}
+
+/// The text from byte `start` of the builder to its end is what a class's custom inspect
+/// (`__inspect()`) returned: `velt_rt_strbuf_inspect_layout` keeps it as one piece, as node
+/// inserts the string a custom inspect returns without laying it out again.
+///
+/// # Safety
+/// `buf` must be a valid builder and `start` at most its length.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_atom(buf: *const VeltStrBuf, start: u64) {
+    let end = (*buf).len();
+    PRINTING.with(|s| {
+        let atoms = &mut s.borrow_mut().atoms;
+        atoms.push((buf as usize, start as usize..end));
+    })
+}
+
+/// The pieces registered for the builder at `buf` (`velt_rt_strbuf_inspect_atom`) that lie in
+/// the text from byte `start` on, relative to `start`, into `out` (cleared first).
+pub(crate) fn atoms_of(buf: *const VeltStrBuf, start: usize, out: &mut Vec<Range<usize>>) {
+    out.clear();
+    PRINTING.with(|s| {
+        let atoms = &s.borrow().atoms;
+        for (b, r) in atoms {
+            if *b == buf as usize && r.start >= start {
+                out.push(r.start - start..r.end - start);
+            }
         }
     })
 }
@@ -42,7 +78,9 @@ pub extern "C" fn velt_rt_strbuf_inspect_begin() {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
     PRINTING.with(|s| {
-        let Printing { stack, numbered } = &mut *s.borrow_mut();
+        let Printing {
+            stack, numbered, ..
+        } = &mut *s.borrow_mut();
         let addr = p as usize;
         if stack.iter().any(|e| e.0 == addr) {
             push_circular(buf, numbered, addr);
@@ -60,7 +98,9 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_inspect_circular(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
     PRINTING.with(|s| {
-        let Printing { stack, numbered } = &mut *s.borrow_mut();
+        let Printing {
+            stack, numbered, ..
+        } = &mut *s.borrow_mut();
         let addr = p as usize;
         if !stack.iter().any(|e| e.0 == addr) {
             return 0;
@@ -88,7 +128,9 @@ unsafe fn push_circular(buf: *mut VeltStrBuf, numbered: &mut Vec<(usize, u32)>, 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_inspect_leave(buf: *mut VeltStrBuf) {
     let done = PRINTING.with(|s| {
-        let Printing { stack, numbered } = &mut *s.borrow_mut();
+        let Printing {
+            stack, numbered, ..
+        } = &mut *s.borrow_mut();
         let (addr, start, _) = stack.pop()?;
         numbered.iter().find(|e| e.0 == addr).map(|e| (start, e.1))
     });

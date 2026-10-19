@@ -1,0 +1,50 @@
+// `T | null` with a nullable `T` is `T | null`, as in JavaScript: there is one `null`, so a
+// generic `U | null` at `U = string | null` holds `null` as itself (#350 review). Before, the
+// value was a nested option, and `id<string | null>(null) === null` was false.
+import { channel } from "velt:channel";
+
+function id<U>(x: U): U | null {
+  return x;
+}
+
+function w<U>(x: U): { a: U | null } {
+  return { a: x };
+}
+
+function firstOr<U>(xs: U[]): U | null {
+  return xs.length > 0 ? xs[0] : null;
+}
+
+function or<U>(x: U | null, d: U): U {
+  return x ?? d;
+}
+
+async function main() {
+  const n: string | null = null;
+  console.log(id<string | null>(n) === null, w<string | null>(n).a === null);
+  const s: string | null = "s";
+  console.log(id<string | null>(s) ?? "none", or<string | null>(n, "d"));
+  const f = firstOr<string | null>([n]);
+  console.log(f === null, f ?? "dflt");
+
+  const xs: (string | null)[] = ["a", null];
+  const p = xs.pop();
+  const q = xs.pop();
+  console.log(p === null, q ?? "none", xs.pop() == null);
+  const ys: (string | null)[] = [null, "b"];
+  console.log(ys.find((y) => y === null) === null, ys.find((y) => y !== null) ?? "none");
+  const m = new Map<string, string | null>();
+  m.set("k", null);
+  m.set("j", "v");
+  console.log(m.get("k") === null, m.get("j") ?? "none", m.get("x") == null);
+
+  const ch = channel<string | null>(4);
+  await ch.send("a");
+  await ch.send(n);
+  ch.close();
+  console.log(
+    (await ch.receive()) ?? "N",
+    (await ch.receive()) ?? "N",
+    (await ch.receive()) ?? "closed",
+  );
+}

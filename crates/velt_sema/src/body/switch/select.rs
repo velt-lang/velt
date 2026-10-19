@@ -30,9 +30,10 @@ impl FnCx<'_, '_> {
             ScrutKind::Plain | ScrutKind::Enum(_) => None,
             _ => self.literal_const(test),
         });
-        let null = matches!(strip_parens(test).kind, ast::ExprKind::Lit(ast::Lit::Null));
+        // `case null` / `case undefined`: the nothing of a `T | null` / `T | undefined`.
+        let null = crate::body::narrow::nothing_word(test);
         match (&s.kind, lit) {
-            (_, _) if null => self.null_sel(s, test.span),
+            (_, _) if null.is_some() => self.null_sel(s, null.unwrap_or("null"), test.span),
             (ScrutKind::Discriminant(vals), Some(l)) => {
                 let vals = vals.clone();
                 let what = s.what.clone();
@@ -65,13 +66,40 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// A local of a literal type (`const y = "y"`, `y: "y"`) used as a case value: like the
-    /// literal, as in TypeScript (it narrows and counts toward exhaustiveness).
+    /// A constant of a literal type used as a case value: a local or module-level `const`
+    /// initialized with a literal (`const y = "y"`) or a local of a literal type (`y: "y"`). It
+    /// selects like the literal, as in TypeScript (it narrows and counts toward exhaustiveness).
     fn literal_const(&mut self, test: &ast::Expr) -> Option<ast::SignedLit> {
         let ast::ExprKind::Ident(id) = &strip_parens(test).kind else {
             return None;
         };
-        let lit = match self.cx.lit_value(self.peek_local_ty(&id.name)?)? {
+        let lit = match self.const_lit(id) {
+            Some(l) => l,
+            None => self.typed_lit(self.peek_local_ty(&id.name)?)?,
+        };
+        // Checked as a value too, so the constant counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        Some(lit)
+    }
+
+    /// The literal a `const` named `id` was initialized with, when it has no type annotation.
+    pub(crate) fn const_lit(&mut self, id: &ast::Ident) -> Option<ast::SignedLit> {
+        if self.is_local_name(&id.name) {
+            return self.peek_const_lit(&id.name);
+        }
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
+            return None;
+        };
+        let src = &self.cx.global(d)?.src;
+        if src.ann.is_some() || src.owner.is_some() {
+            return None;
+        }
+        literal_of(src.init?)
+    }
+
+    /// The value of literal type `t` as a pattern literal (not a float one).
+    fn typed_lit(&self, t: crate::hir::TyId) -> Option<ast::SignedLit> {
+        let lit = match self.cx.lit_value(t)? {
             LitValue::Str(v) => ast::SignedLit {
                 lit: ast::Lit::Str(v),
                 negative: false,
@@ -89,8 +117,6 @@ impl FnCx<'_, '_> {
             },
             LitValue::Float(..) => return None,
         };
-        // Checked as a value too, so the local counts as used (captures, editors).
-        self.expr(test, None, Want::Borrow);
         Some(lit)
     }
 
@@ -120,14 +146,42 @@ impl FnCx<'_, '_> {
         })
     }
 
-    fn null_sel(&mut self, s: &Scrut, span: Span) -> Sel {
-        if self.cx.ty.opt_payload(s.expr.ty).is_none() {
+    fn null_sel(&mut self, s: &Scrut, word: &str, span: Span) -> Sel {
+        // `case` compares with `===`: `case null` never matches a `T | undefined` value.
+        let lacks = self
+            .cx
+            .ty
+            .nothing_of(s.expr.ty)
+            .is_some_and(|n| match word {
+                "undefined" => !n.has_undefined(),
+                _ => !n.has_null(),
+            });
+        if self.cx.ty.opt_payload(s.expr.ty).is_none() || lacks {
             let tn = self.cx.display(s.expr.ty);
-            self.cx.err(
-                format!("`case null` on a value of type `{tn}`, which is never null"),
+            let mut d = Diagnostic::error(
+                format!("`case {word}` on a value of type `{tn}`, which is never {word}"),
                 span,
             );
+            if lacks {
+                d = d.with_note(format!(
+                    "`case` compares with `===`, and `null === undefined` is `false`; to match either, test `x == {word}` before the `switch`"
+                ));
+            }
+            self.cx.error(d);
             return self.never_sel(s, span);
+        }
+        if self.is_three_state(s.expr.ty) {
+            // One of the two nothing slots (`nothing_arms` order: `undefined`, then `null`).
+            let (which, k) = match word {
+                "null" => (crate::hir::Nothing::Null, 1),
+                _ => (crate::hir::Nothing::Undefined, 0),
+            };
+            return Sel {
+                pat: self.one_nothing_pat(which, s.expr.ty, span),
+                guard: None,
+                touched: vec![k],
+                covered: vec![k],
+            };
         }
         match self.slot_sel(s, span, &|_, slot| slot.member.is_none()) {
             Some(sel) => sel,
@@ -143,6 +197,8 @@ impl FnCx<'_, '_> {
     fn typeof_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let tag = match &l.lit {
             ast::Lit::Str(t) if TYPEOF_TAGS.contains(&t.as_str()) => t.clone(),
+            // No value is a `bigint` yet (#1088): the case never matches.
+            ast::Lit::Str(t) if t == "bigint" => return self.never_sel(s, span),
             _ => {
                 let tags: Vec<String> = TYPEOF_TAGS.iter().map(|t| format!("\"{t}\"")).collect();
                 self.cx.error(
@@ -152,11 +208,24 @@ impl FnCx<'_, '_> {
                 return self.never_sel(s, span);
             }
         };
+        if self.cx.dynamic(s.expr.ty).is_some() {
+            return self.dynamic_typeof_sel(s, &tag, span);
+        }
+        let none = nothing_tag(self.cx, s.expr.ty);
         let found = self.slot_sel(s, span, &|cx, slot| match slot.member {
             Some(m) => cx.cx.typeof_tag(m) == tag,
-            None => tag == "object",
+            None => tag == none,
         });
         found.unwrap_or_else(|| {
+            // On a type that fixes the run-time `typeof` of its values, here also a union local
+            // that flow narrowing reduced to one member (`let u: number | string = 5`),
+            // TypeScript accepts the case, which never matches. A union none of whose members
+            // passes stays an error, as for `typeof x === "..."` (`type_test`), and so do types
+            // whose `typeof` is only known at run time (`any`, `unknown`, `T`, `object`).
+            let inner = self.cx.ty.core(s.expr.ty).unwrap_or(s.expr.ty);
+            if self.cx.union_def(inner).is_none() && typeof_exact(self.cx, inner) {
+                return self.never_sel(s, span);
+            }
             let tn = self.cx.display(s.expr.ty);
             self.never_matches(
                 s,
@@ -170,7 +239,7 @@ impl FnCx<'_, '_> {
     /// covered; a literal of a base-type member only tests that value).
     fn union_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let (v, m) = match self.lit_member(inner, l) {
             Ok(x) => x,
             Err(msg) => {
@@ -205,7 +274,7 @@ impl FnCx<'_, '_> {
             span,
         );
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         let touched = (0..s.slots.len())
             .filter(|&k| s.slots[k].variant == Some(v))
@@ -221,7 +290,7 @@ impl FnCx<'_, '_> {
     /// `case 5:` / `case "a":` on a plain (possibly nullable) value.
     fn plain_lit_sel(&mut self, s: &Scrut, l: &ast::SignedLit, span: Span) -> Sel {
         let sty = s.expr.ty;
-        let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if let Some(v) = self.cx.lit_value(inner) {
             if !lit_matches(&v, l) {
                 let tn = self.cx.display(inner);
@@ -242,7 +311,7 @@ impl FnCx<'_, '_> {
         };
         let mut pat = self.pat(P::Lit(lit), inner, span);
         if inner != sty {
-            pat = self.pat(P::Some(Box::new(pat)), sty, span);
+            pat = self.present_pat(pat, sty, span);
         }
         Sel {
             pat,
@@ -261,14 +330,35 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
-        // A JS number (`switch (xs.length)`) stays one in the comparison.
-        self.note_inferred_local(l, &s.expr);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
         let v = self.expr(test, Some(ty), Want::Borrow);
         let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
         let guard = self.eq_values(cur, v, span);
+        Sel {
+            pat: self.pat(P::Binding(l, mode), ty, span),
+            guard: Some(guard),
+            touched: (0..s.slots.len()).collect(),
+            covered: vec![],
+        }
+    }
+
+    /// `case "string":` on `typeof x` with `x` an `any` / `unknown`: the value is bound and its
+    /// run-time `typeof` compared with the tag in a guard, as `typeof x === "string"` does.
+    fn dynamic_typeof_sel(&mut self, s: &Scrut, tag: &str, span: Span) -> Sel {
+        let ty = s.expr.ty;
+        let mode = if self.cx.is_copy(ty) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        };
+        let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
+        let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let str_ = self.cx.ty.str_;
+        let key = self.intrinsic(hir::Intrinsic::AnyTypeof, vec![cur], str_, span);
+        let want = self.str_lit(tag, span);
+        let guard = self.eq_values(key, want, span);
         Sel {
             pat: self.pat(P::Binding(l, mode), ty, span),
             guard: Some(guard),
@@ -321,7 +411,7 @@ impl FnCx<'_, '_> {
                     self.base_lit_expr(&vals[v as usize], span)
                 }
                 (ScrutKind::TypeOf, Some(m), _) => self.str_lit(self.cx.typeof_tag(m), span),
-                (ScrutKind::TypeOf, None, _) => self.str_lit("object", span),
+                (ScrutKind::TypeOf, None, _) => self.str_lit(nothing_tag(self.cx, s.expr.ty), span),
                 _ => return None,
             };
             arms.push(hir::Arm {
@@ -352,8 +442,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
-    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
-    /// another number type, literal types as their base), and a mismatch is reported once.
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an integer next to a number,
+    /// literal types as their base), and a mismatch is reported once.
     fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
         let (l, r) = self.nullable_operands(l, r);
         let (l, r) = if l.ty != r.ty {
@@ -361,8 +451,8 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        let (l, r) = self.compared_numbers(l, r);
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = self.mix_ints(l, r);
         let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
             return self.error_expr(span);
         };
@@ -420,5 +510,38 @@ impl FnCx<'_, '_> {
         self.cx
             .rec_ref(prop.span, crate::ide::record::Target::Variant(d, v));
         Some(v)
+    }
+}
+
+/// `typeof` of the nothing of option type `t`: `"undefined"` for `T | undefined`, else
+/// `"object"` (`typeof null`).
+fn nothing_tag(cx: &crate::ctx::Ctx, t: crate::hir::TyId) -> &'static str {
+    match cx.ty.nothing_of(t) {
+        Some(crate::hir::Nothing::Undefined) => "undefined",
+        _ => "object",
+    }
+}
+
+/// Does the static type `t` fix the run-time `typeof` of its values? Not for `object`,
+/// `Function`, `any` / `unknown` or an interface value (which may hold a function), a type
+/// parameter (any instantiation), an enum (a number or a string) or a deferred type.
+fn typeof_exact(cx: &crate::ctx::Ctx, t: hir::TyId) -> bool {
+    use crate::hir::TyKind;
+    let t = cx.brand_base(t).unwrap_or(t);
+    match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Str
+        | TyKind::Bool
+        | TyKind::Symbol
+        | TyKind::Literal(_)
+        | TyKind::FnPtr { .. }
+        | TyKind::Closure(_)
+        | TyKind::Array(_)
+        | TyKind::Tuple(_)
+        | TyKind::Map(..)
+        | TyKind::Promise(..) => true,
+        TyKind::Adt(d, _) => cx.adt(*d).is_some(),
+        _ => false,
     }
 }

@@ -1,6 +1,7 @@
 //! VIR verifier: checks the invariants listed in the `vir.rs` header — program-level layout and
 //! symbol rules here, per-function typing in typing.rs, definite assignment in init.rs.
 
+mod debug;
 mod dominators;
 mod init;
 mod typing;
@@ -8,6 +9,22 @@ mod typing;
 use std::collections::HashSet;
 
 use crate::vir::*;
+
+/// A `velt_simd_*` extern has no runtime function: backends emit it inline from what its
+/// symbol names, so it must name an operation and have that operation's signature.
+fn check_simd_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
+    if !e.symbol.starts_with("velt_simd_") {
+        return;
+    }
+    match crate::simd::SimdCall::of_symbol(&e.symbol) {
+        None => errs.push(format!("extern#{i} {}: not a SIMD operation", e.symbol)),
+        Some(call) if call.signature() != (e.params.clone(), e.ret) => errs.push(format!(
+            "extern#{i} {}: signature differs from the SIMD operation's",
+            e.symbol
+        )),
+        Some(_) => {}
+    }
+}
 
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     let mut errs = vec![];
@@ -19,9 +36,11 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
                 e.symbol
             ));
         }
+        check_simd_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);
+    debug::check_debug(p, &mut errs);
     for (i, f) in p.funcs.iter().enumerate() {
         check_locs(p, f, &mut errs);
         check_param_attrs(f, &mut errs);

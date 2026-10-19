@@ -1,0 +1,241 @@
+// check: no leaks
+// An operand that is not a number is read before a later operand runs too (#580): a string,
+// a class object, a `T | null`, a tuple, an inner array or a function value element is held (a
+// reference of its own), so a later operand that reallocates the array or replaces the element
+// leaves the earlier operand's value intact, as in JS. Where sema sees the conflict
+// (`console.log(ss[0], growS(ss))` borrows `ss` twice), the program is rejected; a closure that
+// captures the array hides it, so these go through closures.
+class P {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class R {
+  v: number;
+  name: string;
+  constructor(v: number) {
+    this.v = v;
+    this.name = long(v);
+  }
+}
+
+class Q {
+  a: string;
+  b: string;
+  constructor(a: string, b: string) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+function long(n: number): string {
+  return `a string long enough to live on the heap, number ${n}`;
+}
+
+// Reallocates `ss` and frees the string that was `ss[0]`.
+function growS(ss: string[]): string {
+  for (let i = 0; i < 1000; i++) {
+    ss.push(long(i));
+  }
+  ss[0] = long(-1);
+  return "!";
+}
+
+function both(a: string, b: string): string {
+  return a + b;
+}
+
+async function later(): Promise<number> {
+  return 4;
+}
+
+async function laterS(): Promise<string> {
+  return "?";
+}
+
+type V = { n: number };
+
+extend V {
+  bump(k: number): void {
+    this.n += k;
+  }
+}
+
+function bumpV(v: V, k: number): void {
+  v.n += k;
+}
+
+async function bumpLater(v: V, k: number): Promise<void> {
+  v.n += k;
+}
+
+class Item {
+  v: number;
+  name: string;
+  constructor(v: number) {
+    this.v = v;
+    this.name = long(v);
+  }
+}
+
+class Counter {
+  n: number = 0;
+  add(k: number): void {
+    this.n += k;
+  }
+  get(): number {
+    return this.n;
+  }
+}
+
+function callIt(f: () => string, n: number): string {
+  return `${f()}${n}`;
+}
+
+async function main() {
+  let ss = [long(0)];
+  const g = (): string => growS(ss);
+  console.log(ss[0] + g());
+  ss = [long(0)];
+  console.log(`${ss[0]}${g()}`);
+  ss = [long(0)];
+  console.log(`<${ss[0]}|${g()}>`);
+  ss = [long(0)];
+  console.log(ss[0], g());
+  ss = [long(0)];
+  console.log(both(ss[0], g()));
+  ss = [long(0)];
+  console.log(ss[0] === g(), ss.length);
+  ss = [long(0)];
+  const q = new Q(ss[0], growS(ss));
+  console.log(q.a, q.b);
+  ss = [long(0)];
+  const pair = [ss[0], growS(ss)];
+  console.log(pair[0], pair[1]);
+
+  const ps = [new P(3)];
+  const replace = (): number => {
+    ps[0] = new P(7);
+    return 1;
+  };
+  console.log(ps[0], replace(), ps[0]);
+  ps[0] = new P(3);
+  console.log(ps[0].v + replace(), ps[0].v);
+  const os: (P | null)[] = [new P(5)];
+  const swap = (): number => {
+    os[0] = new P(9);
+    return 1;
+  };
+  console.log(os[0]?.v, swap(), os[0]?.v);
+
+  // Values that are not strings or objects but own parts are held too.
+  const ns: (string | null)[] = [long(1)];
+  const r = (): number => {
+    ns[0] = "x";
+    return 1;
+  };
+  console.log(ns[0], r(), ns[0]);
+  const rs: (R | null)[] = [new R(5)];
+  const swapR = (): number => {
+    rs[0] = new R(9);
+    return 1;
+  };
+  console.log(rs[0], swapR(), rs[0]?.v);
+  const ts: [string, number][] = [[long(2), 1]];
+  const growT = (): number => {
+    for (let i = 0; i < 100; i++) {
+      ts.push([long(i), i]);
+    }
+    ts[0] = [long(-2), 2];
+    return 1;
+  };
+  console.log(ts[0], growT(), ts[0][1]);
+  const aa: string[][] = [[long(3)]];
+  const growA = (): number => {
+    for (let i = 0; i < 100; i++) {
+      aa.push([long(i)]);
+    }
+    aa[0] = [long(-3)];
+    return 1;
+  };
+  console.log(aa[0], growA(), aa[0][0]);
+  const tag = long(4);
+  const fs = [(): string => tag];
+  const replaceF = (): number => {
+    const other = long(-4);
+    fs[0] = (): string => other;
+    return 1;
+  };
+  console.log(callIt(fs[0], replaceF()), fs[0]());
+
+  // An argument the callee modifies, followed by one that grows or replaces its array: the
+  // callee modifies the element the argument read, as in JS.
+  const vs: V[] = [{ n: 1 }];
+  const growV = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      vs.push({ n: i });
+    }
+    vs[0] = { n: 100 };
+    return 5;
+  };
+  const v0 = vs[0];
+  vs[0].bump(growV());
+  bumpV(vs[0], growV());
+  await bumpLater(vs[0], growV());
+  console.log(v0.n, vs[0].n, vs.length);
+  const aa2: number[][] = [[1, 2]];
+  const growAA = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      aa2.push([i]);
+    }
+    aa2[0] = [100, 101];
+    return 5;
+  };
+  const a0 = aa2[0];
+  aa2[0].push(growAA());
+  console.log(a0, aa2[0], aa2.length);
+
+  // An element a later operand removes through another reference (a closure) is held too.
+  const items = [new Item(10)];
+  const clear = (): number => {
+    items.pop();
+    return 1;
+  };
+  console.log(items[0], clear(), items.length);
+  const cut = [new Item(11), new Item(12)];
+  const splice = (): number => {
+    cut.splice(0, 1);
+    return 1;
+  };
+  console.log(cut[0], splice(), cut[0].v);
+  let cell = [new Item(13)];
+  const reset = (): number => {
+    cell = [];
+    return 1;
+  };
+  console.log(cell[0], reset(), cell.length);
+  const sum = [new Item(14)];
+  const drop = (): number => {
+    sum.pop();
+    return 1;
+  };
+  console.log(sum[0].v + drop(), `${sum.length}`);
+
+  // A receiver held across a later call is the same object, not a copy.
+  const counts = new Map<string, number>();
+  for (const w of ["the", "cat", "the"]) {
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  const c = new Counter();
+  c.add(c.get() + 1);
+  c.add(c.get() + 1);
+  console.log(counts.get("the"), counts.size, c.n);
+
+  const xs: number[] = [3];
+  const p = later();
+  console.log(xs[0] + (await p));
+  ss = [long(0)];
+  console.log(ss[0] + (await laterS()) + growS(ss));
+}

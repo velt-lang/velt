@@ -1,0 +1,13 @@
+// TypeScript's errors for the polymorphic `this` type: outside an instance method (TS2526),
+// and a method returning `this` that returns another object (TS2322).
+class A {
+  m(): this {
+    return new A();
+  }
+  static s(): this {
+    return new A();
+  }
+}
+function f(): this {
+  return 1;
+}

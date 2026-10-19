@@ -1,0 +1,19 @@
+// A module constant that is evaluated at each use (an object literal) is a new object at
+// each use, so comparing it by identity is an error. One from a call is kept (#802), so
+// `ADD_ONE === ADD_ONE` is fine.
+
+function adder(n: number): (x: number) => number {
+  return (x: number): number => x + n;
+}
+
+type Point = { x: number; y: number };
+
+const ADD_ONE = adder(1);
+const ORIGIN: Point = { x: 0, y: 0 };
+
+function main() {
+  console.log(ADD_ONE === ADD_ONE);
+  console.log(ORIGIN !== ORIGIN);
+  const keep = ADD_ONE;
+  console.log(keep === keep);
+}

@@ -1,0 +1,14 @@
+// Unusual quoted field names: a NUL (escaped in debug info, which once panicked), the empty name,
+// a space, a quote and non-ASCII letters; output as in Node.
+
+type T = { "a\u0000b": number; "": string; "a b": number; "\"": number; "日本": number };
+
+function show(t: T): string {
+  return `${t["a\u0000b"]}${t[""]}${t["a b"]}${t["\""]}${t["日本"]}`;
+}
+
+function main() {
+  const t: T = { "a\u0000b": 1, "": "e", "a b": 2, "\"": 3, "日本": 4 };
+  console.log(show(t), JSON.stringify(t));
+  console.log(t);
+}

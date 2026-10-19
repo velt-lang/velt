@@ -1,0 +1,81 @@
+// check: no leaks
+// Weak maps in async code: a task resumes on any worker thread after an `await`, and its maps,
+// keys and `raw -> proxy` entries keep working there; spawned tasks use maps of their own at the
+// same time.
+class Key {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Proxy {
+  target: Key;
+  constructor(target: Key) {
+    this.target = target;
+  }
+}
+
+async function tick(i: number): Promise<number> {
+  await sleep(1);
+  return i;
+}
+
+async function worker(i: number): Promise<number> {
+  const mine = new WeakMap<Key, string>();
+  const seen = new WeakSet<Key>();
+  const k = new Key(i);
+  mine.set(k, "w" + i.toString());
+  seen.add(k);
+  let found = 0;
+  for (let j = 0; j < 3; j++) {
+    await sleep(2);
+    const s = mine.get(k);
+    if (s != null && seen.has(k)) {
+      found += s.length;
+    }
+  }
+  return found;
+}
+
+async function main() {
+  const proxies = new WeakMap<Key, Proxy>();
+  const keys: Key[] = [];
+  for (let i = 0; i < 50; i++) {
+    const k = new Key(i);
+    proxies.set(k, new Proxy(k));
+    keys.push(k);
+  }
+  const ref = new WeakRef(keys[7]);
+  let hits = 0;
+  for (let i = 0; i < 50; i++) {
+    await tick(i);
+    const p = proxies.get(keys[i]);
+    if (p != null && p.target === keys[i]) {
+      hits++;
+    }
+  }
+  console.log("hits", hits, ref.deref()?.n);
+
+  const ps: Promise<number>[] = [];
+  for (let i = 0; i < 16; i++) {
+    ps.push(spawn(worker(i)));
+  }
+  let total = 0;
+  for (const x of await Promise.all(ps)) {
+    total += x;
+  }
+  console.log("workers", total);
+
+  // Dropping keys after more awaits frees them and their proxies; the WeakRef clears.
+  await tick(0);
+  keys.splice(0, 25);
+  await tick(1);
+  let left = 0;
+  for (const k of keys) {
+    if (proxies.has(k)) {
+      left++;
+    }
+  }
+  console.log("left", left, ref.deref() == null);
+}

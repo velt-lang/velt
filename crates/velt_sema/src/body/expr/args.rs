@@ -9,11 +9,15 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::error_slots::{error_only, occurs_plain};
 use super::ops::untyped;
 use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
+
+/// The temporary holding an argument tested for `undefined` (no source name can be this).
+const ARG: &str = "<arg>";
 
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
 pub(crate) struct Callable {
@@ -23,9 +27,18 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
-    /// A `std/` function called from user code: a float argument for an integer parameter is
-    /// a JS number and converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
+    /// Per slot, a bound that is a type (`Generics::constraints`); empty when none has one.
+    pub constraints: Vec<Option<TyId>>,
+    /// A `std/` function called from user code: a float argument for a parameter it declares
+    /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
+    /// A method of a SIMD type (`u8x16.load`): with `js_numbers`, a float for a parameter it
+    /// declares `usize` (a position or lane index) that is not a whole number from 0 up is out
+    /// of range there, not truncated (`numbers::simd_position`).
+    pub positions: bool,
+    /// A function of the JS API (`numbers::is_js_api`): integers it passes to callbacks (an
+    /// index) are numbers there.
+    pub js_api: bool,
     /// The last parameter is a rest parameter (`...xs: T[]`): the remaining arguments, spreads
     /// included, become one array literal.
     pub rest: bool,
@@ -52,7 +65,9 @@ pub(crate) fn want_of(mode: PassMode) -> Want {
 /// Does this argument take its type from the parameter (checked in the second round)?
 pub(crate) fn deferred(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) | ast::ExprKind::Arrow { .. } => true,
+        ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) | ast::ExprKind::Arrow { .. } => {
+            true
+        }
         ast::ExprKind::Array(xs) => xs.is_empty(),
         ast::ExprKind::Paren(x) => deferred(x),
         _ => untyped(e),
@@ -78,6 +93,16 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let weak_key = std::mem::take(&mut self.weak_key_args);
+        let expanded;
+        let args = match self.expand_spreads(c, args, span) {
+            Ok(Some(a)) => {
+                expanded = a;
+                &expanded[..]
+            }
+            Ok(None) => args,
+            Err(()) => return self.failed_call(c, &slots),
+        };
         let packed;
         let args = match self.pack_rest(c, args) {
             Some((p, skip)) if !skip.is_empty() => {
@@ -89,24 +114,17 @@ impl FnCx<'_, '_> {
             }
             None => args,
         };
+        // Trailing `void` parameters may be left out, as in TS: `resolve()` for a
+        // `Promise<void>`'s `resolve: (value: void) => void`.
         let min = c
             .params
             .iter()
-            .rposition(|p| p.default.is_none())
+            .rposition(|p| p.default.is_none() && p.ty != self.cx.ty.unit)
             .map_or(0, |i| i + 1);
         if args.len() < min || args.len() > c.params.len() {
             self.arg_count_error(&c.what, min, c.params.len(), args.len(), span);
             self.check_args_loose(args);
-            let type_args: Vec<TyId> = slots
-                .iter()
-                .map(|s| s.unwrap_or(self.cx.ty.error))
-                .collect();
-            let ret = self.cx.ty.subst(c.ret, &type_args);
-            return Checked {
-                args: vec![],
-                ret,
-                type_args,
-            };
+            return self.failed_call(c, &slots);
         }
         // The expected result type is a lower-priority inference source, as in TS: it types
         // the arguments of slots no argument has fixed yet (`const y: i32 = id(1)` checks `1`
@@ -116,6 +134,11 @@ impl FnCx<'_, '_> {
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
             self.cx.match_context(c.ret, e, &mut context);
+        }
+        for (a, p) in args.iter().zip(&c.params) {
+            if p.default.is_some() {
+                self.optional_slot(a, crate::body::OptionalSlot::Param);
+            }
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {
@@ -129,29 +152,136 @@ impl FnCx<'_, '_> {
         let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
-            let target = self.cx.ty.subst(p.ty, &type_args);
-            let h = if c.js_numbers && self.cx.ty.is_int(target) && self.cx.ty.is_float(h.ty) {
-                // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
-                let span = h.span;
-                self.mk(H::Cast(Box::new(h)), target, span)
+            let outer = self.cx.type_level.use_site.replace(h.span);
+            let target = self.cx.subst(p.ty, &type_args);
+            self.cx.type_level.use_site = outer;
+            // Only a parameter the library declares an integer (`slice(start: i64)`), not a
+            // type argument the program chose (`push` on an `i64[]`).
+            let declared_int = self.cx.ty.is_int(p.ty);
+            // A neutral use for the literal-local pre-scan: the JS API takes numbers.
+            let h = if c.js_numbers && declared_int && self.cx.ty.is_float(h.ty) {
+                if c.positions && p.ty == self.cx.ty.usize {
+                    self.simd_position(h)
+                } else {
+                    // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
+                    let span = h.span;
+                    self.mk(H::Cast(Box::new(h)), target, span)
+                }
             } else {
                 h
             };
-            let mut h = self.coerce(h, target);
+            let arg_ty = h.ty;
+            let mut h = if weak_key && hargs.is_empty() {
+                self.weak_key_coerce(h, target)
+            } else if self.cx.sigq.readonly_params.contains(&p.span)
+                || ((collect || self.cx.iterable_elem(target).is_some())
+                    && self.readonly_copy_elem(&h, target).is_some())
+            {
+                self.readonly_array_arg(h, target)
+            } else if p.mode != PassMode::Owned {
+                self.object_arg_coerce(h, target)
+            } else {
+                self.coerce(h, target)
+            };
+            if let Some(d) = &p.default {
+                h = self.default_on_undefined(h, arg_ty, d, &type_args);
+            }
             if p.mode == PassMode::BorrowMut {
                 self.use_mutably(&mut h, "modify");
             }
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let mut d = p.default.clone().expect("ICE: default checked by arity");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.ty.subst(t, &type_args));
+            let Some(mut d) = p.default.clone() else {
+                // A left-out `void` parameter (checked by arity).
+                hargs.push(self.unit_expr(span));
+                continue;
+            };
+            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
             d.span = span;
             hargs.push(d);
         }
-        let ret = self.cx.ty.subst(c.ret, &type_args);
+        let ret = self.cx.subst(c.ret, &type_args);
         Checked {
             args: hargs,
+            ret,
+            type_args,
+        }
+    }
+
+    /// JavaScript applies a parameter's default to a passed `undefined` too. A function with a
+    /// body does that itself for a parameter of a dynamic type (`defaults::in_callee`); for one
+    /// that does not (an interface method's own default, a generator's), an argument that may
+    /// hold `undefined` (`h`, of type `arg_ty` before its conversion) is tested where it is
+    /// passed: `{ const <arg> = h; typeof <arg> === "undefined" ? <default> : <arg> }`. Other
+    /// parameters whose type allows `undefined` take no default but `undefined` itself
+    /// (`defaults.rs`).
+    fn default_on_undefined(
+        &mut self,
+        h: hir::Expr,
+        arg_ty: TyId,
+        default: &hir::Expr,
+        type_args: &[TyId],
+    ) -> hir::Expr {
+        let may_be_undefined = self.cx.dynamic(arg_ty).is_some()
+            || self
+                .cx
+                .ty
+                .nothing_of(arg_ty)
+                .is_some_and(|n| n.has_undefined());
+        if self.cx.dynamic(h.ty).is_none() || !may_be_undefined || self.is_undefined_lit(default) {
+            return h;
+        }
+        let (ty, span) = (h.ty, h.span);
+        let mut stmts = vec![];
+        self.push_scope();
+        let arg = self.bind_temp(ARG, h, &mut stmts);
+        let name = |span| {
+            super::setters::synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: ARG.into(),
+                    span,
+                }),
+                span,
+            )
+        };
+        let test = crate::body::defaults::undefined_test(name(span), span);
+        let cond = self.cond(&test);
+        let mut d = default.clone();
+        crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, type_args));
+        d.span = span;
+        let els = self.read_temp(arg, ty, span);
+        let pick = H::If {
+            cond: Box::new(cond),
+            then: Box::new(d),
+            els: Box::new(els),
+        };
+        let pick = self.mk(pick, ty, span);
+        self.pop_scope();
+        let b = super::accessor_rmw::block(stmts, Some(pick), span);
+        self.mk(H::Block(b), ty, span)
+    }
+
+    /// Is `h` the dynamic `undefined` (`dynamic_nothing`)? The default of an optional dynamic
+    /// parameter, and of one whose function applies its default itself (`defaults::in_callee`):
+    /// testing a passed argument for `undefined` changes nothing there.
+    fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::ToDyn { expr, .. } => self.is_undefined_lit(expr),
+            H::Lit(hir::Lit::Null) => self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined),
+            _ => false,
+        }
+    }
+
+    /// A call whose arguments were reported: no arguments, the result with what is known.
+    fn failed_call(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Checked {
+        let type_args: Vec<TyId> = slots
+            .iter()
+            .map(|s| s.unwrap_or(self.cx.ty.error))
+            .collect();
+        let ret = self.cx.subst(c.ret, &type_args);
+        Checked {
+            args: vec![],
             ret,
             type_args,
         }
@@ -181,7 +311,7 @@ impl FnCx<'_, '_> {
                 from = k;
             } else {
                 self.cx.err(
-                    "a spread argument can only fill the rest parameter (`...xs: T[]`)",
+                    "a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)",
                     args[k].span,
                 );
             }
@@ -220,7 +350,10 @@ impl FnCx<'_, '_> {
             ret: c.ret,
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
+            constraints: c.constraints.clone(),
             js_numbers: c.js_numbers,
+            positions: c.positions,
+            js_api: c.js_api,
             rest: false,
             defaults: c.defaults.clone(),
         };
@@ -233,7 +366,7 @@ impl FnCx<'_, '_> {
                 .default
                 .clone()
                 .expect("ICE: skipped parameters have defaults");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.ty.subst(t, &ck.type_args));
+            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &ck.type_args));
             d.span = span;
             ck.args.insert(skip.start + k, d);
         }
@@ -252,13 +385,18 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         collect: bool,
     ) -> Vec<hir::Expr> {
-        let round = |e: &ast::Expr| match (deferred(e), as_arrow(e).is_some()) {
+        // A parameter of a deferred type (`t: IsString<T>`) is known only once the other
+        // arguments have fixed its type parameters: its argument goes with the second round.
+        let late: Vec<bool> = (0..args.len())
+            .map(|i| c.params.get(i).is_some_and(|p| self.cx.mentions_op(p.ty)))
+            .collect();
+        let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
             (false, _) => 0,
             (true, false) => 1,
             (true, true) => 2,
         };
         let mut order: Vec<usize> = (0..args.len()).collect();
-        order.sort_by_key(|&i| round(&args[i]));
+        order.sort_by_key(|&i| round(i));
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
             let p = &c.params[i];
@@ -266,19 +404,59 @@ impl FnCx<'_, '_> {
                 self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
-            let known: Vec<Option<TyId>> =
+            let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
-            let expected = self.cx.ty.subst_known(p.ty, &known);
-            let adapter = self.fewer_params_adapter(&args[i], expected);
-            let h = match adapter.as_ref().or(as_arrow(&args[i])) {
-                Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.std_callback = c.js_numbers;
-                    let h = self.arrow_arg(a, expected, p.mode == PassMode::Owned);
-                    self.std_callback = false;
-                    h
+            if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
+                known[k] = slots[k];
+            }
+            let outer = self.cx.type_level.use_site.replace(args[i].span);
+            let expected = self.cx.subst_known(p.ty, &known);
+            self.cx.type_level.use_site = outer;
+            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
+            let mode = self.callback_mode(&args[i]);
+            let arrow = as_arrow(&args[i]);
+            let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
+            // An arrow (or a function's adapter) passed to the JS API (also where `cmp | null` is
+            // expected): what its parameters and result are in user code (`closure`,
+            // `returns::returned`).
+            let declared = self.cx.ty.core(p.ty).unwrap_or(p.ty);
+            self.std_callback = match self.cx.ty.kind(declared) {
+                TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
+                    Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
                 }
-                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                _ => None,
             };
+            let adapted = self.callback_adapter(&args[i], expected, mode);
+            // `xs.forEach(o.log)`: checked as the arrow it stands for.
+            let bound = match adapted {
+                None => self.method_value_arg(&args[i], expected),
+                Some(_) => None,
+            };
+            let owned = p.mode == PassMode::Owned;
+            let h = match (adapted, bound, arrow) {
+                (Some(h), _, _) => h,
+                (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, None, Some(a))
+                    if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) =>
+                {
+                    self.arrow_arg(a, expected, owned)
+                }
+                _ => match &super::method_value::strip_parens(&args[i]).kind {
+                    // `f(k!)` for a borrowed parameter: `k` stays (`non_null_arg`).
+                    ast::ExprKind::NonNull(inner) if want_of(p.mode) == Want::Borrow => {
+                        self.non_null_arg(inner, Some(expected), args[i].span)
+                    }
+                    _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                },
+            };
+            // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
+            let h = match self.cx.ty.array_elem(expected).is_some()
+                && self.in_place_misuse(&args[i], &h, expected)
+            {
+                true => self.error_expr(h.span),
+                false => h,
+            };
+            self.std_callback = None;
             let h = match collect {
                 true => self.collected_arg(h, p.ty),
                 false => h,
@@ -302,7 +480,7 @@ impl FnCx<'_, '_> {
         args: &[hir::Expr],
         exp: TyId,
     ) {
-        let ret = self.cx.ty.subst_known(c.ret, slots);
+        let ret = self.cx.subst_known(c.ret, slots);
         if self.converts_to(ret, exp) {
             return;
         }
@@ -323,8 +501,8 @@ impl FnCx<'_, '_> {
             return;
         }
         for (h, p) in args.iter().zip(&c.params) {
-            let target = self.cx.ty.subst_known(p.ty, &wider);
-            let number = self.is_inferred_int(h) && self.float_core(target);
+            let target = self.cx.subst_known(p.ty, &wider);
+            let number = self.exact_in_number(h.ty) && self.float_core(target);
             if !self.converts_to(h.ty, target)
                 && !number
                 && !(is_fresh(h) && self.widens(h.ty, target))
@@ -338,7 +516,7 @@ impl FnCx<'_, '_> {
     /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
     /// JS number argument converts)?
     fn float_core(&self, t: TyId) -> bool {
-        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let t = self.cx.ty.core(t).unwrap_or(t);
         self.cx.ty.is_float(t)
     }
 
@@ -368,9 +546,14 @@ impl FnCx<'_, '_> {
             if !params.contains(&pty) {
                 continue;
             }
+            // An integer the JS API declares (a callback's index) is a number in user code.
+            let params: Vec<TyId> = params
+                .into_iter()
+                .filter(|t| !(c.js_api && self.cx.ty.is_int(*t)))
+                .collect();
             let known: Vec<TyId> = params
                 .iter()
-                .map(|t| self.cx.ty.subst_known(*t, slots))
+                .map(|t| self.cx.subst_known(*t, slots))
                 .collect();
             let known = known.into_iter().find(|t| {
                 *t != pty && self.cx.ty.is_numeric(*t) && (!float || self.cx.ty.is_float(*t))
@@ -432,7 +615,7 @@ impl FnCx<'_, '_> {
                     args: b
                         .args
                         .iter()
-                        .map(|a| self.cx.ty.subst_known(*a, slots))
+                        .map(|a| self.cx.subst_known(*a, slots))
                         .collect(),
                 };
                 let in_scope = self.bounds.clone();
@@ -466,13 +649,27 @@ impl FnCx<'_, '_> {
                     self.cx.error(d);
                 }
             }
+            self.check_constraint(c, k, t, slots, &name, span);
             out.push(t);
         }
         out
     }
 
-    /// Slots nothing inferred take their defaults (while the slots before them are known).
+    /// Slots nothing inferred take their defaults (while the slots before them are known); an
+    /// error type parameter nothing fixed (it appears only as a promise's or function's error
+    /// type) is `never`.
     fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
+        for (k, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
+                continue;
+            }
+            let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
+            let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
+                && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
+            if unconstrained_error {
+                *slot = Some(self.cx.ty.never);
+            }
+        }
         for k in 0..slots.len() {
             let Some(Some(d)) = c.defaults.get(k) else {
                 continue;
@@ -483,7 +680,16 @@ impl FnCx<'_, '_> {
             let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
                 break;
             };
-            slots[k] = Some(self.cx.ty.subst(*d, &before));
+            slots[k] = Some(self.cx.subst(*d, &before));
+        }
+        // An overload signature calling its implementation: a type parameter of the
+        // implementation that the signature's parameters leave open is `void` (TypeScript
+        // infers `unknown`), as in `function f(x: string): string;` over
+        // `function f<T>(x: string | T[]): string | T`.
+        if slots.iter().any(Option::is_none) && self.signature_body().is_some() {
+            for slot in slots.iter_mut().filter(|s| s.is_none()) {
+                *slot = Some(self.cx.ty.unit);
+            }
         }
     }
 

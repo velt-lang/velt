@@ -1,0 +1,37 @@
+// A base class and its subclass may each declare `#x` and `#m`: separate fields and methods.
+// A base class method reads the base's `#x` and calls the base's `#m`, also on a subclass
+// instance (private methods are never virtual).
+class Base {
+  #x: number = 1;
+  #m(): string {
+    return "base";
+  }
+  baseView(): string {
+    return `${this.#x} ${this.#m()}`;
+  }
+  static peek(o: Base): number {
+    return o.#x;
+  }
+}
+
+class Sub extends Base {
+  #x: string = "sub";
+  #m(): string {
+    return "sub";
+  }
+  subView(): string {
+    return `${this.#x} ${this.#m()}`;
+  }
+}
+
+class Leaf extends Sub {
+  label: string = "leaf";
+}
+
+function main() {
+  const s = new Sub();
+  console.log(s.baseView(), s.subView());
+  const l = new Leaf();
+  console.log(l.baseView(), l.subView(), Base.peek(l));
+  console.log(s, l);
+}

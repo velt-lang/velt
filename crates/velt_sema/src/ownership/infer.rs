@@ -308,7 +308,29 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 .global(*d)
                 .map(|g| (g.ty, g.name.clone()))
                 .unwrap_or((cx.ty.error, String::new()));
-            if !cx.is_copy(ty) && ty != cx.ty.str_ {
+            let mutable = cx.global(*d).is_some_and(|g| g.stored);
+            if mutable && cx.is_copy(ty) {
+                return false;
+            }
+            if mutable || crate::body::pure_init::shares_on_move(cx, *d) {
+                // A function computed at each use, or a module-level `let` the module state
+                // keeps: another reference to it is owned.
+                let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));
+                let read = Expr {
+                    kind: read,
+                    ty: e.ty,
+                    span: e.span,
+                };
+                e.kind = E::Call {
+                    callee: Callee::Intrinsic(Intrinsic::Share),
+                    args: vec![read],
+                };
+                return true;
+            }
+            if crate::body::pure_init::is_table(cx, *d) {
+                let msg = format!("cannot move out of module constant `{name}`");
+                errors.push(crate::body::pure_init::table_escapes(&name, msg, e.span));
+            } else if !cx.is_copy(ty) && ty != cx.ty.str_ {
                 errors.push(
                     Diagnostic::error(
                         format!("cannot move out of module constant `{name}`"),

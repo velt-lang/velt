@@ -1,0 +1,12 @@
+// @jsxImportSource ./_jsx_attrs_no_fn
+
+// A provider whose `IntrinsicAttributes` declares more than `key` must export
+// `jsxComponentAttributes`, which receives those attributes.
+
+function Card(props: { n: number }): JSX.Element {
+  return <p>{props.n}</p>;
+}
+
+function main() {
+  const a = <Card client:load n={1} />;
+}

@@ -13,6 +13,9 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         format!("name: {}", string_lit(&m.package.name)),
         format!("version: {}", string_lit(&m.package.version)),
     ];
+    if let Some(toolchain) = &m.toolchain {
+        fields.push(format!("velt: {}", string_lit(toolchain)));
+    }
     if let Some(description) = &m.package.description {
         fields.push(format!("description: {}", string_lit(description)));
     }
@@ -47,6 +50,13 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
             .map(|s| format!("importSource: {}", string_lit(s)));
         fields.push(format!("jsx: {}", inline_object(source)));
     }
+    if !m.define.is_empty() {
+        let defines = m
+            .define
+            .iter()
+            .map(|(name, value)| format!("{}: {}", key(name), string_lit(value)));
+        fields.push(format!("define: {}", multiline_object(defines)));
+    }
     if let Some(native) = &m.native {
         let mut parts = Vec::new();
         if native.path != DEFAULT_NATIVE_PATH {
@@ -76,6 +86,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     let mut out = Map::new();
     out.insert("name".into(), json!(m.package.name));
     out.insert("version".into(), json!(m.package.version));
+    if let Some(toolchain) = &m.toolchain {
+        out.insert("velt".into(), json!(toolchain));
+    }
     if let Some(description) = &m.package.description {
         out.insert("description".into(), json!(description));
     }
@@ -114,6 +127,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             o.insert("importSource".into(), json!(source));
         }
         out.insert("jsx".into(), Value::Object(o));
+    }
+    if !m.define.is_empty() {
+        out.insert("define".into(), json!(m.define));
     }
     if let Some(native) = &m.native {
         out.insert(

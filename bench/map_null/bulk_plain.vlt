@@ -1,0 +1,21 @@
+// A map with 200,000 string keys, 40% of them deleted (tombstones, no compaction), read 5
+// times (keys(), values() and entries()). Value type `number`. See run.sh.
+
+function main() {
+  const m = new Map<string, number>();
+  for (let i = 0; i < 200000; i++) {
+    m.set(`k${i}`, i);
+  }
+  for (let i = 0; i < 200000; i++) {
+    if (i % 5 < 2) {
+      m.delete(`k${i}`);
+    }
+  }
+  let total = 0;
+  for (let round = 0; round < 5; round++) {
+    total += m.keys().length;
+    total += m.values().length;
+    total += m.entries().length;
+  }
+  console.log(m.size, total);
+}

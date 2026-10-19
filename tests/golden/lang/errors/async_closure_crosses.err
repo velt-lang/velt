@@ -1,0 +1,12 @@
+async_closure_crosses.vlt:25:5: error: this async closure modifies captured `a`, so it must stay on the task that created it
+async_closure_crosses.vlt:27:9: but it reaches `spawn` here
+async_closure_crosses.vlt:31:5: error: this async closure modifies captured `b`, so it must stay on the task that created it
+async_closure_crosses.vlt:19:9: but it reaches `spawn` here
+async_closure_crosses.vlt:36:5: error: this async closure modifies captured `c`, so it must stay on the task that created it
+async_closure_crosses.vlt:38:9: but it is stored in a `Jobs`, which reaches `spawn` here
+async_closure_crosses.vlt:43:5: error: this async closure modifies captured `d`, so it must stay on the task that created it
+async_closure_crosses.vlt:42:9: but it is sent on a channel here
+async_closure_crosses.vlt:49:5: error: this async closure modifies captured `e`, so it must stay on the task that created it
+async_closure_crosses.vlt:48:3: but it is passed to a function value or an interface method here, which may keep it
+async_closure_crosses.vlt:54:5: error: this async closure modifies captured `counts`, so it must stay on the task that created it
+async_closure_crosses.vlt:53:13: but it reaches `shared(...)` here

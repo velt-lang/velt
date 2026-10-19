@@ -1,0 +1,64 @@
+// check: no leaks
+// Slices crossing threads (#402): a slice shares its parent's buffer through the buffer's count,
+// which is atomic, so tasks on other threads slicing the same buffer, and dropping their slices,
+// while the main task does the same never free it early or twice (the debug run checks every
+// allocation).
+
+async function consume(rest: string, step: number): Promise<number> {
+  let n = 0;
+  while (rest.length > step) {
+    rest = rest.slice(step);
+    n += rest.charCodeAt(0);
+  }
+  return n;
+}
+
+async function grow(piece: string, by: string): Promise<string> {
+  let s = piece;
+  for (let i = 0; i < 100; i++) {
+    s += by;
+  }
+  return s.slice(s.length - 30);
+}
+
+function text(n: number, last: string): string {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += String.fromCharCode(97 + (i % 26));
+  }
+  return s + last;
+}
+
+async function round(source: string): Promise<string> {
+  const tasks: Promise<number>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(consume(source.slice(t * 100), 7 + t)));
+  }
+  const grown = spawn(grow(source.slice(1000), "+"));
+  const grownWide = spawn(grow(source.slice(2000), "ж"));
+  // The main task slices the same buffer meanwhile.
+  let local = 0;
+  let rest = source;
+  while (rest.length > 50) {
+    rest = rest.slice(50);
+    local += rest.length;
+  }
+  const sums = await Promise.all(tasks);
+  const g = await grown;
+  const w = await grownWide;
+  return `${sums.join(",")} ${local} ${g.length} ${g.slice(0, 3)} ${w.length} ${w.slice(-3)}`;
+}
+
+async function main() {
+  console.log(await round(text(40000, "")));
+  console.log(await round(text(40000, "é😀")));
+  // The source is dropped while the tasks still hold slices of it.
+  const tasks: Promise<number>[] = [];
+  {
+    const source = text(20000, "ü");
+    for (let t = 0; t < 4; t++) {
+      tasks.push(spawn(consume(source.slice(t * 5000), 3)));
+    }
+  }
+  console.log((await Promise.all(tasks)).join(","));
+}

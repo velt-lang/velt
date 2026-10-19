@@ -1,0 +1,4 @@
+quoted_property_names_proto.vlt:6:15: error: the property name "__proto__" is not supported: in JavaScript it sets the object's prototype and creates no property
+quoted_property_names_proto.vlt:7:15: error: the property name "__proto__" is not supported: in JavaScript it sets the object's prototype and creates no property
+quoted_property_names_proto.vlt:8:39: error: the property name "__proto__" is not supported: in JavaScript it sets the object's prototype and creates no property
+quoted_property_names_proto.vlt:10:15: error: the property name "__proto__" is not supported: in JavaScript it sets the object's prototype and creates no property

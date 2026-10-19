@@ -1,0 +1,7 @@
+{"a":"key=a","b":["key=0"]}
+"key=" ["key=0","key=1"]
+{"k":"key=k","ks":["key=0","key=1"],"pair":["key=0",5]}
+{"o":"key=o"}
+{"b":"derived:b","list":["base:0","derived:1"]}
+r10 r10!
+7 7! 2

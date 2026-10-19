@@ -1,0 +1,38 @@
+// check: no leaks
+// A `T extends object` instantiated with `object` or `any` and converted to `object` inside
+// (issue #926): the value is the same dynamic value, owned once. sigx's `track(v)` stores it
+// in a `Map<object, V>`.
+class Other {
+  z = 1;
+}
+
+function keep<T extends object>(v: T): number {
+  const o: object = v;
+  return typeof o === "object" ? 1 : 0;
+}
+
+const reg = new Map<object, number>();
+function track<T extends object>(v: T): void {
+  reg.set(v, reg.size);
+}
+
+function keepAndReturn<T extends object>(v: T): T {
+  const o: object = v;
+  reg.set(o, 100);
+  return v;
+}
+
+const oo: object = new Other();
+const a: any = new Other();
+const p = new Other();
+console.log(keep(oo), keep(a), keep(p), keep(new Other()));
+track(oo);
+track(a);
+track(p);
+track(p);
+track(new Other());
+console.log(reg.size, reg.get(oo), reg.get(a), reg.get(p));
+const back = keepAndReturn(oo);
+console.log(back === oo, reg.get(oo), reg.size);
+const anyBack = keepAndReturn(a);
+console.log(anyBack === a, reg.get(a));

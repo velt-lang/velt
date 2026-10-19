@@ -1,0 +1,116 @@
+// More TypeScript-form overloads: optional parameters reaching the implementation's defaults,
+// async signatures, narrower literal, class and promise results, generic signatures, overloaded
+// methods overridden with `override`, signatures picked where a function type is expected, and
+// an overloaded function exported with an export list.
+import { pick } from "./_overloads_list";
+
+// `h("x")` leaves `b` out, so the implementation's default applies.
+function h(a: string): string;
+function h(a: string, b?: number): string;
+function h(a: string, b: number = 5): string {
+  return a + b;
+}
+
+// `async` on signatures, as TypeScript allows.
+async function g(k: string): Promise<string>;
+async function g(k: number): Promise<string>;
+async function g(k: string | number): Promise<string> {
+  return `g${k}`;
+}
+
+// A signature promising a narrower result than the async implementation.
+function load(k: "a"): Promise<number>;
+function load(k: string): Promise<number | string>;
+async function load(k: string): Promise<number | string> {
+  return k === "a" ? 1 : k;
+}
+
+// A literal result out of a `string`.
+function dir(k: "up"): "U";
+function dir(k: string): string;
+function dir(k: string): string {
+  return k === "up" ? "U" : k;
+}
+
+interface Shape {
+  area(): number;
+}
+
+class Circle implements Shape {
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return this.r * 2;
+  }
+}
+
+class Sq implements Shape {
+  s: number;
+  constructor(s: number) {
+    this.s = s;
+  }
+  area(): number {
+    return this.s * this.s;
+  }
+}
+
+// A class result out of an interface.
+function make(k: "c"): Circle;
+function make(k: string): Shape;
+function make(k: string): Shape {
+  return k === "c" ? new Circle(1) : new Sq(3);
+}
+
+// A generic signature, and one that leaves the implementation's type parameter open.
+function first(x: string): string;
+function first<T>(x: T[]): T;
+function first<T>(x: string | T[]): string | T {
+  return typeof x === "string" ? x : x[0];
+}
+
+class A {
+  m(x: string): string;
+  m(x: number): string;
+  m(x: string | number): string {
+    return `A${x}`;
+  }
+}
+
+class B extends A {
+  override m(x: string): string;
+  override m(x: number): string;
+  override m(x: string | number): string {
+    return "B" + (typeof x === "string" ? super.m(x) : super.m(x));
+  }
+}
+
+function describe(x: string): string;
+function describe(x: number): number;
+function describe(x: string | number): string | number {
+  return typeof x === "string" ? "s:" + x : x * 2;
+}
+
+function apply(f: (n: number) => number, n: number): number {
+  return f(n);
+}
+
+async function main() {
+  console.log(h("x"), h("y", 2));
+  const n: number = await load("a");
+  console.log(await g("1"), await g(2), n + 1, await load("zz"));
+  const u: "U" = dir("up");
+  console.log(u, dir("x"));
+  const c: Circle = make("c");
+  console.log(c.r * 2, make("s").area() + 3);
+  const s: string = first("x");
+  const k: number = first([4, 5]);
+  console.log(s, k + 1);
+  const b: A = new B();
+  console.log(b.m("s"), b.m(1));
+  const d: (s: string) => string = describe;
+  console.log(d("a"), apply(describe, 4), [1, 2].map(describe));
+  const p: string = pick("p");
+  console.log(p.length, pick(2) + 1);
+}

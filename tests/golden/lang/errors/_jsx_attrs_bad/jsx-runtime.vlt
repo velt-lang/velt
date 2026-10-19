@@ -1,0 +1,5 @@
+// A JSX runtime whose `IntrinsicAttributes` is not an object type.
+
+export * from "../../_jsx_attrs/jsx-runtime";
+
+export type IntrinsicAttributes = string;

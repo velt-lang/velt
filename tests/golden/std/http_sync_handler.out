@@ -1,0 +1,8 @@
+200 sync /x
+200 named /y
+200 local GET
+200 async ok
+500 Internal Server Error
+200 declared | 200 promise | 200 made GET
+200 checked /page | 500 Internal Server Error
+200 wrapped

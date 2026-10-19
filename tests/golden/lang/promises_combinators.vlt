@@ -1,17 +1,33 @@
 // `Promise.race`, `Promise.allSettled` and `Promise.any` (JS semantics): race takes the first
 // result and the losers keep running; allSettled reports every outcome in order; any takes the
-// first fulfilled value and throws `AggregateError` for an empty array. Timers are >= 140 ms
-// apart, so the order is the same on a loaded machine.
+// first fulfilled value and throws `AggregateError` for an empty array. The losers of `race` and
+// `any` finish only when `main` lets them (after `main done`), one after the other, so the order
+// is the same however the machine schedules them.
+import { channel, Channel } from "velt:channel";
+
 async function after(ms: i64, name: string): Promise<string> {
   await sleep(ms);
   console.log("finished", name);
   return name;
 }
 
+// Finishes once `go` receives a value (or is closed), then reports on `done`.
+async function held(go: Channel<bool>, done: Channel<bool>, name: string): Promise<string> {
+  await go.receive();
+  console.log("finished", name);
+  await done.send(true);
+  return name;
+}
+
 async function main() {
-  const winner = await Promise.race([after(400, "slow"), after(10, "fast")]);
+  const goSlow = channel<bool>(1);
+  const goP = channel<bool>(1);
+  const done = channel<bool>(2);
+
+  const winner = await Promise.race([held(goSlow, done, "slow"), after(10, "fast")]);
   console.log("race:", winner);
 
+  // Timers of one task fire by deadline: `y` first, though `x` was created first.
   const settled = await Promise.allSettled([after(150, "x"), after(10, "y")]);
   for (const s of settled) {
     switch (s.status) {
@@ -24,7 +40,7 @@ async function main() {
     }
   }
 
-  console.log("any:", await Promise.any([after(800, "p"), after(10, "q")]));
+  console.log("any:", await Promise.any([held(goP, done, "p"), after(10, "q")]));
 
   const none: Promise<string>[] = [];
   try {
@@ -33,4 +49,8 @@ async function main() {
     console.log("caught", e.message);
   }
   console.log("main done");
+  await goSlow.send(true);
+  await done.receive();
+  await goP.send(true);
+  await done.receive();
 }

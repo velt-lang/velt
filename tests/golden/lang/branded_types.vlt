@@ -1,0 +1,45 @@
+// Branded types: a primitive `&` an object type is a nominal alias of the primitive with no
+// cost at run time. `x as UserId` brands a value; a branded value works wherever its
+// primitive does; a plain `string` is not a `UserId` (see errors/branded_types).
+
+import { Set } from "velt:collections/set";
+
+type UserId = string & { __brand: "UserId" };
+type OrderId = string & { __brand: "OrderId" };
+type Cents = number & { readonly __unit: "cents" };
+
+function userId(raw: string): UserId {
+  return raw.trim() as UserId;
+}
+
+function greet(id: UserId): string {
+  return `user ${id}`;
+}
+
+function total(items: Cents[]): Cents {
+  let sum: number = 0;
+  for (const c of items) {
+    sum += c;
+  }
+  return sum as Cents;
+}
+
+function main() {
+  const id = userId("  u-42 ");
+  console.log(greet(id), id.length, id.toUpperCase(), id + "!");
+  const order = "o-1" as OrderId;
+  console.log(order.startsWith("o-"), typeof order);
+  const ids: UserId[] = [id, "u-7" as UserId];
+  console.log(ids.join(","), JSON.stringify({ owner: id }));
+  const price = total([250 as Cents, 199 as Cents]);
+  console.log(price, (price as number) / 100);
+  // As keys and elements.
+  const visits = new Map<UserId, number>();
+  visits.set(id, 1);
+  visits.set(id, (visits.get(id) ?? 0) + 1);
+  const seen = new Set<UserId>([id]);
+  console.log(visits.get(id), visits.has("u-42" as UserId), seen.has(id), seen.size);
+  console.log(ids.includes(id), ids.includes("u-8" as UserId), ids.indexOf("u-7" as UserId));
+  const raw: string = id;
+  console.log(raw === "u-42");
+}

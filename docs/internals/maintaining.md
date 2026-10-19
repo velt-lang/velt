@@ -12,10 +12,14 @@ How the project is run day to day: planning work, reviewing and merging pull req
    not a way to compile to JavaScript: TypeScript is the starting point, not the limit. Add
    Velt-only features wherever they make programs substantially faster (integer widths,
    `shared`, `extend`, and more to come), as opt-ins layered on the TypeScript-compatible core.
-   Never copy JavaScript's bug sources (`undefined`,
-   implicit coercion, falsy numbers/strings, `any`): one way of doing things, enforced by the
-   compiler with a precise error and fix-it, even when ported code must change. No backward
-   compatibility before 1.0.
+   Never copy JavaScript's bug sources in typed code (implicit coercion): one way
+   of doing things, enforced by the compiler with a precise error and fix-it, even when ported
+   code must change. `any` is accepted for TypeScript compatibility and checked at run time,
+   like C#'s `dynamic`: a wrong type is a `TypeError` where the value enters typed code, never
+   undefined behaviour. Where valid TypeScript depends on a JavaScript behavior everywhere,
+   TypeScript compatibility comes first and Velt matches Node exactly: numbers and strings are
+   conditions with JavaScript's truthiness (`0`, `NaN` and `""` are falsy, `n || 5` returns an
+   operand). No backward compatibility before 1.0.
 2. **Performance first.** Rust-level speed and memory, no garbage collector, no pauses. A change
    that regresses a benchmark beyond ±3% doesn't merge; JS-like semantics are paid for only
    where a program actually uses them (e.g. reference counts only for types a program shares).
@@ -52,8 +56,10 @@ Prompt template for an agent batch:
 Clone https://github.com/velt-lang/velt (or work in your worktree), create a branch named after
 the batch, read CLAUDE.md and CONTRIBUTING.md, then work through issues <list> in order (design
 issues: post a short design as a comment first). Keep changes focused on your issues and merge
-origin/main often. Run scripts/check.sh (the checks your changes need) while iterating and before
-each pull request; the merge queue runs the whole gate. One
+origin/main often. Run `cargo xtask install-hooks` once (a pre-push hook that runs
+`cargo xtask precheck`: fmt, velt fmt, file sizes and clippy on the changed files), and run
+scripts/check.sh (the checks your changes need) while iterating and before each pull request;
+the merge queue runs the whole gate. Never push with --no-verify to get past a failing precheck. One
 pull request per issue or a few related ones ("Closes #N") with tests and docs; a pull request
 that builds on another of yours joins it in a stack (gh stack). Follow-ups outside scope become
 focused issues. Never stop processes you didn't start.
@@ -66,7 +72,8 @@ changes with file:line and the fix, then follow-ups that may become issues):
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
    tool trailers; the description has no generated footers or session links (it becomes the
-   commit message); no internal process wording.
+   commit message); no internal process wording. The `hygiene` check covers the mechanical part
+   (`cargo xtask pr-lint`); review still reads for stale or process wording it can't recognize.
 2. **Correctness against the issue and the design**: JavaScript-identical results where the
    program is valid TypeScript (compare with Node); regression tests for every fix.
 3. **Soundness and security**: ownership across FFI, use-after-free paths (stale handles must be
@@ -83,19 +90,26 @@ review.
 
 ## Merging
 
-- `main` only changes through pull requests. Required check: `ci` (on the pull request, the
-  checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
-  `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
+- `main` only changes through pull requests. Required checks: `hygiene` (the title, description
+  and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
+  request, the checks its changes need: `cargo xtask check`, rules in
+  `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
   macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
-- Before queueing, strip any generated footer from the description: it becomes the commit message.
+- The description becomes the commit message. `hygiene` fails on generated footers, trailers,
+  session links, machine paths and review-process wording, so there is no footer to strip by hand
+  any more; editing the description re-runs it. It does not judge whether the text still
+  describes the head: that stays part of the review.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
-- A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
-  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
-  and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
-  against the `typescript` pinned in `tests/tscompat-oracle`), and the benchmark guard
+- A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
+  test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
+  goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
+  stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
+  Windows, and the `tsc` oracle for `velt check --ts-compat`
+  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
+  `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly

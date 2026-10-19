@@ -60,7 +60,7 @@ fn makes_promise(cx: &mut Ctx, d: DefId) -> bool {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::Spawn),
             args,
-        } => spawned.extend(args.iter().map(|a| a.span)),
+        } => spawned.extend(args.first().map(|a| a.span)),
         E::Call { .. } | E::New { .. } if !spawned.contains(&e.span) => types.push(e.ty),
         _ => {}
     });

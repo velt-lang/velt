@@ -1,0 +1,34 @@
+// A provider's `jsxSoleEmpty` (docs/internals/contracts/jsx.md "Sole child"): like sigx, the
+// generic runtime renders a `true`, `false` or `null` child as nothing when it is its element's
+// only child and as the `<!---->` placeholder among siblings. The precompiled templates write
+// the export's string for a sole child, so both lowerings render byte-identically (#634).
+
+import { renderToString, templateOf } from "./_jsx_sep_provider/render";
+import * as generic from "./_jsx_sole_page_generic";
+import * as precompiled from "./_jsx_sole_page_precompile";
+
+function main() {
+  const ra = new generic.Reads();
+  const rb = new precompiled.Reads();
+  const inputs: (string | null)[] = ["x", null];
+  for (const maybe of inputs) {
+    for (const flag of [true, false]) {
+      for (const some of [true, false]) {
+        console.log(`maybe=${maybe === null ? "null" : JSON.stringify(maybe)} flag=${flag} el=${some}`);
+        const a = generic.cases(maybe, flag, some, ra);
+        const b = precompiled.cases(maybe, flag, some, rb);
+        for (let i: usize = 0; i < a.length; i++) {
+          const x = renderToString(a[i]);
+          const y = renderToString(b[i]);
+          console.log(x == y ? `  ${x}` : `  different: ${x} vs ${y}`);
+        }
+      }
+    }
+  }
+  // The sole value is read once.
+  console.log(`reads: ${ra.n} ${rb.n}`);
+  console.log("templates:");
+  for (const el of precompiled.cases(null, false, false, rb)) {
+    console.log(`  ${templateOf(el)}`);
+  }
+}

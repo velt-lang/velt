@@ -54,7 +54,7 @@ async function reverseComplementTask(seq: u8[], table: u8[]): Promise<u8[]> {
 // The reverse complement of `seq` in line-aligned blocks, computed concurrently.
 async function reverseComplementBlocks(seq: u8[], table: u8[]): Promise<u8[][]> {
   const tasks: Promise<u8[]>[] = [];
-  for (let end = seq.length; end > 0;) {
+  for (let end = seq.length as usize; end > 0;) {
     const start = end > BLOCK_CHARS ? end - BLOCK_CHARS : 0;
     tasks.push(spawn(reverseComplementTask(seq.slice(start as i64, end as i64), table)));
     end = start;

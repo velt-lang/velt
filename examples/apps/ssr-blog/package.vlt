@@ -1,0 +1,10 @@
+import type { Package } from "velt:package";
+
+export const pkg: Package = {
+  name: "ssr-blog",
+  version: "0.1.0",
+  // std/jsx on the server; a TypeScript client maps the provider to client/jsx-runtime.ts
+  // (tsconfig.json), so the shared components compile with both.
+  jsx: { importSource: "./jsx" },
+  tsCompat: ["src/shared"],
+};

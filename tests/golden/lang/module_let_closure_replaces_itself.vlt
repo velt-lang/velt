@@ -1,0 +1,29 @@
+// check: no leaks
+// A function value called from a module `let` that the call itself reassigns, then reads one
+// of its captures: the call keeps the function value alive until it returns, as in Node.
+
+let handler: (n: number) => string = (n) => "initial " + n;
+let pair: { f: () => string } = { f: () => "pair initial" };
+
+function install(): void {
+  const captured = "captured" + String(1);
+  handler = (n: number): string => {
+    handler = (m: number) => "other " + m;
+    return captured + " " + n;
+  };
+  const tag = "pair" + String(2);
+  pair = {
+    f: (): string => {
+      pair = { f: () => "pair fresh" };
+      return tag + "!";
+    },
+  };
+}
+
+function main(): void {
+  install();
+  console.log(handler(5));
+  console.log(handler(6));
+  console.log(pair.f());
+  console.log(pair.f());
+}

@@ -1,0 +1,9 @@
+// A parameter property cannot be destructured: TypeScript reports TS1187 ("A parameter property
+// may not be declared using a binding pattern").
+class P {
+  constructor(private [a, b]: [string, string]) {}
+}
+
+function main() {
+  console.log(new P(["a", "b"]));
+}

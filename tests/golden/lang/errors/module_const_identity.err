@@ -1,0 +1,2 @@
+module_const_identity.vlt:16:15: error: `ORIGIN` is evaluated at each use, so comparing it by identity is always false
+copy it into a local first (`const c = ORIGIN;`) and compare that, or compare a field that identifies it

@@ -3,7 +3,8 @@
 
 use super::fake::{block_on_fut, fut_result};
 use crate::task::all::{velt_rt_all, velt_rt_all_with_drop};
-use crate::task::local::velt_rt_fut_box;
+use crate::task::leaf::new_leaf;
+use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start, TimerLeaf};
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::spawn::{velt_rt_spawn, velt_rt_spawn_detached, velt_rt_spawn_fut};
 use crate::task::{
@@ -206,41 +207,99 @@ fn spawn_and_join_10k() {
     assert_eq!(run_fanout(n), (0..n).map(|i| i * i).sum::<i64>());
 }
 
-static ORDER: Mutex<Vec<i64>> = Mutex::new(Vec::new());
+static ORDER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
-// async function sleeper(ms) { await sleep(ms); order.push(ms); }  (spawned; reuses AddAfter's shape)
+// async function sleeper(ms) { await sleepUntil(base + ms); order.push(ms); }  (a started
+// promise of `deadlines`)
+#[repr(C)]
+struct Sleeper {
+    result: i64,
+    tag: u32,
+    base: tokio::time::Instant,
+    ms: u64,
+    sleep: *mut VeltFut,
+}
+
 unsafe extern "C" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    if add_after_poll(s, cx) == PENDING {
+    let st = &mut *(s as *mut Sleeper);
+    if st.tag == 0 {
+        // A fixed deadline, not `velt_rt_sleep(ms)`: the order of the deadlines must not depend
+        // on how long the creating code took.
+        let at = st.base + std::time::Duration::from_millis(st.ms);
+        st.sleep = new_leaf(TimerLeaf::new(at));
+        st.tag = 1;
+    }
+    if velt_rt_fut_poll(st.sleep, cx) == PENDING {
         return PENDING;
     }
-    ORDER.lock().unwrap().push((*(s as *mut AddAfter)).ms);
+    velt_rt_fut_drop(st.sleep);
+    ORDER.lock().unwrap().push(st.ms);
+    st.tag = 2;
+    READY
+}
+
+unsafe extern "C" fn sleeper_drop(s: *mut u8) {
+    let st = &mut *(s as *mut Sleeper);
+    if st.tag == 1 {
+        velt_rt_fut_drop(st.sleep);
+    }
+}
+
+// async function deadlines() { const ps = [150, 50, 100].map(sleeper); for (p of ps) await p; }
+#[repr(C)]
+struct Deadlines {
+    tag: u32,
+    sleepers: [*mut VeltFut; 3],
+    next: usize,
+}
+
+unsafe extern "C" fn deadlines_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+    let st = &mut *(s as *mut Deadlines);
+    if st.tag == 0 {
+        let base = tokio::time::Instant::now();
+        for (slot, ms) in st.sleepers.iter_mut().zip([150u64, 50, 100]) {
+            let init = Sleeper {
+                result: 0,
+                tag: 0,
+                base,
+                ms,
+                sleep: null_mut(),
+            };
+            let p = &init as *const Sleeper as *const u8;
+            *slot = velt_rt_fut_box(
+                sleeper_poll,
+                sleeper_drop,
+                p,
+                size_of::<Sleeper>() as u64,
+                8,
+            );
+            velt_rt_fut_start(*slot, None);
+        }
+        st.tag = 1;
+    }
+    while st.next < st.sleepers.len() {
+        let f = st.sleepers[st.next];
+        if velt_rt_fut_poll(f, cx) == PENDING {
+            return PENDING;
+        }
+        velt_rt_fut_drop(f);
+        st.next += 1;
+    }
     READY
 }
 
 #[test]
 fn sleeps_complete_in_deadline_order() {
-    // Deadlines 50 ms apart so the order holds even on a heavily loaded machine.
-    let handles: Vec<*mut VeltFut> = [150i64, 50, 100]
-        .iter()
-        .map(|&ms| {
-            let init = add_after(0, ms);
-            let p = &init as *const AddAfter as *const u8;
-            unsafe {
-                velt_rt_spawn(
-                    sleeper_poll,
-                    add_after_drop,
-                    p,
-                    size_of::<AddAfter>() as u64,
-                    8,
-                    8,
-                    None,
-                )
-            }
-        })
-        .collect();
-    for h in handles {
-        block_on_fut::<i64>(h);
-    }
+    // Timers of one task resume by deadline, whatever order they were created in and however
+    // late the task gets to run: all three are registered (as started promises of one task)
+    // before any is due, so no scheduling delay can reorder them. Tasks have no order among
+    // themselves, so spawned sleepers would only be ordered by the gaps between their deadlines.
+    let mut st = Deadlines {
+        tag: 0,
+        sleepers: [null_mut(); 3],
+        next: 0,
+    };
+    unsafe { velt_rt_block_on(deadlines_poll, &mut st as *mut Deadlines as *mut u8) };
     assert_eq!(*ORDER.lock().unwrap(), vec![50, 100, 150]);
 }
 

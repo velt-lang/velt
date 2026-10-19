@@ -1,0 +1,9 @@
+// `x as T & object` of a type parameter `T` without an `object` bound is checked at run time
+// (#1304): at a primitive `T` it has no value (`never`), so the cast stops with a TypeError
+// (expected output from `node` up to there; TypeScript keeps the primitive).
+function asObject<T>(target: T): T & object {
+  return target as T & object;
+}
+const o = { a: 1 };
+console.log(asObject(o) === o);
+console.log(asObject(3));

@@ -1,0 +1,165 @@
+// JavaScript truthiness: `0`, `-0`, `NaN`, `""` and `null` are falsy, everything else is
+// truthy; `||` and `&&` return an operand. The expected output is Node's.
+enum Color {
+  Red,
+  Green,
+}
+
+enum Name {
+  Empty = "",
+  Ann = "ann",
+}
+
+class Box {
+  v: number = 1;
+}
+
+class Trace {
+  calls: string = "";
+}
+
+function tick(t: Trace, tag: string, v: number): number {
+  t.calls += tag;
+  return v;
+}
+
+function word(t: Trace, tag: string, v: string): string {
+  t.calls += tag;
+  return v;
+}
+
+function show(label: string, v: number | string): string {
+  return `${label}=${v}`;
+}
+
+function main() {
+  const nums: number[] = [0, -0, NaN, 1, -1, 0.5, Infinity, -Infinity];
+  for (const n of nums) {
+    console.log(n, n ? "truthy" : "falsy", !n, !!n);
+  }
+  const strs: string[] = ["", " ", "0", "a", "false"];
+  for (const s of strs) {
+    console.log(JSON.stringify(s), s ? "truthy" : "falsy", !s);
+  }
+  const zero: i64 = 0;
+  const one: u8 = 1;
+  const big: i32 = -5;
+  console.log(zero ? "t" : "f", one ? "t" : "f", big ? "t" : "f", !zero, !one);
+  let count = 0;
+  while (count < 3 || !count) {
+    count++;
+  }
+  console.log("count", count);
+  let k = 3;
+  while (k) {
+    k--;
+  }
+  console.log("k", k);
+  for (let i = 5; i; i--) {
+    if (i === 3) {
+      console.log("i hit 3");
+    }
+  }
+  if (Color.Red) {
+    console.log("red truthy");
+  } else {
+    console.log("red falsy");
+  }
+  if (Color.Green) {
+    console.log("green truthy");
+  }
+  if (!Name.Empty && Name.Ann) {
+    console.log("enum strings");
+  }
+  // || and && return an operand.
+  const port = 0 || 8080;
+  const n = 0;
+  const m = 7;
+  console.log(n || 5, m || 5, n && 5, m && 5, port);
+  const empty = "";
+  const full = "x";
+  console.log(empty || "default", full || "default", JSON.stringify(empty && "y"), full && "y");
+  const mixed = n || "zero";
+  const mixed2 = m || "zero";
+  console.log(show("mixed", mixed), show("mixed2", mixed2));
+  const nn = NaN;
+  console.log(nn || -1, nn && -1);
+  const negz = -0;
+  console.log(1 / (negz || 0), 1 / (negz && 1));
+  // Short circuit and evaluation order.
+  const t = new Trace();
+  t.calls = "";
+  const r1 = tick(t, "a", 0) || tick(t, "b", 2) || tick(t, "c", 3);
+  console.log(r1, t.calls);
+  t.calls = "";
+  const r2 = tick(t, "a", 1) && tick(t, "b", 0) && tick(t, "c", 3);
+  console.log(r2, t.calls);
+  t.calls = "";
+  const r3 = word(t, "a", "") || word(t, "b", "") || word(t, "c", "z");
+  console.log(r3, t.calls);
+  t.calls = "";
+  if (tick(t, "x", 0) && tick(t, "y", 1)) {
+    console.log("no");
+  }
+  if (word(t, "p", "q") || word(t, "r", "")) {
+    console.log("yes", t.calls);
+  }
+  // Nullable numbers and strings.
+  const maybe: number | null = Math.random() > 2 ? 1 : 0;
+  const absent: number | null = Math.random() > 2 ? 1 : null;
+  console.log(maybe ? "t" : "f", absent ? "t" : "f", maybe ?? 9, absent ?? 9);
+  const name: string | null = Math.random() > 2 ? null : "ann";
+  const none: string | null = Math.random() > 2 ? "x" : null;
+  const blank: string | null = Math.random() > 2 ? null : "";
+  if (name) {
+    console.log("name", name.length);
+  }
+  if (!none) {
+    console.log("no name");
+  }
+  console.log(blank ? "t" : "f", blank ?? "nullish only", none ?? "nullish");
+  console.log(name || "anon", blank || "anon", none || "anon");
+  const len = name && name.length;
+  console.log(len);
+  // Objects and arrays are always truthy.
+  const xs: number[] = [];
+  const b = new Box();
+  if (xs) {
+    console.log("empty array is truthy");
+  }
+  console.log(!xs, !b, b ? "box" : "none", (xs || [1]).length);
+  const fn = () => 1;
+  if (fn) {
+    console.log("function is truthy");
+  }
+  // Logical assignment.
+  let a: number | null = null;
+  a ??= 3;
+  let c1 = 1;
+  c1 &&= 5;
+  let c2 = 0;
+  c2 ||= 7;
+  let s1 = "";
+  s1 ||= "filled";
+  let s2 = "keep";
+  s2 &&= "replaced";
+  console.log(a, c1, c2, s1, s2);
+  // Sort comparators: a - b || c - d.
+  const pairs: number[][] = [[1, 2], [0, 5], [1, 1], [0, 3]];
+  pairs.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  console.log(JSON.stringify(pairs));
+  // Unions, literal types and `bool` operands.
+  const us: (number | string)[] = [0, "", 3, "x"];
+  for (const u of us) {
+    console.log(u ? "t" : "f", u || "fallback");
+  }
+  const maybeU: number | string | null = Math.random() > 2 ? 1 : "";
+  console.log(maybeU ? "t" : "f");
+  const bit: 0 | 1 = Math.random() > 2 ? 1 : 0;
+  console.log(bit ? "one" : "zero");
+  const flag = Math.random() < 2;
+  const off = !flag;
+  console.log(flag && "on", off && "on", flag || 5, off || 5);
+  const tri: boolean | null = Math.random() > 2 ? true : null;
+  console.log(tri || false, tri ? "t" : "f");
+}

@@ -37,17 +37,21 @@ version while the old one keeps running:
   function that live values may still call was removed, or closures were reordered.
 - **Build error**: the diagnostics are printed and the old version keeps running.
 - **Program exit**: `velt dev` prints the exit code and waits for the next change.
+- **Crash during a reload**: if the running program dies while it takes a change (a bug in
+  `velt dev`, please report it), `velt dev` says so, for example `velt dev: the running program
+  crashed during the reload (exit code 0xc0000005); restarted it in 950 ms`, and the new version
+  runs from a fresh start.
 
 Stopping `velt dev` (Ctrl-C, or SIGTERM/SIGHUP from a process manager or `docker stop`) stops
-the program the same way a reload does: it gets a stop request, can finish in-flight requests
-for up to a second, and `velt dev` waits for it before exiting. Press Ctrl-C twice to exit at
-once.
+the program the same way a reload does: it gets a stop request and can finish in-flight
+requests; a program still running 1.5 s after the request is killed (set
+`VELT_DEV_STOP_GRACE_MS` to change that limit, in milliseconds). `velt dev` waits for it before
+exiting. Press Ctrl-C twice to exit at once.
 
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
-connection is refused during a reload and a server on port 0 keeps its port. Hot swap needs no
-code changes because Velt has no mutable module-level state
-([Variables](../reference/variables.md#no-mutable-module-state)): state lives in values that
-`main` creates, so there are no globals to migrate.
+connection is refused during a reload and a server on port 0 keeps its port. State in values
+that `main` creates carries over a hot swap. [Module state](../reference/variables.md#module-state)
+(module-level `let`s) does not: the swapped-in code starts it over from its initializers.
 
 ## Modes
 

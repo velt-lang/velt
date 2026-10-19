@@ -1,0 +1,6 @@
+// sigx for Velt: what components import from "sigx". JSX compiles against ./jsx-runtime.
+
+export { component, SetupContext } from "./component";
+export type { Setup } from "./component";
+export { Runtime, Signal, Computed, Reaction } from "./reactivity";
+export { Element, Renderer, State, renderToString } from "./node";

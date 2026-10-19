@@ -19,9 +19,10 @@
 //! (format_array.rs, format_map.rs, format_object.rs). Every format glue takes node's depth of
 //! its value (0 for a `console.log` argument) as its last parameter.
 
-use velt_sema::hir::{AdtKind, TyId, TyKind};
+use velt_sema::hir::{AdtKind, DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_FORMAT};
+use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower};
@@ -37,8 +38,20 @@ fn top_depth() -> Operand {
 }
 
 impl FnLower<'_, '_> {
-    /// Append the top-level (`console.log` argument) text of the value at `place`.
+    /// Append the top-level text of the value at `place` as `String(x)` writes it (a template
+    /// literal part): a number as JS converts it to a string (`-0` is `0`).
     pub(in crate::lower) fn format_top(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        self.format_top_as(buf, place, ty, false);
+    }
+
+    /// Append the text of the `console.log` argument at `place`: as [`Self::format_top`], but a
+    /// number (also one held by a nullable or a union) is printed as `console.log` prints it
+    /// (`-0`).
+    pub(in crate::lower) fn log_top(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        self.format_top_as(buf, place, ty, true);
+    }
+
+    fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
             return self.push_enum_str(buf, place, &strings, false, false);
         }
@@ -48,24 +61,24 @@ impl FnLower<'_, '_> {
                 self.push_str(buf, a);
             }
             TyKind::Literal(l) => self.push_literal(buf, &l, false),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
-                self.format_top(buf, &payload, e);
+                self.format_top_as(buf, &payload, e, log);
                 self.goto(done);
                 self.switch_to(done);
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
-                self.format_top(buf, &inner, e);
+                self.format_top_as(buf, &inner, e, log);
             }
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
                 self.format_json_value(buf, place, ty, true, &top_depth())
@@ -76,12 +89,38 @@ impl FnLower<'_, '_> {
                         lw.push_literal(buf, &l, false);
                     }
                     for (pp, pt) in parts {
-                        lw.format_top(buf, &pp, pt);
+                        lw.format_top_as(buf, &pp, pt, log);
                     }
                 });
             }
+            // `console.log` prints `-0`; `String(x)` writes `0` (`${-0}` is `0`).
+            TyKind::Float(_) if log => {
+                self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
+            }
+            TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
-            _ => {
+            // A string held by an `any` prints as itself at the top level (lower/any.rs).
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
+                let (s_bb, other_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+                let is_str = self.any_holds_str(place);
+                self.branch(is_str, s_bb, other_bb);
+                self.switch_to(s_bb);
+                let data = Operand::Copy(proj(place, Proj::Field(0)));
+                self.push_str(buf, data);
+                self.goto(done);
+                self.switch_to(other_bb);
+                self.format_top_inspect(buf, place, ty);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.format_top_inspect(buf, place, ty),
+        }
+    }
+
+    /// The top-level text of a value that may hold containers.
+    fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        {
+            {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
                 self.call_rt(Rt::StrbufInspectBegin, vec![], None);
@@ -102,6 +141,8 @@ impl FnLower<'_, '_> {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Str
+            | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Literal(_)
@@ -124,14 +165,20 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         match self.cx.kind(ty) {
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
+            TyKind::Float(_) => self.push_inspect_float(buf, Operand::Copy(place.clone()), ty),
+            TyKind::Int(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Str => {
                 let a = self.addr(place.clone());
                 self.call_rt(Rt::StrbufPushInspectStr, vec![buf.clone(), a], None);
             }
+            TyKind::Symbol => {
+                let s = Operand::Copy(place.clone());
+                self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
+            }
             TyKind::Unit => self.push_text(buf, "undefined"),
+            TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
             TyKind::Never => {}
             TyKind::Literal(l) => self.push_literal(buf, &l, true),
             TyKind::Adt(d, _)
@@ -178,7 +225,16 @@ impl FnLower<'_, '_> {
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
+        let proxy = self.cx.proxiable(ty).then(|| {
+            let done = self.new_block();
+            self.proxy_format_split(&buf, &place, &depth, done);
+            done
+        });
         self.format_expand(&buf, &place, ty, &depth);
+        if let Some(done) = proxy {
+            self.goto(done);
+            self.switch_to(done);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
@@ -208,13 +264,13 @@ impl FnLower<'_, '_> {
                 self.format_object(buf, name, place, ty, p, depth);
             }
             TyKind::Tuple(tys) => self.format_tuple(buf, place, ty, &tys, depth),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -340,11 +396,84 @@ impl FnLower<'_, '_> {
             return;
         }
         let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
-        if !self.format_collection(&buf, &place, ty, &depth) {
+        if self.is_proxy(ty) {
+            // Node prints a proxy as its target, without running traps (`showProxy: false`).
+            let any = self.cx.member_ty(ty, 0);
+            let target = self.field_place(&place, ty, 0);
+            self.format_expand(&buf, &target, any, &depth);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
+        if let Some(m) = self.hook(ty, Hook::Inspect) {
+            self.format_inspect(&buf, p, ty, m, &depth);
+        } else if !self.format_collection(&buf, &place, ty, &depth) {
             let name = Some(self.cx.type_name(ty));
             self.format_object(&buf, name, &place, ty, Some(p), &depth);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// Print the class object `obj` through its `__inspect()` method `m`, as Node prints a custom
+    /// inspect: a string result raw, any other value after the class name, at the object's depth
+    /// (`Headers { a: '1' }`).
+    fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
+        let (res, rty) = self.call_hook(m, obj, ty, None);
+        let name = self.cx.type_name(ty);
+        if matches!(self.cx.kind(rty), TyKind::Str) {
+            self.push_inspect_text(buf, &res);
+        } else if self.is_native_inspect(rty) {
+            // What Node prints for one of its own objects (`ArrayBuffer`, `DataView`): the text,
+            // cut to `[ArrayBuffer]` past the depth limit, as Node cuts its objects.
+            let text = self.field_place(&res, rty, 0);
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                lw.push_inspect_text(buf, &text);
+            });
+        } else if let TyKind::Array(_) = self.cx.kind(rty) {
+            // An array: after the name and its length, as Node prints an array subclass or a
+            // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
+            // limit.
+            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+                let start = lw.temp(Ty::U64);
+                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+                let start = Operand::Copy(Place::local(start));
+                let arr = lw.content(&res, rty);
+                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+                lw.push_text(buf, &format!("{name}("));
+                let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
+                lw.push_scalar(buf, len, u64_);
+                lw.push_text(buf, ") ");
+                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.format_nested(buf, &res, rty, depth);
+            });
+        } else {
+            // The string, or the name before the value, is kept as one piece when the value is
+            // broken across lines: node inserts a custom inspect's text as it is.
+            let start = self.temp(Ty::U64);
+            self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+            let start = Operand::Copy(Place::local(start));
+            self.push_text(buf, &format!("{name} "));
+            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.format_nested(buf, &res, rty, depth);
+        }
+        self.drop_glue(res, rty);
+    }
+
+    /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
+    /// broken across lines: node inserts a custom inspect's text as it is.
+    fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = Operand::Copy(Place::local(start));
+        let a = self.addr(text.clone());
+        self.push_str(buf, a);
+        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+    }
+
+    /// Is `ty` std's `NativeInspect` (std/typed_array/core.vlt), the result of an `__inspect()`
+    /// that prints one of Node's own objects?
+    fn is_native_inspect(&self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Adt(d, _)
+            if self.cx.adt_def(d).name == "std/typed_array/core::NativeInspect")
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an

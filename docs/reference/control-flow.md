@@ -4,10 +4,11 @@
 
 - `if` / `else if` / `else`, `while`, `do … while`, C-style `for` (comma lists allowed:
   `for (let i = 0, j = n; i < j; i++, j--)`), `for (const x of xs)`,
-  [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
+  [`for (const k in o)`](#forin), [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
   (optionally labeled: `outer: for (…)` … `continue outer;`), `return`, blocks, and the
   ternary `?:`. A body without braces (`if (c) return x;`) is a one-statement block.
-- Conditions take `bool` or nullable values ([safe truthiness](variables.md#conditions-safe-truthiness)).
+- Conditions take values of any type and test them as JavaScript does: `0`, `NaN`, `""` and
+  `null` are falsy ([truthiness](variables.md#conditions-truthiness)).
 
 ## `for...of`
 
@@ -19,11 +20,43 @@
   element. Index the array to replace an element.
 - Iterating a temporary (a call result, `await …`, a literal) **consumes** it: each element is
   handed to the loop variable without a count.
-- There is no `for...in`; iterate `map.keys()` or an object's known fields.
+
+## `for...in`
+
+`for (const k in o)` visits the keys of an object, as in JavaScript: the same keys, in the same
+order, as [`Object.keys(o)`](types.md#objects-arrays-tuples-and-maps), and it is that loop
+(`for (const k of Object.keys(o))`, with the built-in `Object` even where a local one hides
+it). `k` is a `string`.
+
+- `o` is an object type, a struct or class instance or a `Record`. A record's keys come in
+  insertion order; an object's fields in declaration order, a base class's first. An optional
+  field (`label?: string`) is visited only while it is present. Methods are not keys.
+- The keys are listed when the loop starts: a key added during the loop is not visited. A key
+  of a `Record<string, V>` deleted during the loop is not visited either, as in JavaScript,
+  when `o` is a name or a property of one (`r`, `this.scores`).
+- `let k` makes the variable assignable in the body; the loop variable must be declared in the
+  head (`for (k in o)` with an outer `k` is an error, as for `for...of`).
+- For a `Map`, iterate `m.keys()` with `for...of`; `for...in` over a number or string is an
+  error (TypeScript's TS2407).
+
+```ts
+interface Point {
+  x: number;
+  y: number;
+  label?: string;
+}
+
+function main() {
+  const p: Point = { x: 1, y: 2 };
+  for (const k in p) {
+    console.log(k); // x, then y
+  }
+}
+```
 
 ### Iterables
 
-The prelude declares TypeScript's iteration protocol, without `undefined`:
+The prelude declares TypeScript's iteration protocol; a finished result has no `value`:
 
 ```ts
 type IteratorResult<T> = { value: T; done: false } | { done: true };
@@ -43,13 +76,21 @@ interface Iterable<T, E = never> {
 - `for (const x of src)` calls `src[Symbol.iterator]()` once, then `next()` until a result is
   `done`, binding each `value` (owned by the loop variable). `src` may be any type with that
   method, a class declaring `implements Iterable<T>` or not, or an `Iterable<T>` value.
-- A finished result has no `value` (Velt has no `undefined`); `if (r.done)` narrows `r` like
+- A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+  Destructured into `const { value, done } = r`, a test of `done` (`if (done) break;`,
+  `if (!done)`, `done === false`) narrows `value` to `T` as well, as in TypeScript (when `T`
+  itself cannot be `null`).
+  TypeScript's `{ value: undefined, done: true }` is accepted for a finished result, without
+  the `value`. `console.log` of a finished result prints `{ done: true }` where Node prints
+  `{ value: undefined, done: true }` (issue #930, phase 3).
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
   An iterator class that releases something there writes `return(): IteratorResult<T>` and
   returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
-  makes `break` throw a `TypeError`).
+  makes `break` throw a `TypeError`). TypeScript's `it.return(undefined)` (its `return(value)`
+  takes the generator's return value) calls `return()`; another argument is an error, since a
+  finished result carries no value.
 - **Typed errors**: `E` is what `next()` throws (`never`, the default, means nothing). The loop
   throws it, so a function iterating an `Iterable<T, IoError>` throws `IoError`; a generic
   `function sum<E>(xs: Iterable<i64, E>): i64 throws E` throws what its argument does.
@@ -78,8 +119,13 @@ interface Iterable<T, E = never> {
   the prelude classes `ArrayIterator<T>` and `StringIterator` are its implementations). An
   array's iterator is a live view, as in JS: it reads the length at each step, so it visits
   elements pushed meanwhile, and once it reported `done` it stays done. A string's yields
-  characters (code points). A map's and a set's iterate the entries as of the call, like
-  `for...of` over a map (JS's map and set iterators are live views).
+  characters (code points). A map's and a set's iterate the entries as of the call (JS's map
+  and set iterators are live views).
+- `for...of` over a map, or over its `keys()`, `values()` or `entries()`, is live as in JS:
+  entries the body adds are visited, deleted ones are not. That holds for a map in a variable,
+  a field, a getter, an array element or a call result (`for (const [k, v] of ms[0])`). The
+  map is read once, when the loop starts: assigning another map to its source in the body does
+  not change what the loop visits.
 - `IterableIterator<T, E>`, `IteratorObject<T, E>` and `AsyncIterableIterator<T, E>` are TS's
   iterators that are also iterable (`[Symbol.iterator]()` returns the iterator itself, declared
   as `Iterator<T, E>`, since Velt has no covariant returns). Generators implement them and may
@@ -176,19 +222,19 @@ no generator object, and stopping early closes the iterator):
   ([Iterable object literals](types.md#iterable-object-literals)).
 
 ```ts
-function* countTo(n: i64): Generator<i64> {
+function* countTo(n: number): Generator<number> {
   for (let i = 1; i <= n; i++) {
     yield i;
   }
 }
 
-function* squares(n: i64): Generator<[i64, i64]> {
+function* squares(n: number): Generator<[number, number]> {
   for (const v of countTo(n)) {
     yield [v, v * v];
   }
 }
 
-function sum(...xs: i64[]): i64 {
+function sum(...xs: number[]): number {
   let total = 0;
   for (const x of xs) {
     total += x;
@@ -293,10 +339,17 @@ block scope.
 - **Case values**: literals (numbers, also negative ones; strings; bools), `null`, enum members,
   or any expression that `===` can compare with the discriminant (and compared like it: a
   `string | null` case value on a `string` discriminant, or the reverse; a `string` constant on a
-  union of string literals; a `string` on a discriminant `s.kind` or on `typeof x`). A local of a
-  literal type (`const y: "y" = "y"`) acts like the literal: it narrows and counts toward
-  covering the members. A literal that is not a possible value (`case "square":` when `s.kind`
-  is `"circle" | "rect"`) is an error, as in TypeScript. A value may appear in several cases:
+  union of string literals; a `string` on a discriminant `s.kind` or on `typeof x`). A constant
+  of a literal type acts like the literal: it narrows and counts toward covering the members.
+  As in TypeScript, that is a `const` (local or module-level) initialized with a literal and
+  without a type annotation (`const A = "a"`), or a local whose type is a literal type
+  (`const y: "y" = "y"`). A literal that is not a possible value (`case "square":` when `s.kind`
+  is `"circle" | "rect"`) is an error, as in TypeScript. A `typeof` case that no member of a union
+  has is an error (TypeScript accepts it). On a type that fixes the `typeof` of its values (a
+  number, string, boolean, function, class, array, ...), also a union local that flow narrowing
+  reduced to one member (`let u: number | string = 5`), such a case is accepted, as in
+  TypeScript, and never matches. On `any`, `unknown` and `object`, cases test the run-time
+  `typeof`; on a type parameter, a case its type doesn't fix is an error. A value may appear in several cases:
   the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`

@@ -8,6 +8,7 @@ velt_common.workspace = true
 velt_syntax.workspace = true
 velt_sema.workspace = true
 velt_fmt.workspace = true
+velt_doc = { path = "../velt_doc" }
 velt_http = { path = "../velt_http" }
 vpm.workspace = true
 velt_tscompat.workspace = true

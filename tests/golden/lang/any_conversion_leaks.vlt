@@ -1,0 +1,27 @@
+// check: no leaks
+// A checked conversion out of an `any` variable leaves the variable owned, and it is dropped
+// with its scope (#1103 review): numbers, strings, arrays, class instances, closures, nullable
+// and union targets.
+class A {
+  x: number = 1;
+}
+function main(): void {
+  let total = 0;
+  for (let i = 0; i < 100; i++) {
+    const v: any = i;
+    const k: number = v;
+    const s: any = "s" + i;
+    const t: string = s;
+    const w: any = new A();
+    const o: A = w;
+    const n: A | null = w;
+    const xs: any = [1, 2];
+    const ys: number[] = xs;
+    const f: any = (q: number): number => q + 1;
+    const g: (q: number) => number = f;
+    const u: number | string = s;
+    const unused: any | null = w;
+    total += k + t.length + o.x + (n !== null ? 1 : 0) + ys.length + g(1) + (typeof u === "string" ? 1 : 0);
+  }
+  console.log(total);
+}

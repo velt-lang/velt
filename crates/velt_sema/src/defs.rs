@@ -14,6 +14,15 @@ pub(crate) struct Generics {
     pub names: Vec<String>,
     /// Interface bounds per parameter (`T extends A & B`).
     pub bounds: Vec<Vec<Bound>>,
+    /// Per parameter, a function's default (`function f<T = string>()`, in terms of the
+    /// parameters before it), used when nothing infers it; `None` without one. Empty when
+    /// no parameter has one (a type's defaults live in `crate::type_defaults`).
+    pub defaults: Vec<Option<TyId>>,
+    /// Per parameter, a bound that is a type rather than an interface (`T extends Record<string,
+    /// V>`, `T extends string | number`, `T extends readonly X[]`), in terms of the parameters:
+    /// a type argument must be assignable to it (`crate::constraints`). Empty when no parameter
+    /// has one.
+    pub constraints: Vec<Option<TyId>>,
 }
 
 impl Generics {
@@ -191,8 +200,6 @@ pub(crate) struct FnInfo<'m> {
     pub ret: TyId,
     pub ret_span: Option<Span>,
     pub ret_source: RetSource,
-    /// The result is inferred from integers that behave like JS numbers (`expr::numbers`).
-    pub ret_inferred_int: bool,
     /// Pass modes are part of a dynamically dispatched ABI (vtable / interface / closure /
     /// extern): no ownership inference, moving out of params is an error.
     pub fixed_modes: bool,
@@ -225,6 +232,9 @@ pub(crate) struct FnInfo<'m> {
     pub is_private: bool,
     /// `get name()`: read as a property (`x.name`), never called with `()`.
     pub is_getter: bool,
+    /// An override without a written result of a method returning `this`: it returns `this`
+    /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
+    pub inherits_this: bool,
     /// Closures: stored or returned (captures by move), as opposed to passed directly.
     pub escaping: bool,
     /// Closures: the function values passed as parameters are always heap closures, so the
@@ -234,6 +244,45 @@ pub(crate) struct FnInfo<'m> {
     /// Indices of params that are `Owned` only because the body reassigns them: a caller that
     /// uses the argument again passes a clone (`crate::ownership::mutation`).
     pub soft_params: Vec<usize>,
+    /// Async closures: the captured variables the body modifies (name, first place). Allowed
+    /// when the closure stays on its task, an error when it may reach a thread boundary
+    /// (`crate::ownership::local_async`).
+    pub mutated_captures: Vec<(String, Span)>,
+}
+
+impl FnInfo<'_> {
+    /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose
+    /// `this` is a leading parameter that callers pass (`body::expr::this_param`)?
+    pub fn has_this_param(&self) -> bool {
+        matches!(self.kind, FnKind::Free | FnKind::Closure)
+            && self.this.is_some()
+            && self.source.is_some_and(|s| match s {
+                FnSource::Decl(d) => d.sig.this_param.is_some(),
+                _ => false,
+            })
+    }
+
+    /// The type the polymorphic `this` type resolves to in this function: its class in an
+    /// instance method.
+    pub fn this_type(&self) -> Option<TyId> {
+        match self.kind {
+            FnKind::Method => self.this.as_ref().map(|t| t.ty),
+            _ => None,
+        }
+    }
+
+    /// Is the result the polymorphic `this` type (`m(): this`, or `inherits_this`)?
+    pub fn returns_this(&self) -> bool {
+        if self.inherits_this {
+            return true;
+        }
+        let Some(FnSource::Decl(d)) = self.source else {
+            return false;
+        };
+        self.kind == FnKind::Method
+            && matches!(&d.sig.ret, Some(ast::TypeExpr { kind: ast::TypeExprKind::Named { path, args }, .. })
+                if path.len() == 1 && path[0].name == "this" && args.is_empty())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -245,7 +294,10 @@ pub(crate) struct MethodRef {
 #[derive(Clone)]
 pub(crate) struct FieldInfo {
     pub name: String,
+    /// The type a read gives: `declared`, or `declared | null` for an optional field.
     pub ty: TyId,
+    /// The written type, without the `null` a `?` adds (`Required` gives it back).
+    pub declared: TyId,
     pub span: Span,
     pub readonly: bool,
     pub optional: bool,
@@ -257,9 +309,21 @@ pub(crate) struct FieldInfo {
     pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
-    /// Declared without a type from an integer literal (`count = 0;`): reads are JS numbers
-    /// (`body::expr::numbers`).
-    pub inferred_int: bool,
+}
+
+/// An initializer a class gives a field it inherits (`AdtInfo::redefined`).
+#[derive(Clone, Debug)]
+pub(crate) struct Redefined {
+    /// The field (an index into `AdtInfo::fields`).
+    pub field: usize,
+    /// It runs right before the initializer of field `at`, one of the class's own
+    /// (`fields.len()`: after the last).
+    pub at: usize,
+    /// The name the class declares it by.
+    pub name: String,
+    pub init: Option<hir::Expr>,
+    /// What evaluating `init` may throw (as `FieldInfo::default_throws`).
+    pub throws: Vec<ThrowSrc>,
 }
 
 pub(crate) struct AdtInfo<'m> {
@@ -272,6 +336,10 @@ pub(crate) struct AdtInfo<'m> {
     /// All fields; for classes the base class's fields come first.
     pub fields: Vec<FieldInfo>,
     pub own_fields_start: usize,
+    /// Inherited fields this class gives an initializer of its own: an error class's
+    /// `name = "AppError"` (the prelude `Error`'s `#name`). They run among the class's own
+    /// initializers, in declaration order (hir `AdtDef::inherited_inits`).
+    pub redefined: Vec<Redefined>,
     pub base: Option<TyId>,
     pub methods: HashMap<String, MethodRef>,
     /// Constructor: own, or inherited from the nearest base class that has one.
@@ -287,6 +355,7 @@ pub(crate) struct AdtInfo<'m> {
     pub decl: Option<&'m ast::TypeDecl>,
 }
 
+#[derive(Clone)]
 pub(crate) struct VariantInfo {
     pub name: String,
     pub payload: Vec<TyId>,
@@ -351,6 +420,12 @@ pub(crate) struct GlobalInfo<'m> {
     pub init: Option<hir::Expr>,
     pub state: BodyState,
     pub src: GlobalSrc<'m>,
+    /// A module-level `let` (module state, #76): a slot of the module state, not a constant.
+    pub mutable: bool,
+    /// Kept in the module state, evaluated once per process: a module-level `let`, or a `const`
+    /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
+    /// (a function from a call, #802).
+    pub stored: bool,
 }
 
 /// Source of a constant: a module-level `const`, or a `static readonly` field of a type.
@@ -387,6 +462,16 @@ pub(crate) struct Extension {
     /// Target type pattern (uses `Param(0..generics)`).
     pub target: TyId,
     pub methods: HashMap<String, MethodRef>,
+}
+
+/// The member name of method-table key `key` (`set #v` names `#v`).
+pub(crate) fn key_member_name(key: &str) -> &str {
+    key.strip_prefix("set ").unwrap_or(key)
+}
+
+/// Does method-table key `key` name an ES private member (`#m`, `get #v`, `set #v`)?
+pub(crate) fn is_private_key(key: &str) -> bool {
+    key_member_name(key).starts_with(velt_syntax::ast::PRIVATE_NAME_PREFIX)
 }
 
 /// Method-table key of a class / interface / `extend` member: its name, or `set <name>` for a

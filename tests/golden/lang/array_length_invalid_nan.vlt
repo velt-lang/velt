@@ -1,0 +1,9 @@
+// `NaN` is not a valid array length.
+// Node throws `RangeError: Invalid array length`; Velt panics with the same text, and the
+// array is unchanged (array_length_invalid_*.vlt: a fraction, a `number` variable, `NaN`).
+function main() {
+  const zs = [1, 2];
+  console.log(zs);
+  zs.length = NaN;
+  console.log(zs);
+}

@@ -10,7 +10,7 @@ use velt_sema::hir::{Callee, Def, ExprKind as E};
 fn private_members_are_usable_inside_the_body_only() {
     ok_src(
         "class C { private a: i64 = 1; private f(): i64 { return this.a; }
-           g(): i64 { const xs = [1, 2]; return xs.reduce((acc, x) => acc + x * this.f(), this.a); }
+           g(): i64 { const xs: i64[] = [1, 2]; return xs.reduce((acc, x) => acc + x * this.f(), this.a); }
            static make(): C { const c = new C(); console.log(c.a); return c; } }
          function main() { console.log(C.make().g()); }",
     );
@@ -138,7 +138,7 @@ fn prelude_internals_are_private() {
 fn optional_chains_short_circuit() {
     ok_src(
         "class User { name: string = \"ann\"; }
-         function len(u: User | null): usize { return u?.name.length ?? 0; }
+         function len(u: User | null): number { return u?.name.length ?? 0; }
          function up(u: User | null): string { return u?.name.toUpperCase() ?? \"-\"; }
          function main() { console.log(len(null), up(new User())); }",
     );
@@ -160,4 +160,16 @@ fn getters_returning_a_field_borrow_this() {
     );
     let getter = common::hir_walk::func(&p, "Scope.signal");
     assert_eq!(getter.params[0].mode, velt_sema::hir::PassMode::Borrow);
+}
+
+/// An optional chain on an object whose type failed reports that type, not the local the
+/// chain binds its object to (`<chain@..>`).
+#[test]
+fn a_chain_on_an_object_of_a_failed_type_names_no_internal_local() {
+    let r = err_src(
+        "function g(p: Missing | null): f64 { return p?.get(\"a\").size ?? 0; }
+         function main() { console.log(g(null)); }",
+    );
+    assert!(!r.contains("<chain"), "{r}");
+    assert!(r.contains("`Missing`"), "{r}");
 }

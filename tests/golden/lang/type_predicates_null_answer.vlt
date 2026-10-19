@@ -1,0 +1,11 @@
+// A predicate that returns true for `null` (expected output from `node`, which then throws a
+// TypeError reading `length` of null): the call checks the value at run time.
+function ok(x: string | null): x is string {
+  return true;
+}
+function len(x: string | null): number {
+  if (ok(x)) return x.length;
+  return -1;
+}
+console.log(len("abc"));
+console.log(len(null));

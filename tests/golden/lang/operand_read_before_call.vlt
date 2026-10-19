@@ -1,0 +1,77 @@
+// Arguments and operands are evaluated left to right: an operand read before a later operand's
+// call keeps the value it had, even when the call changes it (#581).
+class N {
+  v: number = 3;
+
+  inc(): number {
+    this.v += 1;
+    return this.v;
+  }
+
+  plus(x: number): number {
+    return this.v + x;
+  }
+}
+
+class Outer {
+  inner: N = new N();
+}
+
+function show(a: number, b: number) {
+  console.log(a, b);
+}
+
+function bump(n: N): number {
+  n.v = 10;
+  return 0;
+}
+
+function main() {
+  const n = new N();
+  console.log(n.v, n.inc());
+  show(n.v, n.inc());
+  show(n.v, bump(n));
+  console.log(n.v + n.inc());
+  console.log(n.v < n.inc(), n.v);
+  const xs = [n.v, n.inc(), n.v];
+  console.log(xs.join(","));
+
+  let s = "a";
+  const f = (): string => {
+    s = "b";
+    return "c";
+  };
+  console.log(s + f());
+  let u = 1;
+  const h = (): number => {
+    u = 2;
+    return 1;
+  };
+  console.log(u == h());
+  let t = "abc";
+  const g = (): number => {
+    t = "xyz";
+    return 1;
+  };
+  console.log(t.charCodeAt(g()));
+
+  const o = new Outer();
+  const swap = (): number => {
+    o.inner = new N();
+    o.inner.v = 100;
+    return 1;
+  };
+  console.log(o.inner.plus(swap()));
+  const st = { a: 1.5, b: 2.5 };
+  const change = (): number => {
+    st.a = 50;
+    return 0;
+  };
+  console.log(st.a + change(), st.a);
+  const nums: number[] = [1, 2, 3];
+  const grow = (): number => {
+    nums.push(9);
+    return 0;
+  };
+  console.log([nums[0], grow(), nums[3]].join(","));
+}

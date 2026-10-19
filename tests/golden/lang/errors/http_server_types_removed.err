@@ -1,0 +1,8 @@
+http_server_types_removed.vlt:3:17: error: module `velt:http` has no member `Request`
+  = note: `velt:http` handlers take and return the global `Request` and `Response`, as in Deno and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, `Response.text(body, status)` is `new Response(body, { status })`; the migration table is in docs/std/http.md)
+
+http_server_types_removed.vlt:3:26: error: module `velt:http` has no member `Response`
+  = note: `velt:http` handlers take and return the global `Request` and `Response`, as in Deno and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, `Response.text(body, status)` is `new Response(body, { status })`; the migration table is in docs/std/http.md)
+
+http_server_types_removed.vlt:3:36: error: module `velt:http` has no member `ResponseWriter`
+  = note: a streamed body is a `BodyStream` from `velt:fetch`: `new Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`

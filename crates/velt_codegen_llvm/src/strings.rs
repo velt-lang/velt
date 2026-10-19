@@ -17,7 +17,9 @@
 //!
 //! The layout is rt_abi.md "Strings": `{w0, w1, w2}`, inline when the top bit of `w2` is set
 //! (byte length in bits 56..61, `0x40` of byte 23 set when non-ASCII, text in the value itself),
-//! otherwise `{ptr, units << 32 | len, cap}` (`cap == 0`: static).
+//! otherwise `{ptr, units << 32 | len, w2}`, where `w2` is 0 for a static string, the capacity
+//! for a plain heap one, and the slice form's flags, offset and capacity for a slice: generated
+//! code tests only `(int64_t)w2 > 0` (heap) and never reads `w2` as the capacity.
 
 use velt_vir::vir::Ty;
 

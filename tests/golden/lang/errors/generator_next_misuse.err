@@ -1,0 +1,8 @@
+generator_next_misuse.vlt:3:13: error: the value of `yield` cannot be used
+TypeScript allows this (`yield` evaluates to the argument of the next `next(value)` call, of the generator's `TNext` type); Velt doesn't when the type is not given (Velt does not default it to `any`); declare the generator's result as `Generator<T, void, N>`, with `N` the type of the values `next` passes, or write the `yield` as a statement of its own
+generator_next_misuse.vlt:8:21: error: mismatched types
+expected string, found f64
+generator_next_misuse.vlt:14:10: error: `next()` takes no argument
+`next(value)` makes the paused `yield` evaluate to `value`, which needs the generator's type to say what it takes: declare it `Generator<T, void, N>` (`N`: the type of the values `next` passes), or write `next()`
+generator_next_misuse.vlt:16:10: error: mismatched types
+expected f64, found string

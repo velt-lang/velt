@@ -5,6 +5,17 @@
 //   iterating never copies non-Copy elements. Like JS, they also get the element's index (a
 //   callback may take fewer parameters: `xs.map((x) => …)`). A callback may throw: the method throws what its
 //   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
+// - A callback may change the array through another reference (an alias, or an object holding
+//   it). Lowering passes a share of the element instead of a borrow when the array is one
+//   other references may reach (velt_vir stabilize.rs), so the argument stays valid when a
+//   push moves the buffer or a `pop` drops the element. The methods visit the indices below
+//   the length they started with, and stop at the length the callback leaves when it is
+//   shorter: `forEach`, `filter`, `reduce`, `some` and `every` skip the missing indices as JS
+//   does; JS's `find` family visits them with `undefined`, which a `T` cannot be; `map`, whose
+//   JS result would have holes, panics. `__intrinsic_may_alias(this)` is a constant, false when
+//   no other reference to an array of this type can exist: the length cannot change then, and
+//   the plain loop on `this.length` is all that is compiled. Otherwise the loop compares the
+//   index with one bound `n`, lowered after a callback shortened the array.
 // - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
 //   the elements themselves, like JS: objects are shared (another reference to the same object,
 //   a count increment), numbers, bool and strings are copied.
@@ -12,91 +23,204 @@
 //   `i64` with -1 for "absent", like JS.
 // - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 extend<T> Array<T> {
+  /**
+   * Performs the specified action for each element in an array.
+   * @param f - A function that accepts up to two arguments, the element and its index. forEach
+   * calls `f` one time for each element in the array, in order. Elements pushed meanwhile are
+   * not visited, and elements removed meanwhile are skipped, as in JS.
+   * @throws what `f` throws.
+   */
   forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        f(this[i], i as i64);
+      }
+      return;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
       f(this[i], i as i64);
+      if (this.length < n) {
+        n = this.length;
+      }
     }
   }
 
+  /**
+   * Calls a defined callback function on each element of an array, and returns an array that
+   * contains the results.
+   * @param f - A function that accepts up to two arguments, the element and its index. The map
+   * method calls `f` one time for each element in the array. If `f` shortens the array (through
+   * another reference to it), `map` panics, where JS would return an array with holes.
+   * @throws what `f` throws.
+   */
   map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
     const out: U[] = __intrinsic_array_with_capacity(this.length);
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        out.push(f(this[i], i as i64));
+      }
+      return out;
+    }
+    const n = this.length;
+    let end = n;
+    for (let i: usize = 0; i < end; i++) {
       out.push(f(this[i], i as i64));
+      if (this.length < end) {
+        end = this.length;
+      }
+    }
+    if (out.length < n) {
+      // JS leaves holes for the missing elements, which a `U[]` cannot hold.
+      panic("the array shrank while `map` ran");
     }
     return out;
   }
 
+  /**
+   * Returns the elements of an array that meet the condition specified in a callback function.
+   * The elements themselves are returned, like JS: objects are shared, not copied.
+   * @param keep - A function that accepts up to two arguments, the element and its index. The
+   * filter method calls `keep` one time for each element in the array.
+   * @throws what `keep` throws.
+   */
   filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
-    for (let i: usize = 0; i < this.length; i++) {
-      if (keep(this[i], i as i64)) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (keep(this[i], i as i64)) {
+          out.push(__intrinsic_share(this[i]));
+        }
+      }
+      return out;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (keep(this[i], i as i64) && i < this.length) {
         out.push(__intrinsic_share(this[i]));
+      }
+      if (this.length < n) {
+        n = this.length;
       }
     }
     return out;
   }
 
+  /**
+   * Calls the specified callback function for all the elements in an array. The return value of
+   * the callback function is the accumulated result, and is provided as an argument in the next
+   * call to the callback function.
+   * @param f - A function that accepts up to three arguments: the accumulated value, the element
+   * and its index. The reduce method calls `f` one time for each element in the array.
+   * @param init - The initial value of the accumulation, passed to the first call of `f`.
+   * Unlike JS, it is required.
+   * @returns the accumulated value: `init` for an empty array.
+   * @throws what `f` throws.
+   */
   reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        acc = f(acc, this[i], i as i64);
+      }
+      return acc;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
       acc = f(acc, this[i], i as i64);
+      if (this.length < n) {
+        n = this.length;
+      }
     }
     return acc;
   }
 
-  // First element matching `pred` (see header), or null.
-  find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
-    for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i], i as i64)) {
+  /** First element matching `pred` (see header), or `undefined`. */
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return __intrinsic_share(this[i]);
+        }
+      }
+      return undefined;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (pred(this[i], i as i64) && i < this.length) {
         return __intrinsic_share(this[i]);
       }
+      if (this.length < n) {
+        n = this.length;
+      }
     }
-    return null;
+    return undefined;
   }
 
-  // Index of the first element matching `pred`, or -1.
+  /** Index of the first element matching `pred`, or -1. */
   findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return i as i64;
+        }
+      }
+      return -1;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
       if (pred(this[i], i as i64)) {
         return i as i64;
+      }
+      if (this.length < n) {
+        n = this.length;
       }
     }
     return -1;
   }
 
-  // Last element matching `pred` (see header), or null.
-  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
+  /** Last element matching `pred` (see header), or `undefined`. */
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
     const i = this.findLastIndex(pred);
-    return i < 0 ? null : __intrinsic_share(this[i as usize]);
-  }
-
-  // Index of the last element matching `pred`, or -1.
-  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
-    let i = this.length;
-    while (i > 0) {
-      i--;
-      if (pred(this[i], i as i64)) {
-        return i as i64;
-      }
-    }
-    return -1;
-  }
-
-  // The element at `index` (negative counts from the end; see header), or null when
-  // out of range.
-  at(index: i64): T | null {
-    const i = index < 0 ? index + (this.length as i64) : index;
-    if (i < 0 || i >= (this.length as i64)) {
-      return null;
+    if (i < 0 || i as usize >= this.length) {
+      return undefined;
     }
     return __intrinsic_share(this[i as usize]);
   }
 
-  // Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
-  // the array; here the result is `void`, like `reverse` and `sort`: returning the array would
-  // share it, which makes every array of its type reference counted in the whole program.
-  // `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
+  /** Index of the last element matching `pred`, or -1. */
+  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if ((!__intrinsic_may_alias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * The element at `index` (negative counts from the end; see header), or `undefined` when
+   * out of range.
+   */
+  at(index: i64): T | undefined {
+    const i = index < 0 ? index + (this.length as i64) : index;
+    if (i < 0 || i >= (this.length as i64)) {
+      return undefined;
+    }
+    return __intrinsic_share(this[i as usize]);
+  }
+
+  /**
+   * Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
+   * the array; here the result is `void`, like `reverse` and `sort`: returning the array would
+   * share it, which makes every array of its type reference counted in the whole program.
+   * `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
+   */
   fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
@@ -104,25 +228,66 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * Determines whether the specified callback function returns true for any element of an array.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * some method calls `pred` for each element in the array until it returns true, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
   some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
       if (pred(this[i], i as i64)) {
         return true;
+      }
+      if (this.length < n) {
+        n = this.length;
       }
     }
     return false;
   }
 
+  /**
+   * Determines whether all the members of an array satisfy the specified test.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * every method calls `pred` for each element in the array until it returns false, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
   every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    if (!__intrinsic_may_alias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (!pred(this[i], i as i64)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
       if (!pred(this[i], i as i64)) {
         return false;
+      }
+      if (this.length < n) {
+        n = this.length;
       }
     }
     return true;
   }
 
-  // Structural equality (`==`), so `NaN` is never found (JS `indexOf` semantics).
+  /**
+   * Position of the first element `==` `x`, or -1. `==` compares objects by identity and numbers
+   * by value, like JS's `===`, so `NaN` is never found (JS `indexOf` semantics).
+   */
   indexOf(x: T): i64 {
     for (let i: usize = 0; i < this.length; i++) {
       if (this[i] == x) {
@@ -132,6 +297,11 @@ extend<T> Array<T> {
     return -1;
   }
 
+  /**
+   * Returns the index of the last occurrence of a specified value in an array, or -1 if it is not
+   * present. Compares like `indexOf`.
+   * @param x - The value to locate in the array.
+   */
   lastIndexOf(x: T): i64 {
     let i = this.length;
     while (i > 0) {
@@ -143,12 +313,33 @@ extend<T> Array<T> {
     return -1;
   }
 
+  /**
+   * Determines whether an array includes a certain element, returning true or false as
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
+   * @param x - The element to search for.
+   */
   includes(x: T): bool {
-    return this.indexOf(x) >= 0;
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `==` itself can compare otherwise: the number `NaN`.
+    if (x == x) {
+      return false;
+    }
+    for (let i: usize = 0; i < this.length; i++) {
+      if (__intrinsic_includes_eq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  // Clones of the elements in [start, end). JS semantics: negative positions count from the
-  // end, out-of-range positions are clamped, and `end` defaults to the length.
+  /**
+   * The elements in [start, end), themselves (objects are shared, as in JS). JS semantics:
+   * negative positions count from the end, out-of-range positions are clamped, and `end`
+   * defaults to the length.
+   */
   slice(start: i64 = 0, end: i64 = 9223372036854775807): T[] {
     const lo = clampPosition(start, this.length);
     const hi = clampPosition(end, this.length);
@@ -162,7 +353,7 @@ extend<T> Array<T> {
     return out;
   }
 
-  // New array with this array's elements followed by `other`'s.
+  /** New array with this array's elements followed by `other`'s. */
   concat(other: T[]): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.length + other.length);
     for (let i: usize = 0; i < this.length; i++) {
@@ -174,13 +365,15 @@ extend<T> Array<T> {
     return out;
   }
 
-  // Reverses in place (JS also returns the array; here the result is `void`, see `fill`).
+  /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
   reverse() {
     reverseRange(this, 0, this.length);
   }
 
-  // Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
-  // inserts `items` there, and returns the removed elements, like JS. O(length).
+  /**
+   * Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
+   * inserts `items` there, and returns the removed elements, like JS. O(length).
+   */
   splice(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
@@ -212,18 +405,22 @@ extend<T> Array<T> {
     return out;
   }
 
-  // Removes and returns the first element, or null when the array is empty (JS: undefined).
-  // O(length): the other elements move down by one, as V8 does for large arrays. A queue that
-  // takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
-  shift(): T | null {
+  /**
+   * Removes and returns the first element, or `undefined` when the array is empty.
+   * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
+   * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+   */
+  shift(): T | undefined {
     if (this.length == 0) {
-      return null;
+      return undefined;
     }
     return __intrinsic_array_remove(this, 0);
   }
 
-  // Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
-  // items): the items are pushed, then rotated to the front by three reversals.
+  /**
+   * Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
+   * items): the items are pushed, then rotated to the front by three reversals.
+   */
   unshift(...items: T[]): i64 {
     if (items.length > 0) {
       const old = this.length;
@@ -237,8 +434,10 @@ extend<T> Array<T> {
     return this.length as i64;
   }
 
-  // Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
-  // `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
+  /**
+   * Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
+   * `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
+   */
   truncate(length: i64) {
     if (length < 0) {
       panic(`RangeError: Invalid array length: ${length}`);
@@ -248,11 +447,39 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * The number of elements, for `xs.length -= k` and `xs.length--` (which set it through the
+   * setter below); a plain read of `xs.length` compiles to the length itself.
+   */
+  get length(): number {
+    return this.length as number;
+  }
+
+  /**
+   * `xs.length = n`, as in JS: drops the elements from `n` on (`xs.length = 0` empties the
+   * array). Like JS, a length that is not a whole number from 0 to 2^32 - 1 (negative,
+   * fractional, `NaN`) panics with `RangeError: Invalid array length`. A larger `n` panics too:
+   * JS would add empty slots, which Velt has no value for (push the elements, or build the
+   * array with `new Array<T>(n).fill(v)`).
+   */
+  set length(n: number) {
+    if (!(n >= 0 && __intrinsic_trunc(n) == n && n <= 4294967295)) {
+      panic("RangeError: Invalid array length");
+    }
+    const len = n as usize;
+    if (len > this.length) {
+      panic(
+        `cannot grow an array by setting its length (from ${this.length} to ${len}): JS would add empty slots, which Velt has no value for; push the elements instead`,
+      );
+    }
+    __intrinsic_array_truncate(this, len);
+  }
+
   // ES2023 copying forms (`toReversed`, `toSpliced`, `with`; `toSorted` is in sort.vlt): a new
   // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
   // are shared, as in JS); the arrays themselves are independent.
 
-  // The elements in reverse order.
+  /** The elements in reverse order. */
   toReversed(): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.length);
     let i = this.length;
@@ -263,8 +490,10 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
-  // `items` inserted.
+  /**
+   * `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
+   * `items` inserted.
+   */
   toSpliced(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
@@ -283,8 +512,10 @@ extend<T> Array<T> {
     return out;
   }
 
-  // A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
-  // when `index` is out of range.
+  /**
+   * A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
+   * when `index` is out of range.
+   */
   with(index: i64, value: T): T[] {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
@@ -295,12 +526,15 @@ extend<T> Array<T> {
     return out;
   }
 
+  /** Whether the array has no elements (`xs.length == 0`). */
   isEmpty(): bool {
     return this.length == 0;
   }
 
-  // `[index, element]` pairs (see header). JS returns an iterator; an array
-  // serves the same `for (const [i, x] of xs.entries())` loops.
+  /**
+   * `[index, element]` pairs (see header). JS returns an iterator; an array
+   * serves the same `for (const [i, x] of xs.entries())` loops.
+   */
   entries(): [usize, T][] {
     const out: [usize, T][] = __intrinsic_array_with_capacity(this.length);
     for (let i: usize = 0; i < this.length; i++) {
@@ -309,108 +543,204 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `join` for element types without their own (string enums, literal unions, objects): each
-  // element as a template literal shows it (`${x}`; for objects that is the `console.log`
-  // form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
-  // arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
+  /**
+   * `join` for element types without their own (string enums, literal unions, objects): each
+   * element as JS's `String(x)` writes an array element (a class instance through its
+   * `toString()`, `[object Object]` for another object, `[object Map]` for a map). A struct
+   * with its own `toString()`, an `Error` or a `RegExp` element is a compile error: write
+   * `xs.map((x) => x.toString()).join(sep)`. Strings, numbers and bools have exact ones
+   * below; arrays of arrays and of nullable elements have JS's in array_nested.vlt.
+   */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
       if (i > 0) {
         s += sep;
       }
-      s += `${this[i]}`;
+      // A one-element tuple is written as its element is written in an array (no allocation).
+      const one: [T] = [__intrinsic_share(this[i])];
+      s += `${one}`;
     }
     return s;
+  }
+
+  /**
+   * The elements joined with ",", each as JS's `String(x)` writes an array element: what
+   * `${xs}` writes (`[1, [2, 3], null].toString()` is `"1,2,3,"`).
+   */
+  toString(): string {
+    return `${this}`;
   }
 }
 
 declare function velt_rt_str_join(parts: string[], sep: string): string;
 
 extend Array<string> {
-  // Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
-  // of exactly that size.
+  /**
+   * Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
+   * of exactly that size.
+   */
   join(sep: string = ","): string {
     return velt_rt_str_join(this, sep);
   }
 }
 
-// `join` on numbers and booleans: each element is converted like `String(x)` (the same text
-// `console.log` prints), then joined as strings. One `extend` per element type, since a generic
-// `T` has no `toString`.
+/**
+ * `join` on numbers and booleans: each element is converted like `String(x)` (the same text
+ * `console.log` prints), then joined as strings. One `extend` per element type, since a generic
+ * `T` has no `toString`.
+ */
 extend Array<i8> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i16> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<isize> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u8> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u16> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<usize> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<f32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<f64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<bool> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
@@ -426,8 +756,10 @@ function clampPosition(pos: i64, len: usize): usize {
   return pos > n ? len : pos as usize;
 }
 
-// `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
-// of `v` in one allocation.
+/**
+ * `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
+ * of `v` in one allocation.
+ */
 export function __arrayFilled<T>(n: i64, v: T): T[] {
   const len: usize = n > 0 ? n as usize : 0;
   const out: T[] = __intrinsic_array_with_capacity(len);
@@ -437,7 +769,7 @@ export function __arrayFilled<T>(n: i64, v: T): T[] {
   return out;
 }
 
-// `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index.
+/** `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index. */
 export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
   const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
   for (let i = 0; i < n; i++) {

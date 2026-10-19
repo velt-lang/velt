@@ -1,0 +1,39 @@
+// check: no leaks
+// A method called on an object held in a field, whose body replaces that field (#1188): the
+// holder is held by a module-level `let`, nested in one, or is a counted object a module array
+// and a variable both reach. Each case has classes of its own, so one case's counting does not
+// change another's. Identical to Node.
+class InnerA {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  swap(): string { slot.inner = new InnerA("slot2"); return this.label + "!"; }
+}
+class HolderA { inner: InnerA; constructor(i: InnerA) { this.inner = i; } }
+let slot = new HolderA(new InnerA("slot" + String(1)));
+
+class InnerB {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  swap(): string { holders[0].inner = new InnerB("arr2"); return this.label + "?"; }
+}
+class HolderB { inner: InnerB; constructor(i: InnerB) { this.inner = i; } }
+const holders: HolderB[] = [];
+
+class InnerC {
+  label: string;
+  constructor(l: string) { this.label = l; }
+  swap(): string { renew(); return this.label + "#"; }
+}
+class Mid { inner: InnerC = new InnerC("nested" + String(1)); }
+class Outer { mid: Mid = new Mid(); }
+let outer = new Outer();
+function renew(): void { outer.mid = new Mid(); outer.mid.inner.label = "nested2"; }
+
+function main(): void {
+  console.log(slot.inner.swap(), slot.inner.label);
+  const h = new HolderB(new InnerB("arr" + String(1)));
+  holders.push(h);
+  console.log(h.inner.swap(), h.inner.label);
+  console.log(holders[0].inner.swap(), holders[0].inner.label);
+  console.log(outer.mid.inner.swap(), outer.mid.inner.label);
+}

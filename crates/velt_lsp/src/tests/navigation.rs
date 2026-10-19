@@ -168,7 +168,13 @@ fn definition_of_locals_items_members_and_imports() {
     client.shutdown();
 }
 
-fn hover_text(client: &mut Client, doc: &Url, text: &str, needle: &str, delta: usize) -> String {
+pub(super) fn hover_text(
+    client: &mut Client,
+    doc: &Url,
+    text: &str,
+    needle: &str,
+    delta: usize,
+) -> String {
     let (line, col) = pos_of(text, needle, delta);
     let hover = client.request("textDocument/hover", at(doc, line, col));
     let value = hover["contents"]["value"]
@@ -275,5 +281,108 @@ fn completion_after_a_dot_lists_members() {
     assert_eq!(complete(&mut client, "this."), ["name", "greet"]);
     assert_eq!(complete(&mut client, "u."), ["name", "greet"]);
     assert_eq!(complete(&mut client, "Color."), ["Red", "Green"]);
+    client.shutdown();
+}
+
+/// "▶ Run" and "Debug" sit above `main`, with the document as the commands' argument, for a
+/// client that asks for them (the VS Code extension, which has the commands); a module without
+/// `main` gets none.
+#[test]
+fn code_lenses_run_and_debug_main() {
+    let mut client = Client::start_with(json!({
+        "capabilities": {},
+        "initializationOptions": { "runLenses": true },
+    }));
+    assert!(client.init["capabilities"]["codeLensProvider"].is_object());
+    let app = uri("nav_app.vlt");
+    client.open(&uri("nav_util.vlt"), UTIL);
+    client.open(&app, APP);
+    let params = json!({ "textDocument": { "uri": app } });
+    let lenses = client.request("textDocument/codeLens", params);
+    let main_line = APP
+        .lines()
+        .position(|l| l.starts_with("function main"))
+        .unwrap();
+    let got: Vec<(String, String, u64)> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            assert_eq!(l["command"]["arguments"], json!([app]));
+            (
+                l["command"]["title"].as_str().unwrap().to_string(),
+                l["command"]["command"].as_str().unwrap().to_string(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let line = main_line as u64;
+    assert_eq!(
+        got,
+        [
+            ("▶ Run".into(), "velt.runFile".into(), line),
+            ("Debug".into(), "velt.debugFile".into(), line)
+        ]
+    );
+    let util = uri("nav_util.vlt");
+    let none = client.request(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": util } }),
+    );
+    assert_eq!(none, json!([]));
+    client.shutdown();
+}
+
+/// In a test file, each test `velt test` would run gets "▶ Run test" and "Debug test" with its
+/// name; a `test_*` function it skips (not exported, or with parameters) gets none.
+#[test]
+fn code_lenses_run_and_debug_tests() {
+    let mut client = Client::start_with(json!({
+        "capabilities": {},
+        "initializationOptions": { "runLenses": true },
+    }));
+    const TESTS: &str = "export function test_add() {\n  assert(1 + 1 == 2);\n}\n\n\
+                         function test_hidden() {}\n\n\
+                         export function test_with(n: number) {}\n";
+    let file = uri("math.test.vlt");
+    client.open(&file, TESTS);
+    let lenses = client.request(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": file } }),
+    );
+    let got: Vec<(String, String, Value, u64)> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["command"]["title"].as_str().unwrap().to_string(),
+                l["command"]["command"].as_str().unwrap().to_string(),
+                l["command"]["arguments"].clone(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let args = json!([file, "test_add"]);
+    assert_eq!(
+        got,
+        [
+            ("▶ Run test".into(), "velt.runTest".into(), args.clone(), 0),
+            ("Debug test".into(), "velt.debugTest".into(), args, 0)
+        ]
+    );
+    client.shutdown();
+}
+
+/// Other clients (Neovim, Helix, Zed) don't have the lenses' commands, so they get none.
+#[test]
+fn plain_clients_get_no_code_lenses() {
+    let (mut client, app) = open_app();
+    assert!(client.init["capabilities"]["codeLensProvider"].is_null());
+    let r = client.request_raw(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": app } }),
+    );
+    assert!(r.response_result.is_err());
     client.shutdown();
 }

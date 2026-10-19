@@ -4,7 +4,7 @@
 // (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
 // class instances per call (tests/golden/bugs/async_closure_call_clones_class_capture.vlt).
 import { channel } from "velt:channel";
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class Store {
   name: string;
@@ -26,7 +26,8 @@ async function main() {
   const store = shared(new Mutex<Store>(new Store("store")));
   const started = channel<bool>();
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    if (req.path == "/slow") {
+    const path = new URL(req.url).pathname;
+    if (path == "/slow") {
       try {
         await started.send(true);
       } catch (e) {
@@ -34,7 +35,7 @@ async function main() {
       }
       await sleep(200);
     }
-    return Response.text(`${store.with((s) => s.name)} ${req.path}`);
+    return new Response(`${store.with((s) => s.name)} ${path}`);
   });
   const base = `http://127.0.0.1:${server.port}`;
   console.log(await get(`${base}/fast`));

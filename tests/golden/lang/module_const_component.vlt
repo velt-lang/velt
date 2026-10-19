@@ -1,0 +1,33 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// A module constant initialized by a pure call (`const Counter = component(...)`), used as a
+// JSX component, as sigx-style component libraries do.
+
+import { render } from "./_jsx_test_provider/render";
+
+type Props = { start: number };
+type Setup = (props: Props) => () => JSX.Element;
+
+function component(setup: Setup): (props: Props) => JSX.Element {
+  return (props: Props): JSX.Element => {
+    const view = setup(props);
+    return view();
+  };
+}
+
+const Counter = component((props: Props) => {
+  const count = props.start + 1;
+  return (): JSX.Element => <p>Count: {count}</p>;
+});
+
+async function main() {
+  console.log(await render(<Counter start={1} />));
+  console.log(
+    await render(
+      <div>
+        <Counter start={10} />
+        <Counter start={20} />
+      </div>,
+    ),
+  );
+}

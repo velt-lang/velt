@@ -2,7 +2,8 @@
 //! (the same sources as an rlib inside `velt`, for the `velt dev` JIT host) and `velt_rt_shared`
 //! (the same sources as the shared library debug builds link):
 //! - `velt_rt_host` gets `cfg(velt_rt_host)`, which drops the C `main` (the host has its own);
-//! - `velt_rt_shared` gets `cfg(velt_rt_shared)`, which drops it too (the executable has its own);
+//! - `velt_rt_shared` gets `cfg(velt_rt_shared)`, which drops it too (the executable has its own),
+//!   and on macOS the install name `@rpath/libvelt_rt_shared.dylib`;
 //! - both get `$OUT_DIR/abi_symbols.rs`: every `#[no_mangle] extern "C"` function of the runtime
 //!   as a `(name, address)` table, which the JIT registers so generated code can call the runtime.
 //!   The addresses come from `extern "C"` declarations of the same symbols, so the table needs
@@ -15,13 +16,28 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(velt_rt_shared)");
     match std::env::var("CARGO_PKG_NAME").as_deref() {
         Ok("velt_rt_host") => println!("cargo::rustc-cfg=velt_rt_host"),
-        Ok("velt_rt_shared") => println!("cargo::rustc-cfg=velt_rt_shared"),
+        Ok("velt_rt_shared") => {
+            println!("cargo::rustc-cfg=velt_rt_shared");
+            // Executables linked against the dylib record its install name; rustc's default is
+            // the absolute path it was built at, which a toolchain installed elsewhere does not
+            // have. `@rpath/` makes them find it through the rpath `velt_link` gives them.
+            if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+                println!(
+                    "cargo::rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libvelt_rt_shared.dylib"
+                );
+            }
+        }
         _ => {}
     }
     // Both packages build from crates/velt_rt/src.
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
     let src = manifest.join("../velt_rt/src");
     println!("cargo::rerun-if-changed={}", src.display());
+    // Listing the sources replaces cargo's default of rerunning when this script changes.
+    println!(
+        "cargo::rerun-if-changed={}",
+        manifest.join("../velt_rt/build.rs").display()
+    );
     let mut names = vec![];
     collect(&src, &mut names);
     names.sort();

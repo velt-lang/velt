@@ -1,0 +1,44 @@
+Velt
+Copyright (c) 2026 The Velt contributors. Licensed under the MIT license or the Apache License
+2.0, at your option (LICENSE-MIT, LICENSE-APACHE).
+
+This product includes documentation text adapted from TypeScript
+(https://github.com/microsoft/TypeScript):
+
+  The doc comments in std/prelude/*.vlt are partly adapted from the JSDoc in TypeScript's
+  standard library declarations (src/lib/*.d.ts, as shipped in the `typescript` package,
+  lib/lib.*.d.ts). The prelude files that contain such text say so in a comment at the top.
+  The text was extracted with scripts/gen-prelude-docs.js and edited for Velt. These adapted
+  passages remain under the Apache License 2.0 only; they are not offered under the MIT license.
+
+  Copyright (c) Microsoft Corporation. All rights reserved.
+
+  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+  except in compliance with the License. You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0 (also in LICENSE-APACHE).
+
+  THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+  EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OR CONDITIONS
+  OF TITLE, FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABLITY OR NON-INFRINGEMENT.
+
+Release toolchains bundle third-party programs and libraries for linking (lib/velt/,
+lib/targets/; docs/internals/linking.md):
+
+  lib/velt/lld (lld.exe) is LLVM's linker, built from the LLVM project's sources
+  (https://github.com/llvm/llvm-project). Copyright (c) the LLVM project contributors. Licensed
+  under the Apache License 2.0 with LLVM Exceptions; the full text, with the notices of the
+  third-party code LLVM includes, is lib/velt/LICENSE.txt (crates/velt_link/kit/licenses/
+  LLVM-LICENSE.txt in the repository). The libunwind.a in the musl link kits
+  (lib/targets/*-linux-musl/) is LLVM's libunwind under the same license, as shipped with the
+  Rust toolchain.
+
+  The musl link kits (lib/targets/*-linux-musl/: crt1.o, crti.o, crtn.o, crtbegin.o,
+  crtend.o, libc.a) are musl libc (https://musl.libc.org) as shipped with the Rust toolchain.
+  Copyright (c) 2005-2020 Rich Felker, et al. Licensed under the MIT license; the full text and
+  the notices of the code musl includes are lib/targets/*-linux-musl/COPYRIGHT
+  (crates/velt_link/kit/licenses/musl-COPYRIGHT.txt in the repository).
+
+  The other link kits are written by Velt: Windows import libraries generated from lists of the
+  system DLLs' exported names, Linux stub libraries generated from lists of glibc's exported
+  symbol names and versions, and macOS .tbd stubs listing the system libraries' exported symbol
+  names. They contain no code from Microsoft, the GNU C Library or Apple.

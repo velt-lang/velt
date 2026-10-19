@@ -1,0 +1,2 @@
+quoted_property_names_reserved_index.vlt:13:15: error: the property name "[Symbol.iterator]" is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys
+quoted_property_names_reserved_index.vlt:7:17: error: the property name "#x" is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys
