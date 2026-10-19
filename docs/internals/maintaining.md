@@ -140,9 +140,9 @@ not a reason for another round.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
-  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for `velt check --ts-compat`
-  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
-  `tests/tscompat-oracle`), and the benchmark guard
+  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for
+  `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
+  pinned in `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
