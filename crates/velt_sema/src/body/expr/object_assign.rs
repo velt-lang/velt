@@ -63,7 +63,11 @@ impl FnCx<'_, '_> {
             return None;
         }
         let probe = self.expr(target, None, Want::Borrow);
-        if self.cx.ty.is_bottom(probe.ty) || !reads_place(&probe) {
+        let function = matches!(
+            self.cx.ty.kind(probe.ty),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        );
+        if self.cx.ty.is_bottom(probe.ty) || function || !reads_place(&probe) {
             return None;
         }
         let place = self.place_once(target, init.span, out);

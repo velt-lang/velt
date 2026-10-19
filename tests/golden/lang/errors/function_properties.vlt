@@ -1,0 +1,20 @@
+// Functions with properties: what is not supported yet. A required member must get its value
+// right after the cast (Node would read `undefined` before the write), a function without a
+// callable type has no properties of its own (TypeScript allows them on a `const` function), and
+// overloads with members are not supported. tsc --strict accepts the first two.
+interface Runner {
+  (): number;
+  stop(): void;
+}
+const runner = (() => 1) as Runner;
+console.log(runner());
+runner.stop = () => {};
+
+const f = () => 1;
+f.label = "one";
+
+interface Parse {
+  (s: string): number;
+  (s: number): number;
+  strict: boolean;
+}

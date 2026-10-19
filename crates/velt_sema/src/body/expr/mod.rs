@@ -13,6 +13,7 @@ mod await_union;
 mod builtins;
 mod call;
 mod call_apply;
+mod callables;
 mod callback;
 mod callback_sig;
 mod chain;
@@ -120,6 +121,7 @@ use super::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
 pub(crate) use call_apply::is_member_read;
+pub(crate) use callables::{property_writes, PendingWrites};
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
@@ -218,9 +220,10 @@ impl FnCx<'_, '_> {
                 type_args,
                 args,
                 optional: false,
-            } if self.object_assign_callee(callee) => {
-                self.object_assign_call(type_args, args, want, span)
-            }
+            } if self.object_assign_callee(callee) => match self.callable_assign(e, exp, span) {
+                Some(h) => h,
+                None => self.object_assign_call(type_args, args, want, span),
+            },
             A::Call {
                 callee,
                 type_args,

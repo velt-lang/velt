@@ -1,0 +1,22 @@
+// A function with properties built by `Object.assign` onto a variable is a new object in Velt,
+// while JavaScript adds the properties to the function itself: using the variable again after
+// the call is not supported yet (a use in the same call or in a closure is fine). JSON of one
+// is `undefined` at the top level (left out of objects and `null` in arrays work), and parsing
+// into one makes no sense. tsc --strict accepts this file.
+interface R {
+  (): number;
+  v: number;
+}
+const fn = () => 5;
+const a = Object.assign(fn, { v: 1 });
+a.v = 10;
+const b: R = Object.assign(fn, { v: 3 });
+console.log(a.v, b.v);
+
+function watch(): R {
+  const stop = () => 1;
+  const later = () => stop();
+  return Object.assign(stop, { v: later() });
+}
+console.log(watch().v, JSON.stringify(watch()));
+const parsed: R = JSON.parse("{}");

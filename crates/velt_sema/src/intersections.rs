@@ -58,6 +58,49 @@ impl Ctx<'_> {
         self.intersect(operands, names, env.module, t.span)
     }
 
+    /// The function type operands of an intersection with object types made callable object
+    /// types (`crate::callables`); false (reported at `span`) when there is more than one
+    /// function type (overloads, not supported).
+    fn callable_operands(
+        &mut self,
+        operands: &mut [(TyId, Span)],
+        module: usize,
+        span: Span,
+    ) -> bool {
+        let is_fn = |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. });
+        let fns: Vec<TyId> = operands
+            .iter()
+            .map(|&(o, _)| o)
+            .filter(|&o| is_fn(self, o))
+            .collect();
+        if fns.is_empty() || operands.len() < 2 {
+            return true;
+        }
+        let mut calls: Vec<TyId> = fns.clone();
+        for &(o, _) in operands.iter() {
+            if let Some(c) = self.call_type(o) {
+                calls.push(c);
+            }
+        }
+        calls.dedup();
+        if fns.len() == operands.len() || calls.iter().any(|&c| c != calls[0]) {
+            self.error(
+                Diagnostic::error(
+                    "intersections of function types (overloads) are not supported",
+                    span,
+                )
+                .with_note("declare one function type with the parameter types every call needs"),
+            );
+            return false;
+        }
+        for op in operands.iter_mut() {
+            if is_fn(self, op.0) {
+                op.0 = self.callable_part(op.0, module);
+            }
+        }
+        true
+    }
+
     /// Is `t` an intersection's part that defers it (#350): a type parameter or a deferred type,
     /// also with `null` (`T | null`).
     fn deferred_part(&self, t: TyId) -> bool {
@@ -76,7 +119,9 @@ impl Ctx<'_> {
         span: Span,
     ) -> TyId {
         for (&(ty, at), name) in operands.iter().zip(names) {
+            // A function type makes a function with properties once the parts are known.
             if self.deferred_part(ty)
+                || matches!(self.ty.kind(ty), TyKind::FnPtr { .. })
                 || self.brandable(ty)
                 || self.dynamic(ty).is_some()
                 || self.has_type_params_at_head(ty)
@@ -232,20 +277,11 @@ impl Ctx<'_> {
             }
             _ => None,
         };
-        // A function with properties: an interface or object type with call signatures and
-        // members (`{ (): T; stop(): void }`, which the parser writes as this intersection).
-        let is_fn =
-            |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_));
-        if operands.iter().any(|&(o, _)| is_fn(self, o))
-            && operands.iter().any(|&(o, _)| self.is_object_type(o))
-        {
-            self.error(
-                Diagnostic::error(
-                    "a function with properties (call signatures next to members) is not supported yet (#921)",
-                    span,
-                )
-                .with_note("pass the function and the members separately, or an object with the function as a method"),
-            );
+        // A function with properties (#921): an interface or object type with a call signature
+        // and members (`{ (): T; stop(): void }`, which the parser writes as this
+        // intersection). The function type is the callable object type `{ #call: F }`
+        // (`crate::callables`), which merges with the members as any object type does.
+        if !self.callable_operands(&mut operands, module, span) {
             return self.ty.error;
         }
         for (&(ty, at), name) in operands.iter().zip(&names) {
@@ -269,6 +305,11 @@ impl Ctx<'_> {
                     );
                     return self.ty.error;
                 }
+            }
+        }
+        if self.is_object_type(acc) {
+            if let Some(fields) = Self::call_field_first(&self.public_fields(acc)) {
+                acc = self.anon_type_with(&fields, module);
             }
         }
         self.declare_intersection_fields(acc, &operands);

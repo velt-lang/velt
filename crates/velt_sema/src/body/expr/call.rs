@@ -309,6 +309,13 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(f) => f,
         };
+        // A function with properties (#921): a call of the function it holds.
+        if self.cx.is_callable_object(f.ty) {
+            return match self.call_of_callable(f, span) {
+                Some(f) => self.call_value(f, args, span),
+                None => self.error_expr(span),
+            };
+        }
         let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,

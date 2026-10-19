@@ -34,6 +34,7 @@ mod ast_walk;
 mod body;
 mod brands;
 mod call_sigs;
+mod callables;
 mod collect;
 mod copy_flow;
 mod creation_notes;

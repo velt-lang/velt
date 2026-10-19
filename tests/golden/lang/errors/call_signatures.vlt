@@ -1,5 +1,5 @@
-// Call signatures: a function with properties, overloaded and generic call signatures and
-// construct signatures are not supported yet; a function must match the signature.
+// Call signatures: overloaded and generic call signatures and construct signatures are not
+// supported yet; a function must match the signature (`Runner`, a function with properties, is).
 interface Runner {
   (): number
   stop(): void

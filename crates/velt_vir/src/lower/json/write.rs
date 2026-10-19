@@ -51,6 +51,12 @@ impl FnLower<'_, '_> {
 
     /// Append `*place` (of concrete type `ty`) to the builder at `buf`.
     pub(super) fn json_write(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        // A function with properties is a function to JSON: `null` as an array element, as
+        // in JavaScript (object members holding one are left out, below).
+        if self.json_callable(ty) {
+            self.push_text(buf, "null");
+            return;
+        }
         if self.json_inline(ty) {
             self.json_write_expand(buf, place, ty, None);
         } else {
@@ -276,6 +282,14 @@ impl FnLower<'_, '_> {
             if velt_sema::property_order::is_hidden_key(&name) {
                 continue;
             }
+            // A member holding a function with properties is left out, as a function is.
+            let payload = match self.cx.kind(fty) {
+                TyKind::Option(e, _) => e,
+                _ => fty,
+            };
+            if self.json_callable(payload) {
+                continue;
+            }
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
             // `a?: T | null`: written when present, `null` included (`hir::FieldDef::presence`).
@@ -422,4 +436,18 @@ fn json_key(name: &str) -> String {
     }
     s.push_str("\":");
     s
+}
+
+impl FnLower<'_, '_> {
+    /// Is `ty` a function with properties: an object type whose first field is the hidden
+    /// function `#call` (hir_encodings.md "Functions with properties")?
+    pub(super) fn json_callable(&self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if a.fields.first().is_some_and(|f| f.name == "#call")
+            ),
+            _ => false,
+        }
+    }
 }
