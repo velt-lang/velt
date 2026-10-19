@@ -18,11 +18,12 @@ function isPrimitive(v: unknown): v is Primitive {
 }
 
 // `Signal<{ value: V }>` in a generic function is `{ value: V; $set(v: { value: V }): void }`.
+let sets = 0;
 function boxed<V>(x: V): Signal<{ value: V }> {
   const s: Signal<{ value: V }> = {
     value: x,
     $set: (v: { value: V }) => {
-      s.value = v.value;
+      sets++;
     },
   };
   return s;
@@ -50,7 +51,7 @@ function asObject<T>(target: T): T & object {
 
 const n = signalOf(1);
 n.$set({ value: 5 });
-console.log(n.value, marked.has(n));
+console.log(n.value, sets, marked.has(n));
 const t = signalOf("a");
 t.value = "b";
 console.log(t.value, marked.has(t), marked.has({}));
