@@ -109,9 +109,9 @@ what a function stored there may throw.
   reads an error's message (the assertion fails at run time for a value that is no `Error`).
   The errors also come through other such types (a closure calling through one) and through
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
-  such a type too. Function types of the standard library are not inferred this way: the
-  timers and `queueMicrotask` take a callback that may throw (what it throws is uncaught, as in
-  Node), and a proxy trap or a promise executor that throws is reported. An async method of an
+  such a type too. Function types of the standard library are not inferred this way:
+  `queueMicrotask` takes a callback that may throw (what it throws is uncaught, as in Node),
+  and a timer callback, a proxy trap or a promise executor that throws is reported. An async method of an
   object literal implementing an interface method written without `throws` may not reject yet.
 
   ```ts

@@ -1,7 +1,7 @@
 // check: no leaks
 // Function types written without `throws` and the standard library (#1154): a callback whose
-// type has inferred errors can be passed to `setTimeout` and `queueMicrotask` (an error it
-// throws there is uncaught, as in Node); interface methods implemented by an object literal
+// type has inferred errors can be passed to `queueMicrotask` (an error it throws there is
+// uncaught, as in Node); interface methods implemented by an object literal
 // throw what its methods throw; the URI functions throw `URIError`.
 class Failed extends Error {
   constructor(m: string) {
@@ -19,7 +19,7 @@ function attempt(f: () => void) {
 }
 
 function later(cb: () => void) {
-  setTimeout(cb, 0);
+  queueMicrotask(cb);
 }
 
 interface Loader {
