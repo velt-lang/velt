@@ -2,8 +2,6 @@ undefined_unsupported.vlt:6:10: error: type `null` is not assignable to type `st
 undefined_unsupported.vlt:10:10: error: type `undefined` is not assignable to type `string | null` (TypeScript's TS2322)
 undefined_unsupported.vlt:14:15: error: `JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string) is not supported yet
 undefined_unsupported.vlt:15:18: error: `JSON.parse` into a type that may hold `undefined` is not supported yet
-undefined_unsupported.vlt:19:13: error: `f64 | undefined` as a type argument of `Map` is not supported yet
-undefined_unsupported.vlt:20:3: error: `f64 | undefined` as a type argument of `Map.set` is not supported yet
 undefined_unsupported.vlt:25:15: error: `=== undefined` on a `f64 | null` is not supported yet (#930)
 undefined_unsupported.vlt:25:58: error: `typeof` compared with "undefined" on a `f64 | null` is not supported yet (#930)
 undefined_unsupported.vlt:30:10: error: `case null` on a value of type `f64 | undefined`, which is never null
