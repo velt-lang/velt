@@ -480,8 +480,9 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
 
 /// What this phase of `undefined` (issue #930) cannot convert yet: `JSON.parse` into a type
 /// that holds a `T | undefined` anywhere, and `JSON.stringify` of a value that may be
-/// `undefined` itself (Node returns `undefined`, not a string) or of a `Map` / `Record` value
-/// that may be. Object fields (left out) and array elements (`null`) are written as Node does.
+/// `undefined` itself (Node returns `undefined`, not a string). Object fields and `Map` /
+/// `Record` values holding `undefined` (left out) and array elements (`null`) are written as
+/// Node does.
 /// A class in the value whose `toJSON()` may return `undefined` is not: Node leaves such a
 /// field out and writes `null` for such an array element, where the glue writes what the
 /// method returned.
@@ -522,12 +523,6 @@ fn undefined_problem(cx: &mut Ctx, t: TyId, parse: bool) -> Option<&'static str>
             continue;
         }
         if let TyKind::Adt(d, args) = cx.ty.kind(t).clone() {
-            let map = [cx.prelude_adt("Map"), cx.prelude_adt("Record")].contains(&Some(d));
-            if map && args.iter().any(|a| undef(cx, *a)) {
-                return Some(
-                    "`JSON.stringify` of a `Map` or `Record` whose values may be `undefined`",
-                );
-            }
             // A class with `toJSON()` is written as what the method returns, its own or a
             // subclass's (the value may be an instance of one).
             let mut to_json = false;

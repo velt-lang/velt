@@ -361,6 +361,9 @@ struct Cx<'h> {
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
     nothing_clashes: Vec<Option<DefId>>,
+    /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
+    /// `keeps_nothings_apart`).
+    map_fields: u32,
 }
 
 /// Static ownership state of a droppable local without a drop flag.

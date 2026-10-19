@@ -85,6 +85,9 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             },
         };
         let mut direct = direct_mask(cx, &own);
+        if keeps_null_apart(cx, d) {
+            direct.iter_mut().for_each(|m| *m &= !NULL);
+        }
         if is_plain_sort(cx, d) {
             if direct.is_empty() {
                 direct.push(0);
@@ -149,7 +152,11 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             stack.extend(children(&k));
         }
     }
-    propagate(&mut masks, &edges);
+    let apart: HashSet<DefId> = (0..cx.defs.len() as u32)
+        .map(DefId)
+        .filter(|&d| keeps_null_apart(cx, d))
+        .collect();
+    propagate(&mut masks, &edges, &apart);
     for (t, span) in ty_uses {
         let mut stack = vec![t];
         let mut walked = HashSet::new();
@@ -215,6 +222,26 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             )),
         );
     }
+}
+
+/// Is `d` part of the prelude `Map` or `Record` (the types, their methods and helpers)? A
+/// map's `V | null` entry slots tell a deleted entry from a live one by the map's index
+/// wherever `V` holds a nothing (`__intrinsic_holds_null`, std/prelude/map.vlt), so a value's
+/// own `undefined` (or `null`) stays a value; a record keeps its entries in a map. Lowering
+/// makes the same exception (`velt_vir` `Cx::intern`).
+fn keeps_null_apart(cx: &Ctx, d: DefId) -> bool {
+    let maps = [cx.prelude_adt("Map"), cx.prelude_adt("Record")];
+    if maps.contains(&Some(d)) {
+        return true;
+    }
+    let Some(f) = cx.try_fn(d) else {
+        return false;
+    };
+    cx.scopes[f.module].is_std
+        && matches!(
+            cx.modules[f.module].path.as_str(),
+            "std/prelude/map" | "std/prelude/record"
+        )
 }
 
 /// Is `d` the prelude's `Array<T>.sort(cmp)` or `toSorted(cmp)` for any element type (not the
@@ -311,7 +338,9 @@ fn direct_mask(cx: &Ctx, tys: &[TyId]) -> Vec<Mask> {
 }
 
 /// Pass the masks along `edges` until nothing changes.
-fn propagate(masks: &mut HashMap<DefId, Vec<Mask>>, edges: &[Edge]) {
+/// `apart`: definitions that keep no `U | null` of their own parameters, whatever they call
+/// ([`keeps_null_apart`]).
+fn propagate(masks: &mut HashMap<DefId, Vec<Mask>>, edges: &[Edge], apart: &HashSet<DefId>) {
     let get = |masks: &HashMap<DefId, Vec<Mask>>, d: DefId, i: usize| {
         masks.get(&d).and_then(|m| m.get(i)).copied().unwrap_or(0)
     };
@@ -327,6 +356,11 @@ fn propagate(masks: &mut HashMap<DefId, Vec<Mask>>, edges: &[Edge]) {
                 }
             };
             for (i, m) in pairs {
+                let m = if apart.contains(&e.into) {
+                    m & !NULL
+                } else {
+                    m
+                };
                 if m == 0 {
                     continue;
                 }
