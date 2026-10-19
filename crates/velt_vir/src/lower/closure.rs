@@ -114,7 +114,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let code = self.cx.func(Work::Fn(def, targs.clone()));
         let ea = self.cx.env_agg(def, &targs);
-        let owns = f.captures.iter().any(|c| c.mode == PassMode::Owned);
+        // A closure holding shared cells owns references too: a frame env of one would have a
+        // drop entry, and sharing an env with a drop entry retains it as a heap env, so a kept
+        // copy would point into this frame.
+        let owns = f.captures.iter().any(|c| c.mode == PassMode::Owned)
+            || !self.cell_captures(def).is_empty();
         let heap = !in_frame && (owns || !borrowed) && self.cx.closure_env_is_heap(def);
         let (env, drop_fn, clone_fn) = if heap {
             let p = self.counted_alloc(Ty::Agg(ea));

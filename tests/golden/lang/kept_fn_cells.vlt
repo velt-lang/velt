@@ -1,0 +1,103 @@
+// check: no leaks
+// Kept callbacks whose captured variables are reassigned afterwards (numbers and strings live
+// in shared cells), forwarded through function-typed, generic, generic-method and interface
+// parameters and kept by `push` and a module `let`. Deep recursion reuses the stack before the
+// kept functions run, so one left pointing into a returned frame would read garbage.
+
+type Reg = (g: () => string) => void;
+
+interface Sink {
+  put(f: () => string): void;
+}
+
+class Store implements Sink {
+  fs: Array<() => string> = [];
+  put(f: () => string): void {
+    this.fs.push(f);
+  }
+}
+
+const kept: Array<() => string> = [];
+let last: (() => string) | null = null;
+
+function viaParam(h: Reg): void {
+  let n = 1;
+  let s = "p".repeat(2);
+  h(() => "param n=" + n + " s=" + s);
+  n = 2;
+  s = "q".repeat(3);
+}
+
+function viaIface(sink: Sink): void {
+  let n = 10;
+  sink.put(() => "iface n=" + n);
+  n = 20;
+}
+
+function forward<T>(reg: (t: T) => void, t: T): void {
+  reg(t);
+}
+
+class Forwarder {
+  go<T>(reg: (t: T) => void, t: T): void {
+    reg(t);
+  }
+}
+
+class Box<T> {
+  item: T;
+  constructor(item: T) {
+    this.item = item;
+  }
+  pass(reg: (t: T) => void, t: T): void {
+    reg(t);
+  }
+}
+
+function viaGeneric(fw: Forwarder): void {
+  const reg = (g: () => string): void => {
+    kept.push(g);
+  };
+  let s = "abc".repeat(3);
+  let n = 5;
+  const nums = [1, 2, 3];
+  forward(reg, () => "generic " + s + " " + n + " " + nums.length);
+  fw.go(reg, () => "method " + s + " " + n);
+  const box = new Box<() => string>(() => "unused");
+  box.pass(reg, () => "class " + s + " " + n);
+  s = "after".repeat(2);
+  n = 6;
+}
+
+function viaModuleLet(): void {
+  let k = 100;
+  const keep = (g: () => string): void => {
+    last = g;
+  };
+  keep(() => "module k=" + k);
+  k = 200;
+}
+
+function deep(n: number): number {
+  const a = [n, n + 1];
+  return n <= 0 ? 0 : a[1] + deep(n - 1) - n;
+}
+
+function run(): void {
+  const store = new Store();
+  viaParam((g) => {
+    kept.push(g);
+  });
+  viaIface(store);
+  viaGeneric(new Forwarder());
+  viaModuleLet();
+  console.log(deep(2000));
+  for (const k of kept) console.log(k());
+  for (const f of store.fs) console.log(f());
+  const l = last;
+  if (l) console.log(l());
+  console.log(deep(2000));
+  for (const k of kept) console.log(k());
+}
+
+run();

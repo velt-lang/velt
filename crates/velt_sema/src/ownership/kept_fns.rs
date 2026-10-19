@@ -14,7 +14,12 @@
 //! - a borrowed function variable that a body keeps, or passes to a callee with fixed modes, is
 //!   traced through the captures to the variable it comes from ([`root`]); when that is a
 //!   borrowed parameter of a function whose modes are inferred, the parameter becomes owned
-//!   ([`KeptFns::forced`]), and its callers hand over (or share) an escaping closure.
+//!   ([`KeptFns::forced`]), and its callers hand over (or share) an escaping closure. Variables
+//!   of a generic type count as function variables here: `T` may be a function type.
+//!
+//! An escaping closure passed as a borrowed argument may still get a frame environment when it
+//! owns nothing; one holding shared cells (a captured variable assigned later) gets a heap
+//! environment (velt_vir closure.rs), since sharing an env with a drop entry retains it.
 //!
 //! The only closure values that live in a frame and capture by reference are then literals
 //! passed to borrowed parameters of functions with inferred modes, held in parameters that are
@@ -202,7 +207,8 @@ pub(super) fn force_roots(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> Vec<DefId> {
     if !cx.kept_fns.on {
         return vec![];
     }
-    let borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
+    let mut borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
+    borrowed.extend(borrowed_generic_locals(cx, d, f));
     if borrowed.is_empty() {
         return vec![];
     }
@@ -217,4 +223,26 @@ pub(super) fn force_roots(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> Vec<DefId> {
         }
     }
     changed
+}
+
+/// The borrowed parameters and captures of `f` (body of `d`) whose type mentions a type
+/// parameter: instantiated with a function type, they may hold a closure in a caller's frame
+/// (`forward<T>(reg: (t: T) => void, t: T) { reg(t); }`).
+fn borrowed_generic_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<LocalId> {
+    let kinds = &cx.fn_info(d).local_kinds;
+    let borrowed = |m: PassMode| matches!(m, PassMode::Borrow | PassMode::BorrowMut);
+    let params = f
+        .params
+        .iter()
+        .filter(|p| kinds.get(p.local.0 as usize) == Some(&LocalKind::Param) && borrowed(p.mode))
+        .map(|p| p.local);
+    let caps = f
+        .captures
+        .iter()
+        .filter(|c| borrowed(c.mode))
+        .map(|c| c.inner);
+    params
+        .chain(caps)
+        .filter(|l| cx.has_type_params(f.body.locals[l.0 as usize].ty))
+        .collect()
 }

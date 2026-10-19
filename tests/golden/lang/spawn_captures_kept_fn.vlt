@@ -3,13 +3,19 @@
 // closure owns its environment, which the task gets a copy of.
 function start(use: (cb: (x: i64) => void) => void) {
   const tag = "t".repeat(3);
-  use((x) => console.log(tag, x));
+  let n = 1;
+  use((x) => console.log(tag, x, n));
+  n = 2;
 }
 
-function main() {
+async function main() {
+  const tasks: Promise<void>[] = [];
   start((cb) => {
-    spawn(async () => {
-      cb(1);
-    });
+    tasks.push(
+      spawn(async () => {
+        cb(1);
+      }),
+    );
   });
+  await Promise.all(tasks);
 }
