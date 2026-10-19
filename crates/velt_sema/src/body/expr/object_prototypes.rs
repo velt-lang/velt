@@ -94,6 +94,9 @@ impl FnCx<'_, '_> {
         };
         let ret = self.cx.ty.option(proto_ty);
         let sty = s.ty;
+        if self.spreads_dynamic(sty) && self.cx.ty.opt_payload(sty).is_none() {
+            return self.dynamic_prototype(s, ret, span);
+        }
         if self.cx.ty.opt_payload(sty).is_some() {
             let tn = self.cx.display(sty);
             self.cx.error(
@@ -179,6 +182,32 @@ impl FnCx<'_, '_> {
             }],
         };
         self.mk(kind, ret, span)
+    }
+
+    /// `Object.getPrototypeOf(v)` of an `any` or `object` `v` (of type `ret`): its class's
+    /// prototype, a record's (`null` when made by `Object.create(null)`), else the prelude's
+    /// `__anyPrototype(v)` (arrays, objects; anything else is a `TypeError`).
+    fn dynamic_prototype(&mut self, s: hir::Expr, ret: TyId, span: Span) -> hir::Expr {
+        let record = self.cx.prelude_adt("Record");
+        self.dynamic_class_match(
+            s,
+            ret,
+            "__anyPrototype",
+            |lw, c, read| {
+                if Some(c) == record {
+                    return lw.prelude_fn_call("__anyRecordPrototype", vec![read], span);
+                }
+                match lw.class_proto(c) {
+                    Some(p) => lw.new_prototype(&p, ret, span),
+                    None => {
+                        let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
+                        let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
+                        lw.prelude_fn_call("__anyPrototypeUnsupported", vec![lit], span)
+                    }
+                }
+            },
+            span,
+        )
     }
 
     /// How the prototype of a value of type `t` (not a union) is found (`None`: Velt doesn't

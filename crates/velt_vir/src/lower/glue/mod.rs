@@ -111,6 +111,8 @@ pub(crate) enum Glue {
     AnySet,
     AnySetIndex,
     AnyHas,
+    AnyKeys,
+    AnyJson,
     ProxyGet,
     ProxySet,
 }
@@ -172,6 +174,8 @@ impl Glue {
             Glue::AnySet => "anyset",
             Glue::AnySetIndex => "anysetindex",
             Glue::AnyHas => "anyhas",
+            Glue::AnyKeys => "anykeys",
+            Glue::AnyJson => "anyjson",
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
         }
@@ -215,7 +219,7 @@ impl Glue {
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
-            Glue::AnyHas => (vec![Ptr, Ptr], U8),
+            Glue::AnyHas | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
         }
     }
@@ -271,6 +275,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
+            Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
+            Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
         }

@@ -15,12 +15,17 @@ use crate::hir::{self, AdtKind, ExprKind as H, TyId, TyKind};
 impl FnCx<'_, '_> {
     /// Is `callee` the built-in `Object.assign`?
     pub(super) fn object_assign_callee(&mut self, callee: &ast::Expr) -> bool {
+        self.object_static_callee(callee, "assign")
+    }
+
+    /// Is `callee` the built-in `Object.<name>`?
+    fn object_static_callee(&mut self, callee: &ast::Expr, name: &str) -> bool {
         match &callee.kind {
             ast::ExprKind::Member {
                 object,
                 prop,
                 optional: false,
-            } if prop.name == "assign" => match &object.kind {
+            } if prop.name == name => match &object.kind {
                 ast::ExprKind::Ident(ns) => self.is_prelude_object(ns),
                 _ => false,
             },
@@ -28,9 +33,10 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `const r = Object.assign(place, ...sources)`: the call as a statement, then the place
-    /// (each index evaluated once) for `r`'s initializer, so `r` is bound as `const r = place`
-    /// is: by reference to an element or field. `None`: another initializer.
+    /// `const r = Object.assign(place, ...sources)` (or `Object.defineProperty(place, ...)`):
+    /// the call as a statement, then the place (each index evaluated once) for `r`'s
+    /// initializer, so `r` is bound as `const r = place` is: by reference to an element or
+    /// field. `None`: another initializer.
     pub(crate) fn assign_decl_split(
         &mut self,
         init: &ast::Expr,
@@ -51,7 +57,8 @@ impl FnCx<'_, '_> {
                 .iter()
                 .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
             || !is_place(target)
-            || !self.object_assign_callee(callee)
+            || !(self.object_assign_callee(callee)
+                || self.object_static_callee(callee, "defineProperty"))
         {
             return None;
         }
@@ -545,7 +552,7 @@ impl FnCx<'_, '_> {
 }
 
 /// Is `e` a variable, `this` or a path of fields and elements of one?
-fn is_place(e: &ast::Expr) -> bool {
+pub(super) fn is_place(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(inner) => is_place(inner),
@@ -564,7 +571,7 @@ fn is_place(e: &ast::Expr) -> bool {
 }
 
 /// Does `e` read a variable, or a field or array element of one (no getter, no call)?
-fn reads_place(e: &hir::Expr) -> bool {
+pub(super) fn reads_place(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) => true,
         H::Field { base, .. } | H::Index { base, .. } => reads_place(base),

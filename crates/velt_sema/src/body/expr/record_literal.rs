@@ -3,7 +3,9 @@
 //! must have every key. Where the expected record's type arguments are not known yet (a generic
 //! callee such as `Object.values({ a: 1 })`), an unknown key type is `string`, as in TypeScript
 //! (an object's keys are strings), and an unknown value type is the first value's (widened), which
-//! every other value must have.
+//! every other value must have. A spread of an `any` or `object` (`{ ...a }`) makes the literal
+//! a `Record<string, any>`, filled at run time by the prelude's `__spreadAny` with the keys of the
+//! value held (`Intrinsic::AnyKeys`, then a member read of each).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -55,6 +57,17 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let error = self.cx.ty.error;
+        // `{ ...a }` of an `any`: a `Record<string, any>`.
+        let dynamic = props.iter().any(|p| match p {
+            ast::ObjectProp::Spread(e) if computed_entry(e).is_none() => {
+                self.trial_type(e).is_some_and(|t| self.spreads_dynamic(t))
+            }
+            _ => false,
+        });
+        let (k, v) = match (dynamic, self.any_ty()) {
+            (true, Some(any)) if v == error => (if k == error { self.cx.ty.str_ } else { k }, any),
+            _ => (k, v),
+        };
         let spread = props.iter().any(is_spread);
         if (k != error && v != error) || (spread && v != error) || props.is_empty() {
             return self.record_literal_with(d, k, v, props, vec![], span);
@@ -218,6 +231,15 @@ impl FnCx<'_, '_> {
                         ),
                     }
                 }
+                ast::ObjectProp::Spread(e)
+                    if self.trial_type(e).is_some_and(|t| self.spreads_dynamic(t)) =>
+                {
+                    complete = true;
+                    match self.spread_any(recv, ty, e) {
+                        Some(call) => call,
+                        None => continue,
+                    }
+                }
                 ast::ObjectProp::Spread(e) => {
                     complete = true;
                     self.record_call(recv, "__extend", std::slice::from_ref(e), e.span)
@@ -303,6 +325,64 @@ impl FnCx<'_, '_> {
             _ => synth(ast::ExprKind::Ident(name.clone()), name.span),
         };
         Some(self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span))
+    }
+
+    /// Is `t` a dynamic type an object spread takes (`any`, `object`; also `| null`)? An
+    /// `unknown` is not one (TypeScript's TS2698).
+    pub(super) fn spreads_dynamic(&self, t: TyId) -> bool {
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        self.cx
+            .dynamic(t)
+            .is_some_and(|d| d != crate::any::Dynamic::Unknown)
+    }
+
+    /// `__spreadAny(r, e)` for the spread `...e` of an `any` into the record literal whose
+    /// temporary `recv` (of type `ty`) reads; `None` when reported.
+    fn spread_any(&mut self, recv: hir::Expr, ty: TyId, e: &ast::Expr) -> Option<hir::Expr> {
+        let value_any = self.record_args(ty).is_some_and(|(k, v)| {
+            k == self.cx.ty.str_ && self.cx.dynamic(v) == Some(crate::any::Dynamic::Any)
+        });
+        let H::Local(t, _) = recv.kind else {
+            return None;
+        };
+        if !value_any {
+            let tn = self.cx.display(ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("spreading an `any` into a `{tn}` is not supported yet (#924)"),
+                    e.span,
+                )
+                .with_note(
+                    "build a `Record<string, any>` (`const o: Record<string, any> = { ...a }`)",
+                ),
+            );
+            return None;
+        }
+        let name = format!("<spread@{}>", e.span.lo);
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name.clone(), t);
+        }
+        let ident = |n: &str| {
+            synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: n.to_string(),
+                    span: e.span,
+                }),
+                e.span,
+            )
+        };
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(ident("__spreadAny")),
+                type_args: vec![],
+                args: vec![ident(&name), e.clone()],
+                optional: false,
+            },
+            e.span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, crate::body::Want::Move))
     }
 }
 

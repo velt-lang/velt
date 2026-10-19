@@ -11,6 +11,10 @@
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings only) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //! | 5..8 | member reads and calls (any_member.rs), when the program has them |
+//! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
+//! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
+//! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
+//! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.
@@ -35,7 +39,7 @@ pub(super) const TAG_NULL: u64 = 1;
 pub(super) const TAG_BOOLEAN: u64 = 2;
 pub(super) const TAG_NUMBER: u64 = 3;
 pub(super) const TAG_STRING: u64 = 4;
-const TAG_SYMBOL: u64 = 5;
+pub(super) const TAG_SYMBOL: u64 = 5;
 pub(super) const TAG_FUNCTION: u64 = 6;
 pub(super) const TAG_OBJECT: u64 = 7;
 
@@ -151,6 +155,14 @@ impl Cx<'_> {
             ));
         }
         e.extend(self.any_member_entries(ty));
+        if self.boxing.any_keys {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyKeys, ty)));
+            e.push((super::any_keys::SLOT_KEYS, f));
+        }
+        if self.boxing.any_json {
+            let f = Const::Func(self.func(Work::Glue(Glue::AnyJson, ty)));
+            e.push((super::json::any::SLOT_JSON, f));
+        }
         e
     }
 }

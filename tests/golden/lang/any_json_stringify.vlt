@@ -1,0 +1,47 @@
+// check: no leaks
+// `JSON.stringify` of an `any`, `unknown` or `object` (#924) writes whatever value it holds, as
+// Node does: `undefined`, functions and symbols are left out as members and written as `null`
+// in arrays, and a class's `toJSON()` is used.
+class Point {
+  x = 1;
+  y = 2;
+}
+
+class Stamp {
+  at: number;
+  constructor(at: number) {
+    this.at = at;
+  }
+  toJSON(): string {
+    return `t${this.at}`;
+  }
+}
+
+function text(v: any): string {
+  return JSON.stringify(v);
+}
+
+function main(): void {
+  console.log(text(1), text("a\"b"), text(true), text(null));
+  const mixed: any[] = [1, "two", null];
+  console.log(text(new Point()), text(mixed));
+  console.log(text({ a: 1, nested: { b: [true, false] } }));
+  const u: unknown = new Stamp(5);
+  console.log(JSON.stringify(u));
+  const parts: any[] = [new Stamp(1), new Point()];
+  const o: object = parts;
+  console.log(JSON.stringify(o));
+  const items: unknown[] = [1, undefined, "x", () => 2, Symbol("s")];
+  console.log(JSON.stringify(items));
+  const r: Record<string, any> = {};
+  r["keep"] = 1;
+  r["gone"] = undefined;
+  r["fn"] = () => 3;
+  r["list"] = [undefined];
+  console.log(JSON.stringify(r));
+  const holder: { v: any; w: any } = { v: undefined, w: "w" };
+  console.log(JSON.stringify(holder));
+  const when: any = new Date(0);
+  const dates: any[] = [new Date(86400000)];
+  console.log(JSON.stringify(when), JSON.stringify(dates));
+}

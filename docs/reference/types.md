@@ -1706,8 +1706,30 @@ does is an error saying it is not supported yet, never a quiet difference.
   `structuredClone` of a record in a program that calls `Object.create(null)`, are not
   supported yet.
 
-The other `Object` functions (`defineProperty`, `seal`, `isFrozen`, `setPrototypeOf`, ...) are not
-supported yet.
+- `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
+  compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
+  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
+  Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
+  non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
+  Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
+  `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
+  the same ones. With a string key naming a declared field and only a `value`, it assigns the
+  field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
+  A brand on a class instance (whose declared field is an own property from construction),
+  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
+  supported yet, and neither is `Object.defineProperties`.
+
+The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
+
+`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
+browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
+Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
+`typeof window === "undefined"` tells the server from the browser. Reading a browser global
+throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
+still compiles.
 
 ```ts
 class Point {
@@ -2108,13 +2130,51 @@ except that `NaN` is itself and `0` is not `-0`.
 the length before each step as JavaScript's array iterator does. Another value (a string, a
 `Map`, an iterable object) stops with a `TypeError` naming #924 for now.
 
+`Object.keys(x)` of an `any`, an `object` or a `Function` lists the own enumerable string keys
+of the value held, in JavaScript's order (integer-like keys first, ascending, then the others in
+order): the fields of a class instance (a subclass's too) or object (an optional field only while
+present), a `Record`'s keys, an array's or a string's indexes as strings, and none for a number,
+a boolean, a function, a `Map` or a `Set`. `null` and `undefined` stop with Node's `TypeError:
+Cannot convert undefined or null to object`; a proxy stops with a `TypeError` naming #924 for
+now. `Object.keys` of an `unknown` is an error until it is narrowed, as in TypeScript. A spread
+of an `any` or `object` into an object literal (`{ ...a, b: 1 }`) builds a `Record<string, any>`
+with those keys and their values (`null` and `undefined` spread nothing):
+
+```ts
+function main(): void {
+  const a: any = { x: 1, y: "two" };
+  console.log(Object.keys(a)); // [ 'x', 'y' ]
+  const merged = { ...a, z: true };
+  console.log(merged); // { x: 1, y: 'two', z: true }
+}
+```
+
+`Object.hasOwn(x, k)` and `Object.prototype.hasOwnProperty.call(x, k)` of an `any` or `object`
+test the keys `Object.keys(x)` lists (and an array's or string's `length`).
+`Object.getPrototypeOf(x)` gives the prototype of the class of the value held (`C.prototype`),
+`Object.prototype` for an object or a record (`null` for one made by `Object.create(null)`) and
+`Array.prototype` for an array, so `proto === Object.prototype || proto === null` tells a plain
+object apart; a value whose prototype Velt doesn't name (a number, a function, a `Date`) stops with
+a `TypeError` naming #924. `Object.prototype.toString.call(x)` gives the `[object Tag]` of the
+value held.
+
+`JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
+`unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
+`toJSON()`: `undefined`, functions and symbols are left out as object members and written as
+`null` in arrays, and an object that holds itself stops with `TypeError: Converting circular
+structure to JSON`. Node returns `undefined` for such a value at the top; a Velt `string` cannot
+hold it, so `JSON.stringify` of an `any` holding `undefined`, a function or a symbol stops with a
+`TypeError` naming #924. A value with no JSON form here (an object with a function field, a
+proxy) also stops with a `TypeError`.
+
 **Planned** (#924): compound assignments and `++` on members, arithmetic operators,
-`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
-interface types and the warning on a written `any`; until then each is a compile error.
+`String(x)`, `JSON.parse` into an `any`, `any` converted to interface types and the warning on a
+written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
-`Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
+`Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
+an array its `length`. A `null` or `undefined` value stops with
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
 
@@ -2380,5 +2440,5 @@ function main(): void {
 
 **Not yet** (#926): `object` as a `WeakMap` key, a `WeakSet` member or a `WeakRef` target, the
 members every object has (`constructor`, `toString`, `hasOwnProperty`) and a function has
-(`call`, `apply`, `bind`, `name`, `length`), `Object.keys` of an `object`, and a type parameter
-without the `object` bound converted with `as object`. Each is a compile error.
+(`call`, `apply`, `bind`, `name`, `length`), and a type parameter without the `object` bound
+converted with `as object`. Each is a compile error.
