@@ -2,7 +2,7 @@
 // Timer callbacks capturing a holder of a shared promise (#212): a callback runs as a task of
 // its own, so the holder it captured is handed over to it and awaited there through a copy of
 // the result made on this task; each run of the callback shares it again there. Node prints
-// the same (the timers are far apart, so their order does not depend on timer ties).
+// the same (each callback tells `main` it ran, so the order does not depend on timing).
 class Obj {
   n: number;
   constructor(n: number) {
@@ -20,23 +20,32 @@ async function count(n: number): Promise<number> {
 async function main() {
   const p = val(7);
   const q = p;
+  const t = Promise.withResolvers<void>();
+  const tDone = t.resolve;
   setTimeout(async () => {
     console.log("t", (await q).n);
+    tDone();
   }, 10);
-  await sleep(300);
+  await t.promise;
   const c = count(3);
   const d = c;
+  const u = Promise.withResolvers<void>();
+  const uDone = u.resolve;
   setTimeout(async () => {
     const again = d;
     console.log("c", (await d) + (await again));
+    uDone();
   }, 10);
-  await sleep(300);
+  await u.promise;
   const r = val(9);
   const s = r;
+  const v = Promise.withResolvers<void>();
+  const vDone = v.resolve;
   const every = setInterval(async () => {
     console.log("i", (await s).n);
+    vDone();
   }, 300);
-  await sleep(450);
+  await v.promise;
   clearInterval(every);
   console.log("m", (await p).n, await c, (await r).n);
 }
