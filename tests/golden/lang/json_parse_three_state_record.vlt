@@ -6,6 +6,8 @@ function more(): void {
   console.log(s, s["b"] === null, s["zz"] === undefined);
   const b = JSON.parse('{"a":true,"b":null}') as Record<string, boolean | null | undefined>;
   console.log(b);
+  const arr = JSON.parse('{"a":[1],"b":null}') as Record<string, number[] | null | undefined>;
+  console.log(arr);
   const mm = JSON.parse('{"o":{"p":{"x":2},"q":null}}') as { o: Record<string, { x: number } | null | undefined> };
   console.log(mm.o, JSON.stringify(mm));
   const mp = new Map(Object.entries(s));

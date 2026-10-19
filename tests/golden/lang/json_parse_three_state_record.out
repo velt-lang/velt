@@ -3,5 +3,6 @@
 { k: 'v', n: null } {"k":"v","n":null}
 { a: 'x', b: null } true true
 { a: true, b: null }
+{ a: [ 1 ], b: null }
 { p: { x: 2 }, q: null } {"o":{"p":{"x":2},"q":null}}
 Map(2) { 'a' => 'x', 'b' => null }
