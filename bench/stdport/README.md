@@ -58,16 +58,31 @@ Reading it:
 
   | benchmark | Velt ms | Rust ms | Velt M instr | Rust M instr | Velt / Rust (instr) |
   |---|---:|---:|---:|---:|---:|
-  | sha256_large | 115 → 15 | 14 | 2,380 → 69 | 66 | 36.0 → 1.04 |
-  | sha256_small | 117 → 16 | 16 | 2,719 → 178 | 94 | 28.8 → 1.89 |
+  | sha256_large | 115 → 27 | 29 | 2,380 → 69 | 66 | 36.0 → 1.04 |
+  | sha256_small | 117 → 27 | 30 | 2,719 → 193 | 94 | 28.8 → 2.04 |
 
-  `sha256_large` runs the same block loop as `sha2`: 2,700 MB/s natively on the M4 against
-  2,765 (SHA-1: 3,015 against 2,955). `sha256_small` (500,000 one-block hashes) takes the same
-  time; its extra instructions are the digest, a new 32-byte array per call where `sha2` returns
-  it on the stack, and the runtime call of `set`, which copies the digest into the message as
-  the Rust port's `copy_from_slice` does (the Velt program used to copy it byte by byte). HMAC
-  with a 64-byte key and a 250-byte message (callgrind, instructions per call, the digest
-  returned as a `Vec` in Rust): HMAC-SHA1 1,368 against 1,466, HMAC-SHA256 1,345 against 1,417.
+  (The machine was heavily loaded for the times.) The hash loops are bound by the latency of
+  the SHA instructions, not by how many instructions run, so they are compared in cycles: the
+  `cycles elapsed` that `/usr/bin/time -l` reports for the process on macOS, which other
+  processes' load does not change, as the difference between two run lengths (natively on the
+  M4, data in cache, median of 3, lower is faster):
+
+  | | Velt | Rust |
+  |---|---:|---:|
+  | SHA-256, cycles per byte | 1.37–1.39 | 1.41–1.42 (`sha2`) |
+  | SHA-1, cycles per byte | 1.38–1.39 | 1.38–1.39 (`sha1`) |
+  | `sha256_small`'s hash + `set`, cycles per call | 121–125 | 125–127 |
+  | HMAC-SHA1, 64-byte key, 250-byte message, cycles per call | 690–707 | 738–749 |
+  | HMAC-SHA256, same, cycles per call | 668–687 | 718–727 |
+
+  Rust's HMAC is `hmac` with the digest left on the stack. SHA-1 is at the latency of SHA1C
+  for both. Velt's SHA-256 makes the next sixteen message words after each four groups of
+  rounds instead of between them, which keeps the schedule off the rounds' dependency chain.
+  `sha256_small` runs more instructions: the digest is a new 32-byte array per call where `sha2`
+  returns it on the stack, and padding is built in registers. `u8[].set` copies 16 to 64 bytes
+  without calling the runtime, as Rust's `copy_from_slice` is inline; the Velt program copies
+  the digest into the message with `set` as the Rust port does with `copy_from_slice` (it used
+  to copy it byte by byte).
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.

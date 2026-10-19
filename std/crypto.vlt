@@ -430,37 +430,36 @@ struct Sha1State {
   e: u32;
 }
 
-// One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2.
+// One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
+// with the next sixteen message words made after each batch (but the last). The schedule
+// instructions share the crypto pipes with the rounds: made between batches, they stay off the
+// rounds' dependency chain.
 function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
   __intrinsic_target("sha-arm");
   let m0 = w0;
   let m1 = w1;
   let m2 = w2;
   let m3 = w3;
-  let abcd = s.a;
-  let efgh = s.b;
-  // Groups 0–11 also make the message words of groups 4–15; 12–15 use them up.
-  for (let j: usize = 0; j < 12; j++) {
-    const wk = m0.add(u32x4.load(K256, 4 * j));
-    const next = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m0, m1), m2, m3);
-    m0 = m1;
-    m1 = m2;
-    m2 = m3;
-    m3 = next;
-    const before = abcd;
-    abcd = velt_simd_u32x4_sha256h(abcd, efgh, wk);
-    efgh = velt_simd_u32x4_sha256h2(efgh, before, wk);
+  let t = s;
+  for (let j: usize = 0; j < 16; j += 4) {
+    t = group256Arm(t, m0.add(u32x4.load(K256, 4 * j)));
+    t = group256Arm(t, m1.add(u32x4.load(K256, 4 * j + 4)));
+    t = group256Arm(t, m2.add(u32x4.load(K256, 4 * j + 8)));
+    t = group256Arm(t, m3.add(u32x4.load(K256, 4 * j + 12)));
+    if (j < 12) {
+      m0 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m0, m1), m2, m3);
+      m1 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m1, m2), m3, m0);
+      m2 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m2, m3), m0, m1);
+      m3 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m3, m0), m1, m2);
+    }
   }
-  for (let j: usize = 12; j < 16; j++) {
-    const wk = m0.add(u32x4.load(K256, 4 * j));
-    m0 = m1;
-    m1 = m2;
-    m2 = m3;
-    const before = abcd;
-    abcd = velt_simd_u32x4_sha256h(abcd, efgh, wk);
-    efgh = velt_simd_u32x4_sha256h2(efgh, before, wk);
-  }
-  return { a: abcd.add(s.a), b: efgh.add(s.b) };
+  return { a: t.a.add(s.a), b: t.b.add(s.b) };
+}
+
+// Four rounds on ARMv8 with message words plus constants `wk`.
+function group256Arm(s: Pair, wk: u32x4): Pair {
+  __intrinsic_target("sha-arm");
+  return { a: velt_simd_u32x4_sha256h(s.a, s.b, wk), b: velt_simd_u32x4_sha256h2(s.b, s.a, wk) };
 }
 
 function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
