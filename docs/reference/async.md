@@ -18,7 +18,10 @@ last.
 
 `await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
-`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
+missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
+`await m.get(k)`) is a `number | undefined`, and so is `await x` with
+`x: number | Promise<void>`.
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
