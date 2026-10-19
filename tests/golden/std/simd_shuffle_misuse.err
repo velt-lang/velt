@@ -1,6 +1,7 @@
 error: `u32x4.shuffle`: a lane index must be an integer literal
 note: the indices are compiled into the instruction, so they must be known when the program is compiled
 error: `u32x4.shuffle`: lane index out of range (a lane of the first vector is 0–3, of the second 4–7)
+error: `u32x4.shuffle`: lane index out of range: below 0 (a lane of the first vector is 0–3, of the second 4–7)
 error: `u32x4.shuffle` takes 6 arguments: two vectors and 4 lane indices
 error: mismatched types
 note: expected u32x4, found f64

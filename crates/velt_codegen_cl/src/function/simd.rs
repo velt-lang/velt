@@ -40,6 +40,20 @@ fn mask_type(bits: u32) -> ir::Type {
     }
 }
 
+/// Whether `isa` shuffles bytes with one instruction: everything but x86-64 without SSSE3
+/// (`pshufb`), where Cranelift would call a library function for most masks.
+pub(super) fn has_byte_shuffles(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    if !matches!(
+        isa.triple().architecture,
+        target_lexicon::Architecture::X86_64
+    ) {
+        return true;
+    }
+    isa.isa_flags()
+        .iter()
+        .any(|f| f.name == "has_ssse3" && f.as_bool() == Some(true))
+}
+
 impl<M: Module> Translator<'_, '_, M> {
     /// The all-zero vector.
     pub(super) fn zero_vector(&mut self) -> ir::Value {
@@ -270,10 +284,30 @@ impl<M: Module> Translator<'_, '_, M> {
         self.builder.ins().shuffle(values[0], values[1], mask)
     }
 
-    /// Byte `i` of the result is byte `mask[i]` of the 32 bytes of `a` followed by `b`.
+    /// Byte `i` of the result is byte `mask[i]` of the 32 bytes of `a` followed by `b`. Without
+    /// a byte shuffle instruction (`has_byte_shuffles`) the bytes go through memory instead of
+    /// Cranelift's `shuffle`, which there calls a `__cranelift_x86_pshufb` that nothing defines.
     fn simd_shuffle(&mut self, mask: &[u8; 16], a: ir::Value, b: ir::Value) -> ir::Value {
-        let mask = self.builder.func.dfg.immediates.push(mask.to_vec().into());
-        self.builder.ins().shuffle(a, b, mask)
+        if self.byte_shuffles {
+            let mask = self.builder.func.dfg.immediates.push(mask.to_vec().into());
+            return self.builder.ins().shuffle(a, b, mask);
+        }
+        let both = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            32,
+            4,
+        ));
+        let out = self.simd_spill(a);
+        self.builder.ins().stack_store(a, both, 0);
+        self.builder.ins().stack_store(b, both, 16);
+        for (i, &from) in mask.iter().enumerate() {
+            let byte = self
+                .builder
+                .ins()
+                .stack_load(types::I8, both, i32::from(from));
+            self.builder.ins().stack_store(byte, out, i as i32);
+        }
+        self.builder.ins().stack_load(types::I8X16, out, 0)
     }
 
     /// The lanes of both vectors at half the width, clamped. Unsigned lanes are capped first:

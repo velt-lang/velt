@@ -115,9 +115,13 @@ impl FnCx<'_, '_> {
                 {
                     mask[k] = *value as u8;
                 }
-                ast::ExprKind::Lit(ast::Lit::Int { .. }) => {
+                // Too large, or negative (`-1` is a literal too, below every lane).
+                _ if negated_int(arg)
+                    || matches!(arg.kind, ast::ExprKind::Lit(ast::Lit::Int { .. })) =>
+                {
+                    let below = if negated_int(arg) { ": below 0" } else { "" };
                     let message = format!(
-                        "{what}: lane index out of range (a lane of the first vector is 0–{}, of the second {}–{})",
+                        "{what}: lane index out of range{below} (a lane of the first vector is 0–{}, of the second {}–{})",
                         lanes - 1,
                         lanes,
                         2 * lanes - 1
@@ -152,4 +156,10 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, ck.ret, span)
     }
+}
+
+/// Whether `e` is a negated integer literal (`-1`).
+fn negated_int(e: &ast::Expr) -> bool {
+    matches!(&e.kind, ast::ExprKind::Unary { op: ast::UnaryOp::Neg, expr }
+        if matches!(expr.kind, ast::ExprKind::Lit(ast::Lit::Int { .. })))
 }
