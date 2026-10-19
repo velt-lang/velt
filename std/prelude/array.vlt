@@ -216,19 +216,6 @@ extend<T> Array<T> {
   }
 
   /**
-   * `this[index]` read where the program expects `T | undefined` (the compiler calls it, sema
-   * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
-   * of range, negative or not a whole number), as in JS.
-   */
-  __get(index: number): T | undefined {
-    const i = __floatPosition(index);
-    if (i >= this.length) {
-      return undefined;
-    }
-    return __intrinsic_share(this[i]);
-  }
-
-  /**
    * Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
    * the array; here the result is `void`, like `reverse` and `sort`: returning the array would
    * share it, which makes every array of its type reference counted in the whole program.
@@ -802,5 +789,21 @@ function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
     __intrinsic_array_swap(xs, i, j);
     i++;
     j--;
+  }
+}
+
+// Kept last, so the lines above keep their numbers in panic locations.
+extend<T> Array<T> {
+  /**
+   * `this[index]` read where the program expects `T | undefined` (the compiler calls it, sema
+   * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
+   * of range, negative or not a whole number), as in JS.
+   */
+  __get(index: number): T | undefined {
+    const i = __floatPosition(index);
+    if (i >= this.length) {
+      return undefined;
+    }
+    return __intrinsic_share(this[i]);
   }
 }
