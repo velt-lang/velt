@@ -1,0 +1,82 @@
+// Vector math in a loop, n-body style, with today's `struct` written in place: the same
+// `Vec3` values as vecmath_struct.vlt, but each body's fields are assigned (`bs[i].vel = …`), as
+// a mutable struct allows today and the value-type design forbids.
+struct Vec3 {
+  x: number;
+  y: number;
+  z: number;
+
+  add(o: Vec3): Vec3 {
+    return { x: this.x + o.x, y: this.y + o.y, z: this.z + o.z };
+  }
+
+  sub(o: Vec3): Vec3 {
+    return { x: this.x - o.x, y: this.y - o.y, z: this.z - o.z };
+  }
+
+  scale(k: number): Vec3 {
+    return { x: this.x * k, y: this.y * k, z: this.z * k };
+  }
+
+  dot(o: Vec3): number {
+    return this.x * o.x + this.y * o.y + this.z * o.z;
+  }
+}
+
+struct Body {
+  pos: Vec3;
+  vel: Vec3;
+  mass: number;
+}
+
+function makeBodies(n: number): Body[] {
+  const bs: Body[] = [];
+  for (let i = 0; i < n; i++) {
+    const sign = i % 2 == 0 ? 1.0 : -1.0;
+    bs.push({
+      pos: { x: i * 1.5, y: i * 0.5 - 1, z: 0.1 * i },
+      vel: { x: 0.01 * i, y: 0.3 * sign, z: -0.02 * i },
+      mass: 1 + i * 0.25,
+    });
+  }
+  return bs;
+}
+
+function step(bs: Body[], dt: number) {
+  const n = bs.length;
+  for (let i = 0; i < n; i++) {
+    const b = bs[i];
+    let acc: Vec3 = { x: 0, y: 0, z: 0 };
+    for (let j = 0; j < n; j++) {
+      if (j == i) continue;
+      const d = bs[j].pos.sub(b.pos);
+      const r2 = d.dot(d) + 0.01;
+      acc = acc.add(d.scale(bs[j].mass / (r2 * Math.sqrt(r2))));
+    }
+    bs[i].vel = b.vel.add(acc.scale(dt));
+  }
+  for (let i = 0; i < n; i++) {
+    bs[i].pos = bs[i].pos.add(bs[i].vel.scale(dt));
+  }
+}
+
+function energy(bs: Body[]): number {
+  let e: number = 0;
+  for (let i = 0; i < bs.length; i++) {
+    e += 0.5 * bs[i].mass * bs[i].vel.dot(bs[i].vel);
+    for (let j = i + 1; j < bs.length; j++) {
+      const d = bs[i].pos.sub(bs[j].pos);
+      e -= (bs[i].mass * bs[j].mass) / Math.sqrt(d.dot(d) + 0.01);
+    }
+  }
+  return e;
+}
+
+function main() {
+  const bs = makeBodies(5);
+  console.log(energy(bs).toFixed(9));
+  for (let s = 0; s < 1000000; s++) {
+    step(bs, 0.001);
+  }
+  console.log(energy(bs).toFixed(9));
+}

@@ -128,8 +128,9 @@ impl FnLower<'_, '_> {
     }
 
     /// `Glue::DynShare`: the data pointer of another reference to an interface value's data. A
-    /// counted value (class object, boxed value) is retained; a value that is never changed in
-    /// place gets a copy of its own; anything else is recorded so the next pass counts it.
+    /// counted value (class object, boxed value) is retained; a function value or a value that
+    /// is never changed in place gets a new box holding a share of it (part by part); anything
+    /// else is recorded so the next pass counts it.
     pub(super) fn dyn_share_body(&mut self, data: vir::Local, ty: TyId) {
         self.cx.note_share(ty);
         let d = Operand::Copy(Place::local(data));
@@ -137,9 +138,15 @@ impl FnLower<'_, '_> {
             let c = self.count_ptr(d.clone(), ty);
             self.retain(c);
             d
-        } else if self.cx.share_kind(ty) == ShareKind::Closure {
+        } else if matches!(
+            self.cx.share_kind(ty),
+            ShareKind::Closure | ShareKind::Value
+        ) {
             // A new box with a share of the function value: the same environment, so the
-            // function keeps its identity (a clone would build another environment).
+            // function keeps its identity (a clone would build another environment). A value
+            // never changed in place (an object literal of methods) is shared part by part the
+            // same way: its methods' captured variables stay the ones the literal captured (a
+            // deep copy would give a call its own copy of a captured array, #1310).
             let vt = self.cx.ty(ty);
             let b = self.alloc(vt);
             let src = self.deref_param(data, ty);

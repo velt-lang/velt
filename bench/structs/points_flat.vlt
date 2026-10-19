@@ -1,0 +1,27 @@
+// Building and summing 1M points flattened by hand into one `number[]` (x and y interleaved),
+// five times over. The layout a guaranteed-inline `Point[]` has.
+function build(n: number, round: number): number[] {
+  const ps: number[] = [];
+  for (let i = 0; i < n; i++) {
+    ps.push(i * 0.5 + round);
+    ps.push((i % 1000) * 0.25);
+  }
+  return ps;
+}
+
+function sum(ps: number[]): number {
+  let s: number = 0;
+  for (let i = 0; i < ps.length; i += 2) {
+    s += ps[i] * 0.001 + ps[i + 1];
+  }
+  return s;
+}
+
+function main() {
+  let total: number = 0;
+  for (let r = 0; r < 5; r++) {
+    const ps = build(1000000, r);
+    total += sum(ps);
+  }
+  console.log(total.toFixed(3));
+}

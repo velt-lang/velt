@@ -1,0 +1,34 @@
+// check: no leaks
+// A borrowed callback renamed by a `const` and kept by an interface method, directly and from
+// a closure: the parameter it comes from owns its closure, which outlives `setup`'s frame.
+interface Bus { on(h: () => void): void; emit(): void; }
+class B implements Bus {
+  hs: Array<() => void> = [];
+  on(h: () => void): void { this.hs.push(h); }
+  emit(): void { for (const h of this.hs) h(); }
+}
+function untrack(fn: () => void): void { fn(); }
+function outer(bus: Bus, f: () => void): void {
+  const g = f;
+  untrack(() => bus.on(g));
+}
+function outer2(bus: Bus, f: () => void): void {
+  const g = f;
+  bus.on(g);
+}
+function clobber(n: number): number {
+  const words: string[] = [];
+  for (let i = 0; i < n; i++) words.push("w" + i);
+  return words.join("").length;
+}
+function setup(bus: Bus): void {
+  const msg = "hello".repeat(2);
+  let k = 1;
+  outer(bus, () => console.log(msg, k));
+  outer2(bus, () => console.log("two", msg, k));
+  k = 5;
+}
+const bus = new B();
+setup(bus);
+console.log(clobber(60));
+bus.emit();

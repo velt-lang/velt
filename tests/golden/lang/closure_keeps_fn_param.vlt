@@ -1,0 +1,15 @@
+// check: no leaks
+// A closure keeps a function it receives (`saved.push(cb)`), like the executor of `new Promise`:
+// the function passed to it owns its environment and outlives the frame that created it.
+function withCallback(use: (cb: () => void) => void) {
+  const name = "cb".repeat(2);
+  use(() => console.log("called", name));
+}
+
+function main() {
+  const saved: (() => void)[] = [];
+  withCallback((cb) => {
+    saved.push(cb);
+  });
+  for (const f of saved) f();
+}
