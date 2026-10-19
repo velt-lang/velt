@@ -1126,15 +1126,24 @@ console.log(last, t.a, t.id); // 2 1 x
 
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
+- A field that is a type parameter in one part and a type in another (`{ a: D } & { a: string }`)
+  is `D` when `D`'s constraint is that type (`D extends string`), the deferred `D & X` when `X` is
+  an object type or a type parameter, and an error otherwise. Two function types in one field
+  (nested `Signal<Signal<T>>`'s `$set`s) are one function when one of them takes every argument
+  the other does (its parameters have a subset of the other's fields); other overloads are
+  errors.
 - When the parts have no value in common (`{ k: string } & { k: number }`, or two different
   discriminants), TypeScript makes the type, or the field, `never`; Velt reports
   ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
-  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
-  (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
+  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays (also `Signal<T>` at
+  an array `T`, reported at the call) and function types (overloads) are not parts either;
+  `T extends A & B` stays a bound on two interfaces.
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
-  is passed on and returned as it is, but its members (`x.id`), its conversion to one part
-  (`T` or `{ id: string }`) and building one (`{ ...t, id }`) are not supported yet (#350).
+  is passed on and returned as it is, and the members of its object parts are read (also with
+  `?.` and destructuring), written and called on the value itself (`x.id = "b"`, `s.$set(v)` for
+  `s: Signal<T>`); its conversion to one part (`T` or `{ id: string }`) and building one
+  (`{ ...t, id }`) are not supported yet (#350).
 - An intersection is the same type as the object type with its fields written out, so where a
   program has both forms, inference through `T & { id: string }` treats them alike: an object
   literal `{ a: 1, id: "x" }` gives `T = A` when the program also declares a value of type

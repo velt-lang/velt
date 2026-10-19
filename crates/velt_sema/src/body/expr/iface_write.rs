@@ -39,6 +39,18 @@ impl FnCx<'_, '_> {
                 self.bounds.get(*n as usize).cloned().unwrap_or_default(),
                 true,
             ),
+            // `T & { … }`: a member of an object part (`crate::intersection_members`).
+            TyKind::Op(..) => {
+                let f = self.cx.part_field(t, name)?;
+                return Some(IfaceField {
+                    iface: f.iface,
+                    args: f.args,
+                    index: f.index,
+                    ty: f.ty,
+                    readonly: f.readonly,
+                    on_param: true,
+                });
+            }
             _ => return None,
         };
         for b in bounds {

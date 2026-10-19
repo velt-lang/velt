@@ -132,11 +132,6 @@ impl Ctx<'_> {
                 // An intersection whose parts are all known object types is reduced even when
                 // their fields still mention type parameters: `Signal<T>` at `T = { data: D }`
                 // in a generic function is `{ data: D; $set(v: { data: D }): void }`.
-                let out = if ps.is_empty() || self.reducible_now(op) {
-                    self.reduce_op(op)
-                } else {
-                    op
-                };
                 if op != t {
                     if let Some(&s) = self.type_level.op_sites.get(&t) {
                         self.type_level.op_sites.entry(op).or_insert(s);
@@ -145,6 +140,11 @@ impl Ctx<'_> {
                         self.type_level.op_modules.entry(op).or_insert(m);
                     }
                 }
+                let out = if ps.is_empty() || self.reducible_now(op) {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
                 self.canon_memo.insert(t, out);
                 return out;
             }

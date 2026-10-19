@@ -177,7 +177,7 @@ impl FnCx<'_, '_> {
         }
         if matches!(self.cx.ty.kind(t), hir::TyKind::Op(hir::TyOp::Intersect, _)) {
             d = d.with_note(
-                "in generic code, the members of an intersection with a type parameter part are not available yet (#350); callers see them once the type arguments are known",
+                "in generic code, an intersection with a type parameter part has only the members of its object parts; callers see the type parameter's once the type arguments are known (#350)",
             );
         }
         if let Some(note) = self.unnarrowed_note(obj) {

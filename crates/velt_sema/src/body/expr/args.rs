@@ -201,7 +201,10 @@ impl FnCx<'_, '_> {
             d.span = span;
             hargs.push(d);
         }
+        // A deferred type in the result that the type arguments let reduce is reported here.
+        let outer = self.cx.type_level.use_site.replace(span);
         let ret = self.cx.subst(c.ret, &type_args);
+        self.cx.type_level.use_site = outer;
         Checked {
             args: hargs,
             ret,
