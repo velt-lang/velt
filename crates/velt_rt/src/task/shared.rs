@@ -2,7 +2,7 @@
 //! hold, each of which may await it and gets the result, as in JS.
 //!
 //! The first share (`velt_rt_fut_share`) turns the future into a shared one in place: its
-//! header's `poll` / `drop` become [`orig_poll`] / [`orig_drop`], and the original entries move
+//! header's `poll` / `drop` become [`holder_poll`] / [`holder_drop`], and the original entries move
 //! to a side record (the hub, found by the future's address). The original pointer stays its
 //! first holder's; every other holder gets a handle of its own (a small heap future with a
 //! result slot, the hub in front of its header), so each holder awaits, and is dropped, as one
@@ -29,6 +29,7 @@
 use std::alloc::Layout;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::Waker;
 
@@ -52,6 +53,8 @@ struct Hub {
     size: usize,
     share: Option<ShareFn>,
     result_drop: Option<ResultDropFn>,
+    /// The task the promise is shared on (`local::task_key`; 0: not known yet).
+    task: AtomicUsize,
     st: Mutex<HubState>,
 }
 
@@ -82,12 +85,14 @@ fn handle_layout(size: usize) -> Layout {
         .unwrap_or_else(|_| crate::panic::fatal("invalid shared promise size"))
 }
 
-/// The hub of holder `f` (the original future or a handle).
+/// The hub of holder `f`: an original future is always in [`HUBS`] (by its address), a handle
+/// never is (its hub is in front of its header). The header's `poll` only says whether `f` is
+/// shared at all ([`is_shared`]): it never tells an original from a handle, so a linker that
+/// folds functions cannot make one read as the other.
 unsafe fn hub(f: *mut VeltFut) -> Arc<Hub> {
-    if is_handle(f) {
-        handle_hub(f)
-    } else {
-        orig_hub(f)
+    match orig_hub(f) {
+        Some(h) => h,
+        None => handle_hub(f),
     }
 }
 
@@ -96,16 +101,12 @@ unsafe fn handle_hub(f: *mut VeltFut) -> Arc<Hub> {
     (*((f as *mut u8).sub(FRONT) as *const Arc<Hub>)).clone()
 }
 
-/// The hub of the original future `f`, by its address.
-unsafe fn orig_hub(f: *mut VeltFut) -> Arc<Hub> {
-    match HUBS.lock().as_ref().and_then(|m| m.get(&(f as usize))) {
-        Some(h) => h.clone(),
-        None => crate::panic::fatal("internal error: a shared promise lost its record"),
-    }
-}
-
-unsafe fn is_handle(f: *mut VeltFut) -> bool {
-    std::ptr::fn_addr_eq((*f).poll, handle_poll as FutPoll)
+/// The hub of `f` if it is an original future (by its address).
+fn orig_hub(f: *mut VeltFut) -> Option<Arc<Hub>> {
+    HUBS.lock()
+        .as_ref()
+        .and_then(|m| m.get(&(f as usize)))
+        .cloned()
 }
 
 /// Is `f` a holder of a shared promise (its original future or a handle)?
@@ -113,7 +114,7 @@ unsafe fn is_handle(f: *mut VeltFut) -> bool {
 /// # Safety
 /// `f` must be a live heap future.
 pub(crate) unsafe fn is_shared(f: *mut VeltFut) -> bool {
-    is_handle(f) || std::ptr::fn_addr_eq((*f).poll, orig_poll as FutPoll)
+    std::ptr::fn_addr_eq((*f).poll, holder_poll as FutPoll)
 }
 
 /// Another holder of the promise `f` (null: none): a handle of its own (rt_abi_async.md §1.2).
@@ -143,6 +144,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
             size: result_size as usize,
             share,
             result_drop,
+            task: AtomicUsize::new(super::local::task_key()),
             st: Mutex::new(HubState {
                 holders: 1,
                 done: false,
@@ -153,10 +155,11 @@ pub unsafe extern "C" fn velt_rt_fut_share(
         HUBS.lock()
             .get_or_insert_with(HashMap::new)
             .insert(f as usize, h.clone());
-        (*f).poll = orig_poll;
-        (*f).drop = orig_drop;
+        (*f).poll = holder_poll;
+        (*f).drop = holder_drop;
         h
     };
+    on_its_task(&h);
     h.st.lock().holders += 1;
     let l = handle_layout(h.size);
     let base = std::alloc::alloc(l);
@@ -166,8 +169,8 @@ pub unsafe extern "C" fn velt_rt_fut_share(
     (base as *mut Arc<Hub>).write(h);
     let g = base.add(FRONT) as *mut VeltFut;
     g.write(VeltFut {
-        poll: handle_poll,
-        drop: handle_drop,
+        poll: holder_poll,
+        drop: holder_drop,
     });
     g
 }
@@ -176,23 +179,16 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(FUT_RESULT_OFFSET)
 }
 
-// `orig_poll` and `handle_poll` tell the original future from a handle by address
-// ([`is_handle`]), so their code must differ: the linker folds identical functions into one
-// (`/OPT:ICF`), and with the same body both would have one address, every original would read as
-// a handle, and its hub would be read from the bytes in front of it.
-unsafe extern "C" fn orig_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&orig_hub(f), f, cx)
+/// `poll` of every holder, the original future and the handles alike.
+unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    poll_holder(&hub(f), f, cx)
 }
 
-unsafe extern "C" fn handle_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&handle_hub(f), f, cx)
-}
-
-unsafe extern "C" fn orig_drop(f: *mut VeltFut) {
-    release(hub(f), f);
-}
-
-unsafe extern "C" fn handle_drop(f: *mut VeltFut) {
+/// `drop` of every holder: a handle also frees its own block.
+unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
+    if let Some(h) = orig_hub(f) {
+        return release(h, f);
+    }
     let base = (f as *mut u8).sub(FRONT);
     let h = (base as *mut Arc<Hub>).read();
     let l = handle_layout(h.size);
@@ -200,8 +196,32 @@ unsafe extern "C" fn handle_drop(f: *mut VeltFut) {
     std::alloc::dealloc(base, l);
 }
 
+/// Stop the program when the promise of `h` is used on another task than the one it is shared
+/// on (a holder passed to `spawn` or sent over a channel): its original future runs on that
+/// task, and its result would be used from two threads. Outside a task (the runtime dropping
+/// what is left at exit) anything goes.
+fn on_its_task(h: &Hub) {
+    let now = super::local::task_key();
+    if now == 0 {
+        return;
+    }
+    match h
+        .task
+        .compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed)
+    {
+        Ok(_) => {}
+        Err(t) if t == now => {}
+        Err(_) => crate::panic::fatal(
+            "a promise shared on one task was used on another (`spawn`, a channel): awaiting a \
+             shared promise from another task is not supported yet (#212); await it on its own \
+             task and pass the result",
+        ),
+    }
+}
+
 /// Poll holder `f` of the promise of `h`.
 unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    on_its_task(h);
     let me = f as usize;
     let w = context(cx).waker().clone();
     let mut st = h.st.lock();
@@ -268,6 +288,7 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
 
 /// Holder `f` of the promise of `h` is dropped.
 unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
+    on_its_task(&h);
     let me = f as usize;
     let mut st = h.st.lock();
     st.holders -= 1;
@@ -315,23 +336,4 @@ pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
         std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
     }
     st.done
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The original future and a handle are told apart by their `poll` (`is_handle`): the two
-    /// functions must keep their own addresses after the linker folded identical code.
-    #[test]
-    fn original_and_handle_polls_differ() {
-        assert!(!std::ptr::fn_addr_eq(
-            orig_poll as FutPoll,
-            handle_poll as FutPoll
-        ));
-        assert!(!std::ptr::fn_addr_eq(
-            orig_drop as FutDrop,
-            handle_drop as FutDrop
-        ));
-    }
 }

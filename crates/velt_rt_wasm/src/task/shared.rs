@@ -45,15 +45,13 @@ fn handle_layout(size: usize) -> Layout {
         .unwrap_or_else(|_| crate::panic::fatal("invalid shared promise size"))
 }
 
-unsafe fn is_handle(f: *mut VeltFut) -> bool {
-    std::ptr::fn_addr_eq((*f).poll.0, handle_poll as FutPollFn)
-}
-
+/// The hub of holder `f`: an original future is always in `HUBS` (by its address), a handle
+/// never is (its hub is in front of its header). The header's `poll` only says whether `f` is
+/// shared at all, so a linker that folds functions cannot make one holder read as the other.
 unsafe fn hub(f: *mut VeltFut) -> HubRef {
-    if is_handle(f) {
-        handle_hub(f)
-    } else {
-        orig_hub(f)
+    match orig_hub(f) {
+        Some(h) => h,
+        None => handle_hub(f),
     }
 }
 
@@ -62,10 +60,9 @@ unsafe fn handle_hub(f: *mut VeltFut) -> HubRef {
     (*((f as *mut u8).sub(FRONT) as *const HubRef)).clone()
 }
 
-/// The hub of the original future `f`, by its address.
-unsafe fn orig_hub(f: *mut VeltFut) -> HubRef {
+/// The hub of `f` if it is an original future (by its address).
+fn orig_hub(f: *mut VeltFut) -> Option<HubRef> {
     HUBS.with(|m| m.borrow().get(&(f as usize)).cloned())
-        .unwrap_or_else(|| crate::panic::fatal("internal error: a shared promise lost its record"))
 }
 
 /// Is `f` a holder of a shared promise (its original future or a handle)?
@@ -73,7 +70,7 @@ unsafe fn orig_hub(f: *mut VeltFut) -> HubRef {
 /// # Safety
 /// `f` must be a live heap future.
 pub(crate) unsafe fn is_shared(f: *mut VeltFut) -> bool {
-    is_handle(f) || std::ptr::fn_addr_eq((*f).poll.0, orig_poll as FutPollFn)
+    std::ptr::fn_addr_eq((*f).poll.0, holder_poll as FutPollFn)
 }
 
 /// Another holder of the promise `f` (null: none): a handle of its own.
@@ -106,8 +103,8 @@ pub unsafe extern "C" fn velt_rt_fut_share(
             waiters: Vec::new(),
         }));
         HUBS.with(|m| m.borrow_mut().insert(f as usize, h.clone()));
-        (*f).poll = Wide(orig_poll);
-        (*f).drop = Wide(orig_drop);
+        (*f).poll = Wide(holder_poll);
+        (*f).drop = Wide(holder_drop);
         h
     };
     let size = {
@@ -122,7 +119,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
     }
     (base as *mut HubRef).write(h);
     let g = base.add(FRONT) as *mut VeltFut;
-    g.write(VeltFut::new(handle_poll, handle_drop));
+    g.write(VeltFut::new(holder_poll, holder_drop));
     g
 }
 
@@ -130,23 +127,16 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(FUT_RESULT_OFFSET)
 }
 
-// `orig_poll` and `handle_poll` tell the original future from a handle by address
-// ([`is_handle`]), so their code must differ: the linker folds identical functions into one
-// (`/OPT:ICF`), and with the same body both would have one address, every original would read as
-// a handle, and its hub would be read from the bytes in front of it.
-unsafe extern "C" fn orig_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&orig_hub(f), f, cx)
+/// `poll` of every holder, the original future and the handles alike.
+unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    poll_holder(&hub(f), f, cx)
 }
 
-unsafe extern "C" fn handle_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    poll_holder(&handle_hub(f), f, cx)
-}
-
-unsafe extern "C" fn orig_drop(f: *mut VeltFut) {
-    release(hub(f), f);
-}
-
-unsafe extern "C" fn handle_drop(f: *mut VeltFut) {
+/// `drop` of every holder: a handle also frees its own block.
+unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
+    if let Some(h) = orig_hub(f) {
+        return release(h, f);
+    }
     let base = (f as *mut u8).sub(FRONT);
     let h = (base as *mut HubRef).read();
     let l = handle_layout(h.borrow().size);

@@ -168,8 +168,12 @@ shares a promise never calls it, and its futures are unchanged.
 - The runtime functions that recognize boxed promises by their header (`velt_rt_fut_start`,
   `velt_rt_futs_handled`, `velt_rt_fut_transfer`) treat a holder as some other future.
   `velt_rt_fut_peek` reads the settled result.
-- A shared promise is awaited on the task that drives it. Awaiting one from several tasks at
-  once is not supported yet (#212).
+- Every holder has the same `poll` and `drop` entries, which say only that a future is shared.
+  An original future is found in the runtime's table of hubs by its address, and a handle never
+  is.
+- A shared promise stays on the task where it was shared. A holder that is polled, shared or
+  dropped on another task stops the program with a fatal error (exit code 101). Awaiting a
+  shared promise from several tasks is not supported yet (#212).
 
 ## 2. Tasks
 

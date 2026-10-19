@@ -99,6 +99,14 @@ fn current_set() -> *mut LocalSet {
     unsafe { *(*tcx).set }
 }
 
+/// Which task is being polled: the address of its set slot, fixed for the task's life (0 outside
+/// a task). Shared promises (task/shared.rs) check that they stay on one task.
+pub(crate) fn task_key() -> usize {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    unsafe { tcx.as_ref() }.map_or(0, |t| t.set as usize)
+}
+
 /// The turn of the task being polled (0 outside a task).
 fn current_turn() -> u32 {
     let tcx = CURRENT.with(Cell::get);
