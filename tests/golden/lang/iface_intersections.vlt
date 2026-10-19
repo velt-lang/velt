@@ -78,6 +78,15 @@ class K implements Large {
   }
 }
 
+function* counter(): IterableIterator<number> {
+  yield 1;
+  yield 2;
+}
+function step(it: Iterator<number>): number {
+  const r = it.next();
+  return r.done ? -1 : r.value;
+}
+
 function main() {
   const w = make();
   console.log(w.state, w.errors, w.refresh(), w.errors);
@@ -126,4 +135,6 @@ function main() {
   const lit: Large = { a: () => 2, b: () => "lit" };
   const litSmall: Small = lit;
   console.log(small.a(), small === large, litSmall.a(), litSmall === lit);
+  const gen = counter();
+  console.log(step(gen), step(gen), step(gen));
 }

@@ -233,6 +233,8 @@ impl FnLower<'_, '_> {
             self.goto(join);
         }
         self.switch_to(join);
+        // An owned temporary like any call's result: a consumer takes it, else it is dropped.
+        self.own_temp(out, fty);
         Operand::Copy(Place::local(out))
     }
 
