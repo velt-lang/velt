@@ -619,6 +619,11 @@ impl FnCx<'_, '_> {
             checks.push((a.ty, a.span, place.span, coerced.map(|c| c.ty), using));
         }
         for (t, at, pspan, coerced, using) in checks {
+            // A promise is not shared with a task (a shared promise is awaited on one task,
+            // #212): it moves there (`crate::ownership::soften_moves` keeps it a move too).
+            if self.cx.holds_promise(t) {
+                self.f.soft_moves.retain(|s| *s != pspan);
+            }
             self.no_generator_copy(t, crate::body::GenCopy::Task, at);
             // A generator behind an interface value made here (`spawn(sum(gen()))` with
             // `sum(it: Iterable<T>)`): the same.
@@ -717,7 +722,7 @@ pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>
     }
 }
 
-fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
+pub(crate) fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;
     loop {
