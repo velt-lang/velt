@@ -43,11 +43,15 @@ runs:
     # (runner images differ in their preinstalled stable, which split the cache into two live keys
     # per OS on Oct 15) and the workspace manifests (any edit made a new entry). Now the `main` job
     # saves a new entry exactly when the toolchain or a dependency changes; until it has, jobs
-    # start without a cache. The nightly `cache-prune` job deletes the superseded entries.
+    # start without a cache. The nightly `cache-prune` job deletes the superseded entries. A changed
+    # feature of an external dependency in a Cargo.toml doesn't change the key (Cargo.lock stays).
     - name: rust-cache key
       id: rust-cache-key
       shell: bash
-      run: echo "key=$(bash "${GITHUB_ACTION_PATH//\\//}/rust-cache-key.sh")" >> "$GITHUB_OUTPUT"
+      run: |
+        key=$(bash "${GITHUB_ACTION_PATH//\\//}/rust-cache-key.sh")
+        [ -n "$key" ] || { echo "::error::rust-cache-key.sh printed no key"; exit 1; }
+        echo "key=$key" >> "$GITHUB_OUTPUT"
     - uses: Swatinem/rust-cache@v2
       if: inputs.cache == 'true'
       with:

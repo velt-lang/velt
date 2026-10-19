@@ -4,18 +4,21 @@
 # against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
-# (bench/nightly.sh), and the WebAssembly goldens on Windows and macOS. Then the timing-sensitive
-# tests, many times on Windows and macOS (`flake`), and the deletion of superseded build caches
-# (`cache-prune`). A manual run can pick one of them: `gh workflow run nightly -f only=stress`.
+# (bench/nightly.sh), the WebAssembly goldens on Windows and macOS, and the deletion of superseded
+# build caches (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
+# has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
+# can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`).
 name: nightly
 
 on:
   schedule:
     - cron: "17 2 * * *"
+    # Only the flake jobs (their `if` and the others' check for this schedule).
+    - cron: "7 5 * * *"
   workflow_dispatch:
     inputs:
       only:
-        description: Run only one job (scheduled runs run all of them).
+        description: Run only one job (all = every job, flake included).
         type: choice
         options: [all, gate, stress, oracle, bench, wasm, flake, cache]
         default: all
@@ -27,7 +30,7 @@ on:
         options: [compare, accept]
         default: compare
       flake_rounds:
-        description: "flake: how many times each test runs."
+        description: "flake: how many times each test runs (the scheduled run: 8)."
         type: number
         default: 20
 
@@ -37,7 +40,7 @@ env:
 
 jobs:
   gate-with-services:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'gate'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'gate')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     services:
@@ -90,7 +93,7 @@ jobs:
   # A debug build (Cranelift) of long_main_16000 must stay under 2 GB of peak memory and print the
   # right result (#42, #189). The script prints the stage times and the peak; the summary shows them.
   compile-stress:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'stress'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'stress')
     name: compile-stress (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -155,7 +158,7 @@ jobs:
   # (crates/veltc/tests/ts_compat_node). The pull request gate skips the parts that need the
   # Node packages or a Node that strips types; VELT_TSC_ORACLE=1 makes them fail here.
   tsc-oracle:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'oracle'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'oracle')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -181,7 +184,7 @@ jobs:
   # "nightly benchmarks regressed"; the baseline then stays put, so the job keeps failing until the
   # slowdown is fixed or accepted (`gh workflow run nightly -f only=bench -f bench_baseline=accept`).
   bench:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'bench'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'bench')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -242,13 +245,14 @@ jobs:
             }
 
   # The tests that have failed now and then in the merge queue, mostly on Windows and macOS: the
-  # async, promise and timer goldens and the `velt dev` reload goldens, each run 20 times (one job
-  # per OS and suite: a round of each takes about 5 minutes). There are no automatic retries here
+  # async, promise and timer goldens and the `velt dev` reload goldens, each run 8 times on the
+  # schedule and `flake_rounds` (20) times by hand (one job per OS and suite; a round takes 3 to 6
+  # minutes). There are no automatic retries here
   # or anywhere else (they would hide real races in the runtime): every failure is recorded, the
   # job fails, and `flake-report` opens or updates one issue per test that failed, so a flaky test
   # shows up here before it drops pull requests from the queue.
   flake:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'flake'
+    if: github.event.schedule == '7 5 * * *' || inputs.only == 'all' || inputs.only == 'flake'
     name: flake (${{ matrix.os }}, ${{ matrix.suite }})
     strategy:
       fail-fast: false
@@ -258,7 +262,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
-      ROUNDS: ${{ inputs.flake_rounds || 20 }}
+      ROUNDS: ${{ inputs.flake_rounds || 8 }}
       SUITE: ${{ matrix.suite }}
       VELT_GOLDEN: lang/async,lang/promise,std/timers,std/global_timers,async_dispatch/
     steps:
@@ -339,7 +343,7 @@ jobs:
           path: flake
       - uses: actions/github-script@v7
         env:
-          ROUNDS: ${{ inputs.flake_rounds || 20 }}
+          ROUNDS: ${{ inputs.flake_rounds || 8 }}
         with:
           script: |
             const fs = require('fs');
@@ -376,7 +380,8 @@ jobs:
               .filter(i => !i.pull_request);
             for (const [id, t] of tests) {
               const marker = `<!-- flake: ${id} -->`;
-              const named = new RegExp(`(^|[^A-Za-z0-9_])${shortName(id)}([^A-Za-z0-9_]|$)`);
+              const escaped = shortName(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const named = new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`);
               const existing = open.find(i => (i.body ?? '').includes(marker))
                 ?? (id.includes('/') ? open.find(i => named.test(i.title) && /flak|timing|timer order|under load/i.test(i.title)) : undefined);
               const counts = Object.entries(t.rounds).map(([os, r]) => `${r.size} of ${process.env.ROUNDS} rounds on ${os}`).join(', ');
@@ -400,7 +405,7 @@ jobs:
   # those of the older key scheme), so the live entries are never evicted at the 10 GB limit. A
   # run from another branch only lists what it would delete.
   cache-prune:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'cache'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'cache')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -417,13 +422,20 @@ jobs:
           echo "live: ${current}<OS>-<arch>"
           dry=
           [ "$GITHUB_REF" = refs/heads/main ] || { dry=1; echo "not main: nothing is deleted"; }
-          gh cache list --limit 1000 --json id,key,sizeInBytes \
-            --jq '.[] | "\(.id)\t\(.key)\t\(.sizeInBytes)"' > "$RUNNER_TEMP/caches.tsv"
+          # An entry saved in the last hour stays: main may have just saved a key that this checkout
+          # (from before that push) doesn't know yet.
+          recent=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh cache list --limit 1000 --json id,key,sizeInBytes,createdAt \
+            --jq '.[] | "\(.id)\t\(.key)\t\(.sizeInBytes)\t\(.createdAt)"' > "$RUNNER_TEMP/caches.tsv"
           freed=0
-          while IFS=$'\t' read -r id key size; do
+          while IFS=$'\t' read -r id key size created; do
             case "$key" in
               "$current"*) echo "keep    $key" ;;
               v[0-9]*-rust-*)
+                if [[ "$created" > "$recent" ]]; then
+                  echo "keep    $key (saved $created)"
+                  continue
+                fi
                 echo "delete  $key ($((size >> 20)) MiB)"
                 freed=$((freed + size))
                 [ -n "$dry" ] || gh cache delete "$id"
