@@ -1,0 +1,62 @@
+// check: no leaks
+// Members of `Signal<T>` (`T & { $set: … }`) where a generic function's return type is
+// instantiated at a type that still mentions the caller's type parameters, as sigx's `signal()`
+// in `cell<D>` (#1304): fields are read, written, destructured and reached with `?.` through
+// the object part, `$set` is called, and the value stays shared. Expected output: Node's.
+type Signal<T> = T & { $set: (v: T) => void };
+type StateName = "idle" | "pending" | "ready" | "errored";
+
+let sets = 0;
+function count(): void {
+  sets++;
+}
+const seen: object[] = [];
+// `attach` makes the signal; the one it returns is kept, not a copy.
+function signal<T extends object>(t: T, attach: (t: T) => Signal<T>): Signal<T> {
+  const s = attach(t);
+  seen.push(s);
+  return s;
+}
+
+function cell<D>(d: D, fail: boolean): string {
+  const state = signal(
+    {
+      st: "idle" as StateName,
+      data: null as D | null,
+      err: null as Error | null,
+      has: false,
+    },
+    (t) => ({ ...t, $set: (v) => count() }),
+  );
+  const alias = state;
+  state.st = "pending";
+  if (fail) {
+    alias.err = new Error("boom");
+    alias.st = "errored";
+  } else {
+    alias.data = d;
+    alias.has = true;
+    state.st = "ready";
+  }
+  state.$set({ st: state.st, data: state.data, err: state.err, has: state.has });
+  const { st, has } = state;
+  return `${st} ${has} ${state.data} ${alias.err?.message} ${state === alias} ${seen[seen.length - 1] === state}`;
+}
+
+// A field that holds a function of the type parameter, called through the intersection.
+function mapped<V>(v: V, f: (x: V) => string): string {
+  const s = signal({ value: v, show: f }, (t) => ({ ...t, $set: (v) => count() }));
+  return s.show(s.value);
+}
+
+// `?.` on a signal that may be null.
+function maybe<V>(v: V, some: boolean): V | undefined {
+  const s = some ? signal({ v }, (t) => ({ ...t, $set: (v) => count() })) : null;
+  return s?.v;
+}
+
+console.log(cell(5, false));
+console.log(cell("x", true));
+console.log(mapped(3, (x) => `n=${x}`), mapped([1, 2], (x) => x.join("+")));
+console.log(maybe(7, true), maybe("s", false));
+console.log(sets, seen.length);

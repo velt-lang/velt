@@ -1,0 +1,80 @@
+// check: no leaks
+// Members of intersections with a type parameter part (#350, #1304), as TypeScript has them.
+// In a generic body, a member of an object part (`s.$set(v)` for `s: Signal<T>`) is read
+// (also with `?.` and destructuring), written and called on the value itself; a field that is
+// a type parameter in one part and a type in another is their intersection (`D` for
+// `D extends string` and `string`); and nested `Signal<Signal<…>>`'s two `$set`s are
+// overloads, called through the one that takes both.
+// Expected output: Node's.
+type Signal<T> = T & { $set: (v: T) => void };
+type Tagged<T> = T & { tag: string; n: number };
+type Both<T> = T & { a: string; b: number };
+
+function reset<T extends object>(s: Signal<T>, v: T): void {
+  s.$set(v);
+}
+
+function swap<T extends object>(s: Signal<T>, v0: T, f: (v: T) => void): Signal<T> {
+  const old = s.$set;
+  s.$set = f;
+  old(v0);
+  return s;
+}
+
+function bump<T>(x: Tagged<T>): string {
+  x.n = x.n + 1;
+  x.tag = x.tag + "!";
+  return `${x.tag}:${x.n}`;
+}
+
+function look<T>(x: Tagged<T> | null): string {
+  const t = x?.tag;
+  if (x === null) return "none";
+  const { n, tag } = x;
+  return `${t} ${n} ${tag}`;
+}
+
+function both<T extends object>(t: T, f: (t: T) => Both<T>): Both<T> {
+  return f(t);
+}
+function named<D extends string>(d: D): string {
+  const s = both({ a: d }, (t) => ({ ...t, b: 1 }));
+  return `${s.a} ${s.b}`;
+}
+
+let calls = 0;
+function nested<V>(v: V): number {
+  const outer: Signal<Signal<{ value: V }>> = {
+    value: v,
+    $set: (x) => {
+      calls++;
+    },
+  };
+  outer.value = v;
+  outer.$set({ value: v });
+  return calls + 2;
+}
+
+let last = 0;
+const s: Signal<{ n: number }> = {
+  n: 1,
+  $set: (v) => {
+    last = v.n;
+  },
+};
+reset(s, { n: 5 });
+console.log(last);
+const t = swap(s, { n: 2 }, (v) => {
+  last = v.n * 10;
+});
+t.$set({ n: 7 });
+console.log(last, t === s, s.n);
+
+const g: Tagged<{ id: number }> = { id: 3, tag: "a", n: 1 };
+const b1 = bump(g);
+const b2 = bump(g);
+console.log(b1, b2, g.n, g.tag, g.id);
+console.log(look(g), look<{ id: number }>(null));
+
+console.log(named("x"));
+console.log(nested(1), nested("s"));
