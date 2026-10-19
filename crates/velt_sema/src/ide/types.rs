@@ -120,7 +120,8 @@ impl Analysis {
             // The first record: desugarings check synthetic expressions with the span of the
             // expression they stand for after it (`const { a = 1 } = p` reads `p.a` at `p`'s
             // span).
-            let mut index = FxHashMap::with_capacity_and_hasher(self.types.len(), Default::default());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.types.len(), Default::default());
             for (i, (s, _, _)) in self.types.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }

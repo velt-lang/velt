@@ -167,7 +167,8 @@ impl Analysis {
     /// recorded wins, as with [`Analysis::def_at`].
     pub fn def_of(&self, span: Span) -> Option<DefRef> {
         let index = self.ref_index.get_or_init(|| {
-            let mut index = FxHashMap::with_capacity_and_hasher(self.refs.len(), Default::default());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.refs.len(), Default::default());
             for (i, (s, _)) in self.refs.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }
