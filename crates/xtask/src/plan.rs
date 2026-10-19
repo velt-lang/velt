@@ -79,6 +79,14 @@ const SHARED_SOURCES: &[(&str, &[&str])] = &[
 /// `vpm` resolves imports and packages for every program, so it runs the goldens too.
 const GOLDENS_TOO: &[&str] = &["vpm"];
 
+/// Files that build WebAssembly besides those with `wasm` in their path (crates/velt_rt_wasm,
+/// crates/velt_link/src/wasm.rs, the `wasm_goldens` test): a change to them runs the
+/// WebAssembly goldens ([`Plan::wasm`]).
+const WASM_TOO: &[&str] = &[
+    "crates/velt_codegen_llvm/src/target.rs",
+    "crates/velt_codegen_llvm/src/llc.rs",
+];
+
 /// Changes to these select everything.
 const EVERYTHING: &[&str] = &[
     "Cargo.toml",
@@ -249,6 +257,13 @@ pub struct Plan {
     pub other_os: Option<String>,
     /// How velt_syntax's robustness test cuts the goldens, if it runs.
     pub sweep: Sweep,
+    /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
+    /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
+    /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
+    /// still runs on WebAssembly (its `veltc` tests are selected by name). The nightly gate and
+    /// the checks after merging run them in full. `--full` runs them unless
+    /// `VELT_WASM_GOLDENS=skip`, which the merge queue sets from the change's plan.
+    pub wasm: bool,
 }
 
 impl Plan {
@@ -269,6 +284,7 @@ impl Plan {
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
             // (`VELT_ROBUSTNESS`, as `cargo xtask affected` sets it for the queue).
             sweep: Sweep::Sampled(BTreeSet::new()),
+            wasm: true,
         }
     }
 
@@ -295,6 +311,7 @@ impl Plan {
             difftest: false,
             vscode: false,
             sweep: Sweep::Sampled(BTreeSet::new()),
+            wasm: false,
         }
     }
 
@@ -308,6 +325,7 @@ impl Plan {
     pub fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Plan {
         let mut plan = Plan::nothing();
         plan.sweep = Sweep::for_changes(graph, paths, comment_only);
+        plan.wasm = paths.iter().any(|p| is_wasm(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
         for path in paths {
@@ -486,8 +504,12 @@ impl Plan {
 
     /// The nextest filterset of the tests to run (never the goldens, which run on their own).
     pub fn filterset(&self) -> Option<String> {
+        let mut excluded = "binary_id(veltc::golden)".to_string();
+        if self.veltc == Veltc::All && !self.wasm {
+            excluded.push_str(" - binary_id(veltc::wasm_goldens)");
+        }
         if self.all_tests {
-            return Some("all() - binary_id(veltc::golden)".into());
+            return Some(format!("all() - {excluded}"));
         }
         let mut parts: Vec<String> = self
             .packages
@@ -508,10 +530,7 @@ impl Plan {
         if parts.is_empty() {
             return None;
         }
-        Some(format!(
-            "({}) - binary_id(veltc::golden)",
-            parts.join(" | ")
-        ))
+        Some(format!("({}) - {excluded}", parts.join(" | ")))
     }
 
     /// `VELT_GOLDEN` for the goldens (and the WebAssembly goldens): `None` for all of them.
@@ -561,6 +580,13 @@ impl Plan {
             }
         };
         out.push_str(&format!("  goldens: {goldens}\n"));
+        let wasm = match &self.veltc {
+            Veltc::All if !self.wasm => "no (nightly; no WebAssembly code changed)",
+            Veltc::All => "yes",
+            Veltc::Some(binaries) if binaries.contains("wasm_goldens") => "yes",
+            _ => "no",
+        };
+        out.push_str(&format!("  WebAssembly goldens: {wasm}\n"));
         let sweep = match &self.sweep {
             Sweep::Full => "every character of every golden (VELT_ROBUSTNESS=full)".to_string(),
             Sweep::Sampled(files) if files.is_empty() => "sampled".to_string(),
@@ -635,6 +661,11 @@ fn classify(graph: &Graph, path: &str) -> Effect {
         return Effect::Nothing;
     }
     Effect::Everything
+}
+
+/// Whether `path` builds WebAssembly: `wasm` in its path, or [`WASM_TOO`].
+fn is_wasm(path: &str) -> bool {
+    path.to_ascii_lowercase().contains("wasm") || WASM_TOO.contains(&path)
 }
 
 /// The `VELT_GOLDEN` substring that selects the goldens a changed file belongs to.

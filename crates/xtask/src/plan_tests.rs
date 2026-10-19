@@ -75,7 +75,8 @@ fn a_pipeline_crate_runs_its_dependents_and_every_end_to_end_test() {
     assert_eq!(p.goldens, Goldens::All);
     assert_eq!(
         p.filterset().unwrap(),
-        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden)"
+        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden) \
+         - binary_id(veltc::wasm_goldens)"
     );
 }
 
@@ -197,7 +198,10 @@ fn the_standard_library_runs_every_test_but_no_clippy() {
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
-    assert_eq!(p.filterset().unwrap(), "all() - binary_id(veltc::golden)");
+    assert_eq!(
+        p.filterset().unwrap(),
+        "all() - binary_id(veltc::golden) - binary_id(veltc::wasm_goldens)"
+    );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
     assert!(p.vlt_fmt);
@@ -579,4 +583,44 @@ fn unknown_changes_sweep_in_full_but_explicit_full_leaves_it_to_the_environment(
     let full = Plan::everything("--full");
     assert_eq!(full.sweep, Sweep::Sampled(set(&[])));
     assert!(full.sweep_env().is_empty());
+}
+
+#[test]
+fn the_webassembly_goldens_run_only_for_webassembly_code() {
+    let skipped = " - binary_id(veltc::wasm_goldens)";
+    for paths in [
+        &["crates/velt_sema/src/check.rs"][..],
+        &["crates/velt_rt/src/http.rs"],
+        &["std/json.vlt"],
+    ] {
+        let p = plan(paths);
+        assert!(!p.wasm, "{paths:?}");
+        assert!(p.filterset().unwrap().ends_with(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: no (nightly"));
+    }
+    for paths in [
+        &[
+            "crates/velt_sema/src/check.rs",
+            "crates/velt_rt_wasm/src/io.rs",
+        ][..],
+        &["crates/velt_link/src/wasm.rs"],
+        &["crates/veltc/tests/wasm_goldens.rs"],
+        &["crates/velt_codegen_llvm/src/target.rs"],
+        &["Cargo.lock"],
+    ] {
+        let p = plan(paths);
+        assert!(p.wasm, "{paths:?}");
+        assert!(!p.filterset().unwrap().contains(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: yes"));
+    }
+    // A changed golden, or the WebAssembly runtime alone, names the binary.
+    for paths in [
+        &["tests/golden/lang/foo.vlt"][..],
+        &["crates/velt_rt_wasm/src/lib.rs"],
+    ] {
+        let filterset = plan(paths).filterset().unwrap();
+        assert!(filterset.contains("binary(wasm_goldens)"), "{filterset}");
+        assert!(!filterset.contains(skipped), "{filterset}");
+    }
+    assert!(Plan::everything("--full").wasm);
 }
