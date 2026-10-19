@@ -140,20 +140,21 @@ not a reason for another round.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
-  Windows, and the `tsc` oracle for `velt check --ts-compat`
+  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for `velt check --ts-compat`
   (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
   `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
   -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f
-  only=stress` (or `gate`, `oracle`, `bench`).
+  only=stress` (or `gate`, `oracle`, `bench`, `wasm`).
 - A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
   the queue checked the change on Linux only, and opens or updates the issue "main fails on
-  <OS>" when that fails; fix it first. A change the queue checked on every OS skips them, unless
+  <OS>" when that fails; fix it first. A commit the queue tested on every OS skips them, unless
   it touches the toolchain or the dependencies (`main-plan`: `cargo xtask affected --base
   HEAD^1`, the queue's own plan, since the queue tested the commit on its parent; rules in
-  `crates/xtask/src/os.rs`). The same jobs refresh the build cache: on Linux at every push, on
+  `crates/xtask/src/os.rs`). A commit no passing merge queue run tested (a direct push or an
+  admin merge) runs every OS. The same jobs refresh the build cache: on Linux at every push, on
   Windows and macOS when they run. Pull request and merge queue runs restore it but never save
   their own.
 - A check the selection missed shows up in the merge queue; tighten the rule in

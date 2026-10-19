@@ -80,18 +80,19 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   changed runs the tests and doctests of its crate (and of the crates compiling its sources),
   clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. The WebAssembly
   goldens (`wasm_goldens`, about half of the test time) run only for changes to WebAssembly code
-  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly gate and
-  the checks after merging run them all. Changes to the
-  build, the toolchain, CI or the scripts select everything. `cargo xtask affected` prints the plan
-  and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes
-  release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly run
+  checks them all on Linux, Windows and macOS. Changes to the build, the toolchain, CI or the
+  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
+  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
+  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
   OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
-  only, so you need it locally only when you want that certainty before queueing. The queue skips the WebAssembly goldens
-  when the change doesn't touch WebAssembly code (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests
-  the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
-  script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
+  only, so you need it locally only when you want that certainty before queueing. The queue
+  skips the WebAssembly goldens when the change doesn't touch WebAssembly code
+  (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
+  WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the script with `--dir
+  /mnt/d/...` to keep it on the bigger disk, see below);
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
   PostgreSQL and Redis so the database tests run).
 

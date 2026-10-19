@@ -263,8 +263,8 @@ pub struct Plan {
     /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
     /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
     /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
-    /// still runs on WebAssembly (its `veltc` tests are selected by name). The nightly gate and
-    /// the checks after merging run them in full. `--full` runs them unless
+    /// still runs on WebAssembly (its `veltc` tests are selected by name). The nightly run checks
+    /// them in full on every OS, as do the checks after merging when they run. `--full` runs them unless
     /// `VELT_WASM_GOLDENS=skip`, which the merge queue sets from the change's plan.
     pub wasm: bool,
 }
