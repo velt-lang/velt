@@ -24,7 +24,7 @@
 //! releases it before the task starts ([`transfer_copy`](FnLower::transfer_copy),
 //! `async_fn/tasks.rs` `spawn`).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
@@ -36,10 +36,10 @@ impl Cx<'_> {
     /// Can a value of `t` reach a counted object (itself, or any part stored in it), a weak map
     /// or ref, or a promise whose result can? Only such values have anything to transfer.
     pub(super) fn holds_counted(&mut self, t: TyId) -> bool {
-        self.holds_counted_in(t, &mut HashSet::new())
+        self.holds_counted_in(t, &mut FxHashSet::default())
     }
 
-    fn holds_counted_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn holds_counted_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -68,10 +68,10 @@ impl Cx<'_> {
     /// glue/many.rs)? A `shared<T>` was checked when it was made; a promise's result is not
     /// reachable from it.
     pub(super) fn reaches_fn(&mut self, t: TyId) -> bool {
-        self.reaches_fn_in(t, &mut HashSet::new())
+        self.reaches_fn_in(t, &mut FxHashSet::default())
     }
 
-    fn reaches_fn_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn reaches_fn_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -89,10 +89,10 @@ impl Cx<'_> {
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`)? Function and
     /// interface values may hold any type: assumed to.
     pub(super) fn reaches_own_clone(&mut self, t: TyId) -> bool {
-        self.reaches_own_clone_in(t, &mut HashSet::new())
+        self.reaches_own_clone_in(t, &mut FxHashSet::default())
     }
 
-    fn reaches_own_clone_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn reaches_own_clone_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -120,7 +120,7 @@ impl Cx<'_> {
 
     /// The part of `t` that makes it `uncopyable`: the resource type or the promise type.
     pub(super) fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
-        self.uncopyable_in(t, true, &mut HashSet::new())
+        self.uncopyable_in(t, true, &mut FxHashSet::default())
     }
 
     /// `uncopyable_part`, or with `honour_clones` false: the part through which a
@@ -130,7 +130,7 @@ impl Cx<'_> {
         &mut self,
         t: TyId,
         honour_clones: bool,
-        seen: &mut HashSet<TyId>,
+        seen: &mut FxHashSet<TyId>,
     ) -> Option<TyId> {
         if !seen.insert(t) {
             return None;
@@ -171,13 +171,16 @@ impl Cx<'_> {
             self.own_clones = Some(self.find_own_clones());
         }
         let m = self.own_clones.as_ref().and_then(|m| m.get(&d).copied());
-        let m = m.filter(|_| self.uncopyable_in(t, false, &mut HashSet::new()).is_some());
+        let m = m.filter(|_| {
+            self.uncopyable_in(t, false, &mut FxHashSet::default())
+                .is_some()
+        });
         self.honoured_clones.insert(t, m);
         m
     }
 
-    fn find_own_clones(&self) -> HashMap<DefId, DefId> {
-        let mut out = HashMap::new();
+    fn find_own_clones(&self) -> FxHashMap<DefId, DefId> {
+        let mut out = FxHashMap::default();
         for (i, def) in self.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = def else { continue };
             let Some(TyKind::Adt(owner, _)) = f.self_ty.map(|t| self.types.kind(t).clone()) else {

@@ -65,7 +65,7 @@ pub(crate) struct Recorder {
     pub params: Vec<Vec<String>>,
     /// `const f = (x) => ...`: declaring identifier → closure, so `f` displays with the
     /// closure's parameter names.
-    pub closures: std::collections::HashMap<Span, DefId>,
+    pub closures: rustc_hash::FxHashMap<Span, DefId>,
 }
 
 impl Ctx<'_> {

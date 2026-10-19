@@ -9,10 +9,10 @@ use super::*;
 /// Only the message uses it: which closures a handler reaches does not depend on it, since
 /// what such a local holds may be reached through what it shares (a field read out of it, an
 /// array handed to a constructor), which the graph does not follow.
-pub(super) fn homes(cx: &Ctx, g: &Graph) -> HashMap<DefId, Vec<usize>> {
+pub(super) fn homes(cx: &Ctx, g: &Graph) -> FxHashMap<DefId, Vec<usize>> {
     let setters = setters(cx);
-    let parents: HashSet<DefId> = g.parent.values().copied().collect();
-    let mut homes: HashMap<DefId, Vec<usize>> = HashMap::new();
+    let parents: FxHashSet<DefId> = g.parent.values().copied().collect();
+    let mut homes: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
@@ -33,8 +33,8 @@ pub(super) fn homes(cx: &Ctx, g: &Graph) -> HashMap<DefId, Vec<usize>> {
 /// The methods of the program that only keep some of their parameters in what `this` holds
 /// (`on(f) { this.listeners.push(f); }`, `set cb(f) { this.f = f; }`), with those parameters'
 /// positions (`this` is 0).
-fn setters(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
-    let mut out = HashMap::new();
+fn setters(cx: &Ctx) -> FxHashMap<DefId, Vec<usize>> {
+    let mut out = FxHashMap::default();
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
@@ -43,7 +43,7 @@ fn setters(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
         }
         let this = f.params[0].local;
         // Per parameter: its uses, and those that keep it in `this`.
-        let mut uses: HashMap<LocalId, (u32, u32)> = HashMap::new();
+        let mut uses: FxHashMap<LocalId, (u32, u32)> = FxHashMap::default();
         let mut kept = |x: &Expr| {
             if let E::Local(l, _) = x.kind {
                 uses.entry(l).or_default().1 += 1;
@@ -87,7 +87,7 @@ fn setters(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
 /// [`homes`]).
 struct Sites<'a, 'm>(
     &'a Ctx<'m>,
-    &'a HashMap<DefId, Vec<usize>>,
+    &'a FxHashMap<DefId, Vec<usize>>,
     &'a mut Vec<(DefId, LocalId)>,
 );
 

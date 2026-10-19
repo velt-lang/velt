@@ -8,7 +8,7 @@
 //! `null` together with several members is `Option<union>`. Like anonymous object types, the enum
 //! is generic over the type parameters its members mention (renumbered by first occurrence).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 
@@ -209,7 +209,7 @@ impl Ctx<'_> {
         for m in members {
             collect_params(&self.ty, *m, &mut params);
         }
-        let renumber: HashMap<u32, TyId> = params
+        let renumber: FxHashMap<u32, TyId> = params
             .iter()
             .enumerate()
             .map(|(i, p)| (*p, self.ty.param(i as u32)))

@@ -13,7 +13,7 @@
 //! given, so a spawned call is allowed too, and `Promise.all` and the other combinators only
 //! wait for the promises they are given, each checked where it is made.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
@@ -54,7 +54,7 @@ pub(super) fn made_from_value(
         s,
         def,
         copy,
-        spawned: HashSet::new(),
+        spawned: FxHashSet::default(),
         found: vec![],
     };
     visit::block(&mut f.body.block, &mut p);
@@ -68,7 +68,7 @@ struct Promises<'a, 'r, 's, 'm> {
     def: DefId,
     copy: bool,
     /// Spans of the calls `spawn` takes.
-    spawned: HashSet<Span>,
+    spawned: FxHashSet<Span>,
     found: Vec<Made>,
 }
 

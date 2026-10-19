@@ -7,7 +7,8 @@
 //! Those checks are fixed points over the functions ([`Rounds`]), and their work is counted
 //! ([`instantiation_work`]) so a test can tell that it grows linearly with the program.
 
-use std::collections::{BTreeSet, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ctx::Ctx;
@@ -21,9 +22,9 @@ pub(crate) type Target = (DefId, Vec<TyId>);
 /// [`Dispatch::targets`] per type, memoized.
 #[derive(Default)]
 pub(crate) struct Dispatch {
-    memo: HashMap<TyId, Vec<Target>>,
+    memo: FxHashMap<TyId, Vec<Target>>,
     /// Indices into `Ctx::impls` per implementing struct or class, built on first use.
-    impls_by_adt: Option<HashMap<DefId, Vec<usize>>>,
+    impls_by_adt: Option<FxHashMap<DefId, Vec<usize>>>,
     /// Vtable entries and impls examined: see [`instantiation_work`].
     pub(crate) work: u64,
 }
@@ -111,8 +112,8 @@ pub(crate) fn instantiate(cx: &mut Ctx, need: TyId, args: &[TyId]) -> Option<TyI
 }
 
 /// `Ctx::impls` indices per implementing struct or class.
-fn impls_by_adt(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
-    let mut by_adt: HashMap<DefId, Vec<usize>> = HashMap::new();
+fn impls_by_adt(cx: &Ctx) -> FxHashMap<DefId, Vec<usize>> {
+    let mut by_adt: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
     for (i, imp) in cx.impls.iter().enumerate() {
         if let TyKind::Adt(c, _) = *cx.ty.kind(imp.ty) {
             by_adt.entry(c).or_default().push(i);
@@ -170,13 +171,13 @@ pub(crate) struct Rounds {
     /// The function being visited.
     at: usize,
     /// The functions that read each def's requirements.
-    readers: HashMap<DefId, Vec<usize>>,
+    readers: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Rounds {
     /// Every function is visited in the first round; `reads`: (function, def it reads).
     pub(crate) fn new(n: usize, reads: impl IntoIterator<Item = (usize, DefId)>) -> Rounds {
-        let mut readers: HashMap<DefId, Vec<usize>> = HashMap::new();
+        let mut readers: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
         for (f, d) in reads {
             let rs = readers.entry(d).or_default();
             if rs.last() != Some(&f) {

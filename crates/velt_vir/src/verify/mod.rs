@@ -6,7 +6,7 @@ mod dominators;
 mod init;
 mod typing;
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::vir::*;
 
@@ -157,7 +157,7 @@ fn check_param_attrs(f: &Function, errs: &mut Vec<String>) {
 }
 
 fn check_symbols(p: &Program, errs: &mut Vec<String>) {
-    let mut syms = HashSet::new();
+    let mut syms = FxHashSet::default();
     for f in &p.funcs {
         if !syms.insert(f.symbol.as_str()) {
             errs.push(format!("duplicate function symbol `{}`", f.symbol));

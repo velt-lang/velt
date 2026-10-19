@@ -8,7 +8,7 @@
 //! collection, so an unknown type in a default is reported there, once, even when no use
 //! leaves the parameter out.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -29,11 +29,11 @@ pub(crate) enum DefaultsOf {
 #[derive(Default)]
 pub(crate) struct TypeDefaults {
     /// Per declaration, per parameter: its default (`Error` when invalid), `None` without one.
-    resolved: HashMap<DefaultsOf, Vec<Option<TyId>>>,
+    resolved: FxHashMap<DefaultsOf, Vec<Option<TyId>>>,
     /// The declarations whose defaults are being resolved, with the parameter at hand.
     resolving: Vec<(DefaultsOf, usize, ast::Ident)>,
     /// Declarations reported for a circular default.
-    circular: HashSet<DefaultsOf>,
+    circular: FxHashSet<DefaultsOf>,
     /// Circular defaults found so far (a default resolved while one was found is invalid too).
     hits: u32,
 }

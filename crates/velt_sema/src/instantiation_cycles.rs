@@ -24,7 +24,8 @@
 //! object, so the edge only fires from types that may be primitives, and a growing edge never
 //! makes one. If every growing edge of a component is allowed, its instantiations are finite.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 use velt_common::{Diagnostic, Span};
 
@@ -75,7 +76,7 @@ pub(crate) fn check(cx: &mut Ctx) -> bool {
     }
     let graph = Graph::new(&edges);
     let comp = graph.components();
-    let mut reported: HashSet<Span> = HashSet::new();
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
     for (i, e) in edges.iter().enumerate() {
         let (a, b) = (graph.index[&e.from], graph.index[&e.to]);
         if e.grows && !e.allowed && comp[a] == comp[b] && reported.insert(e.span) {
@@ -246,7 +247,7 @@ fn generics(cx: &Ctx, d: DefId) -> u32 {
 
 /// The expansion graph as adjacency lists over dense node indices.
 struct Graph {
-    index: HashMap<Node, usize>,
+    index: FxHashMap<Node, usize>,
     /// Outgoing edges (indices into the edge list) per node.
     out: Vec<Vec<usize>>,
     /// Target node per edge.
@@ -256,7 +257,7 @@ struct Graph {
 impl Graph {
     fn new(edges: &[Edge]) -> Graph {
         let mut g = Graph {
-            index: HashMap::new(),
+            index: FxHashMap::default(),
             out: vec![],
             to: vec![],
         };
@@ -333,7 +334,7 @@ impl Graph {
 
     /// The edges of a shortest path from `from` to `to` inside their component.
     fn path(&self, edges: &[Edge], from: usize, to: usize, comp: &[usize]) -> Vec<usize> {
-        let mut via: HashMap<usize, usize> = HashMap::new();
+        let mut via: FxHashMap<usize, usize> = FxHashMap::default();
         let mut queue = VecDeque::from([from]);
         while let Some(v) = queue.pop_front() {
             if v == to {

@@ -20,7 +20,7 @@
 //! called when the closure value is dropped. Its clone and transfer entries are null: nothing
 //! copies or transfers a closure that is only called.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S};
 
@@ -31,15 +31,15 @@ use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalI
 pub(super) fn scan(
     hir: &hir::Program,
     f: &hir::FnDef,
-) -> (HashSet<DefId>, HashMap<LocalId, DefId>) {
+) -> (FxHashSet<DefId>, FxHashMap<LocalId, DefId>) {
     let mut s = Scan {
         hir,
-        lets: HashMap::new(),
-        siblings: HashMap::new(),
-        uses: HashMap::new(),
-        calls: HashMap::new(),
-        captured: HashSet::new(),
-        immediate: HashSet::new(),
+        lets: FxHashMap::default(),
+        siblings: FxHashMap::default(),
+        uses: FxHashMap::default(),
+        calls: FxHashMap::default(),
+        captured: FxHashSet::default(),
+        immediate: FxHashSet::default(),
     };
     s.block(&f.body.block);
     let mut out = s.immediate;
@@ -90,16 +90,16 @@ pub(super) fn group_member(f: &hir::FnDef) -> bool {
 struct Scan<'h> {
     hir: &'h hir::Program,
     /// Locals initialized with a closure literal.
-    lets: HashMap<LocalId, DefId>,
+    lets: FxHashMap<LocalId, DefId>,
     /// Locals initialized with `Intrinsic::ClosureSibling`.
-    siblings: HashMap<LocalId, DefId>,
+    siblings: FxHashMap<LocalId, DefId>,
     /// Per local: every use, and the uses that are the callee of a call.
-    uses: HashMap<LocalId, usize>,
-    calls: HashMap<LocalId, usize>,
+    uses: FxHashMap<LocalId, usize>,
+    calls: FxHashMap<LocalId, usize>,
     /// Locals some closure captures.
-    captured: HashSet<LocalId>,
+    captured: FxHashSet<LocalId>,
     /// Immediately called closures.
-    immediate: HashSet<DefId>,
+    immediate: FxHashSet<DefId>,
 }
 
 impl Scan<'_> {

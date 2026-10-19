@@ -6,7 +6,7 @@
 //! Reading a Copy value (`xs.length`, `xs[i]` of numbers, `p.x`) is not a use here: the value
 //! is copied out before the call starts, so it can't alias anything the callee sees.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -75,7 +75,7 @@ pub(super) struct Use {
 /// Borrowing pattern bindings (`for...of` elements, `match` / destructuring bindings) point
 /// into the matched place: `aliases[binding]` is that place, so `f(xs, x)` (modifying `xs`) inside
 /// `for (const x of xs)` is seen as a use of `xs[..]`.
-pub(super) type Aliases = HashMap<LocalId, Place>;
+pub(super) type Aliases = FxHashMap<LocalId, Place>;
 
 pub(super) struct Collector<'a, 'm> {
     pub cx: &'a Ctx<'m>,
@@ -83,7 +83,7 @@ pub(super) struct Collector<'a, 'm> {
     pub aliases: &'a Aliases,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`): a call
     /// through one uses the variables it borrows, as a closure argument would.
-    pub held: &'a HashMap<LocalId, DefId>,
+    pub held: &'a FxHashMap<LocalId, DefId>,
 }
 
 impl Collector<'_, '_> {
@@ -174,7 +174,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         visit::expr(e, &mut v);
     }
@@ -184,7 +184,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         visit::block(b, &mut v);
     }
@@ -194,7 +194,7 @@ impl Collector<'_, '_> {
         let mut v = Nested {
             col: self,
             out,
-            skip: HashSet::new(),
+            skip: FxHashSet::default(),
         };
         for s in stmts {
             visit::stmt(s, &mut v);
@@ -245,7 +245,7 @@ impl Collector<'_, '_> {
 struct Nested<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     out: &'c mut Vec<Use>,
-    skip: HashSet<*const Expr>,
+    skip: FxHashSet<*const Expr>,
 }
 
 impl Nested<'_, '_, '_> {

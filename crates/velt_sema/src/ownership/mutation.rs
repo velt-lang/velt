@@ -21,7 +21,7 @@
 //!   modes; an interface method's receiver / params are modified if any implementation (or the
 //!   default) modifies them.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnKind};
@@ -37,7 +37,7 @@ pub(super) fn apply(
     d: DefId,
     f: &mut FnDef,
     ev: &Evidence,
-    moved: &HashSet<LocalId>,
+    moved: &FxHashSet<LocalId>,
 ) -> bool {
     let ncap = f.captures.len();
     let mut changed = false;
@@ -166,8 +166,8 @@ impl Dispatch {
     }
 
     /// Method → the groups it belongs to.
-    pub(super) fn membership(&self) -> HashMap<DefId, Vec<usize>> {
-        let mut out: HashMap<DefId, Vec<usize>> = HashMap::new();
+    pub(super) fn membership(&self) -> FxHashMap<DefId, Vec<usize>> {
+        let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
         for (g, group) in self.groups.iter().enumerate() {
             let (Group::Vtable(methods) | Group::Iface { methods, .. }) = group;
             for &m in methods {
@@ -178,7 +178,7 @@ impl Dispatch {
     }
 
     /// Method or interface → the groups whose joined modes a call through it reads.
-    pub(super) fn slots(&self) -> HashMap<DefId, Vec<usize>> {
+    pub(super) fn slots(&self) -> FxHashMap<DefId, Vec<usize>> {
         let mut out = self.membership();
         for (g, group) in self.groups.iter().enumerate() {
             if let Group::Iface { iface, .. } = group {
@@ -213,8 +213,8 @@ impl Dispatch {
 
 /// Methods in the same vtable slot of a class and its base classes (union-find over vtables).
 fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
-    let mut parent: HashMap<DefId, DefId> = HashMap::new();
-    fn find(parent: &HashMap<DefId, DefId>, mut d: DefId) -> DefId {
+    let mut parent: FxHashMap<DefId, DefId> = FxHashMap::default();
+    fn find(parent: &FxHashMap<DefId, DefId>, mut d: DefId) -> DefId {
         while let Some(&p) = parent.get(&d) {
             if p == d {
                 break;
@@ -245,7 +245,7 @@ fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
     let mut members: Vec<DefId> = parent.keys().chain(parent.values()).copied().collect();
     members.sort_unstable();
     members.dedup();
-    let mut groups: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    let mut groups: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
     for m in members {
         groups.entry(find(&parent, m)).or_default().push(m);
     }
@@ -283,7 +283,7 @@ fn join_group(cx: &mut Ctx, group: &[DefId], changed: &mut Vec<DefId>) {
 
 /// Every interface method slot with its implementations (in impl order) and default.
 fn iface_slots(cx: &Ctx) -> Vec<Group> {
-    let mut impls: HashMap<DefId, Vec<&[DefId]>> = HashMap::new();
+    let mut impls: FxHashMap<DefId, Vec<&[DefId]>> = FxHashMap::default();
     for im in &cx.impls {
         impls.entry(im.iface).or_default().push(&im.methods);
     }

@@ -22,7 +22,7 @@
 //!
 //! The receiver the traps see is the proxy itself, as an `any`.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -112,7 +112,7 @@ impl Cx<'_> {
         next.proxy_traced.insert(pty);
         // Rule 2, to a fixed point: what a proxiable value is upcast to.
         let casts: Vec<(TyId, TyId)> = self.facts.proxy_casts.iter().copied().collect();
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         loop {
             let mut changed = false;
             for &(from, to) in &casts {

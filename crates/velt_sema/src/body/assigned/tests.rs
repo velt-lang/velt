@@ -25,7 +25,7 @@ fn by_closures(body: &str) -> Vec<String> {
 
 fn anywhere(body: &str) -> Vec<String> {
     names(body, |stmts| {
-        let mut out = Assigned::new();
+        let mut out = Assigned::default();
         stmts.iter().for_each(|s| assigned_in_stmt(s, &mut out));
         out.keys().map(|n| n.to_string()).collect()
     })

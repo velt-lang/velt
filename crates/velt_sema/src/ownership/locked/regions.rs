@@ -7,7 +7,7 @@
 //! reach; the parameters of one passed to a call reach what the call's other arguments reach
 //! (`v.items.forEach((x) => out.push(x))`), and those of any other closure reach both regions.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -24,26 +24,26 @@ type Key = (DefId, LocalId);
 
 /// The regions of the locals of a callback and its closures.
 pub(super) struct Regions {
-    bits: HashMap<Key, u8>,
+    bits: FxHashMap<Key, u8>,
     /// A closure's capture local → the captured variable (in the creating body).
-    alias: HashMap<Key, Key>,
+    alias: FxHashMap<Key, Key>,
     /// The callback's parameter and captures: storing into them is a store across the boundary
     /// (assigning any other local only rebinds it).
-    homes: HashSet<Key>,
+    homes: FxHashSet<Key>,
     /// Captured variables of each closure (in the creating body).
-    captured: HashMap<DefId, Vec<LocalId>>,
+    captured: FxHashMap<DefId, Vec<LocalId>>,
     /// Parameters of each closure (after its captures).
-    pub(super) params: HashMap<DefId, Vec<LocalId>>,
+    pub(super) params: FxHashMap<DefId, Vec<LocalId>>,
     /// Function values called or passed in the bodies that are resolved to closures among the
     /// bodies (their spans): their bodies are checked, so calls need not copy anything.
-    pub(super) resolved: HashSet<Span>,
+    pub(super) resolved: FxHashSet<Span>,
     /// The callback's captures: its capture local → the captured variable (in the function
     /// making the callback).
-    callback_captures: HashMap<LocalId, LocalId>,
+    callback_captures: FxHashMap<LocalId, LocalId>,
     /// The callback.
     callback: DefId,
     /// The named functions among what each resolved function value may be.
-    pub(super) named: HashMap<Span, Vec<DefId>>,
+    pub(super) named: FxHashMap<Span, Vec<DefId>>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
     pub(super) changed: bool,
 }
@@ -52,14 +52,14 @@ impl Regions {
     /// The starting regions of callback `c` and the closures in `bodies` (`c`'s included).
     pub(super) fn new(c: DefId, bodies: &mut [(DefId, FnDef)]) -> Self {
         let mut r = Regions {
-            bits: HashMap::new(),
-            alias: HashMap::new(),
-            homes: HashSet::new(),
-            captured: HashMap::new(),
-            params: HashMap::new(),
-            resolved: HashSet::new(),
-            named: HashMap::new(),
-            callback_captures: HashMap::new(),
+            bits: FxHashMap::default(),
+            alias: FxHashMap::default(),
+            homes: FxHashSet::default(),
+            captured: FxHashMap::default(),
+            params: FxHashMap::default(),
+            resolved: FxHashSet::default(),
+            named: FxHashMap::default(),
+            callback_captures: FxHashMap::default(),
             callback: c,
             changed: false,
         };
@@ -218,8 +218,8 @@ pub(super) fn crosses(dest: u8, b: u8) -> bool {
 struct Sites {
     /// The body being visited.
     body: DefId,
-    parent: HashMap<DefId, DefId>,
-    passed: HashSet<DefId>,
+    parent: FxHashMap<DefId, DefId>,
+    passed: FxHashSet<DefId>,
 }
 
 impl visit::VisitMut for Sites {
@@ -243,8 +243,8 @@ impl visit::VisitMut for Sites {
 fn closure_sites(bodies: &mut [(DefId, FnDef)]) -> Sites {
     let mut sites = Sites {
         body: DefId(0),
-        parent: HashMap::new(),
-        passed: HashSet::new(),
+        parent: FxHashMap::default(),
+        passed: FxHashSet::default(),
     };
     for (d, f) in bodies.iter_mut() {
         sites.body = *d;

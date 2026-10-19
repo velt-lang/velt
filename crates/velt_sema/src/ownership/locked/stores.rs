@@ -8,7 +8,7 @@
 //! into a fresh local only grows what the local reaches, and one into a place whose type
 //! cannot hold a shared value (`out: i64[]`) crosses nothing.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 
@@ -155,7 +155,7 @@ impl Stores<'_, '_, '_, '_> {
                 }
             }
         }
-        let mut done = HashSet::new();
+        let mut done = FxHashSet::default();
         let flows = match callee {
             // A resolved function value: its closures' bodies are checked; its named functions
             // store what their summaries say.

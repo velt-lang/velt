@@ -11,7 +11,7 @@
 //! Every implementation records how it stores each writable field ([`SetterSrc`]) when it is
 //! created; the setter methods are synthesized only once the interface is written through.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -24,10 +24,10 @@ use crate::hir::{DefId, PassMode, TyId};
 #[derive(Default)]
 pub(crate) struct IfaceWrites {
     /// Interfaces with setter slots.
-    written: HashSet<DefId>,
+    written: FxHashSet<DefId>,
     /// Per `Ctx::impls` index: how each writable field of its interface is stored, in field
     /// order. An implementation without an entry cannot be written through.
-    sources: HashMap<u32, Vec<SetterSrc>>,
+    sources: FxHashMap<u32, Vec<SetterSrc>>,
 }
 
 /// How an implementation stores one writable interface field.

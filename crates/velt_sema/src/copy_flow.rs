@@ -7,7 +7,7 @@
 //! that value may be the copy (or the copy reached the heap, where any value of a type holding
 //! the converted-to type may hold it).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -152,8 +152,8 @@ struct Edges<'a> {
     f: DefId,
     copies: &'a [(Span, TyId)],
     /// The parameters (locals) of each function.
-    params: &'a HashMap<DefId, Vec<LocalId>>,
-    to: HashMap<Store, Vec<Store>>,
+    params: &'a FxHashMap<DefId, Vec<LocalId>>,
+    to: FxHashMap<Store, Vec<Store>>,
 }
 
 impl Edges<'_> {
@@ -266,14 +266,14 @@ impl VisitMut for Edges<'_> {
 /// Where each copy may go.
 pub(crate) struct CopyFlow {
     /// The stores each copy reaches (`None`: the heap among them).
-    reach: Vec<Option<HashSet<Store>>>,
+    reach: Vec<Option<FxHashSet<Store>>>,
 }
 
 impl CopyFlow {
     /// Build the flow for the copies at `copies` (span and converted-to type, in
     /// `Copies::copies` order).
     pub(crate) fn new(cx: &mut Ctx, copies: &[(Span, TyId)]) -> CopyFlow {
-        let mut params: HashMap<DefId, Vec<LocalId>> = HashMap::new();
+        let mut params: FxHashMap<DefId, Vec<LocalId>> = FxHashMap::default();
         let mut captures: Vec<(DefId, LocalId, LocalId)> = vec![];
         for (i, d) in cx.defs.iter().enumerate() {
             if let Some(Def::Fn(f)) = d {
@@ -286,7 +286,7 @@ impl CopyFlow {
             f: GLOBAL,
             copies,
             params: &params,
-            to: HashMap::new(),
+            to: FxHashMap::default(),
         };
         for (i, d) in cx.defs.iter_mut().enumerate() {
             if let Some(Def::Fn(f)) = d {
@@ -316,7 +316,7 @@ impl CopyFlow {
         }
         // A closure's captures are its enclosing function's variables: both ways. The
         // enclosing function is found from the closure expression.
-        let mut outer: HashMap<DefId, DefId> = HashMap::new();
+        let mut outer: FxHashMap<DefId, DefId> = FxHashMap::default();
         for (i, d) in cx.defs.iter_mut().enumerate() {
             if let Some(Def::Fn(f)) = d {
                 visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
@@ -338,7 +338,7 @@ impl CopyFlow {
         let to = edges.to;
         let reach = (0..copies.len() as u32)
             .map(|i| {
-                let mut seen: HashSet<Store> = HashSet::new();
+                let mut seen: FxHashSet<Store> = FxHashSet::default();
                 let mut work = vec![Store::Copy(i)];
                 while let Some(s) = work.pop() {
                     if !seen.insert(s) {

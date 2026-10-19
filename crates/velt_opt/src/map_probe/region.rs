@@ -7,7 +7,7 @@
 //! never part of it. A dominator tree answers "does `q` dominate `p`" first, so most pairs of
 //! points never need the walk.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::ops::Range;
 
 use velt_vir::vir::Function;
@@ -25,7 +25,7 @@ pub(crate) struct Point {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Region {
     pub parts: Vec<(usize, Range<usize>)>,
-    by_block: HashMap<usize, Vec<Range<usize>>>,
+    by_block: FxHashMap<usize, Vec<Range<usize>>>,
 }
 
 impl Region {
