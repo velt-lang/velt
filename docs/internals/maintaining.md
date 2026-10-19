@@ -146,11 +146,12 @@ not a reason for another round.
   `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
   pinned in `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
-  the last run that passed; more than 3% more fails and opens, or comments on, the issue "nightly
-  benchmarks regressed" with the benchmarks over the limit and the commits since the baseline);
-  fix failures first ("A red nightly" below). An intended slowdown is accepted with `gh workflow
-  run nightly -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run
-  nightly -f only=stress` (or `gate`, `oracle`, `bench`, `wasm`).
+  the last run that passed, `compile/check_all_std` per code line of `std/`; more than 3% more
+  fails and opens, or comments on, the issue "nightly benchmarks regressed" with the benchmarks
+  over the limit and the commits since the baseline); fix failures first ("A red nightly" below).
+  An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
+  bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
+  `gate`, `oracle`, `bench`, `wasm`).
 - A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
   the queue checked the change on Linux only, and opens or updates the issue "main fails on
   <OS>" when that fails; fix it first. A commit the queue tested on every OS skips them, unless
@@ -177,15 +178,17 @@ not a reason for another round.
   crashed process may still lock.
 - **A red nightly** gets an answer the same day, so red doesn't become the normal state:
   - The bench guard holds its baseline until a run passes, so every later run fails again and
-    the commit range in the issue grows. Measure before deciding: build `velt` at the range's
-    ends and count the instructions of the regressed benchmark with cachegrind, as
-    `bench/nightly.sh` does (`valgrind --tool=cachegrind --cache-sim=no`; on macOS in a Linux
-    container, where the count doesn't depend on load), then bisect the range.
+    the commit range in the issue grows. Measure before deciding: count the regressed
+    benchmark's instructions at the range's ends and bisect it, with cachegrind as
+    `bench/nightly.sh` does (`bench/compile/count_check.sh WORKDIR REF...` for
+    `compile/check_all_std`, `bench/compare_refs.sh` for the programs; Linux only, so on macOS
+    in a Linux container, where the count doesn't depend on load).
   - A commit that slows the compiler or a program without need gets a fix with a regression
-    test. Growth that is the point of the change (more of `std/` to check in
-    `compile/check_all_std`, a feature that costs work) is accepted with `gh workflow run nightly
-    -f only=bench -f bench_baseline=accept`; say on the issue which commits it was and why, then
-    close it.
+    test. Growth that is the point of the change (a type-checking feature that costs work on
+    every line, a slower but correct runtime path) is accepted with `gh workflow run nightly -f
+    only=bench -f bench_baseline=accept`; say on the issue which commits it was and why, then
+    close it. More of `std/` to check is not a regression: `compile/check_all_std` is compared
+    per line of `std/`.
   - Any other job: find the commit (`gh run view <id> --log-failed`), fix it with a regression
     test or open an issue that says why it waits.
 - **Platform gaps** found by CI (e.g. a test that is skipped on one OS) get an issue, and any CI
