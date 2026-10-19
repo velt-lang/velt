@@ -129,11 +129,9 @@ impl Ctx<'_> {
                 let op = self.ty.intern(TyKind::Op(o, args));
                 let mut ps = vec![];
                 crate::types::collect_params(&self.ty, op, &mut ps);
-                let out = if ps.is_empty() {
-                    self.reduce_op(op)
-                } else {
-                    op
-                };
+                // An intersection whose parts are all known object types is reduced even when
+                // their fields still mention type parameters: `Signal<T>` at `T = { data: D }`
+                // in a generic function is `{ data: D; $set(v: { data: D }): void }`.
                 if op != t {
                     if let Some(&s) = self.type_level.op_sites.get(&t) {
                         self.type_level.op_sites.entry(op).or_insert(s);
@@ -142,6 +140,11 @@ impl Ctx<'_> {
                         self.type_level.op_modules.entry(op).or_insert(m);
                     }
                 }
+                let out = if ps.is_empty() || self.reducible_now(op) {
+                    self.reduce_op(op)
+                } else {
+                    op
+                };
                 self.canon_memo.insert(t, out);
                 return out;
             }

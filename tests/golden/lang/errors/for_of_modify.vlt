@@ -1,5 +1,6 @@
 // A `for...of` loop over a place points into the array until it ends: the body must not modify
-// or move the array (or what owns it). Changing elements in place is fine.
+// the array (or what owns it). Changing elements in place is fine, and moving the array out
+// shares it (lang/share_for_of_moved.vlt).
 class Box {
   items: string[][] = [];
 
@@ -13,11 +14,6 @@ class Box {
       console.log(t.length);
     }
   }
-}
-
-function take(xs: string[][]): i64 {
-  const ys = xs;
-  return ys.length as i64;
 }
 
 function main() {
@@ -38,8 +34,4 @@ function main() {
     b.items.pop();
   }
   b.each();
-  for (const x of xs) {
-    take(xs);
-    break;
-  }
 }

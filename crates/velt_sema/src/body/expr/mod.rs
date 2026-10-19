@@ -3,6 +3,7 @@
 
 mod access;
 mod accessor_rmw;
+mod arg_order;
 mod args;
 mod array_ctor;
 mod assign;
