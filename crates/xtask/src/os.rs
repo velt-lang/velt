@@ -77,3 +77,50 @@ pub fn after_merge_reason(paths: &[String], other_os: &Option<String>) -> Option
         .find(|p| CACHE_INPUTS.iter().any(|c| p.starts_with(c)))
         .map(|p| format!("{p} changed: refresh the build cache"))
 }
+
+/// How many jobs check the goldens in parallel on each OS in the merge queue
+/// (.github/workflows/queue-goldens.yml), after one job built them. Windows, whose goldens take
+/// longest, gets the most; macOS has 5 runners for everything, so it gets few. A runner not
+/// listed gets one.
+pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
+    ("ubuntu-latest", 2),
+    ("windows-latest", 3),
+    ("macos-latest", 2),
+];
+
+/// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
+/// JSON object: `{"ubuntu-latest":["1/2","2/2"],…}`.
+pub fn golden_shards_json(oses: &[&str]) -> String {
+    let mut entries = vec![];
+    for os in oses {
+        let n = GOLDEN_SHARDS
+            .iter()
+            .find(|(name, _)| name == os)
+            .map_or(1, |(_, n)| *n);
+        let shards: Vec<String> = (1..=n).map(|i| format!("\"{i}/{n}\"")).collect();
+        entries.push(format!("\"{os}\":[{}]", shards.join(",")));
+    }
+    format!("{{{}}}", entries.join(","))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_os_gets_its_shards() {
+        assert_eq!(
+            golden_shards_json(&["ubuntu-latest"]),
+            r#"{"ubuntu-latest":["1/2","2/2"]}"#
+        );
+        let all = golden_shards_json(&["ubuntu-latest", "windows-latest", "macos-latest"]);
+        let total: usize = GOLDEN_SHARDS.iter().map(|(_, n)| n).sum();
+        assert_eq!(all.matches('/').count(), total);
+        assert!(
+            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            "{all}"
+        );
+        assert_eq!(golden_shards_json(&["other"]), r#"{"other":["1/1"]}"#);
+        assert_eq!(golden_shards_json(&[]), "{}");
+    }
+}

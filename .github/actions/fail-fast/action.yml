@@ -1,0 +1,13 @@
+name: fail-fast
+description: >-
+  Cancel the rest of the workflow run (run it `if: failure()`). The merge queue drops a pull
+  request when the required check `ci` fails, and `ci` waits for every job: without this, one
+  failed job would leave the others running for nothing, holding runners the next queue entries
+  wait for and delaying the result. The job needs `actions: write`.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true

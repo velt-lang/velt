@@ -8,10 +8,11 @@
 # pull request). The WebAssembly goldens run only when the change touches WebAssembly code, in
 # pull requests and in the queue; the nightly gate and the checks after merging run them.
 #
-# The merge queue checks everything against the pull request merged with the latest main, as two
-# jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
-# when the change touches OS-specific code (crates/xtask/src/os.rs). The single required check is
-# `ci`, which summarizes whichever jobs ran. The pull request's text and commits are checked by
+# The merge queue checks everything against the pull request merged with the latest main: per OS
+# one job lints and tests, and the goldens (debug and release mode) are built once and checked in
+# parallel shards (queue-goldens.yml). Linux always; Windows and macOS when the change touches
+# OS-specific code (crates/xtask/src/os.rs). The single required check is `ci`, which summarizes
+# whichever jobs ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
 # Each push to main checks everything on Windows and macOS when the queue checked the change on
@@ -120,6 +121,8 @@ jobs:
       robustness_files: ${{ steps.plan.outputs.robustness_files }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
+      # The golden shards of each OS (crates/xtask/src/os.rs).
+      golden_shards: ${{ steps.plan.outputs.golden_shards || '{}' }}
     steps:
       # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
       # the queue test the entries behind it again, under new branches, and deletes the old
@@ -156,20 +159,18 @@ jobs:
   queue:
     needs: queue-plan
     if: needs.queue-plan.outputs.os != '[]'
-    name: ${{ matrix.part }} (${{ matrix.os }})
+    name: check (${{ matrix.os }})
     strategy:
       # One failed job drops the pull request from the queue: cancel the others at once, so
-      # their runners go to the next queue entries instead of finishing a result nobody uses.
+      # their runners go to the next queue entries instead of finishing a result nobody uses
+      # (and `fail-fast` below for the jobs outside this matrix).
       fail-fast: true
       matrix:
         os: ${{ fromJSON(needs.queue-plan.outputs.os) }}
-        part: [check, golden]
-        include:
-          - part: check
-            args: --part lint,test
-          - part: golden
-            args: --part golden
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: write
     env:
       VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
       VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
@@ -180,10 +181,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - name: cargo xtask check --full ${{ matrix.args }}
+      - name: cargo xtask check --full --part lint,test
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo xtask check --full ${{ matrix.args }}
+        run: cargo xtask check --full --part lint,test
+      - if: failure()
+        uses: ./.github/actions/fail-fast
+
+  # The goldens: per OS a build, then shards (queue-goldens.yml).
+  queue-golden:
+    needs: queue-plan
+    if: needs.queue-plan.outputs.os != '[]'
+    name: golden (${{ matrix.os }})
+    strategy:
+      fail-fast: true
+      matrix:
+        os: ${{ fromJSON(needs.queue-plan.outputs.os) }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/queue-goldens.yml
+    with:
+      os: ${{ matrix.os }}
+      shards: ${{ toJSON(fromJSON(needs.queue-plan.outputs.golden_shards)[matrix.os]) }}
 
   # Which OSes the push to main checks. The queue tested this commit against its base_sha, which
   # is HEAD^1 here, so `affected --base HEAD^1` is the queue's plan: Windows and macOS run when it
@@ -262,12 +282,12 @@ jobs:
 
   ci:
     if: always()
-    needs: [pr, pr-plan, pr-lint-os, queue-plan, queue]
+    needs: [pr, pr-plan, pr-lint-os, queue-plan, queue, queue-golden]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
           for r in "${{ needs.pr.result }}" "${{ needs.pr-plan.result }}" "${{ needs.pr-lint-os.result }}" \
-            "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}"; do
+            "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}" "${{ needs.queue-golden.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done

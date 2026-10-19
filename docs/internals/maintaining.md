@@ -127,8 +127,9 @@ not a reason for another round.
   and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
   request, the checks its changes need: `cargo xtask check`, rules in
   `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
-  merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
-  macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
+  merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
+  (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
+  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` in the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording, so there is no footer to strip by hand

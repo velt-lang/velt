@@ -16,6 +16,7 @@ mod check;
 mod comments;
 mod doctests;
 mod file_size;
+mod golden_archive;
 mod graph;
 mod hooks;
 mod os;
@@ -57,6 +58,11 @@ Options:
   --fast               Goldens in debug mode only, no smoke test
   --golden-modes <m>   debug or release (default: both, or debug with --fast)
   --no-smoke           Skip the smoke test (it runs only with --full, on Linux and macOS)
+  --pack <file>        (--part golden) Build what the goldens run and pack it into a tar
+                       instead of running them; the path is relative to the repository root
+  --archive <file>     (--part golden) Run the goldens from a `--pack` tar, unpacked into a
+                       checkout at the same path, without building (VELT_GOLDEN_SHARD=<i>/<n>
+                       runs one of n shards)
   --dry-run            Print the commands without running them
   --github             (affected) Write the plan to $GITHUB_OUTPUT and $GITHUB_STEP_SUMMARY
   --force              (install-hooks) Replace a pre-push hook xtask didn't install (kept as
@@ -73,6 +79,8 @@ struct Args {
     fast: bool,
     golden_modes: Option<String>,
     no_smoke: bool,
+    pack: Option<String>,
+    archive: Option<String>,
     dry_run: bool,
     github: bool,
     force: bool,
@@ -91,6 +99,8 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--golden-modes" => args.golden_modes = Some(value("--golden-modes")?),
             "--fast" => args.fast = true,
             "--no-smoke" => args.no_smoke = true,
+            "--pack" => args.pack = Some(value("--pack")?),
+            "--archive" => args.archive = Some(value("--archive")?),
             "--dry-run" => args.dry_run = true,
             "--github" => args.github = true,
             "--force" => args.force = true,
@@ -130,6 +140,12 @@ fn run() -> Result<(), String> {
             println!("root: {}", root.display());
             print!("{}", plan.describe());
             let part = args.part.as_deref().unwrap_or("all");
+            if (args.pack.is_some() || args.archive.is_some()) && part != "golden" {
+                return Err("--pack and --archive need `--part golden`".into());
+            }
+            if args.pack.is_some() && args.archive.is_some() {
+                return Err("--pack builds, --archive runs without building: use one".into());
+            }
             let opts = Options {
                 parts: Parts::parse(part).ok_or(format!("unknown part `{part}`"))?,
                 golden_modes: args
@@ -137,6 +153,8 @@ fn run() -> Result<(), String> {
                     .clone()
                     .or(args.fast.then(|| "debug".to_string())),
                 smoke: !args.no_smoke && !args.fast,
+                pack: args.pack.clone(),
+                archive: args.archive.clone(),
                 dry_run: args.dry_run,
             };
             check::run(&root, &Graph::load(&root)?, &plan, &opts)?;
@@ -230,21 +248,25 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
-    let (os, other_os) = if plan.other_os.is_some() {
-        (
-            r#"["ubuntu-latest","windows-latest","macos-latest"]"#,
-            r#"["windows-latest","macos-latest"]"#,
-        )
+    let oses: &[&str] = if plan.other_os.is_some() {
+        &["ubuntu-latest", "windows-latest", "macos-latest"]
     } else {
-        (r#"["ubuntu-latest"]"#, "[]")
+        &["ubuntu-latest"]
     };
     let main_os = if plan.after_merge.is_some() {
         r#"["ubuntu-latest","windows-latest","macos-latest"]"#
     } else {
         r#"["ubuntu-latest"]"#
     };
+    let json = |list: &[&str]| {
+        let quoted: Vec<String> = list.iter().map(|os| format!("\"{os}\"")).collect();
+        format!("[{}]", quoted.join(","))
+    };
+    let (os, other_os) = (json(oses), json(&oses[1..]));
+    let golden_shards = os::golden_shards_json(oses);
     let mut text = format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n",
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n\
+         golden_shards={golden_shards}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build() || plan.difftest || plan.vscode),
@@ -377,6 +399,12 @@ name = \"a\"
             text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
             "{text}"
         );
+        // The queue's golden shards follow the OSes.
+        assert!(
+            text.contains("\ngolden_shards={\"ubuntu-latest\":[\"1/"),
+            "{text}"
+        );
+        assert!(!text.contains("windows"), "{text}");
     }
 
     #[test]

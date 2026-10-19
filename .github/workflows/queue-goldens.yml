@@ -1,0 +1,86 @@
+# The merge queue's goldens on one OS, called by ci.yml's `queue-golden` for each OS the queue
+# checks. One job builds what the goldens run and packs it (`cargo xtask check --part golden
+# --pack`, crates/xtask/src/golden_archive.rs); then each shard downloads the archive and checks
+# every n-th golden (`--archive`, `VELT_GOLDEN_SHARD=<i>/<n>`), on its own runner, without
+# building. The shards per OS are in crates/xtask/src/os.rs (`GOLDEN_SHARDS`). Together the
+# shards check every golden once, in debug and release mode, and the bundled-linker goldens.
+#
+# The golden test binary has the build's absolute paths compiled in, so a shard unpacks it into
+# a checkout at the same path: the workspace (or on Windows the Dev Drive copy) of every runner
+# of an OS is at the same path, and xtask stops with an error if it is not.
+name: queue-goldens
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: The runner (e.g. windows-latest).
+        type: string
+        required: true
+      shards:
+        description: The shards, a JSON list of VELT_GOLDEN_SHARD values (e.g. ["1/2","2/2"]).
+        type: string
+        required: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: cargo xtask check --full --part golden --pack golden.tar
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --full --part golden --pack golden.tar
+      # Binaries and debug info compress well, but deflate at higher levels costs more time than
+      # it saves in transfer.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goldens-${{ inputs.os }}
+          path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}/golden.tar
+          compression-level: 1
+          retention-days: 1
+          overwrite: true
+      - if: failure()
+        uses: ./.github/actions/fail-fast
+
+  shard:
+    needs: build
+    name: shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: goldens-${{ inputs.os }}
+          path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: cargo xtask check --full --part golden --archive golden.tar
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_GOLDEN_SHARD: ${{ matrix.shard }}
+        run: cargo xtask check --full --part golden --archive golden.tar
+      - if: failure()
+        uses: ./.github/actions/fail-fast
