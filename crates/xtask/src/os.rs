@@ -4,7 +4,8 @@
 //! `velt` command line and packages, and the standard library; a change there (or to the build,
 //! CI or scripts, which select everything) runs every OS in the queue. The front end and the
 //! tooling are portable Rust: Linux checks them, and the full gate on Windows and macOS after
-//! each push to `main` catches the rare exception.
+//! the push to `main` catches the rare exception. A change the queue checked on every OS skips
+//! that second run ([`after_merge_reason`]).
 
 use crate::graph::Graph;
 
@@ -48,4 +49,97 @@ pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<St
         }
     }
     None
+}
+
+/// Files that key or fill the build cache (Swatinem/rust-cache in `.github/actions/setup`): the
+/// toolchain and the dependencies. Only the pushes to `main` save the cache. A dependency change
+/// reaches `Cargo.lock`. Once #1135 C5 keys the cache by `rust-toolchain.toml` and `Cargo.lock`'s
+/// external packages only, an edit to a `Cargo.toml` alone changes nothing the cache holds; until
+/// then such an edit changes the key without refreshing the Windows and macOS caches.
+const CACHE_INPUTS: &[&str] = &[
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/",
+    ".github/actions/setup/",
+];
+
+/// Why the whole gate runs on Windows and macOS after a change lands on `main`, or `None` when
+/// the merge queue already ran it there. `other_os` is the change's [`other_os_reason`]: on the
+/// push, `cargo xtask affected --base HEAD^1` plans the same change the queue planned (the queue
+/// tests each entry on its `base_sha`, which becomes `HEAD^1` on `main`). The gate runs when
+///
+/// - the queue checked Linux only, so Windows and macOS have not seen the change, or
+/// - the change touches the toolchain or the dependencies: the run refreshes the Windows and
+///   macOS build caches, which only pushes to `main` save.
+pub fn after_merge_reason(paths: &[String], other_os: &Option<String>) -> Option<String> {
+    if other_os.is_none() {
+        return Some("the merge queue checked Linux only".into());
+    }
+    paths
+        .iter()
+        .find(|p| CACHE_INPUTS.iter().any(|c| p.starts_with(c)))
+        .map(|p| format!("{p} changed: refresh the build cache"))
+}
+
+/// The runners the merge queue checks on: Linux always, the others for OS-specific changes.
+pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-latest"];
+
+/// How many jobs check the goldens in parallel on each OS in the merge queue
+/// (.github/workflows/queue-goldens.yml), after one job built them. Windows, whose goldens take
+/// longest, gets the most. macOS gets one: its goldens are not the queue's long pole, and with 5
+/// macOS runners for everything, more shards would let two queue entries starve each other.
+/// Every runner in [`QUEUE_OSES`] needs an entry: the workflow fails when an OS has no shards.
+pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
+    ("ubuntu-latest", 2),
+    ("windows-latest", 3),
+    ("macos-latest", 1),
+];
+
+/// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
+/// JSON object: `{"ubuntu-latest":["1/2","2/2"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
+/// gets none, which fails the queue (never a silent skip of its goldens).
+pub fn golden_shards_json(oses: &[&str]) -> String {
+    let mut entries = vec![];
+    for os in oses {
+        let Some(&(_, n)) = GOLDEN_SHARDS.iter().find(|(name, _)| name == os) else {
+            continue;
+        };
+        let shards: Vec<String> = (1..=n).map(|i| format!("\"{i}/{n}\"")).collect();
+        entries.push(format!("\"{os}\":[{}]", shards.join(",")));
+    }
+    format!("{{{}}}", entries.join(","))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_os_gets_its_shards() {
+        assert_eq!(
+            golden_shards_json(&["ubuntu-latest"]),
+            r#"{"ubuntu-latest":["1/2","2/2"]}"#
+        );
+        let all = golden_shards_json(QUEUE_OSES);
+        let total: usize = GOLDEN_SHARDS.iter().map(|(_, n)| n).sum();
+        assert_eq!(all.matches('/').count(), total);
+        assert!(
+            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            "{all}"
+        );
+        assert!(all.contains(r#""macos-latest":["1/1"]"#), "{all}");
+        assert_eq!(golden_shards_json(&["other"]), "{}");
+        assert_eq!(golden_shards_json(&[]), "{}");
+    }
+
+    #[test]
+    fn every_queue_os_has_at_least_one_golden_shard() {
+        for os in QUEUE_OSES {
+            let n = GOLDEN_SHARDS
+                .iter()
+                .find(|(name, _)| name == os)
+                .map(|e| e.1);
+            assert!(n.is_some_and(|n| n >= 1), "{os} has no golden shards");
+        }
+    }
 }

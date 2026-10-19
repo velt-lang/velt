@@ -140,11 +140,28 @@ the decoded size for `base64`/`base64url` and `hex`.
 ## Map
 
 `Map<K, V>` is an insertion-ordered hash map. Keys compare as in JavaScript (SameValueZero):
-numbers, `bool` and strings by value, and objects (class instances, object types, structs,
-arrays, maps, records, interface and function values) by identity, as `===` compares them. An
+numbers, `bool` and strings by value, and objects (class instances, object types, arrays,
+maps, records, interface and function values) by identity, as `===` compares them. An
 object literal finds only itself: an equal object is another key, and changing an object after
 using it as a key keeps its entry where it is. A copy (`{ ...key }`, `key.clone()`) is another
 object, so it is another key.
+
+A type declared with `struct` is a Velt value type: its keys compare and hash by content, field
+by field, so an equal struct finds the entry (`Map<Cell, number>` counts each cell once). Each
+field compares as a key does: numbers, strings and nested structs by value, objects (an array
+field, a class instance) by identity. `==` still compares structs by identity.
+
+```ts
+struct Cell {
+  x: number;
+  y: number;
+}
+
+const visits = new Map<Cell, number>();
+visits.set({ x: 1, y: 2 }, 1);
+visits.set({ x: 1, y: 2 }, 2);
+console.log(visits.size, visits.get({ x: 1, y: 2 })); // 1 2
+```
 
 Float keys compare like JavaScript's: `0` and `-0` are one key, and `NaN` is a key that finds
 itself (`m.get(NaN)`). `==` keeps IEEE comparison (`NaN == NaN` is `false`).

@@ -7,7 +7,7 @@ use crate::collect::{self_type, DISPOSE};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{
-    self, AdtDef, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
+    self, AdtDef, AdtKind, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
     InterfaceMethodDef, VariantDef,
 };
 use crate::hooks;
@@ -246,6 +246,7 @@ fn adt_def(
             hidden: hidden.contains(&f.name),
         })
         .collect();
+    let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some();
     let (name, kind, base, ctor, vtable, span) = (
         a.qual_name.clone(),
         a.kind,
@@ -269,6 +270,7 @@ fn adt_def(
         generics: n as u32,
         fields,
         is_copy: cx.is_copy(st),
+        declared_struct,
         private_fields,
         opaque,
         assigned,
