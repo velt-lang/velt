@@ -52,7 +52,10 @@ pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<St
 }
 
 /// Files that key or fill the build cache (Swatinem/rust-cache in `.github/actions/setup`): the
-/// toolchain and the dependencies. Only the pushes to `main` save the cache.
+/// toolchain and the dependencies. Only the pushes to `main` save the cache. A dependency change
+/// reaches `Cargo.lock`. Once #1135 C5 keys the cache by `rust-toolchain.toml` and `Cargo.lock`'s
+/// external packages only, an edit to a `Cargo.toml` alone changes nothing the cache holds; until
+/// then such an edit changes the key without refreshing the Windows and macOS caches.
 const CACHE_INPUTS: &[&str] = &[
     "Cargo.lock",
     "rust-toolchain.toml",
