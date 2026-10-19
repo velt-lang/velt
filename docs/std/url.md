@@ -1,7 +1,7 @@
 # velt:url
 
-A WHATWG-style `URL` and `URLSearchParams` (global, as in Node; `velt:url` exports them too),
-plus JS's URI encoding functions (`import { encodeURIComponent } from "velt:url"`).
+A WHATWG-style `URL` and `URLSearchParams`, plus JS's URI encoding functions
+(`encodeURIComponent` and the others): globals, as in Node; `velt:url` exports them too.
 
 - `new URL(input, base: string | null = null)`: throws `UrlError` (`Invalid URL: …`, or
   `Invalid base URL: …` when `base` does not parse), a `TypeError` as in JS (its `name` is

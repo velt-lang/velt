@@ -1,0 +1,19 @@
+// A function type written without `throws` whose error types are inferred from what is stored
+// into it (#1154) is shown as written in an unrelated type error.
+class Failed extends Error {}
+
+function attempt(f: () => void) {
+  try {
+    f();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+
+attempt(() => {
+  throw new Failed("x");
+});
+
+const callbacks: Array<() => void> = [];
+const n: number = callbacks;
+console.log(n);

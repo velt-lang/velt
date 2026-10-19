@@ -341,14 +341,27 @@ fn closures_and_function_values_carry_error_types() {
         "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
     );
     assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
-    // Only `Error` classes are inferred: a thrown string is still reported.
-    let r = err_src(
-        "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
+    // Values that are not errors are inferred too (#1154).
+    let p = ok_src(
+        "function run(f: () => void) { f(); } function main() { try { run(() => { throw \"x\"; }); } catch (e) {} }",
     );
     assert!(
-        r.contains("but the function type it is used as does not allow throwing"),
-        "{r}"
+        func(&p, "run").throws.is_some(),
+        "a call through `f` throws a string"
     );
+    // The errors come through other function types and through untyped `let`s.
+    let p = ok_src(
+        "class A extends Error {}
+         let s1: (n: i64) => i64 = (n) => n;
+         let s0: (s: string) => i64 = (s) => s1(1);
+         function main() {
+           let f = () => {};
+           f = () => { throw new A(\"x\"); };
+           s1 = (n) => { throw new A(\"y\"); };
+           try { f(); s0(\"a\"); } catch (e) {}
+         }",
+    );
+    assert!(func(&p, "main").throws.is_none(), "caught");
     // A written `throws` clause still bounds what may be stored.
     let r = err_src(
         "class A extends Error {} function run(f: () => void throws A) { f(); }

@@ -1,0 +1,2 @@
+throws_fn_type_display.vlt:18:19: error: mismatched types
+  = note: expected f64, found (() => void)[]

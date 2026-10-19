@@ -1,0 +1,10 @@
+before 0
+caught true end at 11
+A,C
+caught bad b
+first
+caught reassigned
+error an error
+value a string
+value 42
+message only errors here

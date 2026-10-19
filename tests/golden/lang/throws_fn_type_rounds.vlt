@@ -1,0 +1,157 @@
+// check: no leaks
+// Function types written without `throws` throw what is stored into them (#1154), also when
+// the errors reach a site through other sites: a chain of twelve function types, each closure
+// calling the next, the last one throwing; a recursive function calling through one; a `let`
+// without a type assigned a closure that throws; and values that are not `Error`s.
+class End extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "End";
+  }
+}
+
+class K0 { v = 0; }
+class K1 { v = 1; }
+class K2 { v = 2; }
+class K3 { v = 3; }
+class K4 { v = 4; }
+class K5 { v = 5; }
+class K6 { v = 6; }
+class K7 { v = 7; }
+class K8 { v = 8; }
+class K9 { v = 9; }
+class K10 { v = 10; }
+class K11 { v = 11; }
+
+let s0: (k: K0) => number = (k) => k.v;
+let s1: (k: K1) => number = (k) => k.v;
+let s2: (k: K2) => number = (k) => k.v;
+let s3: (k: K3) => number = (k) => k.v;
+let s4: (k: K4) => number = (k) => k.v;
+let s5: (k: K5) => number = (k) => k.v;
+let s6: (k: K6) => number = (k) => k.v;
+let s7: (k: K7) => number = (k) => k.v;
+let s8: (k: K8) => number = (k) => k.v;
+let s9: (k: K9) => number = (k) => k.v;
+let s10: (k: K10) => number = (k) => k.v;
+let s11: (k: K11) => number = (k) => k.v;
+
+function chain() {
+  console.log("before", s0(new K0()));
+  s11 = (k) => {
+    if (k.v > 0) {
+      throw new End(`end at ${k.v}`);
+    }
+    return 0;
+  };
+  s0 = (k) => s1(new K1()) + k.v;
+  s1 = (k) => s2(new K2()) + k.v;
+  s2 = (k) => s3(new K3()) + k.v;
+  s3 = (k) => s4(new K4()) + k.v;
+  s4 = (k) => s5(new K5()) + k.v;
+  s5 = (k) => s6(new K6()) + k.v;
+  s6 = (k) => s7(new K7()) + k.v;
+  s7 = (k) => s8(new K8()) + k.v;
+  s8 = (k) => s9(new K9()) + k.v;
+  s9 = (k) => s10(new K10()) + k.v;
+  s10 = (k) => s11(new K11()) + k.v;
+  try {
+    console.log(s0(new K0()));
+  } catch (e) {
+    console.log("caught", e instanceof End, (e as Error).message);
+  }
+}
+
+// A recursive function calling through a function type whose closures throw: the closure it
+// passes to `map` calls it back before the call that throws is reached.
+interface Handler {
+  revive: (s: string) => string;
+}
+
+const handlers: Handler[] = [
+  {
+    revive: (s) => {
+      if (s === "b") {
+        throw new End(`bad ${s}`);
+      }
+      return s.toUpperCase();
+    },
+  },
+];
+
+function revive(v: string[], depth: number): string[] {
+  if (depth > 10) {
+    throw new RangeError("too deep");
+  }
+  if (v.length > 1) {
+    return v.map((x) => revive([x], depth + 1)[0]);
+  }
+  return [handlers[0].revive(v[0])];
+}
+
+function recursion() {
+  console.log(revive(["a", "c"], 0).join(","));
+  try {
+    revive(["a", "b"], 0);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+// A `let` without a type: its function type is inferred, and throws what is assigned to it.
+function untyped() {
+  let f = () => {
+    console.log("first");
+  };
+  f();
+  f = () => {
+    throw new End("reassigned");
+  };
+  try {
+    f();
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+// Values that are not errors: the `catch` variable's union has them, and an assertion to
+// `Error` still reads the errors' messages.
+function run(f: () => void) {
+  try {
+    f();
+  } catch (e) {
+    if (e instanceof Error) {
+      console.log("error", e.message);
+    } else {
+      console.log("value", e);
+    }
+  }
+}
+
+function runMessage(f: () => void) {
+  try {
+    f();
+  } catch (e) {
+    console.log("message", (e as Error).message);
+  }
+}
+
+function values() {
+  run(() => {
+    throw new End("an error");
+  });
+  run(() => {
+    throw "a string";
+  });
+  run(() => {
+    throw 42;
+  });
+  runMessage(() => {
+    throw new End("only errors here");
+  });
+}
+
+chain();
+recursion();
+untyped();
+values();
