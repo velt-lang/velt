@@ -64,7 +64,8 @@ pub(crate) struct State {
     /// Where each deferred type was first written (reductions report there).
     pub(crate) op_sites: std::collections::HashMap<TyId, Span>,
     /// The sites of the deferred intersections (`op_sites`) one reduction of which was
-    /// reported: the reductions at other type arguments are not reported again.
+    /// reported: a reduction at an instantiation, with no use to report at, is not reported
+    /// again.
     pub(crate) failed_sites: std::collections::HashSet<Span>,
     /// The module each deferred intersection was written in (its object type is made there).
     pub(crate) op_modules: std::collections::HashMap<TyId, usize>,
@@ -183,7 +184,12 @@ impl Ctx<'_> {
                 .or_else(|| self.type_level.op_sites.get(&t).copied())
                 .unwrap_or(Span::DUMMY);
             let written = self.type_level.op_sites.get(&t).copied();
-            let quiet = written.is_some_and(|w| self.type_level.failed_sites.contains(&w));
+            // Reduced where it was written (at an instantiation), after a use of it with other
+            // type arguments failed: reported once, at that use.
+            let unplaced =
+                self.type_level.alias_site.is_none() && self.type_level.use_site.is_none();
+            let quiet =
+                unplaced && written.is_some_and(|w| self.type_level.failed_sites.contains(&w));
             let before = self.diags.len();
             let r = self.reduce_intersection(t, args, span);
             if quiet {
