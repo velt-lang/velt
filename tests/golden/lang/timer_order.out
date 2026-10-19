@@ -1,9 +1,6 @@
 main end
 delay 1
 delay 0
-delay 20
-delay 30
-delay 40
 timeout a
 microtask a
 timeout b
@@ -21,3 +18,6 @@ outer
 nested microtask
 nested immediate
 nested timeout
+delay 300
+delay 400
+delay 500

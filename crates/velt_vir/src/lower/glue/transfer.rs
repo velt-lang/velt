@@ -65,7 +65,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // weak_threads.rs); this is one in a function value's environment, or behind a type
             // sema could not see into (docs/internals/design/weak-refs.md).
             self.panic_msg(&format!(
-                "a `{name}` cannot go to another thread (`spawn`, a channel, a timer, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
+                "a `{name}` cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
             ));
             return;
         }

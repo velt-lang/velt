@@ -1,5 +1,5 @@
 // A timer callback whose own closure assigns a variable the callback captured (#913): the
-// callback runs on its own copy of `k`, so this is the error for the callback modifying `k`.
+// callback runs on the task that created the timer and shares `k` with `main`, as in Node (#1315).
 function delay(ms: number): Promise<void> {
   return new Promise<void>((r) => {
     setTimeout(() => r(), ms);

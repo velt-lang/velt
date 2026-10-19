@@ -444,7 +444,11 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     let t = &*tcx;
     micro::sync_enter(t);
     let outer = STARTING.with(|s| s.replace(f));
+    // The credit of a waiter being resumed (micro.rs) is its own step: not one of the promise
+    // it starts, whose `await`s take steps of their own.
+    let credit = t.credit.replace(false);
     let finished = node::poll_first(f, t.word.as_ptr());
+    t.credit.set(credit);
     STARTING.with(|s| s.set(outer));
     micro::sync_exit(t);
     if finished {
