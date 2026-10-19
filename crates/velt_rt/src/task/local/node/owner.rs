@@ -33,6 +33,23 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
     READY
 }
 
+/// Await started node `f` without adopting it (a shared promise's hub, task/shared.rs): the set
+/// drives it, and `cx`'s waker is woken as it finishes, so the hub learns of the settle then.
+pub(in crate::task::local) unsafe fn poll_unadopted(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    let h = head(f);
+    let fl = h.flags.load(Ordering::Acquire);
+    if fl & DONE == 0 && !wait(f, cx, fl) {
+        return PENDING;
+    }
+    h.owner.set(OWNER_DELIVERED);
+    READY
+}
+
+/// Has started node `f` finished (its result is in the slot)?
+pub(in crate::task::local) unsafe fn is_done(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & DONE != 0
+}
+
 /// How many adopted nodes may be polled one inside the other. A deeper owner waits for the set
 /// instead, so the stack stays bounded however long a chain of promises awaiting each other is
 /// (`p = p.then(f)` 100,000 times), and so does the work of polling the chain's end.

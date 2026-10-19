@@ -77,7 +77,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
-| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
 | `velt_rt_xfer_begin` / `velt_rt_xfer_end` | `()` | bracket one transfer of a value to another task (the `TransferRoot` glue, a `thread_copy`); nest. The outermost `end` releases the deferred references (`xfer_defer`) and forgets the copies (additive) |
 | `velt_rt_xfer_find` | `(const void* obj) -> void*` | the copy of the counted object `obj` made in this transfer, null if none yet, or `1` outside a transfer. The clone glue of a counted object asks it before copying one whose count is above 1, the transfer glue before copying a still-shared one, so an object reached twice is copied once and a cycle is copied as a cycle (additive) |
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
@@ -156,10 +156,13 @@ shares a promise never calls it, and its futures are unchanged.
   Before a holder returns `READY`, it writes a fresh share of the settled result into its slot,
   using the `share` glue. That gives the same object for an object result, and a copy of a
   string or a value.
-- The first holder that waits drives the original future with its own `cx`. When the original
-  settles there, that holder goes on as the awaiter of an unshared promise would. The other
-  waiting holders are queued in the task's microtask queue (as `velt_rt_latch_open` queues its
-  waiters) in the order they started waiting.
+- A started original future is driven by its task's set: the hub awaits it with a waker of its
+  own, and when it finishes every waiting holder is queued in the task's microtask queue (as
+  `velt_rt_latch_open` queues its waiters) in the order they started waiting, as Node queues a
+  promise's reactions. `velt_rt_race` over a holder that settled takes it before a child that
+  only finishes when the race polls it. Any other original is driven by the first holder that
+  waits, with its own `cx`; when it settles there, that holder goes on as the awaiter of an
+  unshared promise would, and the others are queued the same way.
 - Dropping a holder never cancels the promise. The last holder drops the settled result with
   `result_drop`. If the promise has not settled, the last holder restores the original header
   and drops the future, which then behaves like any dropped promise: a started promise runs to
@@ -171,16 +174,19 @@ shares a promise never calls it, and its futures are unchanged.
 - `velt_rt_fut_transfer` of a holder (the holder goes to another task: `spawn`, a channel, a
   closure capturing it) hands it over: a new holder awaits the promise on this task inside a
   started promise of its own (the proxy), whose result `transfer` moves or copies for the other
-  task as for any promise handed over (#160). The holder handed over forwards its polls and its
-  drop to the proxy, so the other task gets a copy made on the promise's task.
+  task as for any promise handed over (#160); a null `transfer` (a result with nothing counted)
+  copies it as it is. The holder handed over forwards its polls and its drop to the proxy, so
+  the other task gets a copy made on the promise's task. On the other task the holder is a
+  promise of that task: `velt_rt_fut_share` of it shares its proxy there, and handing it on
+  again hands over its role in that promise the same way.
 - Every holder has the same `poll` and `drop` entries, which say only that a future is shared.
   An original future is found in the runtime's table of hubs by its address, and a handle never
   is.
 - A shared promise stays on the logical task where it was shared (`velt_rt_task_id`: the
   orphan task driving a task's promises after its root returned has the same one; on
   WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
-  dropped on another task without having been handed over (above), or a holder handed over that
-  is shared again there, stops the program with a fatal error (exit code 101).
+  dropped on another task without having been handed over (above) stops the program with a
+  fatal error (exit code 101).
 
 ## 2. Tasks
 

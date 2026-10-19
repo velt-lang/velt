@@ -36,10 +36,18 @@ impl Cx<'_> {
     /// Can a value of `t` reach a counted object (itself, or any part stored in it), a weak map
     /// or ref, or a promise whose result can? Only such values have anything to transfer.
     pub(super) fn holds_counted(&mut self, t: TyId) -> bool {
-        self.holds_counted_in(t, &mut HashSet::new())
+        self.holds_counted_in(t, false, &mut HashSet::new())
     }
 
-    fn holds_counted_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    /// Has a value of `t` anything to transfer: a counted part ([`holds_counted`](Self::holds_counted))
+    /// or a promise of any result? A promise of a plain value has nothing to copy, but a holder
+    /// of a shared one is handed over to the other task (velt_rt task/shared.rs `hand_over`),
+    /// so the runtime must hear of it (#212).
+    pub(super) fn transfers(&mut self, t: TyId) -> bool {
+        self.holds_counted_in(t, true, &mut HashSet::new())
+    }
+
+    fn holds_counted_in(&mut self, t: TyId, promises: bool, seen: &mut HashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -55,13 +63,16 @@ impl Cx<'_> {
             TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             // Its result reaches the awaiter on another task (`velt_rt_fut_transfer`, #160).
+            TyKind::Promise(..) if promises => return true,
             TyKind::Promise(r, e) => vec![r, e],
             // The object behind it may be of any subclass, with fields of its own.
             TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
-        parts.into_iter().any(|p| self.holds_counted_in(p, seen))
+        parts
+            .into_iter()
+            .any(|p| self.holds_counted_in(p, promises, seen))
     }
 
     /// Can a value of `t` reach a function or interface value (the many-threads check,
@@ -217,7 +228,7 @@ impl FnLower<'_, '_> {
     /// object. The caller keeps its reference, so everything reachable is copied.
     pub(super) fn transfer_copy(&mut self, v: Operand, ty: TyId) -> Operand {
         let ty = self.sub(ty);
-        if self.dead() || !self.cx.holds_counted(ty) {
+        if self.dead() || !self.cx.transfers(ty) {
             return v;
         }
         let copy = self.thread_copy(v, ty);
@@ -313,7 +324,7 @@ impl FnLower<'_, '_> {
 
     /// The owned value `v` of type `ty`, made safe to hand to another thread (module docs).
     pub(super) fn transfer_value(&mut self, v: Operand, ty: TyId) -> Operand {
-        if self.dead() || !self.cx.holds_counted(ty) {
+        if self.dead() || !self.cx.transfers(ty) {
             return v;
         }
         let vt = self.cx.ty(ty);
@@ -326,7 +337,7 @@ impl FnLower<'_, '_> {
 
     /// Transfer the owned value at `p` (concrete type `ty`) in place (glue/transfer.rs).
     pub(super) fn transfer_in_place(&mut self, p: Place, ty: TyId) {
-        if !self.cx.holds_counted(ty) {
+        if !self.cx.transfers(ty) {
             return;
         }
         let a = self.addr(p);

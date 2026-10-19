@@ -447,16 +447,19 @@ fn current_set_or_new() -> *mut LocalSet {
 /// (#160). A started or lazy promise node keeps the function for when its state finishes; a
 /// race passes it on to its children (the winner's result is theirs); anything else (a join
 /// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
-/// to transfer.
+/// to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
+/// holder of a shared promise (task/shared.rs).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
     if crate::task::race::pass_transfer(f, transfer) {
         return;
     }
-    node::set_transfer(f, transfer);
+    if let Some(t) = transfer {
+        node::set_transfer(f, t);
+    }
 }
 
 /// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the
@@ -471,9 +474,20 @@ pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
     node::peek(f) as u8
 }
 
-/// [`velt_rt_fut_peek`] of a promise that is not shared.
-pub(crate) unsafe fn peek_node(f: *mut VeltFut) -> bool {
-    node::peek(f)
+/// Is `f` a started promise (driven by its task's set)?
+pub(crate) unsafe fn is_started_node(f: *mut VeltFut) -> bool {
+    node::is_started(f)
+}
+
+/// Await started promise `f` without adopting it: its set drives it, and `cx`'s waker is woken
+/// as it finishes (a shared promise's hub, task/shared.rs).
+pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void) -> u32 {
+    node::poll_unadopted(f, cx)
+}
+
+/// Has started promise `f` finished?
+pub(crate) unsafe fn node_done(f: *mut VeltFut) -> bool {
+    node::is_done(f)
 }
 
 /// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a

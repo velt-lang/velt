@@ -50,13 +50,17 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
 /// are moved or copied at the same points as on native targets (rt_abi_async.md §1). A race
 /// passes the mark to its children; a second mark, and any other future, is ignored.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
     if super::shared::is_shared(f) {
         return super::shared::hand_over(f, transfer);
     }
     if super::race::pass_transfer(f, transfer) {
         return;
     }
+    // A result with nothing to move or copy: only a holder of a shared promise is handed over.
+    let Some(transfer) = transfer else {
+        return;
+    };
     let started = std::ptr::fn_addr_eq(
         (*f).poll.0,
         started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
@@ -549,8 +553,8 @@ mod tests {
         let st = s as *mut i64;
         if *st.add(1) == 0 {
             let p = started_child();
-            velt_rt_fut_transfer(p, tag);
-            velt_rt_fut_transfer(p, tag);
+            velt_rt_fut_transfer(p, Some(tag));
+            velt_rt_fut_transfer(p, Some(tag));
             log("marked");
             *st.add(2) = p as i64;
             *st.add(1) = 1;

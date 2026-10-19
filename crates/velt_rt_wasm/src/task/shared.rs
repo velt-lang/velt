@@ -6,8 +6,9 @@
 //! delivery writes a fresh share of the result into the holder's slot.
 //!
 //! A shared promise stays on its logical task, as on native targets: the tasks share the one
-//! thread here, but a holder used on another task (`spawn`, a channel) stops the program the
-//! same way, so two tasks never use one result object (docs/reference/async.md).
+//! thread here, but a holder that goes to another task (`spawn`, a channel, a timer callback)
+//! is handed over the same way, and is shared again there as a promise of that task, so two
+//! tasks never use one result object (docs/reference/async.md).
 
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -92,6 +93,11 @@ pub unsafe extern "C" fn velt_rt_fut_share(
 ) -> *mut VeltFut {
     if f.is_null() {
         return f;
+    }
+    if let Some((p, _)) = forwarded(f) {
+        // Handed to this task and shared again here: its proxy becomes the promise shared on
+        // this task (`f` goes on forwarding to it).
+        return velt_rt_fut_share(p, result_size, share, result_drop);
     }
     let h = if is_shared(f) {
         hub(f)
@@ -181,27 +187,26 @@ fn forwarded(f: *mut VeltFut) -> Option<(*mut VeltFut, usize)> {
 /// # Safety
 /// `f` must be a live holder of a shared promise, owned by the caller; `transfer` must match
 /// its result.
-pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: ResultDropFn) {
-    if forwarded(f).is_some() {
+pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
+    if let Some((p, _)) = forwarded(f) {
+        if !is_shared(p) {
+            // Handed on again: the proxy's result is this holder's own copy already.
+            return;
+        }
+        // Shared again on this task: a proxy of this task takes `f`'s role over in turn.
+        let next = new_proxy(hub(p), transfer);
+        FORWARDS.with(|m| {
+            if let Some(w) = m.borrow_mut().get_mut(&(f as usize)) {
+                w.proxy = next;
+            }
+        });
+        super::velt_rt_fut_drop(p);
         return;
     }
     let h = hub(f);
     on_its_task(&h);
-    let (size, result_drop) = {
-        let s = h.borrow();
-        (s.size, s.result_drop)
-    };
-    let role = new_handle(h.clone());
-    let state_size = size.max(8).next_multiple_of(16);
-    let mut state = vec![0u128; state_size / 16];
-    (state.as_mut_ptr() as *mut *mut VeltFut).write(role);
-    let proxy = super::boxed::velt_rt_fut_box(
-        proxy_poll,
-        proxy_drop,
-        state.as_ptr() as *const u8,
-        state_size as u64,
-        16,
-    );
+    let size = h.borrow().size;
+    let proxy = new_proxy(h.clone(), transfer);
     let is_orig = orig_hub(f).is_some();
     FORWARDS.with(|m| {
         m.borrow_mut().insert(
@@ -215,8 +220,30 @@ pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: ResultDropFn) {
         )
     });
     release(h, f);
+}
+
+/// A started promise of this task holding a role of its own in the promise of `h`, delivering
+/// a share of the result transferred with `transfer` (null: copied as it is).
+unsafe fn new_proxy(h: HubRef, transfer: Option<ResultDropFn>) -> *mut VeltFut {
+    on_its_task(&h);
+    let (size, result_drop) = {
+        let s = h.borrow();
+        (s.size, s.result_drop)
+    };
+    let role = new_handle(h);
+    let state_size = size.max(8).next_multiple_of(16);
+    let mut state = vec![0u128; state_size / 16];
+    (state.as_mut_ptr() as *mut *mut VeltFut).write(role);
+    let proxy = super::boxed::velt_rt_fut_box(
+        proxy_poll,
+        proxy_drop,
+        state.as_ptr() as *const u8,
+        state_size as u64,
+        16,
+    );
     super::local::velt_rt_fut_start(proxy, result_drop);
     super::local::velt_rt_fut_transfer(proxy, transfer);
+    proxy
 }
 
 unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
@@ -277,9 +304,7 @@ fn on_its_task(h: &HubRef) {
         s.task = now;
     } else if s.task != now {
         crate::panic::fatal(
-            "a promise shared on one task was used on another: a holder is awaited on another task \
-             only when it is passed to a spawned call or sent over a channel, with a result \
-             holding an object or a string (#212); await it on its own task and pass the result",
+            "a promise shared on one task was used on another without being handed over (#212)",
         );
     }
 }
