@@ -1,0 +1,2 @@
+`Object.defineProperty` expects 3 argument(s), but got 2 (TypeScript's TS2554)
+`valu` is not a property descriptor attribute (`value`, `enumerable`, `writable`, `configurable`, `get`, `set`)

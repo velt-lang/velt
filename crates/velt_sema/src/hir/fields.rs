@@ -21,6 +21,9 @@ pub struct FieldDef {
     /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
     /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
     pub presence: bool,
+    /// Not enumerable: a symbol brand `Object.defineProperty` adds (velt_sema
+    /// `defined_props`). `console.log` and spreads leave it out, as Node does.
+    pub hidden: bool,
 }
 
 /// An initializer a class gives a field it inherits: an error class's `name = "AppError"`

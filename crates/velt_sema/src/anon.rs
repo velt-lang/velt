@@ -54,6 +54,10 @@ pub(crate) struct ObjectState {
     pub frozen_defs: HashSet<DefId>,
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
+    /// `Object.defineProperty` brands (`crate::defined_props`).
+    pub brands: crate::defined_props::Brands,
+    /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
+    pub hidden: Option<HashSet<String>>,
 }
 
 impl Ctx<'_> {
