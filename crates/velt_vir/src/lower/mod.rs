@@ -219,6 +219,19 @@ enum ThunkKind {
     Unbound,
 }
 
+/// When a function runs in velt_rt's read mode (boxing/locks.rs), which decides how it counts
+/// and writes lock-set objects (rc.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum LkMode {
+    /// Never: inline counts.
+    #[default]
+    Plain,
+    /// Always (code only a `read` callback calls directly): read mode's inline rules.
+    Read,
+    /// Either: asks the thread once (`velt_rt_lk_mode`).
+    Checked,
+}
+
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Work {
@@ -242,6 +255,14 @@ enum Work {
     Oob(bool),
     /// A caller-tracking function instance (track_caller.rs) for one call site.
     Tracked(DefId, Vec<TyId>, SrcLoc),
+    /// `Work` compiled to run in velt_rt's read mode as well (boxing/locks.rs): its counts and
+    /// writes of lock-set objects ask the thread's mode (rc.rs). Every function whose address is
+    /// taken, every callback and every poll is one; a plain `Work` is code only ever called
+    /// directly from code outside read mode, which counts lock-set objects inline.
+    Checked(Box<Work>),
+    /// `Work` reached only by direct calls from a `read` callback literal: it always runs in read
+    /// mode, so it counts lock-set objects by read mode's rules without asking.
+    Read(Box<Work>),
     /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
     /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
     /// the call site when it is given, and given closure literals for some function params:
@@ -371,6 +392,8 @@ struct Cx<'h> {
     anon: types::AnonShapes,
     /// The function whose instance is being built (for `nothing_clashes`).
     cur_def: Option<DefId>,
+    /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
+    cur_mode: LkMode,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
@@ -513,6 +536,15 @@ struct FnLower<'c, 'h> {
     known_fns: FxHashMap<LocalId, frozen::KnownFn>,
     /// While binding a pattern into a frozen value: bindings take no shares (frozen.rs).
     frozen_binds: bool,
+    /// While evaluating a place only to read it (`FieldPresent`): no write barrier.
+    read_target: bool,
+    /// This function's read mode, once asked (rc.rs `lk_mode`).
+    lk_mode: Option<Local>,
+    /// Whether this function runs in read mode (`Work::Checked`, `Work::Read`).
+    mode: LkMode,
+    /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
+    /// code runs in.
+    lock_callback: Option<(DefId, LkMode)>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
     scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).

@@ -562,6 +562,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         I::PerfNow => "performance.now",
         I::SharedNew | I::SharedAdd | I::SharedGet | I::SharedSet | I::SharedRead => "shared",
         I::MutexNew | I::MutexWith => "Mutex",
+        I::RwLockNew | I::LockRead => "RwLock",
         I::Spawn | I::SpawnHandled => "spawn",
         I::JsonParse => "JSON.parse",
         I::ToString

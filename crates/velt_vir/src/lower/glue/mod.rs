@@ -313,7 +313,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         match self.cx.kind(ty) {
             TyKind::Str => self.call_rt(Rt::StrClone, vec![s, d], None),
             _ => {
-                let f = self.cx.func(Work::Glue(Glue::Clone, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Clone, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![s, d], None, false);
             }
         }
@@ -321,7 +321,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Call glue `g` for `ty` with `args`, storing a non-Unit result in a fresh temp.
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
-        let f = self.cx.func(Work::Glue(g, ty));
+        let f = self.cx.func_direct(Work::Glue(g, ty), self.mode);
         match g.sig().1 {
             Ty::Unit => {
                 self.call(vir::Callee::Func(f), args, None, false);

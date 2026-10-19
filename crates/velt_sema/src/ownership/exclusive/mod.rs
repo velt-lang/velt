@@ -307,7 +307,10 @@ impl VisitMut for Checker<'_, '_> {
                 }
             }
             E::Call { callee, args } => {
-                let mutex_with = matches!(callee, Callee::Intrinsic(Intrinsic::MutexWith));
+                let mutex_with = matches!(
+                    callee,
+                    Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
+                );
                 let held = self.collector().held_call(callee).map(|c| (c, e.span));
                 self.check_call(args, mutex_with, held);
             }

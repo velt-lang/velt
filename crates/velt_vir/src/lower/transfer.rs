@@ -350,7 +350,9 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let t = Place::local(self.copy_to_temp(v, vt));
         let a = self.addr(t.clone());
-        let f = self.cx.func(Work::Glue(Glue::TransferRoot, ty));
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::TransferRoot, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
         Operand::Copy(t)
     }
@@ -361,7 +363,9 @@ impl FnLower<'_, '_> {
             return;
         }
         let a = self.addr(p);
-        let f = self.cx.func(Work::Glue(Glue::Transfer, ty));
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::Transfer, ty), self.mode);
         self.call(vir::Callee::Func(f), vec![a], None, false);
     }
 }

@@ -134,7 +134,7 @@ impl FnLower<'_, '_> {
         };
         if self.cx.counted(ty) {
             let weak = self.cx.weak_capable(ty);
-            self.release_as(obj, weak, free);
+            self.release_of(obj, ty, weak, free);
         } else {
             free(self);
         }
@@ -221,7 +221,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Str => self.call_rt(Rt::StrDrop, vec![a], None),
             _ => {
-                let f = self.cx.func(Work::Glue(Glue::Drop, ty));
+                let f = self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode);
                 self.call(vir::Callee::Func(f), vec![a], None, false);
             }
         }
@@ -309,7 +309,7 @@ impl FnLower<'_, '_> {
     pub(super) fn object_alloc(&mut self, ty: TyId) -> Operand {
         let oa = Ty::Agg(self.cx.obj_agg(ty));
         if self.cx.counted(ty) {
-            self.counted_alloc(oa)
+            self.counted_alloc_of(oa, ty)
         } else {
             self.alloc(oa)
         }

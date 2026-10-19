@@ -498,6 +498,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedSet
         | I::MutexNew
         | I::MutexWith
+        | I::RwLockNew
+        | I::LockRead
         | I::PromiseAll
         | I::PromiseRace
         | I::PromiseAny

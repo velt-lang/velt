@@ -9,6 +9,7 @@
 //! representation everywhere.
 
 mod kinds;
+mod locks;
 mod transfers;
 mod weak;
 
@@ -84,6 +85,12 @@ pub(super) struct Boxing {
     /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
     /// concrete `AnyTo` targets and `Proxy` itself. Others are opaque (a leak at worst).
     pub(super) proxy_traced: BTreeSet<TyId>,
+    /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
+    /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
+    pub(super) lock_values: HashSet<TyId>,
+    pub(super) lock_roots: HashSet<DefId>,
+    pub(super) lock_boxes: HashSet<TyId>,
+    pub(super) lock_exclusive: HashSet<TyId>,
 }
 
 impl Boxing {
@@ -204,6 +211,8 @@ pub(super) struct Facts {
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
+    /// Value types of the `RwLock`s made or locked (locks.rs).
+    pub(super) lock_values: HashSet<TyId>,
 }
 
 impl Cx<'_> {
@@ -397,6 +406,7 @@ impl Cx<'_> {
             if work.is_empty() {
                 self.close_transfers(&mut next);
                 self.close_weak(&mut next);
+                self.close_locks(&mut next);
                 return next;
             }
         }

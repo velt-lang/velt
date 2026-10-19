@@ -1,11 +1,12 @@
 //! Primitives behind `shared<T>`: reference counts (`velt_rt_rc_*`), atomic integers
-//! (`velt_rt_atomic_*`) and the `Mutex<T>` lock (`velt_rt_mutex_*`).
+//! (`velt_rt_atomic_*`), the `Mutex<T>` lock (`velt_rt_mutex_*`) and the `RwLock<T>` lock
+//! (`velt_rt_rwlock_*`).
 //!
 //! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
 //! word inside the shared object), so none of them allocates.
 
-use lock_api::RawMutex as _;
-use parking_lot::RawMutex;
+use lock_api::{RawMutex as _, RawRwLock as _};
+use parking_lot::{RawMutex, RawRwLock};
 use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
 
 /// Refcounts above this abort (a leak of `isize::MAX` clones is a bug, as in `Arc`).
@@ -69,18 +70,80 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
     (*(p as *const RawMutex)).lock();
     crate::task::local::mutex_locked();
+    crate::read_mode::enter_exclusive();
 }
 
 /// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
+    crate::read_mode::leave_exclusive();
     crate::task::local::mutex_unlocked();
     (*(p as *const RawMutex)).unlock();
+}
+
+const _: () = assert!(std::mem::size_of::<RawRwLock>() <= MUTEX_SIZE);
+const _: () = assert!(std::mem::align_of::<RawRwLock>() <= 8);
+
+/// Initialize the 8-byte lock word of an `RwLock<T>` at `p` (unlocked). parking_lot's lock
+/// prefers writers (new readers wait while a writer waits) with eventual fairness, so neither
+/// side starves. No destroy call is needed.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rwlock_init(p: *mut u64) {
+    (p as *mut RawRwLock).write(RawRwLock::INIT);
+}
+
+/// `rw.read(f)`: take the lock shared with other readers (blocking the thread; callbacks
+/// never await). Readers hold no module lock either (task/local/module_state.rs).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64) {
+    (*(p as *const RawRwLock)).lock_shared();
+    crate::task::local::mutex_locked();
+    crate::read_mode::enter_read();
+}
+
+/// Release a shared lock this thread took with `velt_rt_rwlock_read`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64) {
+    crate::read_mode::leave_read();
+    crate::task::local::mutex_unlocked();
+    (*(p as *const RawRwLock)).unlock_shared();
+}
+
+/// `rw.write(f)`: take the lock exclusively.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64) {
+    (*(p as *const RawRwLock)).lock_exclusive();
+    crate::task::local::mutex_locked();
+    crate::read_mode::enter_exclusive();
+}
+
+/// Release the exclusive lock this thread took with `velt_rt_rwlock_write`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64) {
+    crate::read_mode::leave_exclusive();
+    crate::task::local::mutex_unlocked();
+    (*(p as *const RawRwLock)).unlock_exclusive();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rwlock_readers_share_and_writers_exclude() {
+        let mut w = 1u64;
+        unsafe {
+            velt_rt_rwlock_init(&mut w);
+            velt_rt_rwlock_read(&mut w);
+            velt_rt_rwlock_read(&mut w);
+            assert!(!(*(&w as *const u64 as *const RawRwLock)).try_lock_exclusive());
+            velt_rt_rwlock_read_unlock(&mut w);
+            velt_rt_rwlock_read_unlock(&mut w);
+            velt_rt_rwlock_write(&mut w);
+            assert!(!(*(&w as *const u64 as *const RawRwLock)).try_lock_shared());
+            velt_rt_rwlock_write_unlock(&mut w);
+        }
+    }
 
     #[test]
     fn refcount_and_atomics() {

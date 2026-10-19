@@ -53,7 +53,10 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::FieldPresent, [f]) => {
+                // Only read: no write barrier.
+                let outer = std::mem::replace(&mut self.read_target, true);
                 let p = self.place_expr(f);
+                self.read_target = outer;
                 match self.presence_place(f, &p) {
                     Some(fp) => Operand::Copy(fp),
                     None => ice("`FieldPresent` of a field without a presence flag"),
@@ -254,6 +257,8 @@ impl FnLower<'_, '_> {
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith
+                | I::RwLockNew
+                | I::LockRead
                 | I::PromiseWiden
                 | I::ChanSend
                 | I::ChanReceive

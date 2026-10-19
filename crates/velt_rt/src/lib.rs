@@ -51,6 +51,7 @@ pub mod prng;
 pub mod process;
 pub mod proxy_array;
 pub mod random;
+pub mod read_mode;
 pub mod redis;
 pub mod regex;
 pub mod registry;

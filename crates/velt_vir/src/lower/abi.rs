@@ -9,7 +9,7 @@ use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::flags::FlagScan;
 use super::param_attrs::PtrParam;
-use super::{ice, Cx, FnLower, LInfo, LState, ScopeKind, Work};
+use super::{ice, Cx, FnLower, LInfo, LState, LkMode, ScopeKind, Work};
 use crate::vir::{BlockId, Const, Function, Operand, ParamAttrs, Place, Proj, Rvalue, SrcLoc, Ty};
 
 /// ABI shape of a function's result.
@@ -67,6 +67,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             changed: None,
             known_fns: FxHashMap::default(),
             frozen_binds: false,
+            read_target: false,
+            lk_mode: None,
+            mode: LkMode::Plain,
+            lock_callback: None,
             scope_ends: FxHashMap::default(),
             asyncx: None,
             lazy_call: false,
@@ -89,6 +93,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self_env: None,
             in_reflect: false,
         };
+        lw.mode = lw.cx.cur_mode;
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
         lw
@@ -96,6 +101,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn build(cx: &'c mut Cx<'h>, work: &Work) -> Function {
         match work {
+            // `Cx::build_now` builds the inner `Work` in checked mode.
+            Work::Checked(w) | Work::Read(w) => Self::build(cx, w),
             Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0, &[]),
             Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0, &[]),
             Work::Frozen(def, targs, mask, at, fns) => {

@@ -1,18 +1,19 @@
-// The HTTP side: one Store behind a Mutex, every request routed while holding it. Readers
-// can't share the store without the lock yet (#36), so store work runs one request at a time;
-// HTTP parsing and writing run on every core. `route` turns errors into responses, so nothing
-// has to be thrown out of `with` (#703).
+// The HTTP side: one Store behind an RwLock. GETs that only read it (`readRoute`) run under its
+// read lock, on every core at once; every other request is routed under the write lock, one at
+// a time. `route` and `readRoute` turn errors into responses, so nothing has to be thrown out of
+// `read` or `write` (#703).
 import { serve, Server } from "velt:http";
-import { route } from "./api";
+import { readRoute, route } from "./api";
 import { Store } from "./store";
 
-async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Response> {
+async function handle(req: Request, store: shared<RwLock<Store>>): Promise<Response> {
   const method = req.method;
   const url = new URL(req.url);
   const path = url.pathname;
   const query = url.search.slice(1);
   const body = method === "GET" ? "" : await req.text();
-  const out = store.with((s) => route(s, method, path, query, body));
+  const read = method === "GET" ? store.read((s) => readRoute(s, path, query)) : null;
+  const out = read ?? store.write((s) => route(s, method, path, query, body));
   return new Response(out.body, {
     status: out.status as number,
     headers: { "content-type": "application/json" },
@@ -21,6 +22,6 @@ async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Respon
 
 /// Serves `store` on `port` (0 = any free port).
 export async function startServer(store: Store, port: i64): Promise<Server> {
-  const shop = shared(new Mutex<Store>(store));
+  const shop = shared(new RwLock<Store>(store));
   return await serve({ port: port as number }, async (req) => await handle(req, shop));
 }

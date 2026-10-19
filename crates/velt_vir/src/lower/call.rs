@@ -65,15 +65,16 @@ impl FnLower<'_, '_> {
         // Frozen counted arguments go to an instance that neither changes nor counts them.
         let frozen = self.frozen_mask(&modes, args, pre.len());
         let at = self.panic_loc().filter(|_| self.cx.tracks_caller(def));
-        let fid = match (frozen, at) {
-            (0, Some(at)) => self.cx.func(Work::Tracked(def, targs.clone(), at)),
-            (0, None) => self.cx.func_for(def, targs.clone()),
+        // A direct call: the callee runs in this function's mode (`Work::Checked`).
+        let work = match (frozen, at) {
+            (0, Some(at)) => Work::Tracked(def, targs.clone(), at),
+            (0, None) => Work::Fn(def, targs.clone()),
             (mask, at) => {
                 let fns = self.known_fns_of(&modes, args, pre.len());
-                self.cx
-                    .func(Work::Frozen(def, targs.clone(), mask, at, fns))
+                Work::Frozen(def, targs.clone(), mask, at, fns)
             }
         };
+        let fid = self.cx.func_direct(work, self.mode);
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {

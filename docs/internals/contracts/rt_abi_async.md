@@ -589,12 +589,39 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
+| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock word (same layout as `Mutex<T>`); writers preferred, eventually fair [additive, #708] |
+| `velt_rt_rwlock_read` / `velt_rt_rwlock_read_unlock` | `(u64* lock)` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock [additive, #708] |
+| `velt_rt_rwlock_write` / `velt_rt_rwlock_write_unlock` | `(u64* lock)` | `rw.write(f)`: the lock exclusively; like `velt_rt_mutex_lock`, it leaves read mode for its duration [additive, #708] |
+| `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode; answers from a process-wide reader count while no reader runs (§9.1) [additive, #708] |
+| `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |
 | `velt_rt_math_add_int32` | `(i32 a, f64 x) -> i32` | JS `(a + x) \| 0`; emitted inline, integer add when `x` is a whole number of at most 2^52 [additive, #521] |
 | `velt_rt_math_clz32` | `(i32) -> i32` | `Math.clz32` of the 32-bit pattern (32 for 0); emitted as one instruction [additive, #521] |
+
+### 9.1 Read mode (`RwLock.read`)
+
+Readers of an `RwLock<T>` run on many threads at once without copies or atomic counts. The
+*lock set* is the counted types a `T` of some `RwLock` can reach (velt_vir `boxing/locks.rs`;
+an `RwLock` whose `T` reaches a function or interface value, a class in a hierarchy, a weak-capable
+or proxiable type, or a promise has no such readers: its `read` takes the lock exclusively).
+Between `velt_rt_rwlock_read` and its unlock the thread is in *read mode*, and the code it runs
+counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
+- bit 62 of a lock-set object's count word, `LOCAL`, marks an object made in read mode: only this
+  reader reaches it. A count compares and decrements without the bit. A transfer that moves one
+  out of the callback (its result) clears it;
+- a reader counts (retains, releases, tests for uniqueness) only `LOCAL` objects; the others (the
+  store) it borrows, so their counts stay what the last writer left. No writer runs meanwhile;
+- a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
+  program (sema rejects the writes it can see);
+- `velt_rt_mutex_lock` and `velt_rt_rwlock_write` leave read mode until their unlock.
+
+Code whose mode is fixed counts without asking: functions only called directly from outside read
+mode (and `with` / `write` callbacks) count as before; functions only called directly from a
+`read` callback literal use read mode's rules. Everything else (callbacks given as values,
+closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode` once per call.
 
 ## 10. Output with many tasks
 

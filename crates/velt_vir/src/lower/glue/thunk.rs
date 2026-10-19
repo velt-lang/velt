@@ -164,7 +164,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.terminate(Terminator::Unreachable);
             return lw.finish(sym, params, abi.ret);
         }
-        let target = lw.cx.func_for(def, targs.to_vec());
+        let target = lw.cx.func_for_direct(def, targs.to_vec(), lw.mode);
         let tag = match kind {
             ThunkKind::Env(Some(e)) => format!("env_E{}", e.0),
             ThunkKind::Env(None) => "env".into(),

@@ -146,7 +146,7 @@ impl FnLower<'_, '_> {
         let inline = match self.cx.boxed(t) {
             true => {
                 let payload = self.cx.payload_ty(t);
-                let p = self.counted_alloc(payload);
+                let p = self.counted_alloc_of(payload, t);
                 self.assign(dst.clone(), Rvalue::Use(p.clone()));
                 let pp = self.operand_place(p, Ty::Ptr);
                 proj(&pp, Proj::Deref(payload))

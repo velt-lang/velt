@@ -619,7 +619,7 @@ impl crate::visit::VisitMut for FactsOf<'_, '_> {
                     self.passed(args);
                     self.iface_methods(*iface, *slot)
                 }
-                hir::Callee::Intrinsic(hir::Intrinsic::MutexWith) => {
+                hir::Callee::Intrinsic(hir::Intrinsic::MutexWith | hir::Intrinsic::LockRead) => {
                     if let [m, cb] = args.as_slice() {
                         self.passed(std::slice::from_ref(m));
                         self.withs.push((cb.clone(), cb.span));

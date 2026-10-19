@@ -255,6 +255,34 @@ fn views_of_a_shared_typed_array_are_errors() {
         assert!(r.contains("would share its buffer"), "{src}: {r}");
     }
     ok_src("function main() { const u = shared(new Uint8Array(3)); const c = u.slice(0, 2); c[0] = 1; console.log(c[0], u[0]); }");
+
+#[test]
+fn rwlock_read_callbacks_cannot_modify_the_value() {
+    ok_src(
+        "function main() { const rw = shared(new RwLock<number[]>([1])); rw.write((v) => { v.push(2); }); console.log(rw.read((v) => v.length)); }",
+    );
+    let r = err_src(
+        "function main() { const rw = shared(new RwLock<number[]>([1])); rw.read((v) => { v.push(2); }); }",
+    );
+    assert!(
+        r.contains("the function passed to `read` modifies the locked value"),
+        "{r}"
+    );
+    let r = err_src(
+        "function bump(xs: number[]) { xs[0] += 1; } function main() { const rw = shared(new RwLock<number[]>([1])); rw.read((v) => bump(v)); }",
+    );
+    assert!(r.contains("modifies the locked value"), "{r}");
+    let r = err_src("function main() { const rw = shared(new RwLock<number[]>([1])); rw.with((v) => v.length); }");
+    assert!(r.contains("no method named `with`"), "{r}");
+    let r = err_src(
+        "function main() { const m = shared(new Mutex<number[]>([1])); m.read((v) => v.length); }",
+    );
+    assert!(r.contains("no method named `read`"), "{r}");
+    let r = err_src("function main() { const rw = shared(new RwLock<number[]>([1])); rw.read(async (v) => v.length); }");
+    assert!(
+        r.contains("the function passed to `read` cannot be async"),
+        "{r}"
+    );
 }
 
 #[test]

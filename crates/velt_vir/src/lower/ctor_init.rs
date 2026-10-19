@@ -192,7 +192,7 @@ impl FnLower<'_, '_> {
         // The out-of-line initializer throws what may be thrown here: the initializers ran
         // inline in this same context when sema checked them.
         let err = self.handler_error_ty();
-        let f = self.cx.func(Work::Init(ty, err));
+        let f = self.cx.func_direct(Work::Init(ty, err), self.mode);
         let unit = self.cx.intern(TyKind::Unit);
         let argv = vec![Operand::Copy(obj.clone())];
         self.finish_call(vir::Callee::Func(f), argv, unit, err);

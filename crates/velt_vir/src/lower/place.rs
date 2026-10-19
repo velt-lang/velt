@@ -343,6 +343,14 @@ impl FnLower<'_, '_> {
         None
     }
 
+    /// About to write into the counted object of type `ty` whose pointer `p` holds, as part of
+    /// an assignment target (rc.rs `write_barrier`, the lock set).
+    fn target_barrier(&mut self, p: &Place, ty: TyId) {
+        if !self.read_target && self.cx.lock_counted(ty) && !self.dead() {
+            self.write_barrier(Operand::Copy(p.clone()), ty);
+        }
+    }
+
     /// Evaluate a place expression (assignment target).
     pub(super) fn place_expr(&mut self, e: &hir::Expr) -> Place {
         self.place_expr_with(e, &mut VecDeque::new())
@@ -390,11 +398,13 @@ impl FnLower<'_, '_> {
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);
+                self.target_barrier(&bp, bty);
                 self.field_place(&bp, bty, *index)
             }
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
+                self.target_barrier(&arr, bty);
                 let arr = self.content(&arr, bty);
                 let i = match pre.pop_front() {
                     Some(i) => i,

@@ -533,6 +533,46 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
     console.log(await ones, await threes, data.length, data[0]);
   }
   ```
+- `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
+  runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
+  runs it alone, exactly as `with` does (writers waiting go first, so neither side starves).
+  Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
+  value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
+  passes it to a function that changes it) is an error ("the function passed to `read` modifies
+  the locked value"). Readers share the value without copying or counting it, also what they
+  keep while the callback runs (a sorted listing of its objects, a value a method returns); a
+  write to it through such a reference stops the program (``panic: cannot modify a value an
+  `RwLock` holds inside its `read` callback …``). A value that holds function or interface
+  values, objects of a class hierarchy, weak references or promises is read under the exclusive
+  lock instead.
+
+  ```ts
+  class Catalog {
+    prices: number[] = [];
+  }
+
+  function total(c: Catalog): number {
+    let t = 0;
+    for (const p of c.prices) {
+      t += p;
+    }
+    return t;
+  }
+
+  async function report(cat: shared<RwLock<Catalog>>): Promise<number> {
+    return cat.read((c) => total(c));
+  }
+
+  async function main() {
+    const cat = shared(new RwLock<Catalog>(new Catalog()));
+    cat.write((c) => {
+      c.prices.push(2, 3);
+    });
+    const a = spawn(report(cat));
+    const b = spawn(report(cat));
+    console.log(await a, await b);
+  }
+  ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async. Its value
   is read only there: a value holding a `Mutex` cannot be printed, written as JSON or

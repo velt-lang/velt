@@ -115,6 +115,13 @@ pub(super) enum Rt {
     AtomicStore,
     MutexInit,
     MutexLock,
+    RwLockInit,
+    LkMode,
+    LkWrite,
+    RwLockRead,
+    RwLockReadUnlock,
+    RwLockWrite,
+    RwLockWriteUnlock,
     MutexUnlock,
     // M4: string builder and JSON pull reader (rt_abi_async.md §12)
     StrEq,
@@ -298,6 +305,13 @@ impl Rt {
             Rt::MutexInit => f("velt_rt_mutex_init", vec![Ptr], Unit),
             Rt::MutexLock => f("velt_rt_mutex_lock", vec![Ptr], Unit),
             Rt::MutexUnlock => f("velt_rt_mutex_unlock", vec![Ptr], Unit),
+            Rt::RwLockInit => f("velt_rt_rwlock_init", vec![Ptr], Unit),
+            Rt::LkMode => f("velt_rt_lk_mode", vec![], U8),
+            Rt::LkWrite => f("velt_rt_lk_write", vec![Ptr], Unit),
+            Rt::RwLockRead => f("velt_rt_rwlock_read", vec![Ptr], Unit),
+            Rt::RwLockReadUnlock => f("velt_rt_rwlock_read_unlock", vec![Ptr], Unit),
+            Rt::RwLockWrite => f("velt_rt_rwlock_write", vec![Ptr], Unit),
+            Rt::RwLockWriteUnlock => f("velt_rt_rwlock_write_unlock", vec![Ptr], Unit),
             _ => self.sig_json(),
         }
     }

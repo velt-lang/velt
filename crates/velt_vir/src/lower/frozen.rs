@@ -221,7 +221,8 @@ impl FnLower<'_, '_> {
             return None;
         }
         let work = Work::Frozen(k.def, k.targs, k.captures | mask, None, vec![]);
-        let code = self.cx.func(work);
+        // Called directly: in this function's read mode, as a direct call (`Work::Checked`).
+        let code = self.cx.func_direct(work, self.mode);
         let ret = self.sub(ty);
         let outer = std::mem::replace(&mut self.frozen_args, true);
         let v = match n {

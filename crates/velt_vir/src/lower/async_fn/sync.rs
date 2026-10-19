@@ -62,8 +62,9 @@ impl FnLower<'_, '_> {
                 crate::lower::unit()
             }
             (I::SharedRead, [s]) => self.shared_read(s),
-            (I::MutexNew, [x]) => self.mutex_new(x, ty),
-            (I::MutexWith, [m, f]) => self.mutex_with(m, f, ty),
+            (I::MutexNew | I::RwLockNew, [x]) => self.mutex_new(x, ty),
+            (I::MutexWith, [m, f]) => self.mutex_with(m, f, ty, false),
+            (I::LockRead, [m, f]) => self.mutex_with(m, f, ty, true),
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
                 args.len()
@@ -206,12 +207,24 @@ impl FnLower<'_, '_> {
         let m = self.temp(Ty::Agg(a));
         self.assign(Place::local(m), Rvalue::Aggregate(a, vec![zero, v]));
         let lock = self.addr(proj(&Place::local(m), Proj::Field(0)));
-        self.call_rt(Rt::MutexInit, vec![lock], None);
+        let init = match self.cx.type_name(ty) == "RwLock" {
+            true => {
+                let vty = self.cx.adt_field_tys(ty)[1];
+                self.cx.note_lock_value(vty);
+                Rt::RwLockInit
+            }
+            false => Rt::MutexInit,
+        };
+        self.call_rt(init, vec![lock], None);
         self.owned_result(Some(m), ty)
     }
 
-    /// `m.with(f)`: lock, `f(value)`, unlock; the result is `f`'s.
-    fn mutex_with(&mut self, m: &hir::Expr, f: &hir::Expr, ty: TyId) -> Operand {
+    /// `m.with(f)` / `rw.write(f)` (`read`: `rw.read(f)`): lock, `f(value)`, unlock; the result
+    /// is `f`'s. `read` takes an `RwLock`'s lock shared, so readers run at once, unless its value
+    /// can reach what read mode cannot protect (boxing/locks.rs): there the callback runs in
+    /// velt_rt's read mode, which leaves the objects the readers share uncounted and stops a
+    /// write to one.
+    fn mutex_with(&mut self, m: &hir::Expr, f: &hir::Expr, ty: TyId, read: bool) -> Operand {
         let mty = self.sub(m.ty);
         let mv = self.expr(m);
         let mp = self.place_of(mv, mty);
@@ -226,6 +239,16 @@ impl FnLower<'_, '_> {
             _ => (mp, mty),
         };
         let vty = self.cx.adt_field_tys(mutex)[1];
+        let rw = self.cx.type_name(mutex) == "RwLock";
+        if rw {
+            self.cx.note_lock_value(vty);
+        }
+        let shared_read = read && rw && self.cx.shared_reads(vty);
+        let (lock_fn, unlock_fn) = match (rw, shared_read) {
+            (false, _) => (Rt::MutexLock, Rt::MutexUnlock),
+            (true, true) => (Rt::RwLockRead, Rt::RwLockReadUnlock),
+            (true, false) => (Rt::RwLockWrite, Rt::RwLockWriteUnlock),
+        };
         let lock = self.field_place(&mplace, mutex, 0);
         let lock = self.addr(lock);
         let value = self.field_place(&mplace, mutex, 1);
@@ -240,7 +263,15 @@ impl FnLower<'_, '_> {
             }
             _ => false,
         };
+        if let hir::ExprKind::Closure(d) = &f.kind {
+            let mode = match shared_read {
+                true => crate::lower::LkMode::Read,
+                false => crate::lower::LkMode::Plain,
+            };
+            self.lock_callback = Some((*d, mode));
+        }
         let fv = self.borrowed_arg(f);
+        self.lock_callback = None;
         let fp = self.place_of(fv, fty);
         let code = self.rvalue_temp(
             Ty::Ptr,
@@ -251,7 +282,7 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
-        self.call_rt(Rt::MutexLock, vec![lock.clone()], None);
+        self.call_rt(lock_fn, vec![lock.clone()], None);
         let (arg, pt) = match self.cx.ty(vty) {
             Ty::Agg(_) => (self.addr(value.clone()), Ty::Ptr),
             _ if by_ref => (self.addr(value.clone()), Ty::Ptr),
@@ -272,7 +303,7 @@ impl FnLower<'_, '_> {
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
         self.many_check(value, vty);
-        self.call_rt(Rt::MutexUnlock, vec![lock], None);
+        self.call_rt(unlock_fn, vec![lock], None);
         r
     }
 

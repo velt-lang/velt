@@ -80,7 +80,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn call_main(&mut self, def: DefId, state: Option<vir::Local>) -> Operand {
         let f = self.cx.fn_def(def);
         let (ret, throws) = (f.ret, f.throws);
-        let fid = self.cx.func_for(def, vec![]);
+        // A synchronous `main` runs outside read mode (`Work::Checked`).
+        let fid = self.cx.func_for_direct(def, vec![], super::LkMode::Plain);
         let abi = self.cx.ret_abi(ret, throws);
         let callee = vir::Callee::Func(fid);
         let never = self.cx.is_never(ret) && throws.is_none();

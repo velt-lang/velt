@@ -44,6 +44,10 @@ impl FnLower<'_, '_> {
             false => self.projection_base(&args[0], BoxHold::No),
         };
         let arr = self.place_of(av, aty);
+        if i != I::ArrayLen && self.cx.lock_counted(aty) {
+            // A mutating operation: stops a reader of an `RwLock` changing a shared array.
+            self.write_barrier(Operand::Copy(arr.clone()), aty);
+        }
         let arr = self.content(&arr, aty);
         let elem = self.elem_ty(aty);
         match (i, &args[1..]) {
@@ -100,11 +104,17 @@ impl FnLower<'_, '_> {
         let elem = self.elem_ty(dty);
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
+        if self.cx.lock_counted(dty) {
+            self.write_barrier(Operand::Copy(darr.clone()), dty);
+        }
         let darr = self.content(&darr, dty);
         let (id, td) = (self.expr(d), self.vty(d.ty));
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
+        if self.cx.lock_counted(sty) {
+            self.write_barrier(Operand::Copy(sarr.clone()), sty);
+        }
         let sarr = self.content(&sarr, sty);
         let (is, ts) = (self.expr(s), self.vty(s.ty));
         let is = self.freeze(is, s.ty);

@@ -215,7 +215,9 @@ impl FnLower<'_, '_> {
         };
         let aty = self.sub(base.ty);
         let vt = self.cx.ty(ty);
+        // A reader of an `RwLock` never sees an array other readers read as unique.
         if !self.cx.boxed(aty)
+            || self.cx.lock_counted(aty)
             || self.info[l.0 as usize].in_cell
             || !matches!(vt, Ty::Agg(_))
             || self.cx.share_kind(ty) == ShareKind::Plain
@@ -291,7 +293,7 @@ impl FnLower<'_, '_> {
         }
         let t = self.copy_to_temp(Operand::Copy(base.clone()), Ty::Ptr);
         let c = self.count_ptr(Operand::Copy(Place::local(t)), ty);
-        self.retain(c);
+        self.retain_of(c, ty);
         self.own_temp(t, ty);
         Place::local(t)
     }

@@ -1,9 +1,10 @@
-// Prelude: `Mutex<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md).
+// Prelude: `Mutex<T>` and `RwLock<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md).
 //
 // The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`
-// (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`; this
-// declaration only fixes the layout they use: the runtime's 8-byte lock word, then the value.
-// A `Mutex` is never Copy (copying it would duplicate the lock). Use `with` to reach the value.
+// (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`, and
+// `new RwLock<T>(x)`, `rw.read(f)` and `rw.write(f)` the same way; these declarations only fix
+// the layout they use: the runtime's 8-byte lock word, then the value. Neither is ever Copy
+// (copying one would duplicate the lock). Their methods are the only way to reach the value.
 
 /**
  * A lock around a value of type `T`, for sharing it between tasks and threads:
@@ -11,6 +12,17 @@
  * unlocks; it is the only way to reach the value.
  */
 export struct Mutex<T> {
+  private lock: u64;
+  private value: T;
+}
+
+/**
+ * A lock around a value of type `T` that many readers may hold at once:
+ * `shared(new RwLock<T>(x))`. `rw.read((v) => …)` runs the callback on the value while other
+ * readers may run theirs; the callback cannot change the value. `rw.write((v) => …)` runs it
+ * alone, like `Mutex.with`. Waiting writers go first, so neither side starves.
+ */
+export struct RwLock<T> {
   private lock: u64;
   private value: T;
 }

@@ -63,6 +63,7 @@ impl<'h> Cx<'h> {
             json_key_memo: None,
             anon: Default::default(),
             cur_def: None,
+            cur_mode: super::LkMode::Plain,
             nothing_clashes: vec![],
             map_fields: 0,
         }
@@ -122,7 +123,34 @@ impl<'h> Cx<'h> {
     }
 
     /// The function built for `work`; queued for building on first request.
+    /// The function for `work`, whose address may be taken: it may run in any mode.
     pub(super) fn func(&mut self, work: Work) -> FuncId {
+        self.func_in(work, super::LkMode::Checked)
+    }
+
+    /// The function for `work` called directly from code of read mode `mode`: it runs in the
+    /// same mode.
+    pub(super) fn func_direct(&mut self, work: Work, mode: super::LkMode) -> FuncId {
+        self.func_in(work, mode)
+    }
+
+    fn func_in(&mut self, work: Work, mode: super::LkMode) -> FuncId {
+        use super::LkMode as M;
+        // Without a lock set every function counts the same way: one version.
+        let fixed = matches!(
+            work,
+            Work::Checked(_)
+                | Work::Read(_)
+                | Work::Main
+                | Work::ModuleInit
+                | Work::ArrayGrow
+                | Work::Oob(_)
+        ) || !self.has_lock_set();
+        let work = match (fixed, mode) {
+            (true, _) | (false, M::Plain) => work,
+            (false, M::Read) => Work::Read(Box::new(work)),
+            (false, M::Checked) => Work::Checked(Box::new(work)),
+        };
         if let Some(&id) = self.work_map.get(&work) {
             return id;
         }
@@ -141,7 +169,22 @@ impl<'h> Cx<'h> {
         }
         let outer = self.cur_def;
         self.cur_def = work_def(work).or(outer);
-        let func = super::FnLower::build(self, work);
+        let outer_mode = std::mem::take(&mut self.cur_mode);
+        let func = match work {
+            Work::Checked(w) | Work::Read(w) => {
+                let (mode, suffix) = match work {
+                    Work::Read(_) => (super::LkMode::Read, "_R"),
+                    _ => (super::LkMode::Checked, "_K"),
+                };
+                self.cur_mode = mode;
+                let mut f = super::FnLower::build(self, w);
+                // `_K` / `_R` follow no mangled name or suffix the plain version has.
+                f.symbol.push_str(suffix);
+                f
+            }
+            _ => super::FnLower::build(self, work),
+        };
+        self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
@@ -158,6 +201,16 @@ impl<'h> Cx<'h> {
         self.extern_map
             .keys()
             .any(|s| s.starts_with("velt_rt_fut_start") || s.starts_with("velt_rt_spawn"))
+    }
+
+    /// [`func_for`](Self::func_for), called directly from code that is `checked` or not.
+    pub(super) fn func_for_direct(
+        &mut self,
+        def: DefId,
+        targs: Vec<hir::TyId>,
+        mode: super::LkMode,
+    ) -> FuncId {
+        self.func_direct(Work::Fn(def, targs), mode)
     }
 
     pub(super) fn rt(&mut self, r: Rt) -> ExternId {
@@ -240,6 +293,7 @@ impl<'h> Cx<'h> {
 /// The function `work` builds an instance (or a part) of.
 fn work_def(work: &Work) -> Option<DefId> {
     match work {
+        Work::Checked(w) | Work::Read(w) => work_def(w),
         Work::Fn(d, _)
         | Work::Thunk(_, d, _)
         | Work::EnvDrop(d, _)

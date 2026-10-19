@@ -159,10 +159,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let done = self.new_block();
         if self.cx.counted(ty) {
             let (unique, shared) = (self.new_block(), self.new_block());
-            let one = self.count_is_one(o.clone());
+            let one = self.unique_of(o.clone(), ty);
             self.branch(one, unique, shared);
             self.switch_to(shared);
-            self.find_copy(o.clone(), |lw, copy| {
+            self.find_copy(o.clone(), ty, |lw, copy| {
                 lw.defer_release(o.clone(), ty);
                 lw.assign(Place::local(out), Rvalue::Use(copy));
                 lw.goto(done);
@@ -174,6 +174,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
+            // Moved out of a `read` callback: no longer the reader's own (locks.rs).
+            self.leave_read(o.clone(), ty);
         }
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
@@ -215,10 +217,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let nn = self.non_null(p.clone());
         self.when(nn, done);
         let (unique, shared) = (self.new_block(), self.new_block());
-        let one = self.count_is_one(p.clone());
+        let one = self.unique_of(p.clone(), ty);
         self.branch(one, unique, shared);
         self.switch_to(shared);
-        self.find_copy(p.clone(), |lw, copy| {
+        self.find_copy(p.clone(), ty, |lw, copy| {
             lw.defer_release(p.clone(), ty);
             lw.assign(place.clone(), Rvalue::Use(copy));
             lw.goto(done);
@@ -231,6 +233,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
+        // Moved out of a `read` callback: no longer the reader's own (locks.rs).
+        self.leave_read(p.clone(), ty);
         let pp = self.operand_place(p, Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
         match self.cx.kind(ty) {
@@ -279,6 +283,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // with the full sequence, which frees it if this was its last reference.
             let p = self.operand_place(v, Ty::Ptr);
             self.drop_glue(p, ty);
+        } else if self.cx.lock_counted(ty) {
+            // Above 1, or a store object a reader never counted (locks.rs).
+            self.release_of(v, ty, false, |_| {});
         } else {
             let c = self.count_place(v);
             let n = self.rvalue_temp(
@@ -297,7 +304,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// object stays alive (and keeps its count) while copies are looked up by address. True if
     /// so; outside a transfer the caller releases it.
     fn defer_release(&mut self, v: Operand, ty: TyId) -> Operand {
-        let drop = cfunc(self.cx.func(Work::Glue(Glue::Drop, ty)));
+        // Run when this transfer ends, on this thread: in this function's mode.
+        let drop = cfunc(self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode));
         self.rt_u8(Rt::XferDefer, vec![v, drop])
     }
 
@@ -307,12 +315,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(in crate::lower) fn find_copy(
         &mut self,
         p: Operand,
+        ty: TyId,
         hit: impl FnOnce(&mut Self, Operand),
     ) -> Operand {
         let found = Place::local(self.temp(Ty::Ptr));
         self.assign(found.clone(), Rvalue::Use(cint(NO_TRANSFER, Ty::Ptr)));
         let (look, hit_bb, go) = (self.new_block(), self.new_block(), self.new_block());
-        let one = self.count_is_one(p.clone());
+        let one = self.unique_of(p.clone(), ty);
         self.branch(one, go, look);
         self.switch_to(look);
         self.call_rt(Rt::XferFind, vec![p], Some(found.clone()));
