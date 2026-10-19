@@ -65,6 +65,18 @@ impl FnCx<'_, '_> {
         let mut redefine = None;
         let (key_place, name) = match self.symbol_key_of(key) {
             Some(k) => {
+                if self.is_class_instance(ot) {
+                    // A class's optional field is an own property from construction: Node's
+                    // `defineProperty` redefines it, with the attributes it already has.
+                    let shown = self.cx.shown_name(&k);
+                    self.not_yet(
+                        &format!("`Object.defineProperty` of `{shown}` on a `{tn}`, a class instance, is not supported yet"),
+                        key.span,
+                        "a field the class declares is an own property from construction, which `defineProperty` redefines with the attributes it has; assign it instead",
+                    );
+                    self.check_args_loose(args);
+                    return self.error_expr(span);
+                }
                 if let Some(at) = self.cx.direct_write(&k) {
                     let shown = self.cx.shown_name(&k);
                     self.cx.error(
@@ -251,7 +263,38 @@ impl FnCx<'_, '_> {
         let cond = bin(
             ast::BinaryOp::And,
             bin(ast::BinaryOp::In, key.clone(), base.clone()),
-            bin(ast::BinaryOp::StrictNotEq, current, value.clone()),
+            // SameValue (`Object.is`): `NaN` is itself, `-0` is not `0`.
+            synth(
+                ast::ExprKind::Unary {
+                    op: ast::UnaryOp::Not,
+                    expr: Box::new(synth(
+                        ast::ExprKind::Call {
+                            callee: Box::new(synth(
+                                ast::ExprKind::Member {
+                                    object: Box::new(synth(
+                                        ast::ExprKind::Ident(ast::Ident {
+                                            name: "Object".to_string(),
+                                            span,
+                                        }),
+                                        span,
+                                    )),
+                                    prop: ast::Ident {
+                                        name: "is".to_string(),
+                                        span,
+                                    },
+                                    optional: false,
+                                },
+                                span,
+                            )),
+                            type_args: vec![],
+                            args: vec![current, value.clone()],
+                            optional: false,
+                        },
+                        span,
+                    )),
+                },
+                span,
+            ),
         );
         let error = synth(
             ast::ExprKind::New {
@@ -346,6 +389,19 @@ impl FnCx<'_, '_> {
             }
         }
         Some(d)
+    }
+
+    /// Is `t` an instance of a class?
+    fn is_class_instance(&mut self, t: hir::TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            hir::TyKind::Adt(d, _) => {
+                let d = *d;
+                self.cx
+                    .adt(d)
+                    .is_some_and(|a| a.kind == hir::AdtKind::Class)
+            }
+            _ => false,
+        }
     }
 
     /// Report `msg` at `span` with `note`.

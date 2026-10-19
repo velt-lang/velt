@@ -3,3 +3,5 @@ true Cannot redefine property: Symbol(k)
 a
 true 2 { n: 2 }
 b
+NaN again: NaN
+true Cannot redefine property: Symbol(z)

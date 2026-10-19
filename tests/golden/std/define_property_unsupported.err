@@ -5,3 +5,4 @@ an accessor defined with `Object.defineProperty` is not supported yet
 `Object.defineProperties` is not supported yet
 `Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet
 `Object.defineProperty` of `[MIX]` with different attributes at different calls is not supported yet
+`Object.defineProperty` of `[MARK]` on a `Tile`, a class instance, is not supported yet

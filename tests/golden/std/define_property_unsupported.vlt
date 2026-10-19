@@ -24,3 +24,9 @@ interface Flag {
 const flag: Flag = { on: true };
 Object.defineProperty(flag, MIX, { value: true });
 Object.defineProperty(flag, MIX, { value: true, configurable: true });
+class Tile {
+  n = 1;
+  [MARK]?: boolean;
+}
+const tile = new Tile();
+Object.defineProperty(tile, MARK, { value: true });

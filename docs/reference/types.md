@@ -1696,18 +1696,19 @@ does is an error saying it is not supported yet, never a quiet difference.
 
 - `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
   compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
-  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal
-  value), so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that
-  have it. Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and
-  spreads, as a non-enumerable property is; a property with that symbol written directly
-  anywhere (`{ [KEY]: v }`, `o[KEY] = v`) is an error, since it would be enumerable, or written
-  where Node throws. Defining a brand again with another value throws Node's
-  `TypeError: Cannot redefine property: Symbol(k)` unless the descriptors say `writable: true`
-  or `configurable: true`; Velt keeps these attributes per symbol, so every call with one key
-  gives the same ones. With a string key naming a declared field and only a `value`, it assigns
-  the field. The object is written in place and is the result (`Object.defineProperty(o, ...)
-  === o`). Accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare
-  are not supported yet, and neither is `Object.defineProperties`.
+  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
+  Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
+  non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
+  Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
+  `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
+  the same ones. With a string key naming a declared field and only a `value`, it assigns the
+  field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
+  A brand on a class instance (whose declared field is an own property from construction),
+  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
+  supported yet, and neither is `Object.defineProperties`.
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
 
