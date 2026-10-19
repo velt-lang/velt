@@ -5,7 +5,7 @@ plus JS's URI encoding functions (`import { encodeURIComponent } from "velt:url"
 
 - `new URL(input, base: string | null = null)`: throws `UrlError` (`Invalid URL: …`, or
   `Invalid base URL: …` when `base` does not parse), a `TypeError` as in JS (its `name` is
-  `TypeError`).
+  `TypeError`, and `e instanceof TypeError` holds).
   `URL.parse(input, base = null): URL | null`. `URL.canParse(input, base = null)`.
 - Getters: `href protocol username password host hostname port pathname search hash origin`.
 - Setters: everything except `origin`. Invalid values are ignored, as in JS, except `href`,
@@ -17,9 +17,9 @@ plus JS's URI encoding functions (`import { encodeURIComponent } from "velt:url"
   - `append`, `set`, `delete(name, value?)`, `sort()` (stable)
   - `keys()`, `values()`, `entries()`: arrays, not iterators
   - `toString()`: form encoding (space becomes `+`)
-- `encodeURIComponent`, `encodeURI`, `decodeURIComponent`, `decodeURI`: they throw
-  `UrlError("URI malformed")`, named `URIError` as the error JS throws: the encoders on a lone surrogate, the
-  decoders on a bad escape or invalid UTF-8.
+- `encodeURIComponent`, `encodeURI`, `decodeURIComponent`, `decodeURI`: they throw the
+  prelude's `URIError("URI malformed")`, as JS: the encoders on a lone surrogate, the decoders on
+  a bad escape or invalid UTF-8.
 
 ```ts
 import { URL, URLSearchParams, encodeURIComponent } from "velt:url";

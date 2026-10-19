@@ -4,7 +4,7 @@
 // checked against node 22 (bench/strings_utf16 and tests/difftest cover more).
 import { RegExp } from "velt:regex";
 import { parseCsv } from "velt:csv";
-import { URL, encodeURIComponent, decodeURIComponent, UrlError } from "velt:url";
+import { URL, encodeURIComponent, decodeURIComponent } from "velt:url";
 
 function regexOffsets() {
   const word = new RegExp("[a-zé]+", "g");
@@ -46,13 +46,13 @@ function uri() {
     try {
       console.log(encodeURIComponent(s));
     } catch (e) {
-      console.log(e instanceof UrlError ? `URIError: ${e.message}` : "other");
+      console.log(e instanceof URIError ? `URIError: ${e.message}` : "other");
     }
   }
   try {
     console.log(decodeURIComponent("%ED%A0%BD"));
   } catch (e) {
-    console.log(e instanceof UrlError ? `URIError: ${e.message}` : "other");
+    console.log(e instanceof URIError ? `URIError: ${e.message}` : "other");
   }
 }
 
