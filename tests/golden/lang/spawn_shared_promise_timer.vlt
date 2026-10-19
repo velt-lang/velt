@@ -23,20 +23,20 @@ async function main() {
   setTimeout(async () => {
     console.log("t", (await q).n);
   }, 10);
-  await sleep(100);
+  await sleep(300);
   const c = count(3);
   const d = c;
   setTimeout(async () => {
     const again = d;
     console.log("c", (await d) + (await again));
   }, 10);
-  await sleep(100);
+  await sleep(300);
   const r = val(9);
   const s = r;
   const every = setInterval(async () => {
     console.log("i", (await s).n);
-  }, 100);
-  await sleep(150);
+  }, 300);
+  await sleep(450);
   clearInterval(every);
   console.log("m", (await p).n, await c, (await r).n);
 }
