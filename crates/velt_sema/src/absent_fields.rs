@@ -92,6 +92,24 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
 }
 
+/// May the value `h` an object literal gives a watched field be null (`Copies::null_literals`)?
+/// A typed value boxed into `any` is null only when the typed value may be; another dynamic
+/// value may hold `undefined`.
+pub(crate) fn literal_may_be_null(cx: &Ctx, h: &Expr) -> bool {
+    let v = match &h.kind {
+        E::ToDyn { expr, .. } => &**expr,
+        _ => h,
+    };
+    let given = match &v.kind {
+        E::WrapSome(inner) => inner.ty,
+        _ => v.ty,
+    };
+    matches!(v.kind, E::Lit(Lit::Null))
+        || cx.ty.opt_payload(given).is_some()
+        || matches!(cx.dynamic(given), Some(Dynamic::Any | Dynamic::Unknown))
+        || matches!(cx.ty.kind(given), TyKind::Param(_))
+}
+
 /// How the advice writes field `shown` of an object `o`: `o.b`, `o[KEY]` for a symbol key, and
 /// `o["a b"]` for a name that is not an identifier.
 fn place_of(shown: &str) -> String {
