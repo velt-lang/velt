@@ -8,6 +8,7 @@ mod array_ctor;
 mod assign;
 mod assign_checks;
 mod assign_paths;
+mod assign_pattern;
 mod attempt;
 mod await_union;
 mod builtins;
@@ -247,11 +248,14 @@ impl FnCx<'_, '_> {
                 object,
                 index,
                 optional,
-            } => self.index_expr(object, index, *optional, want, span),
+            } => self.index_expr(object, index, *optional, exp, want, span),
             A::Arrow { .. } => self.closure(e, exp, true),
             A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
-            A::Object(props) => self.object_lit(props, exp, span),
+            A::Object(props) => {
+                self.reject_cover_inits(props);
+                self.object_lit(props, exp, span)
+            }
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),
             A::Spread(_) => self.unsupported_expr("spread arguments (`f(...xs)`)", span),
             A::Await(inner) => self.await_expr(inner, exp, span),

@@ -267,6 +267,20 @@ impl<'a> Parser<'a> {
             self.error_expected("`:`");
             return Err(Fail);
         }
+        // `{ a = 1 }`: a default, which only an assignment pattern may have (`({ a = 1 } = o)`;
+        // sema rejects it elsewhere). It is `a: a = 1` with the assignment starting at the key.
+        if self.eat(Tok::Eq) {
+            let value = self.parse_assign()?;
+            let target = self.mk_expr(ExprKind::Ident(key.clone()), key.span);
+            let assign = ExprKind::Assign {
+                op: None,
+                target: Box::new(target),
+                value: Box::new(value),
+            };
+            let span = self.span_from(key.span.lo);
+            let assign = self.mk_expr(assign, span);
+            return Ok(ObjectProp::KeyValue(key, assign));
+        }
         // `{ __DEV__ }` with a `define`: `{ __DEV__: false }`.
         if let Some(lit) = self.define_at.and_then(|d| d.get(&key.span.lo)).cloned() {
             let value = self.mk_expr(ExprKind::Lit(lit), key.span);

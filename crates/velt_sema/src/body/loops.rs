@@ -127,6 +127,20 @@ impl FnCx<'_, '_> {
                 iter,
                 body,
                 is_await,
+            } if super::pattern_defaults::has_default(pattern)
+                || super::object_rest::has_object_rest(pattern) =>
+            {
+                // `for (const { a = 1, ...rest } of xs)`: each element bound to a hidden
+                // variable, then taken apart as a declaration does it.
+                let lp = item_loop(*kind, pattern, iter, body, *is_await, span);
+                self.loop_stmt(&lp, label, out);
+            }
+            ast::StmtKind::ForOf {
+                kind,
+                pattern,
+                iter,
+                body,
+                is_await,
             } => {
                 let tested = match is_await {
                     true => None,
@@ -407,5 +421,63 @@ impl FnCx<'_, '_> {
             Some(e) => e,
             None => self.error_expr(span),
         }
+    }
+}
+
+/// The name of the element of a `for...of` whose pattern has defaults (no source can spell it).
+const ITEM: &str = "<for item>";
+
+/// `for (kind <item> of iter) { kind pattern = <item>; { body } }`: a pattern with defaults or
+/// an object rest, which declarations take apart (`pattern_defaults`, `object_rest`). The body
+/// stays a block of its own, so it may declare the pattern's names again, as in JavaScript.
+fn item_loop(
+    kind: ast::VarKind,
+    pattern: &ast::Pattern,
+    iter: &ast::Expr,
+    body: &ast::Block,
+    is_await: bool,
+    span: Span,
+) -> ast::Stmt {
+    let at = pattern.span;
+    let ident = ast::Ident {
+        name: ITEM.into(),
+        span: at,
+    };
+    let item = ast::Pattern {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::PatternKind::Ident(ident.clone()),
+        span: at,
+    };
+    let read = ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Ident(ident),
+        span: at,
+    };
+    let decl = ast::Stmt {
+        kind: ast::StmtKind::Var(ast::VarDecl {
+            kind,
+            pattern: pattern.clone(),
+            ty: None,
+            init: Some(read),
+            span: at,
+        }),
+        span: at,
+    };
+    let inner = ast::Stmt {
+        kind: ast::StmtKind::Block(body.clone()),
+        span: body.span,
+    };
+    ast::Stmt {
+        kind: ast::StmtKind::ForOf {
+            kind: ast::VarKind::Const,
+            pattern: item,
+            iter: iter.clone(),
+            body: ast::Block {
+                stmts: vec![decl, inner],
+                span: body.span,
+            },
+            is_await,
+        },
+        span,
     }
 }
