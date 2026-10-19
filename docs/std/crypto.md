@@ -1,8 +1,12 @@
 # velt:crypto
 
 `import { sha256Hex, randomBytes } from "velt:crypto"`. SHA-256 and SHA-1, HMAC, secure
-randomness and constant-time comparison. The hashes are pure Velt (SHA-256 runs at about
-360 MB/s in release builds); the randomness comes from the OS generator.
+randomness and constant-time comparison. The hashes are Velt code: in release builds on a CPU
+with SHA instructions (arm64, and x86-64 with SHA-NI) they run on them through
+[`velt:simd`](simd.md#sha-instructions), about 3.0 GB/s for SHA-1 and 2.7 GB/s for SHA-256 on an
+Apple M4, within 2% of Rust's `sha1`/`sha2` crates for large inputs. Elsewhere (other CPUs,
+WebAssembly, debug builds, or with `VELT_SIMD_DISABLE=sha`) they use portable rounds, about
+360 MB/s for SHA-256. The randomness comes from the OS generator.
 
 - `sha256(data: u8[]): u8[]` (32 bytes), `sha256Hex(s: string)`.
 - `sha1(data)` (20 bytes), `sha1Hex(s)`: SHA-1 is for legacy protocols only.

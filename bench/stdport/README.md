@@ -52,8 +52,22 @@ Reading it:
 - The four number rows call the same crates as the Rust column, so their gap is the cost of
   getting there: a call into the runtime per value and a string result, where Rust formats into
   a buffer on the stack.
-- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt:crypto` is portable
-  code. The gap to portable Rust code is smaller than the table says.
+- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt:crypto` was portable
+  code then. It now uses them too (#1330, `velt:simd`). Linux arm64 (OrbStack on an M4), best of
+  5, ms and millions of instructions, Velt before → after, against Rust:
+
+  | benchmark | Velt ms | Rust ms | Velt M instr | Rust M instr | Velt / Rust (instr) |
+  |---|---:|---:|---:|---:|---:|
+  | sha256_large | 115 → 15 | 14 | 2,380 → 69 | 66 | 36.0 → 1.04 |
+  | sha256_small | 117 → 16 | 16 | 2,719 → 178 | 94 | 28.8 → 1.89 |
+
+  `sha256_large` runs the same block loop as `sha2`: 2,700 MB/s natively on the M4 against
+  2,765 (SHA-1: 3,015 against 2,955). `sha256_small` (500,000 one-block hashes) takes the same
+  time; its extra instructions are the digest, a new 32-byte array per call where `sha2` returns
+  it on the stack, and the runtime call of `set`, which copies the digest into the message as
+  the Rust port's `copy_from_slice` does (the Velt program used to copy it byte by byte). HMAC
+  with a 64-byte key and a 250-byte message (callgrind, instructions per call, the digest
+  returned as a `Vec` in Rust): HMAC-SHA1 1,368 against 1,466, HMAC-SHA256 1,345 against 1,417.
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.

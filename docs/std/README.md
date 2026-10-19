@@ -76,7 +76,7 @@ what Velt can't do on its own:
 | `velt:child_process` | process spawning and pipes |
 | `velt:udp`, `velt:dns` | sockets and the system resolver |
 | `velt:bigint` | arbitrary-precision integers (dashu-int) |
-| `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt |
+| `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt (on the CPU's SHA instructions through `velt:simd` where it has them) |
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
 | `velt:html` | `escapeHtml` is one runtime pass |

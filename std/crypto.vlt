@@ -1,12 +1,16 @@
 // std/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), secure random bytes/integers
 // and constant-time comparison.
 //
-// The hashes are pure Velt over `u32` words (integer arithmetic wraps, `>>>` is a logical
-// shift). Randomness comes from the OS generator through the runtime. SHA-1 is broken for
-// collision resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in
-// TOTP, git object ids).
+// The hashes are Velt: where the CPU has SHA instructions (`velt:simd`, #1330: ARMv8 SHA2, x86
+// SHA-NI with SSSE3 and SSE4.1) whole blocks go through functions gated on them, which run the
+// bare instructions; elsewhere (other CPUs, WebAssembly, debug builds, `VELT_SIMD_DISABLE=sha`)
+// through portable rounds over `u32` words (integer arithmetic wraps, `>>>` is a logical shift).
+// Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
+// resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
+// object ids).
 
 import { utf8Encode, hexEncode } from "velt:encoding";
+import { u32x4, u8x16 } from "velt:simd";
 
 // `(uint64_t n, VeltBytes* out)`: `n` bytes from the OS CSPRNG.
 declare function velt_rt_random_bytes(n: u64): u8[];
@@ -15,6 +19,28 @@ declare function velt_rt_random_u64(): u64;
 
 // Bytes per compression block of both hashes (and the HMAC key block).
 const BLOCK: usize = 64;
+
+// The SHA instructions (std/simd/sha.vlt), called bare in the gated functions below.
+declare function velt_simd_u32x4_sha1c(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1p(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1m(abcd: u32x4, e: u32, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1h(e: u32): u32;
+declare function velt_simd_u32x4_sha1su0(w0: u32x4, w1: u32x4, w2: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1su1(t: u32x4, w3: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256h(abcd: u32x4, efgh: u32x4, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256h2(efgh: u32x4, abcd: u32x4, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256su0(w0: u32x4, w1: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256su1(t: u32x4, w2: u32x4, w3: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256rnds2(cdgh: u32x4, abef: u32x4, wk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256msg1(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_sha256msg2(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1rnds4_0(abcd: u32x4, ewk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1rnds4_1(abcd: u32x4, ewk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1rnds4_2(abcd: u32x4, ewk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1rnds4_3(abcd: u32x4, ewk: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1nexte(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1msg1(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_sha1msg2(a: u32x4, b: u32x4): u32x4;
 
 /** Thrown by `randomInt` for an empty or too large range, or a bound that is not a safe integer. */
 export class CryptoError extends Error {
@@ -27,27 +53,48 @@ export class CryptoError extends Error {
 
 /** SHA-256 digest (32 bytes) of `data`. */
 export function sha256(data: u8[]): u8[] {
-  const h: u32[] = [
-    0x6a09e667,
-    0xbb67ae85,
-    0x3c6ef372,
-    0xa54ff53a,
-    0x510e527f,
-    0x9b05688c,
-    0x1f83d9ab,
-    0x5be0cd19,
-  ];
+  return sha256Of([], 0, false, data);
+}
+
+// SHA-256 of `data`, after a first block when `keyed`: `key` (at most a block) zero-padded and
+// XORed with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
+function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  if (u32x4.hasShaArm()) {
+    return sha256Arm(key, pad, keyed, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return sha256X86(key, pad, keyed, data);
+  }
+  const h = H256.slice();
   const w = zeroWords(64);
+  let before: usize = 0;
+  if (keyed) {
+    sha256Block(h, w, keyBlock(key, pad), 0);
+    before = BLOCK;
+  }
   const full = data.length - data.length % BLOCK;
   for (let off: usize = 0; off < full; off += BLOCK) {
     sha256Block(h, w, data, off);
   }
-  const tail = finalBlocks(data, full);
+  const tail = finalBlocks(data, full, before);
   for (let off: usize = 0; off < tail.length; off += BLOCK) {
     sha256Block(h, w, tail, off);
   }
   return wordsToBytes(h);
 }
+
+// The initial hash values (FIPS 180-4 5.3.3, 5.3.1).
+const H256: u32[] = [
+  0x6a09e667,
+  0xbb67ae85,
+  0x3c6ef372,
+  0xa54ff53a,
+  0x510e527f,
+  0x9b05688c,
+  0x1f83d9ab,
+  0x5be0cd19,
+];
+const H1: u32[] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `s`. */
 export function sha256Hex(s: string): string {
@@ -169,13 +216,29 @@ function sha256Block(h: u32[], w: u32[], data: u8[], off: usize) {
 
 /** SHA-1 digest (20 bytes) of `data`. Not collision resistant; see the module comment. */
 export function sha1(data: u8[]): u8[] {
-  const h: u32[] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+  return sha1Of([], 0, false, data);
+}
+
+// SHA-1 of `data`, after a keyed first block (see `sha256Of`).
+function sha1Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  if (u32x4.hasShaArm()) {
+    return sha1Arm(key, pad, keyed, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return sha1X86(key, pad, keyed, data);
+  }
+  const h = H1.slice();
   const w = zeroWords(80);
+  let before: usize = 0;
+  if (keyed) {
+    sha1Block(h, w, keyBlock(key, pad), 0);
+    before = BLOCK;
+  }
   const full = data.length - data.length % BLOCK;
   for (let off: usize = 0; off < full; off += BLOCK) {
     sha1Block(h, w, data, off);
   }
-  const tail = finalBlocks(data, full);
+  const tail = finalBlocks(data, full, before);
   for (let off: usize = 0; off < tail.length; off += BLOCK) {
     sha1Block(h, w, tail, off);
   }
@@ -252,20 +315,18 @@ function loadWords(w: u32[], data: u8[], off: usize) {
 
 // The bytes after the last full block, padded with 0x80, zeros and the 64-bit big-endian bit
 // length: one or two blocks (both hashes use the same padding).
-function finalBlocks(data: u8[], full: usize): u8[] {
+// `before` bytes already hashed ahead of `data` count in the length.
+function finalBlocks(data: u8[], full: usize, before: usize): u8[] {
   const rest = data.length - full;
   const size = rest < 56 ? BLOCK : 2 * BLOCK;
-  const out: u8[] = __intrinsic_array_with_capacity(size);
-  for (let i = full; i < data.length; i++) {
-    out.push(data[i]);
+  const out = Buffer.alloc(size);
+  for (let i: usize = 0; i < rest; i++) {
+    out[i] = data[full + i];
   }
-  out.push(0x80);
-  while (out.length < size - 8) {
-    out.push(0);
-  }
-  const bits = (data.length as u64) * 8;
-  for (let i: u64 = 0; i < 8; i++) {
-    out.push(((bits >> (56 - i * 8)) & 0xff) as u8);
+  out[rest] = 0x80;
+  const bits = ((before + data.length) as u64) * 8;
+  for (let i: usize = 0; i < 8; i++) {
+    out[size - 8 + i] = ((bits >> (56 - (i as u64) * 8)) & 0xff) as u8;
   }
   return out;
 }
@@ -282,36 +343,582 @@ function wordsToBytes(h: u32[]): u8[] {
   return out;
 }
 
+// ───────────────────── the SHA instructions (#1330) ─────────────────────
+//
+// Where the CPU has them, a hash is one call of a function gated on the extension: the state
+// stays in vector registers, the round constants and initial values load from their tables'
+// read-only data, the padding is built in registers, and only the digest is allocated.
+
+// The 16 bytes of `src` from `off`, as four big-endian words.
+function blockWords(src: u8[], off: usize): u32x4 {
+  return u8x16.load(src, off).asU32x4().reverseBytes();
+}
+
+// Quarter `q` of the keyed first block: `key` zero-padded to a block, XORed with `pad`.
+function keyWords(key: u8[], pad: u8x16, q: usize): u32x4 {
+  const at = 16 * q;
+  const bytes = at < key.length ? u8x16.loadPartial(key, at) : u8x16.splat(0);
+  return bytes.xor(pad).asU32x4().reverseBytes();
+}
+
+// Four vectors: a block's words.
+struct Quad {
+  w0: u32x4;
+  w1: u32x4;
+  w2: u32x4;
+  w3: u32x4;
+}
+
+// The bytes of `src` from `at` that exist (up to 16, zeros after) as four big-endian words.
+function quarter(src: u8[], at: usize): u32x4 {
+  return at < src.length ? u8x16.loadPartial(src, at).asU32x4().reverseBytes() : u32x4.splat(0);
+}
+
+// Padding block `b` (0 or 1) after the whole blocks of `data` (which end at `full`): the rest of
+// `data`, the 0x80 marker, zeros, and in the last block the message's length in bits (`total`
+// bytes, a keyed first block included) as a big-endian `u64`.
+function tailBlock(data: u8[], full: usize, total: usize, b: usize, last: bool): Quad {
+  const at = full + 64 * b;
+  let w0 = quarter(data, at);
+  let w1 = quarter(data, at + 16);
+  let w2 = quarter(data, at + 32);
+  let w3 = quarter(data, at + 48);
+  const end = data.length;
+  if (end >= at && end < at + 64) {
+    // Byte `p` of the block is byte `p % 4` (big-endian) of word `p / 4`.
+    const p = end - at;
+    const bit = (0x80 as u32) << ((24 - 8 * (p % 4)) as u32);
+    const word = (p % 16) / 4;
+    if (p < 16) {
+      w0 = w0.withLane(word, w0.lane(word) | bit);
+    } else if (p < 32) {
+      w1 = w1.withLane(word, w1.lane(word) | bit);
+    } else if (p < 48) {
+      w2 = w2.withLane(word, w2.lane(word) | bit);
+    } else {
+      w3 = w3.withLane(word, w3.lane(word) | bit);
+    }
+  }
+  if (last) {
+    const bits = (total as u64) * 8;
+    w3 = w3.withLane(2, (bits >> 32) as u32).withLane(3, (bits & 0xffffffff) as u32);
+  }
+  return { w0: w0, w1: w1, w2: w2, w3: w3 };
+}
+
+// A new array of `n` bytes, uninitialized: the caller writes every byte before anything reads it.
+function newBytes(n: usize): u8[] {
+  const out: u8[] = __intrinsic_array_with_capacity(n);
+  __intrinsic_array_set_len(out, n);
+  return out;
+}
+
+// Padding blocks after the whole blocks of `data`: one, or two when fewer than 9 bytes are left.
+function tailBlocks(data: u8[], full: usize): usize {
+  return data.length - full < 56 ? 1 : 2;
+}
+
+// Two vectors of state: SHA-256's ABCD / EFGH on ARM, ABEF / CDGH on x86.
+struct Pair {
+  a: u32x4;
+  b: u32x4;
+}
+
+// SHA-1's state on ARM: ABCD (A in lane 0) and E.
+struct Sha1State {
+  abcd: u32x4;
+  e: u32;
+}
+
+// One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2.
+function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
+  __intrinsic_target("sha-arm");
+  let m0 = w0;
+  let m1 = w1;
+  let m2 = w2;
+  let m3 = w3;
+  let abcd = s.a;
+  let efgh = s.b;
+  // Groups 0–11 also make the message words of groups 4–15; 12–15 use them up.
+  for (let j: usize = 0; j < 12; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    const next = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m0, m1), m2, m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = next;
+    const before = abcd;
+    abcd = velt_simd_u32x4_sha256h(abcd, efgh, wk);
+    efgh = velt_simd_u32x4_sha256h2(efgh, before, wk);
+  }
+  for (let j: usize = 12; j < 16; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    const before = abcd;
+    abcd = velt_simd_u32x4_sha256h(abcd, efgh, wk);
+    efgh = velt_simd_u32x4_sha256h2(efgh, before, wk);
+  }
+  return { a: abcd.add(s.a), b: efgh.add(s.b) };
+}
+
+function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const s = state256Arm(key, pad, keyed, data);
+  const out = newBytes(32);
+  s.a.reverseBytes().asU8x16().store(out, 0);
+  s.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// HMAC-SHA256 on ARMv8 (`k` at most a block): the inner hash's state is the outer message's
+// words already, so the outer block is made from it in registers and nothing is allocated but
+// the digest.
+function hmac256Arm(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const inner = state256Arm(k, 0x36, true, data);
+  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  const p = u8x16.splat(0x5c);
+  s = rounds256Arm(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  // The 32-byte digest, the 0x80 marker, zeros, and the length: (64 + 32) bytes = 768 bits.
+  const marker = u32x4.splat(0).withLane(0, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 768);
+  s = rounds256Arm(s, inner.a, inner.b, marker, length);
+  const out = newBytes(32);
+  s.a.reverseBytes().asU8x16().store(out, 0);
+  s.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// The state after SHA-256 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
+function state256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
+  __intrinsic_target("sha-arm");
+  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds256Arm(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  // `fits` of a block's last 16 bytes covers its four loads.
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds256Arm(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds256Arm(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}
+
+// One SHA-256 block with x86 SHA-NI: state ABEF / CDGH (A in lane 3), two rounds per SHA256RNDS2.
+function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
+  __intrinsic_target("sha-x86");
+  let m0 = w0;
+  let m1 = w1;
+  let m2 = w2;
+  let m3 = w3;
+  let abef = s.a;
+  let cdgh = s.b;
+  // Groups 0–11 also make the message words of groups 4–15; 12–15 use them up.
+  for (let j: usize = 0; j < 12; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
+    abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
+    const tail = u32x4.shuffle(m2, m3, 1, 2, 3, 4);
+    const next = velt_simd_u32x4_sha256msg2(velt_simd_u32x4_sha256msg1(m0, m1).add(tail), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = next;
+  }
+  for (let j: usize = 12; j < 16; j++) {
+    const wk = m0.add(u32x4.load(K256, 4 * j));
+    cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
+    abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+  }
+  return { a: abef.add(s.a), b: cdgh.add(s.b) };
+}
+
+function sha256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  return digest256X86(state256X86(key, pad, keyed, data));
+}
+
+// SHA-256's initial state as ABEF / CDGH (A in lane 3).
+function initial256X86(): Pair {
+  __intrinsic_target("sha-x86");
+  const dcba = u32x4.load(H256, 0);
+  const hgfe = u32x4.load(H256, 4);
+  const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
+  const efgh = u32x4.shuffle(hgfe, hgfe, 3, 2, 1, 0);
+  return { a: u32x4.shuffle(efgh, cdab, 2, 3, 4, 5), b: u32x4.shuffle(efgh, cdab, 0, 1, 6, 7) };
+}
+
+// State ABEF / CDGH back as ABCD / EFGH (A in lane 0).
+function unswapped256X86(s: Pair): Pair {
+  __intrinsic_target("sha-x86");
+  const feba = u32x4.shuffle(s.a, s.a, 3, 2, 1, 0);
+  const dchg = u32x4.shuffle(s.b, s.b, 1, 0, 3, 2);
+  return { a: u32x4.shuffle(feba, dchg, 0, 1, 6, 7), b: u32x4.shuffle(feba, dchg, 2, 3, 4, 5) };
+}
+
+// The 32 bytes of the digest of state ABEF / CDGH.
+function digest256X86(s: Pair): u8[] {
+  __intrinsic_target("sha-x86");
+  const abcd = unswapped256X86(s);
+  const out = newBytes(32);
+  abcd.a.reverseBytes().asU8x16().store(out, 0);
+  abcd.b.reverseBytes().asU8x16().store(out, 16);
+  return out;
+}
+
+// HMAC-SHA256 with x86 SHA-NI (`k` at most a block); see `hmac256Arm`.
+function hmac256X86(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  const inner = unswapped256X86(state256X86(k, 0x36, true, data));
+  let s = initial256X86();
+  const p = u8x16.splat(0x5c);
+  s = rounds256X86(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  const marker = u32x4.splat(0).withLane(0, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 768);
+  return digest256X86(rounds256X86(s, inner.a, inner.b, marker, length));
+}
+
+// The state (ABEF / CDGH) after SHA-256 with SHA-NI of `data`, after a keyed first block.
+function state256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
+  __intrinsic_target("sha-x86");
+  let s = initial256X86();
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds256X86(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds256X86(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds256X86(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}
+
+// One SHA-1 block on ARMv8: 80 rounds, four per SHA1C / SHA1P / SHA1M.
+function rounds1Arm(s: Sha1State, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Sha1State {
+  __intrinsic_target("sha-arm");
+  const k0 = u32x4.splat(0x5a827999);
+  const k1 = u32x4.splat(0x6ed9eba1);
+  const k2 = u32x4.splat(0x8f1bbcdc);
+  const k3 = u32x4.splat(0xca62c1d6);
+  let m0 = w0;
+  let m1 = w1;
+  let m2 = w2;
+  let m3 = w3;
+  let abcd = s.abcd;
+  let e = s.e;
+  // Four rounds per step, five steps per function (choose, parity, majority, parity); the
+  // message schedule runs ahead every step (its last results are not needed, and cost less than
+  // a branch).
+  for (let j = 0; j < 5; j++) {
+    const wk = m0.add(k0);
+    const next = velt_simd_u32x4_sha1h(abcd.lane(0));
+    abcd = velt_simd_u32x4_sha1c(abcd, e, wk);
+    e = next;
+    const w = velt_simd_u32x4_sha1su1(velt_simd_u32x4_sha1su0(m0, m1, m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const wk = m0.add(k1);
+    const next = velt_simd_u32x4_sha1h(abcd.lane(0));
+    abcd = velt_simd_u32x4_sha1p(abcd, e, wk);
+    e = next;
+    const w = velt_simd_u32x4_sha1su1(velt_simd_u32x4_sha1su0(m0, m1, m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const wk = m0.add(k2);
+    const next = velt_simd_u32x4_sha1h(abcd.lane(0));
+    abcd = velt_simd_u32x4_sha1m(abcd, e, wk);
+    e = next;
+    const w = velt_simd_u32x4_sha1su1(velt_simd_u32x4_sha1su0(m0, m1, m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const wk = m0.add(k3);
+    const next = velt_simd_u32x4_sha1h(abcd.lane(0));
+    abcd = velt_simd_u32x4_sha1p(abcd, e, wk);
+    e = next;
+    const w = velt_simd_u32x4_sha1su1(velt_simd_u32x4_sha1su0(m0, m1, m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  return { abcd: abcd.add(s.abcd), e: e + s.e };
+}
+
+function sha1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const s = state1Arm(key, pad, keyed, data);
+  return sha1Digest(s.abcd, s.e);
+}
+
+// HMAC-SHA1 on ARMv8 (`k` at most a block): the outer block is made from the inner state.
+function hmac1Arm(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-arm");
+  const inner = state1Arm(k, 0x36, true, data);
+  let s: Sha1State = { abcd: u32x4.load(H1, 0), e: H1[4] };
+  const p = u8x16.splat(0x5c);
+  s = rounds1Arm(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  // The 20-byte digest, the 0x80 marker, zeros, and the length: (64 + 20) bytes = 672 bits.
+  const w1 = u32x4.splat(0).withLane(0, inner.e).withLane(1, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 672);
+  s = rounds1Arm(s, inner.abcd, w1, u32x4.splat(0), length);
+  return sha1Digest(s.abcd, s.e);
+}
+
+// The state after SHA-1 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
+function state1Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Sha1State {
+  __intrinsic_target("sha-arm");
+  let s: Sha1State = { abcd: u32x4.load(H1, 0), e: H1[4] };
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds1Arm(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds1Arm(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds1Arm(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}
+
+// One SHA-1 block with x86 SHA-NI: ABCD with A in lane 3, E (in lane 3) carried by SHA1NEXTE.
+// The message words come in ARM's order (word 0 in lane 0) and are turned around here.
+function rounds1X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair {
+  __intrinsic_target("sha-x86");
+  let m0 = u32x4.shuffle(w0, w0, 3, 2, 1, 0);
+  let m1 = u32x4.shuffle(w1, w1, 3, 2, 1, 0);
+  let m2 = u32x4.shuffle(w2, w2, 3, 2, 1, 0);
+  let m3 = u32x4.shuffle(w3, w3, 3, 2, 1, 0);
+  let abcd = s.a;
+  let prev = abcd;
+  // Four rounds per step, five steps per function (SHA1RNDS4's immediate 0–3); the schedule
+  // runs ahead every step, as on ARM.
+  for (let j = 0; j < 5; j++) {
+    const ewk = j == 0 ? s.b.add(m0) : velt_simd_u32x4_sha1nexte(prev, m0);
+    prev = abcd;
+    abcd = velt_simd_u32x4_sha1rnds4_0(abcd, ewk);
+    const w = velt_simd_u32x4_sha1msg2(velt_simd_u32x4_sha1msg1(m0, m1).xor(m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const ewk = velt_simd_u32x4_sha1nexte(prev, m0);
+    prev = abcd;
+    abcd = velt_simd_u32x4_sha1rnds4_1(abcd, ewk);
+    const w = velt_simd_u32x4_sha1msg2(velt_simd_u32x4_sha1msg1(m0, m1).xor(m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const ewk = velt_simd_u32x4_sha1nexte(prev, m0);
+    prev = abcd;
+    abcd = velt_simd_u32x4_sha1rnds4_2(abcd, ewk);
+    const w = velt_simd_u32x4_sha1msg2(velt_simd_u32x4_sha1msg1(m0, m1).xor(m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  for (let j = 0; j < 5; j++) {
+    const ewk = velt_simd_u32x4_sha1nexte(prev, m0);
+    prev = abcd;
+    abcd = velt_simd_u32x4_sha1rnds4_3(abcd, ewk);
+    const w = velt_simd_u32x4_sha1msg2(velt_simd_u32x4_sha1msg1(m0, m1).xor(m2), m3);
+    m0 = m1;
+    m1 = m2;
+    m2 = m3;
+    m3 = w;
+  }
+  return { a: abcd.add(s.a), b: velt_simd_u32x4_sha1nexte(prev, s.b) };
+}
+
+function sha1X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  const s = state1X86(key, pad, keyed, data);
+  return sha1Digest(u32x4.shuffle(s.a, s.a, 3, 2, 1, 0), s.b.lane(3));
+}
+
+// SHA-1's initial state for SHA-NI: ABCD with A in lane 3, E in lane 3.
+function initial1X86(): Pair {
+  __intrinsic_target("sha-x86");
+  const dcba = u32x4.load(H1, 0);
+  return { a: u32x4.shuffle(dcba, dcba, 3, 2, 1, 0), b: u32x4.splat(0).withLane(3, H1[4]) };
+}
+
+// HMAC-SHA1 with x86 SHA-NI (`k` at most a block); see `hmac1Arm`.
+function hmac1X86(k: u8[], data: u8[]): u8[] {
+  __intrinsic_target("sha-x86");
+  const inner = state1X86(k, 0x36, true, data);
+  let s = initial1X86();
+  const p = u8x16.splat(0x5c);
+  s = rounds1X86(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
+  // rounds1X86 takes words in ARM's order (word 0 in lane 0): the digest ABCD, then E.
+  const abcd = u32x4.shuffle(inner.a, inner.a, 3, 2, 1, 0);
+  const w1 = u32x4.splat(0).withLane(0, inner.b.lane(3)).withLane(1, 0x80000000);
+  const length = u32x4.splat(0).withLane(3, 672);
+  s = rounds1X86(s, abcd, w1, u32x4.splat(0), length);
+  return sha1Digest(u32x4.shuffle(s.a, s.a, 3, 2, 1, 0), s.b.lane(3));
+}
+
+// The state (ABCD with A in lane 3, E in lane 3) after SHA-1 with SHA-NI of `data`, after a
+// keyed first block.
+function state1X86(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
+  __intrinsic_target("sha-x86");
+  let s = initial1X86();
+  if (keyed) {
+    const p = u8x16.splat(pad);
+    s = rounds1X86(
+      s,
+      keyWords(key, p, 0),
+      keyWords(key, p, 1),
+      keyWords(key, p, 2),
+      keyWords(key, p, 3),
+    );
+  }
+  const full = data.length - data.length % BLOCK;
+  for (let off: usize = 0; off < full && u8x16.fits(data, off + 48); off += BLOCK) {
+    s = rounds1X86(
+      s,
+      blockWords(data, off),
+      blockWords(data, off + 16),
+      blockWords(data, off + 32),
+      blockWords(data, off + 48),
+    );
+  }
+  const total = (keyed ? BLOCK : 0) + data.length;
+  const blocks = tailBlocks(data, full);
+  for (let b: usize = 0; b < blocks; b++) {
+    const last = b + 1 == blocks;
+    const t = tailBlock(data, full, total, b, last);
+    s = rounds1X86(s, t.w0, t.w1, t.w2, t.w3);
+  }
+  return s;
+}
+
+// The 20 bytes of a SHA-1 digest: A, B, C, D (lanes 0–3 of `abcd`) and E, big-endian.
+function sha1Digest(abcd: u32x4, e: u32): u8[] {
+  const out = newBytes(20);
+  abcd.reverseBytes().asU8x16().store(out, 0);
+  out[16] = (e >>> 24) as u8;
+  out[17] = ((e >>> 16) & 0xff) as u8;
+  out[18] = ((e >>> 8) & 0xff) as u8;
+  out[19] = (e & 0xff) as u8;
+  return out;
+}
+
 // ───────────────────────────── HMAC ─────────────────────────────
 
 /** HMAC-SHA256 (RFC 2104 / RFC 4231) of `data` under `key`. */
 export function hmacSha256(key: u8[], data: u8[]): u8[] {
-  return hmac(key, data, sha256);
+  const k = key.length > BLOCK ? sha256(key) : key;
+  if (u32x4.hasShaArm()) {
+    return hmac256Arm(k, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return hmac256X86(k, data);
+  }
+  return sha256Of(k, 0x5c, true, sha256Of(k, 0x36, true, data));
 }
 
 /** HMAC-SHA1 (RFC 2104 / RFC 2202) of `data` under `key`. */
 export function hmacSha1(key: u8[], data: u8[]): u8[] {
-  return hmac(key, data, sha1);
+  const k = key.length > BLOCK ? sha1(key) : key;
+  if (u32x4.hasShaArm()) {
+    return hmac1Arm(k, data);
+  }
+  if (u32x4.hasShaX86()) {
+    return hmac1X86(k, data);
+  }
+  return sha1Of(k, 0x5c, true, sha1Of(k, 0x36, true, data));
 }
 
-// H((K ^ opad) || H((K ^ ipad) || data)); keys longer than a block are hashed first.
-function hmac(key: u8[], data: u8[], hash: (bytes: u8[]) => u8[]): u8[] {
-  const k = key.length > BLOCK ? hash(key) : key.clone();
-  const inner: u8[] = __intrinsic_array_with_capacity(BLOCK + data.length);
-  const outer: u8[] = __intrinsic_array_with_capacity(BLOCK + 32);
-  for (let i: usize = 0; i < BLOCK; i++) {
-    const b: u8 = i < k.length ? k[i] : 0;
-    inner.push(b ^ 0x36);
-    outer.push(b ^ 0x5c);
+// The key block K ^ `byte` (`k` at most a block, zero-padded) for the portable rounds:
+// H((K ^ opad) || H((K ^ ipad) || data)) hashes it as the first block, so nothing is joined.
+function keyBlock(k: u8[], byte: u8): u8[] {
+  const out = Buffer.alloc(BLOCK);
+  out.set(k, 0);
+  const x = u8x16.splat(byte);
+  for (let i: usize = 0; i < BLOCK; i += 16) {
+    u8x16.load(out, i).xor(x).store(out, i);
   }
-  for (let i: usize = 0; i < data.length; i++) {
-    inner.push(data[i]);
-  }
-  const innerHash = hash(inner);
-  for (let i: usize = 0; i < innerHash.length; i++) {
-    outer.push(innerHash[i]);
-  }
-  return hash(outer);
+  return out;
 }
 
 // ───────────────────────── randomness, comparison ─────────────────────────

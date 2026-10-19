@@ -245,9 +245,11 @@ function main() {
 - Each element is a number or boolean literal, also negated or converted with `as`, or a module
   constant that is one. Any other array constant (strings, nested arrays, objects, computed
   elements) is not a table but [module state](#module-state), evaluated once per process.
+- Passed to a function or method that only reads it (`f(K)` when `f` doesn't modify its parameter,
+  `K.includes(x)`, `K.indexOf(x)`, `u32x4.load(K, i)`), a table is that read-only data too:
+  nothing is built, so such calls are as cheap in a hot loop as indexing.
 - Used in any other way, a table is what every module constant is: evaluated at that use, here
-  to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
-  in a hot loop index the table or iterate it instead of passing it along.
+  to a new array with those elements. `K.slice()` is the one to use for a copy.
 - Nothing can modify a table or take it over, and a use that could is a compile error. That is
   `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
   parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
