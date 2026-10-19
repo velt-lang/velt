@@ -34,7 +34,41 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
         .filter(|d| cx.fn_info(*d).state == BodyState::Done && cx.defs[d.0 as usize].is_some())
         .collect();
     let dispatch = super::mutation::Dispatch::new(cx);
-    let mut work = super::worklist::Worklist::new(cx, &fns, &dispatch);
+    super::kept_fns::find_parents(cx, &fns);
+    fixpoint(cx, &fns, &dispatch);
+    // A program that keeps borrowed function values runs again under the rules that make
+    // keeping them sound (`super::kept_fns`); modes only grow, so the second run continues
+    // from the first one's.
+    if super::kept_fns::any_kept(cx, &fns) {
+        cx.kept_fns.on = true;
+        let before = cx.diags.len();
+        fixpoint(cx, &fns, &dispatch);
+        // What the first run reported is reported once.
+        let again: Vec<Diagnostic> = cx.diags.drain(before..).collect();
+        for e in again {
+            let seen = cx.diags[..before].iter().any(|o| {
+                o.message == e.message
+                    && o.labels.first().map(|l| l.span) == e.labels.first().map(|l| l.span)
+            });
+            if !seen {
+                cx.diags.push(e);
+            }
+        }
+    }
+    super::finish::demote_fn_values(cx);
+    for &d in &fns {
+        with_body(cx, d, |cx, f| {
+            super::finish::reassigned_fixed_params(cx, d, f);
+            super::finish::soft_args(cx, d, f);
+            sync_params(cx, d, f);
+            false
+        });
+    }
+}
+
+/// Visit the bodies of `fns` until no mode changes.
+fn fixpoint(cx: &mut Ctx, fns: &[DefId], dispatch: &super::mutation::Dispatch) {
+    let mut work = super::worklist::Worklist::new(cx, fns, dispatch);
     let position: HashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
     let mut reported = HashSet::new();
     // Errors found while patching, reported in definition order (not visiting order).
@@ -61,12 +95,16 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
             break;
         }
         let before = cx.diags.len();
+        let mut forced = vec![];
         let body_changed = with_body(cx, d, |cx, f| {
             let borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
             let patched =
                 super::patch::patch_calls(cx, &mut f.body.block, &borrowed, &mut reported);
-            infer_body(cx, d, f) | patched
+            let inferred = infer_body(cx, d, f) | patched;
+            forced = super::kept_fns::force_roots(cx, d, f);
+            inferred
         });
+        forced.into_iter().for_each(|r| work.changed(r));
         errors.extend(cx.diags.drain(before..).map(|e| (position[&d], e)));
         if body_changed {
             work.changed(d);
@@ -78,15 +116,6 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
     }
     errors.sort_by_key(|(at, _)| *at);
     cx.diags.extend(errors.into_iter().map(|(_, e)| e));
-    super::finish::demote_fn_values(cx);
-    for &d in &fns {
-        with_body(cx, d, |cx, f| {
-            super::finish::reassigned_fixed_params(cx, d, f);
-            super::finish::soft_args(cx, d, f);
-            sync_params(cx, d, f);
-            false
-        });
-    }
 }
 
 /// Run `op` on def `d`'s body (taken out of the context meanwhile).
@@ -187,7 +216,14 @@ fn through_class(cx: &Ctx, e: &Expr) -> bool {
 
 fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
     let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
-    let moved = moved_roots(cx, &mut f.body.block, &soft);
+    let mut moved = moved_roots(cx, &mut f.body.block, &soft);
+    // Parameters that must own their closure (`super::kept_fns`).
+    moved.extend(
+        f.params
+            .iter()
+            .map(|p| p.local)
+            .filter(|l| cx.kept_fns.forced.contains(&(d, *l))),
+    );
     let mut changed = false;
     let fixed = cx.fn_info(d).fixed_modes;
     let has_this = cx.fn_info(d).this.is_some();

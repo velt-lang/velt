@@ -1028,8 +1028,17 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   passes to an async function is **owned** (inferred like other parameters), and a closure
   literal passed to an owned parameter is escaping, so `new Holder(() => msg)` keeps a closure
   that stays valid. Closures and overridden or interface methods have fixed borrowed
-  parameters, so they cannot keep a function they receive:
-  ``cannot keep a copy of `g`, a borrowed function parameter``.
+  parameters; they may still keep a function they receive, as JS callback registries do
+  (`onCleanup((fn) => (cleanupFn = fn))`, `subscribe(handler) { this.handlers.push(handler); }`).
+  A program that does so passes such callees only closures that own their environment: every
+  closure literal passed to a function value or an interface method escapes (also one that
+  forwards a borrowed function, below), and a parameter of a named function that is kept, or
+  passed to a function value, an interface method, an overridden method or a parameter of a
+  generic type, becomes owned (a generic type may stand for a function type, so a closure
+  literal passed to a parameter of a generic type always escapes, and a method keeping a value
+  of a generic type, `put(t: T) { this.items.push(t); }`, counts as keeping a function), also when a closure
+  inside the function does it (`untrack(() => topic.subscribe(f))`). A closure may likewise keep
+  a function it captured from a local variable (`untrack(() => registry.add(onInvalidate))`).
   The executor of `new Promise((resolve, reject) => …)` is the exception: its `resolve` and
   `reject` are handles the compiler creates on the heap (never a caller's closure), so it may
   keep them ([Async](async.md#new-promise)). A spawned or stored closure can't capture a borrowed
@@ -1043,9 +1052,11 @@ console.log(add.call(null, 1, 2), add.apply(null, pair)); // 3 7
   type) may be kept, and so may anything passed to a callee that returns a promise the caller
   does not `await` right away (the callee may run after the caller returned): a forwarding
   closure passed there escapes like any other. It captures the function it forwards by value,
-  and that parameter of the enclosing function becomes owned. Where that parameter cannot become
-  owned (in a closure, or an overridden or interface method), this is the error
-  ``cannot keep a copy of `next`, a borrowed function parameter``.
+  and that parameter of the enclosing function becomes owned. In a closure, or an overridden or
+  interface method, where that parameter cannot become owned, it is kept as described above.
+  What remains an error (``cannot keep a copy of `g`, a borrowed function parameter``) is keeping
+  a function that reached the closure through a destructured or `for...of` binding of a
+  borrowed value, or through `this`.
 - A closure held in a `const` that is only ever called (`const add = (n: number) => {
   this.total += n; }; add(1); add(2);`) is non-escaping too: it captures by reference, sees
   every later change of what it captures, and lives in the frame, so capturing `this` does not

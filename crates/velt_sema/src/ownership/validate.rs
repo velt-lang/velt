@@ -40,6 +40,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
+            d,
             f: &f,
             kinds: &kinds,
             copy: &copy,
@@ -63,6 +64,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 if !invalid.is_empty() {
                     match super::fn_values::borrowed_fn_copy(
                         v.cx,
+                        d,
                         v.f,
                         v.kinds,
                         v.keeps_fn_params,
@@ -146,6 +148,7 @@ fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId,
 
 struct Validator<'a, 'c, 'm> {
     cx: &'c Ctx<'m>,
+    d: DefId,
     f: &'a FnDef,
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
@@ -183,6 +186,7 @@ impl Validator<'_, '_, '_> {
                 if let [a] = args.as_slice() {
                     errors.extend(super::fn_values::borrowed_fn_copy(
                         self.cx,
+                        self.d,
                         self.f,
                         self.kinds,
                         self.keeps_fn_params,
@@ -207,6 +211,7 @@ impl Validator<'_, '_, '_> {
                             .then(|| {
                                 super::fn_values::borrowed_fn_copy(
                                     self.cx,
+                                    self.d,
                                     self.f,
                                     self.kinds,
                                     self.keeps_fn_params,

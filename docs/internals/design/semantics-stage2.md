@@ -73,7 +73,7 @@ shares lower once. `ShareKind` (boxing/kinds.rs):
 | struct / object literal that is assigned somewhere (`AdtDef::assigned`), has `[Symbol.dispose]` or holds a `Mutex` | count + 1 | boxed like arrays (`Ptr` to the fields) |
 | other struct / object literal, `T \| null`, unions, tuples | field-wise share (`Glue::Share`) | parts as needed; an object type compared by identity is boxed instead |
 | function value | env count + 1 (heap envs are always counted; a frame env is copied to the heap) | — |
-| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data, copy immutable data) | — |
+| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data; data never changed in place, such as an object literal of methods, is shared part by part in a new box, so its methods keep the variables they captured) | — |
 | `shared<T>` | its own atomic count | — |
 | `Promise` | never shared (sema) | — |
 

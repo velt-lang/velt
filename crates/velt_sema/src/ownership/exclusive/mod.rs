@@ -25,7 +25,7 @@ mod let_borrow;
 mod this_alias;
 mod uses;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -78,11 +78,13 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
+        let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
             locals: &f.body.locals,
             aliases,
             held: &held,
+            soft: &soft,
             errors: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
@@ -119,6 +121,8 @@ struct Checker<'a, 'm> {
     aliases: Aliases,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
     held: &'a HashMap<LocalId, DefId>,
+    /// The function's soft moves (`FnInfo::soft_moves`).
+    soft: &'a HashSet<Span>,
     errors: Vec<Diagnostic>,
 }
 
@@ -275,6 +279,7 @@ impl VisitMut for Checker<'_, '_> {
                     if !*consume {
                         let text = place_text(self.cx, self.locals, iter);
                         let col = self.collector();
+                        iteration::share_moved_iterated(&col, &p, self.soft, body);
                         let hit =
                             iteration::modified_while_iterating(&col, &p, &text, iter.span, body);
                         self.errors.extend(hit);
