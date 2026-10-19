@@ -240,6 +240,9 @@ enum Work {
     ArrayGrow,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
+    /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
+    /// promises or tasks; stores its result at `state` (entry.rs).
+    SyncMainRoot,
     /// `(state: ptr, cx: ptr) -> u32` poll function of an async function instance (async_fn/).
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.
