@@ -36,10 +36,17 @@ import {
 } from "velt:url/encode";
 
 /**
- * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`) and for malformed
- * escapes or lone surrogates in the URI functions (`URI malformed`).
+ * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`), a `TypeError` as
+ * in JS, and for malformed escapes or lone surrogates in the URI functions (`URI malformed`),
+ * named `URIError` as JS's.
  */
-export class UrlError extends Error {}
+export class UrlError extends TypeError {
+  /** An error with the given `message` and `name`. */
+  constructor(message: string = "", name: string = "TypeError") {
+    super(message);
+    this.name = name;
+  }
+}
 
 /** A parsed absolute URL (JS `URL`). */
 export class URL {
@@ -492,7 +499,7 @@ export class URLSearchParams {
 export function encodeURIComponent(s: string): string {
   const out = encodeUri(s, false);
   if (out == null) {
-    throw new UrlError("URI malformed");
+    throw new UrlError("URI malformed", "URIError");
   }
   return out;
 }
@@ -501,7 +508,7 @@ export function encodeURIComponent(s: string): string {
 export function encodeURI(s: string): string {
   const out = encodeUri(s, true);
   if (out == null) {
-    throw new UrlError("URI malformed");
+    throw new UrlError("URI malformed", "URIError");
   }
   return out;
 }
@@ -510,7 +517,7 @@ export function encodeURI(s: string): string {
 export function decodeURIComponent(s: string): string {
   const out = decodeUri(s, false);
   if (out == null) {
-    throw new UrlError("URI malformed");
+    throw new UrlError("URI malformed", "URIError");
   }
   return out;
 }
@@ -519,7 +526,7 @@ export function decodeURIComponent(s: string): string {
 export function decodeURI(s: string): string {
   const out = decodeUri(s, true);
   if (out == null) {
-    throw new UrlError("URI malformed");
+    throw new UrlError("URI malformed", "URIError");
   }
   return out;
 }

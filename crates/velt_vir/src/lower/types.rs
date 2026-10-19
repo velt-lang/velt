@@ -617,6 +617,27 @@ impl<'h> Cx<'h> {
     }
 
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
+    /// Is `d` a standard library class standing for one of JS's error classes: declared outside
+    /// the prelude's `error` module, extending one of its classes other than `Error`
+    /// (`UrlError extends TypeError`)?
+    pub(super) fn std_class(&self, d: DefId) -> bool {
+        const ERRORS: &str = "std/prelude/error::";
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return false;
+        };
+        if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
+            return false;
+        }
+        let base = a.base.and_then(|b| match self.types.kind(b) {
+            TyKind::Adt(p, _) => match self.hir.def(*p) {
+                hir::Def::Adt(pa) => Some(pa.name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        });
+        base.is_some_and(|n| n.starts_with(ERRORS) && n != "std/prelude/error::Error")
+    }
+
     pub(super) fn type_name(&self, t: TyId) -> String {
         let full = match self.types.kind(t) {
             TyKind::Adt(d, _) | TyKind::Dyn(d, _) => match self.hir.def(*d) {
