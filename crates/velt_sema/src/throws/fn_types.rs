@@ -137,10 +137,15 @@ impl Ctx<'_> {
 
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
-    /// `err` can't be kept (then the use is reported).
+    /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
+    /// reach every function type of the same shape, and a `catch` around a call through one
+    /// reads `e.message` as TypeScript code does.
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
+            if !self.is_error_class(m) {
+                return false;
+            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -242,5 +247,62 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
+    }
+
+    /// Is `t` the prelude's `Error` or a class extending it?
+    fn is_error_class(&mut self, t: TyId) -> bool {
+        let Some(root) = self.prelude_adt("Error") else {
+            return false;
+        };
+        let mut cur = t;
+        for _ in 0..64 {
+            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
+                return true;
+            }
+            match self.base_of(cur) {
+                Some(b) => cur = b,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
+    /// when `to` allows every error of `from` (a value converts through a wrapper), else
+    /// `Some(false)`, after adding `from`'s errors to the sites `to` may come from (a value of a
+    /// function type stored into one written without `throws`).
+    pub(crate) fn fn_throws_differ(&mut self, from: TyId, to: TyId) -> Option<bool> {
+        let (
+            TyKind::FnPtr {
+                params: p,
+                ret: r,
+                throws: e,
+            },
+            TyKind::FnPtr {
+                params: q,
+                ret: s,
+                throws: f,
+            },
+        ) = (self.ty.kind(from).clone(), self.ty.kind(to).clone())
+        else {
+            return None;
+        };
+        let promise_err = |cx: &Self, t: TyId| match cx.ty.kind(t) {
+            TyKind::Promise(v, e) => (*v, Some(*e)),
+            _ => (t, None),
+        };
+        let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
+        if p != q || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
+            return None;
+        }
+        let have = self.join_errors(Some(e), re);
+        let want = self.join_errors(Some(f), se);
+        if self.error_outside(want, have).is_none() {
+            return Some(true);
+        }
+        if let Some(have) = have {
+            self.seed_fn_sites(to, have);
+        }
+        Some(false)
     }
 }

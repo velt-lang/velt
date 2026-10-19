@@ -131,3 +131,53 @@ try {
 // Nothing throwing is stored into this type: calls through it need no error check.
 const safe: (a: number, b: number) => number = (a, b) => a + b;
 console.log(safe(1, 1));
+
+// A closure whose errors come through another such type: `task` throws only once `Gen` is
+// known to throw.
+type Gen = () => number;
+type Task = () => void;
+function callGen(g: Gen): number {
+  return g();
+}
+const gens: Gen[] = [
+  () => {
+    throw new RangeError("from gen");
+  },
+];
+const tasks: Task[] = [
+  () => {
+    console.log(callGen(gens[0]));
+  },
+];
+try {
+  tasks[0]();
+} catch (e) {
+  console.log("task", (e as Error).message);
+}
+
+// Function values of other types: a value that throws less converts, one that throws more
+// adds its errors to the type it is stored into.
+const quiet = () => {
+  console.log("quiet");
+};
+let g: () => void = quiet;
+g();
+function loud(): void {
+  throw new RangeError("loud");
+}
+const later: () => void = loud;
+try {
+  later();
+} catch (e) {
+  console.log("later", (e as Error).name);
+}
+let numberOf: () => string = () => "1";
+const throwing = (): string => {
+  throw new TypeError("not now");
+};
+numberOf = throwing;
+try {
+  numberOf();
+} catch (e) {
+  console.log("value", (e as Error).name);
+}

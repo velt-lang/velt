@@ -12,3 +12,7 @@ generic SyntaxError
 first 1
 second 2
 2
+task from gen
+quiet
+later RangeError
+value TypeError

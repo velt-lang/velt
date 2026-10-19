@@ -97,6 +97,12 @@ impl FnCx<'_, '_> {
             };
             return Ok(self.mk(call, exp, span));
         }
+        if let Some(widens) = self.cx.fn_throws_differ(h.ty, exp) {
+            return match widens {
+                true => self.adapt_fn(h, exp),
+                false => Err(h),
+            };
+        }
         if self.converts_by_state(h.ty, exp) {
             return self.coerce_hidden_nothings(h, exp);
         }
