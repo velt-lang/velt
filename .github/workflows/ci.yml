@@ -14,10 +14,9 @@
 # `ci`, which summarizes whichever jobs ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
-# Each push to main checks everything on Windows and macOS (opening an issue when that fails),
-# which covers the changes the queue checked on Linux only, and refreshes the build cache every
-# other run restores (a cache saved on a pull request or queue branch can't be restored anywhere
-# else).
+# Each push to main checks everything on Windows and macOS when the queue checked the change on
+# Linux only (opening an issue when that fails), and refreshes the build cache every other run
+# restores (a cache saved on a pull request or queue branch can't be restored anywhere else).
 name: ci
 
 on:
@@ -186,15 +185,37 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: cargo xtask check --full ${{ matrix.args }}
 
-  # After each push to main: the whole gate on Windows and macOS (the queue may have checked the
-  # change on Linux only), and on all three OSes the build cache, saved even when a check fails.
-  main:
+  # Which OSes the push to main checks. The queue tested this commit against its base_sha, which
+  # is HEAD^1 here, so `affected --base HEAD^1` is the queue's plan: Windows and macOS run when it
+  # checked Linux only (or the change refreshes their build cache; crates/xtask/src/os.rs).
+  main-plan:
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      os: ${{ steps.plan.outputs.main_os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: plan
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo xtask affected --base HEAD^1 --github
+
+  # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
+  # and macOS the whole gate (and their caches) when main-plan says the queue didn't run it there.
+  # Without a plan (main-plan failed) every OS runs.
+  main:
+    needs: main-plan
+    if: ${{ !cancelled() && github.event_name == 'push' }}
     name: main (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: >-
+          ${{ fromJSON(needs.main-plan.outputs.os
+          || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     permissions:

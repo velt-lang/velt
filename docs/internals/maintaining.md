@@ -115,10 +115,14 @@ review.
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
   -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f
   only=stress` (or `gate`, `oracle`, `bench`).
-- Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
-  which covers the changes the queue checked on Linux only, and opens or updates the issue
-  "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
-  all three OSes: pull request and merge queue runs restore it but never save their own.
+- A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
+  the queue checked the change on Linux only, and opens or updates the issue "main fails on
+  <OS>" when that fails; fix it first. A change the queue checked on every OS skips them, unless
+  it touches the toolchain or the dependencies (`main-plan`: `cargo xtask affected --base
+  HEAD^1`, the queue's own plan, since the queue tested the commit on its parent; rules in
+  `crates/xtask/src/os.rs`). The same jobs refresh the build cache: on Linux at every push, on
+  Windows and macOS when they run. Pull request and merge queue runs restore it but never save
+  their own.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
