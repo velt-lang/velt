@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
 use super::{FnCx, LoopCx, Want};
-use crate::hir::{self, ExprKind as H, StmtKind as S, TyId};
+use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     fn true_lit(&self, span: Span) -> hir::Expr {
@@ -262,6 +262,13 @@ impl FnCx<'_, '_> {
     /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
     pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
         let it = self.expr(iter, None, Want::Borrow);
+        // `for (const x of s)` over a `shared<T[]>` or `shared<string>`: the value inside (#36).
+        let it = match *self.cx.ty.kind(it.ty) {
+            TyKind::Shared(t) if t == self.cx.ty.str_ || self.cx.ty.array_elem(t).is_some() => {
+                self.frozen_view(it, None)
+            }
+            _ => it,
+        };
         if self.record_args(it.ty).is_none() {
             return it;
         }

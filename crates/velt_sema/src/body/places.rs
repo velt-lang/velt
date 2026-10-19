@@ -98,6 +98,12 @@ impl FnCx<'_, '_> {
     /// checks that its root may be mutated and marks the place `BorrowMut`.
     pub fn use_mutably(&mut self, e: &mut hir::Expr, what: &str) {
         if !is_place(e) {
+            if let H::Call { args, .. } = &e.kind {
+                if Self::is_frozen_view(e) {
+                    let (shared, span) = (args[0].clone(), e.span);
+                    self.frozen_write(&shared, span);
+                }
+            }
             return;
         }
         self.require_mutable(e, what);
@@ -107,6 +113,13 @@ impl FnCx<'_, '_> {
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
         self.readonly_element_write(e);
+        if let H::Call { args, .. } = &root_expr(e).kind {
+            if Self::is_frozen_view(root_expr(e)) {
+                let shared = args[0].clone();
+                self.frozen_write(&shared, e.span);
+                return false;
+            }
+        }
         if let H::Global(d) = root_expr(e).kind {
             let (name, stored, mutable, module) = self
                 .cx

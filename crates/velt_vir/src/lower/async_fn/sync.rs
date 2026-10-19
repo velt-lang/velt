@@ -1,6 +1,8 @@
 //! Shared-state intrinsics (rt_abi_async.md §9):
 //! - `shared<int>` `.add(n)` / `.get()` / `.set(v)`: atomics on the box's value cell
 //!   (`{ count, value }`); the value must be a 64-bit integer (the rt atomics are `i64`).
+//! - A `shared<T>` read as its `T` (`Intrinsic::SharedRead`, #36): the box's value cell,
+//!   borrowed, or a copy of it when the reader must not touch the counts in it.
 //! - `Mutex<T>`: a struct whose field 0 is the 8-byte lock word and field 1 the value (the
 //!   prelude declares it). `new Mutex(x)` zero-initializes the lock (`velt_rt_mutex_init`);
 //!   `m.with(f)` on a `Mutex<T>` or `shared<Mutex<T>>` locks, calls `f(value)` through the
@@ -43,6 +45,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::AtomicStore, vec![cell, v], None);
                 crate::lower::unit()
             }
+            (I::SharedRead, [s]) => self.shared_read(s),
             (I::MutexNew, [x]) => self.mutex_new(x, ty),
             (I::MutexWith, [m, f]) => self.mutex_with(m, f, ty),
             _ => ice(format_args!(
@@ -73,6 +76,50 @@ impl FnLower<'_, '_> {
         let bx = self.cx.shared_box(inner);
         let cell = proj(&proj(&p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
         (self.addr(cell), vt)
+    }
+
+    /// The value inside the `shared<T>` that `s` evaluates to, in its box.
+    fn shared_value(&mut self, s: &hir::Expr) -> (Place, TyId) {
+        let sty = self.sub(s.ty);
+        let TyKind::Shared(inner) = self.cx.kind(sty) else {
+            ice("SharedRead of a non-shared value")
+        };
+        let v = self.expr(s);
+        let p = self.operand_place(v, Ty::Ptr);
+        let bx = self.cx.shared_box(inner);
+        (
+            proj(&proj(&p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1)),
+            inner,
+        )
+    }
+
+    /// `Intrinsic::SharedRead`: the `T` of a `shared<T>` read where it is borrowed (#36). Other
+    /// threads read the same value at the same time, so this reader must not change it, which
+    /// sema guarantees, nor any reference count in it, which are not atomic: when `T` holds a
+    /// counted part the reader gets a copy (dropped with the statement), else the value itself:
+    /// its inline part (an array's or string's header) copied bit for bit into a temporary
+    /// that only borrows it (never dropped). Nothing writes the box while it is shared, and in
+    /// a local the header stays in registers across the calls of a loop, where LLVM would
+    /// reload it from the box after each one.
+    fn shared_read(&mut self, s: &hir::Expr) -> Operand {
+        let (place, inner) = self.shared_value(s);
+        if !self.cx.holds_counted(inner) {
+            let vt = self.cx.ty(inner);
+            if vt == Ty::Unit {
+                return Operand::Copy(place);
+            }
+            let tmp = self.copy_to_temp(Operand::Copy(place), vt);
+            return Operand::Copy(Place::local(tmp));
+        }
+        let v = self.clone_value(Operand::Copy(place), inner);
+        self.own_value(v, inner)
+    }
+
+    /// `Intrinsic::SharedRead` consumed (moved into a variable, an owned parameter, a field):
+    /// a copy of the value inside, which the consumer owns.
+    pub(in crate::lower) fn shared_read_owned(&mut self, s: &hir::Expr) -> Operand {
+        let (place, inner) = self.shared_value(s);
+        self.clone_value(Operand::Copy(place), inner)
     }
 
     /// `new Mutex<T>(x)`: `{ lock: 0, value: x }`.

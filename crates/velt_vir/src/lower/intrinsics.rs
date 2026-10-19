@@ -210,6 +210,7 @@ impl FnLower<'_, '_> {
                 | I::DateNow
                 | I::SharedAdd
                 | I::SharedGet
+                | I::SharedRead
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith

@@ -568,6 +568,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::DateNow
         | I::SharedAdd
         | I::SharedGet
+        | I::SharedRead
         | I::JsonParse
         | I::HttpHandler
         | I::StrCharCodeAt

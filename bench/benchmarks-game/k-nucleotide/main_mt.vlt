@@ -1,6 +1,7 @@
 // k-nucleotide, multi-threaded: main.vlt with every k-nucleotide length counted in its own
 // spawned task (like the Rust #7 program's thread pool); `Promise.all` returns the maps in order.
-// Async parameters are owned, so every task gets its own copy of the sequence (see NOTES.md).
+// The tasks read one `shared` sequence: a `shared<u8[]>` passes where a `u8[]` is read, so no
+// task copies it (see NOTES.md).
 
 import { readLineSync } from "velt:stdin";
 
@@ -82,7 +83,7 @@ function toFixed3(x: f64): string {
   return `${scaled / 1000}.${`${scaled % 1000}`.padStart(3, "0")}`;
 }
 
-async function countTask(seq: u8[], length: usize): Promise<Map<i64, i64>> {
+async function countTask(seq: shared<u8[]>, length: usize): Promise<Map<i64, i64>> {
   return frequencies(seq, length);
 }
 
@@ -100,13 +101,13 @@ function printCount(counts: Map<i64, i64>, nucleotide: string) {
 }
 
 async function main() {
-  const seq = readSequence();
+  const seq = shared(readSequence());
   const nucleotides = ["GGT", "GGTA", "GGTATT", "GGTATTTTAATT", "GGTATTTTAATTTATAGT"];
   // Longest first: the 18- and 12-nucleotide maps take longest.
   const lengths: usize[] = [18, 12, 6, 4, 3, 2, 1];
   const tasks: Promise<Map<i64, i64>>[] = [];
   for (const length of lengths) {
-    tasks.push(spawn(countTask(seq.clone(), length)));
+    tasks.push(spawn(countTask(seq, length)));
   }
   const maps = await Promise.all(tasks);
   printFrequencies(maps[6], seq.length as f64, 1);

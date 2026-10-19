@@ -580,6 +580,25 @@ passes one that may modify its arguments; a move out of it, however it is named)
 array is never written either. The two lists must stay equal: an element sema accepts and lowering
 does not fold would make the table an array built at every read.
 
+## Reading a `shared<T>` (issue #36)
+
+`Call { Intrinsic(SharedRead), [s] }`, typed `T`, is the value inside the `shared<T>` `s` (its
+one argument, a `Borrow` place or any expression of that type). Sema emits it only where the
+value is read: the object of `Index`, of a `Field` and of the `ArrayLen` / `StrLen`
+intrinsics, the source of a `ForOf`, the receiver of a method of `T` that `shared<T>` itself
+doesn't have, and an expression converted to `T` (`coerce`: an argument, a variable, a field). Never for a `T` that holds a `Mutex`, a weak map
+or ref, a promise, a function or interface value (`Ctx::frozen_readable`), nor for a
+`shared<int>` (its atomics). Sema rejects every write through it (`require_mutable`,
+`use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
+argument of a call through a function value or next to one that may modify its arguments
+(`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
+not touch a reference count in it either: where `T` holds no counted part (`Cx::holds_counted`)
+the call is a borrow of the value in the box, read through a bitwise copy of its inline part
+that is never dropped; otherwise, and wherever the value is consumed (`FnLower::consume`), it is
+a deep copy (`clone_value`), dropped with the statement's temporaries or owned by the consumer.
+A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
+deep-copied too: a move would leave the all-zero value in the box.
+
 ## Module state
 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an

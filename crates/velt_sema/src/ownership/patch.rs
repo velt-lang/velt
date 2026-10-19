@@ -21,7 +21,7 @@ use super::infer::force_move;
 use crate::body::places::{is_place, set_place_mode};
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, LocalId, PassMode, TyKind, UseMode,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, PassMode, TyKind, UseMode,
 };
 use crate::visit;
 
@@ -289,6 +289,17 @@ fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
         let msg = format!("cannot pass module constant `{name}` to a function value");
         errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
     }
+    // The same for a value read out of a `shared<T>`, which other tasks read at the same time.
+    for a in args.iter().filter(|a| frozen_root(a)) {
+        let tn = cx.display(a.ty);
+        errors.push(
+            Diagnostic::error(
+                format!("cannot pass a `{tn}` read out of a `shared` value to a function value"),
+                a.span,
+            )
+            .with_note("the function may modify it, and a shared value is read-only: pass a copy, or call a named function"),
+        );
+    }
 }
 
 /// Is argument `a` a table (through upcasts)?
@@ -306,6 +317,14 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
     };
+    if frozen_root(target) {
+        let tn = cx.display(target.ty);
+        errors.push(Diagnostic::error(
+            format!("this call may modify its argument, a `{tn}` read out of a `shared` value"),
+            target.span,
+        ).with_note("a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`"));
+        return false;
+    }
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
@@ -332,6 +351,22 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     }
     set_place_mode(target, UseMode::BorrowMut);
     true
+}
+
+/// Is `e` a value read out of a `shared<T>` (`Intrinsic::SharedRead`), or a part of one?
+fn frozen_root(e: &Expr) -> bool {
+    match &e.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::SharedRead),
+            ..
+        } => true,
+        E::Field { base, .. }
+        | E::Index { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) => frozen_root(base),
+        _ => false,
+    }
 }
 
 fn outer_mode(e: &Expr) -> Option<UseMode> {
@@ -424,7 +459,9 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             Callback::Modifies => true,
             // A table can't be told apart from a copy here either: the function value may be
             // the one that modifies it.
-            Callback::Unknown => super::evidence::in_root_memory(arg) || table_arg(cx, arg),
+            Callback::Unknown => {
+                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || frozen_root(arg)
+            }
             Callback::None => false,
         };
         // Only `Borrow` places change: Copy arguments are copied, receivers of any type

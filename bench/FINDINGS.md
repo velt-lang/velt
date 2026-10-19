@@ -411,11 +411,13 @@ fs_stream handle code) was out of scope this round and still reads through its p
   (since implemented). `fill`, `at` and `findLast` exist. Likewise `process.stdout.write` itself: `process` is
   a builtin namespace.
 
-### 8.7 `shared<T>` can't be read (language)
-Affects the multi-threaded k-nucleotide (1010 MB against Rust's 134 MB) and regex-redux (514 MB
-against 201 MB). Each task gets `seq.clone()`, because `shared<u8[]>` / `shared<string>` can't be
-indexed, have `length` read, or be passed where `T` is borrowed. Proposed: let a `shared<T>` that
-doesn't hold a `Mutex` be read like a `T` borrow. It is immutable, so this is sound.
+### 8.7 ~~`shared<T>` can't be read~~ (language, done: #36)
+A `shared<T>` that doesn't hold a `Mutex` is now read like a `T` (index, `length`, `T`'s methods,
+passed where a `T` is read). The multi-threaded k-nucleotide shares one sequence instead of a
+`seq.clone()` per task: 1010 MB → 255–272 MB peak RSS, 2% fewer instructions (k-nucleotide
+NOTES.md §3). regex-redux needed no change: a string's `clone()` is another reference (strings
+count atomically), not a copy, so its tasks never copied the sequence; its RSS is the
+substitution chain's strings.
 
 ### 8.8 ~~Smaller: `i64 / 2` is a signed divide~~ (velt_opt, done)
 Accounts for about 10% of spectral-norm `main`. The product has no `nsw` (integers wrap), so LLVM

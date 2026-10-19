@@ -439,6 +439,42 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
+  Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
+  once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string or array,
+  `for (const x of s)`, a field (`s.name`), `T`'s methods (`s.includes(x)`,
+  `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)` for
+  `count(xs: u8[])`). Such a read takes no copy when nothing in `T` is reference counted
+  (numbers, strings, and arrays and objects of those, unless the program shares such arrays or
+  objects between variables elsewhere); otherwise it reads a copy. What keeps the value or a
+  part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
+  stored one), and a variable bound to a part (`const ps = s.ports`, a `for…of` element that
+  the loop changes), so changing that copy leaves the shared value as it was.
+  Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
+  read-only …``), and so is passing it to a function that may change it or to a function
+  value: share a `Mutex` instead.
+
+  ```ts
+  async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
+    return countIn(xs, b);
+  }
+
+  function countIn(xs: u8[], b: u8): i64 {
+    let n: i64 = 0;
+    for (let i: usize = 0; i < xs.length; i++) {
+      if (xs[i] == b) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async function main() {
+    const data = shared([1 as u8, 2, 1, 3, 1]);
+    const ones = spawn(count(data, 1));
+    const threes = spawn(count(data, 3));
+    console.log(await ones, await threes, data.length, data[0]);
+  }
+  ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:

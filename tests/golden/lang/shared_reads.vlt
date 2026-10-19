@@ -1,0 +1,97 @@
+// check: no leaks
+// A `shared<T>` without a `Mutex` is read like the `T` it holds (#36): indexed, its length,
+// `T`'s methods, and passed where a `T` is read, from several tasks at once.
+async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
+  return countIn(xs, b);
+}
+
+function countIn(xs: u8[], b: u8): i64 {
+  let n: i64 = 0;
+  for (let i: usize = 0; i < xs.length; i++) {
+    if (xs[i] == b) {
+      n++;
+    }
+  }
+  return n;
+}
+
+function total(xs: number[]): number {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+// An owned parameter gets its own copy: changing it leaves the shared value as it was.
+function keep(xs: number[]): number[] {
+  xs.push(100);
+  return xs;
+}
+
+class Item {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function names(items: Item[]): string {
+  return items.map((i) => i.name).join(",");
+}
+
+struct Cfg {
+  name: string;
+  ports: number[];
+  owner: Item;
+}
+
+async function portSum(cfg: shared<Cfg>): Promise<number> {
+  let t = 0;
+  for (const p of cfg.ports) {
+    t += p;
+  }
+  return t + cfg.owner.name.length;
+}
+
+async function wordTask(text: shared<string>, w: string): Promise<boolean> {
+  return text.includes(w);
+}
+
+async function main() {
+  const data = shared([1 as u8, 2, 1, 3, 1]);
+  const tasks: Promise<i64>[] = [];
+  for (let b: u8 = 0; b < 4; b++) {
+    tasks.push(spawn(count(data, b)));
+  }
+  console.log(await Promise.all(tasks), data.length, data[0], data[3]);
+
+  const nums = shared([1.5, 2.5, 3]);
+  console.log(total(nums), nums.indexOf(2.5), nums.includes(4), nums.slice(1).length);
+  const mine = keep(nums);
+  console.log(mine.length, nums.length, mine[3]);
+  const copy: number[] = nums;
+  console.log(copy.length, copy[0]);
+
+  const text = shared("the quick brown fox");
+  const found = await Promise.all([spawn(wordTask(text, "quick")), spawn(wordTask(text, "slow"))]);
+  console.log(found, text.length, text[4], text.startsWith("the"), text.toUpperCase());
+
+  // Class instances may be counted: each read gets a copy, which is still correct.
+  const items = shared([new Item("a"), new Item("b")]);
+  console.log(names(items), items.length);
+
+  // Fields and `for...of`, also on other tasks; a variable bound to a part holds a copy.
+  const cfg = shared<Cfg>({ name: "db", ports: [5432, 5433], owner: new Item("ops") });
+  console.log(await spawn(portSum(cfg)), cfg.name, cfg.ports[1], cfg.owner.name);
+  const ports = cfg.ports;
+  ports.push(1);
+  console.log(ports.length, cfg.ports.length);
+  let chars = "";
+  for (const c of text) {
+    if (c != " ") {
+      chars += c;
+    }
+  }
+  console.log(chars.length);
+}
