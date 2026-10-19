@@ -40,8 +40,11 @@ follow it. The essentials for agents:
    (hand-built inputs, unit tests, snapshot tests).
 3. Before you finish: `cargo build --workspace` and `cargo test -p <your crates>` pass, and
    `cargo clippy -p <your crates> --all-targets -- -D warnings` is clean. Commit on your branch
-   with a message like `frontend: lexer + Pratt parser for M1 subset`. Push your branch and open
-   a pull request (`Closes #N`, gate result); never push to `main`. The pull request title and
+   with a message like `frontend: lexer + Pratt parser for M1 subset`. Before opening the pull
+   request, go through the self-check in CONTRIBUTING.md "Before opening a pull request" (Node
+   comparison, docs, regression tests, no unwrap on user input, benchmarks, no sleeps, size).
+   Push your branch and open a pull request (`Closes #N`), then post the self-check and the gate
+   result as its first comment, not in the description; never push to `main`. The pull request title and
    description become the squash commit message: no "Generated with …" footers, session links or
    `Co-authored-by` trailers there or in commits, and commits keep the repository's configured
    author. CI runs the checks the pull
