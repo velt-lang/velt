@@ -98,6 +98,17 @@ impl SimdTy {
         }
     }
 
+    /// The number of lanes of a vector type (`None` for a mask type).
+    pub fn lane_count(self) -> Option<u32> {
+        Some(match self {
+            SimdTy::I8x16 | SimdTy::U8x16 => 16,
+            SimdTy::I16x8 | SimdTy::U16x8 => 8,
+            SimdTy::I32x4 | SimdTy::U32x4 | SimdTy::F32x4 => 4,
+            SimdTy::I64x2 | SimdTy::U64x2 | SimdTy::F64x2 => 2,
+            _ => return None,
+        })
+    }
+
     /// The SIMD type named `name`.
     pub fn named(name: &str) -> Option<SimdTy> {
         SimdTy::ALL.into_iter().find(|t| t.name() == name)
