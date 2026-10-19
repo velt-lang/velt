@@ -61,14 +61,33 @@ origin/main often. Run `cargo xtask install-hooks` once (a pre-push hook that ru
 scripts/check.sh (the checks your changes need) while iterating and before each pull request;
 the merge queue runs the whole gate. Never push with --no-verify to get past a failing precheck. One
 pull request per issue or a few related ones ("Closes #N") with tests and docs; a pull request
-that builds on another of yours joins it in a stack (gh stack). Follow-ups outside scope become
-focused issues. Never stop processes you didn't start.
+that builds on another of yours joins it in a stack (gh stack), and so does work past about 1,500
+changed lines. Before opening each pull request, run `cargo xtask precheck` and go through the
+self-check in CONTRIBUTING.md "Before opening a pull request" (Node comparison for new goldens,
+docs, a regression test per fix, no unwrap/expect on user input, benchmark numbers for hot paths,
+tests ordered by awaits, not sleeps); post its result as the first comment on the pull request,
+not in the description. When a review ends in `Verdict: CHANGES NEEDED`, push fixes for every
+required item and say in a comment which commit addresses which item. Follow-ups outside scope
+become focused issues. Never stop processes you didn't start.
 ```
 
 ## Reviewing a pull request
 
-Check, in this order, and post the result as a review (verdict first, then numbered required
-changes with file:line and the fix, then follow-ups that may become issues):
+Check, in this order, and post the result as a review (`gh pr review <n> --comment --body-file
+<file>`, or `--approve` / `--request-changes` on someone else's pull request): a summary, then
+numbered required changes with file:line and the fix, then follow-ups that may become issues, and
+as the **last line** exactly one of
+
+```
+Verdict: APPROVE
+Verdict: CHANGES NEEDED
+```
+
+That line is what the maintainer loop reads to know where a pull request stands, so write it in
+this plain form, with nothing else on the line, and only in reviews; it judges the head the review
+was posted on. Older reviews wrote it in bold (`**Verdict: APPROVE**`); the status command below
+still reads those. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
+opening a pull request") gets it as a required change.
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
    tool trailers; the description has no generated footers or session links (it becomes the
@@ -88,15 +107,31 @@ changes with file:line and the fix, then follow-ups that may become issues):
 Large pull requests get a read-only review agent per pull request; a maintainer posts the
 review.
 
+**Re-review** after `CHANGES NEEDED`: look only at the commits pushed since the reviewed head
+(`git log -p <reviewed>..<head>`; `git range-diff` when the branch was rebased) and at each
+required item of the earlier review, not the whole pull request again. When every item is
+addressed and the new commits raise nothing new, approve and queue in the same step:
+
+```
+gh pr review <n> --comment --body-file review.md   # ends in "Verdict: APPROVE"
+gh pr merge <n> --auto
+```
+
+The rule stays that nothing is queued before an approving review; queueing with it removes the
+wait between approval and the queue. A new finding in the new commits is a required change like
+any other (`Verdict: CHANGES NEEDED`); an older nit that the first review missed is a follow-up,
+not a reason for another round.
+
 ## Merging
 
 - `main` only changes through pull requests. Required checks: `hygiene` (the title, description
   and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
   request, the checks its changes need: `cargo xtask check`, rules in
   `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
-  merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
-  macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
-  --auto` once the review is approved.
+  merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
+  (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
+  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
+  --auto` in the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording, so there is no footer to strip by hand
   any more; editing the description re-runs it. It does not judge whether the text still
@@ -107,18 +142,23 @@ review.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
-  Windows, and the `tsc` oracle for `velt check --ts-compat`
-  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
-  `tests/tscompat-oracle`), and the benchmark guard
+  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for
+  `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
+  pinned in `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
   -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f
-  only=stress` (or `gate`, `oracle`, `bench`).
-- Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
-  which covers the changes the queue checked on Linux only, and opens or updates the issue
-  "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
-  all three OSes: pull request and merge queue runs restore it but never save their own.
+  only=stress` (or `gate`, `oracle`, `bench`, `wasm`).
+- A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
+  the queue checked the change on Linux only, and opens or updates the issue "main fails on
+  <OS>" when that fails; fix it first. A commit the queue tested on every OS skips them, unless
+  it touches the toolchain or the dependencies (`main-plan`: `cargo xtask affected --base
+  HEAD^1`, the queue's own plan, since the queue tested the commit on its parent; rules in
+  `crates/xtask/src/os.rs`). A commit no passing merge queue run tested (a direct push or an
+  admin merge) runs every OS. The same jobs refresh the build cache: on Linux at every push, on
+  Windows and macOS when they run. Pull request and merge queue runs restore it but never save
+  their own.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
@@ -142,10 +182,42 @@ review.
   bigger disk (`/mnt/d/...`, `TMPDIR` too): the WSL home directory lives in a disk image on the
   system drive that grows and never shrinks on its own.
 
-## Starting a maintainer session
+## The maintainer loop
 
-Read this file, CLAUDE.md and CONTRIBUTING.md, then:
-1. `gh pr list` — review what is open; queue what is approved and green.
-2. `gh run list --workflow nightly` and the queue — fix anything red on `main` first.
-3. `gh issue list --milestone …` — check running batches, hand out the next ones.
-4. Prune merged branches and stale worktrees.
+Most of the time a pull request spends open is spent waiting for a review or a re-review, not
+being fixed. So a maintainer session (`/maintain` in Claude Code, `.claude/commands/maintain.md`)
+works in this order, finishing each step before the next:
+
+1. **What is red** on `main`, in the merge queue or in the nightly workflow (`gh run list
+   --branch main --workflow ci`, `gh run list --workflow nightly`, the issues "main fails on
+   <OS>" and "nightly benchmarks regressed"): fix it or hand it out first.
+2. **Re-reviews**: pull requests whose last verdict is `CHANGES NEEDED` and that have new commits
+   since (above). They approve and queue in one step when everything is addressed.
+3. **Unreviewed pull requests, smallest first**: small ones merge fastest and unblock stacks.
+4. **Issues and batches**: `gh issue list --milestone …`; check running batches, hand out the
+   next ones.
+5. **Housekeeping**: prune merged branches, stale worktrees and their build directories.
+
+Where each open pull request stands, smallest first (size, last verdict, and whether commits
+arrived after it):
+
+```
+gh pr list --repo velt-lang/velt -L 100 \
+  --json number,additions,deletions,headRefOid,isDraft,reviews --jq '.[]
+  | select(.isDraft | not)
+  | ([.reviews[] | select(.body | test("(?m)^\\**Verdict: "))] | last) as $r
+  | [.number, .additions + .deletions,
+     (($r.body // "") | capture("(?m)^\\**Verdict: (?<v>APPROVE|CHANGES NEEDED)").v // "unreviewed"),
+     (if $r == null then "-" elif $r.commit.oid == .headRefOid then "head reviewed"
+      else "new commits" end)]
+  | @tsv' | sort -t$'\t' -k2 -n
+```
+
+`CHANGES NEEDED` with `new commits` is step 2; `unreviewed` is step 3; `APPROVE` with `new
+commits` (a rebase, or a fix pushed after approval) gets a quick look at the new commits and is
+queued again if the queue dropped it.
+
+**Run it on a schedule** while batches are running, instead of only when someone starts it:
+`/loop 30m /maintain` in Claude Code (every 30–60 minutes), or a scheduled agent with the same
+prompt. Each run reports only what changed since the previous one. Stop the loop when no batch is
+running and nothing is open.

@@ -10,6 +10,11 @@ inputs:
   wasmtime:
     description: The wasmtime release the tests run under (with `tools`).
     default: v49.0.1
+  cache:
+    description: >-
+      Restore the build cache. Jobs that build nothing (the queue's golden shards, which run a
+      build another job packed) skip it.
+    default: "true"
   save-cache:
     description: >-
       Save the build cache. Only the pushes to main do (`main` job in ci.yml): caches saved
@@ -34,6 +39,7 @@ runs:
       shell: bash
       run: rustup toolchain install && rustc --version
     - uses: Swatinem/rust-cache@v2
+      if: inputs.cache == 'true'
       with:
         workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }}
         shared-key: gate

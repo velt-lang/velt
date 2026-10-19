@@ -624,3 +624,73 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
     }
     assert!(Plan::everything("--full").wasm);
 }
+
+#[test]
+fn main_skips_the_windows_and_macos_gate_the_queue_already_ran() {
+    // The queue checked every OS: the push to main doesn't check them again.
+    for path in [
+        "crates/velt_rt/src/http.rs",
+        "crates/veltc/src/main.rs",
+        "std/fs.vlt",
+        "tests/golden/lang/foo.out",
+        ".github/workflows/ci.yml",
+        "scripts/check-all.sh",
+        "crates/xtask/src/plan.rs",
+        "Cargo.toml",
+    ] {
+        let p = plan(&[path]);
+        assert!(p.other_os.is_some(), "{path}");
+        assert_eq!(p.after_merge, None, "{path}");
+    }
+    let p = plan(&[
+        "crates/velt_sema/src/check.rs",
+        "crates/velt_rt/src/http.rs",
+    ]);
+    assert_eq!(p.after_merge, None);
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_after_a_linux_only_queue_run() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "crates/velt_lsp/src/hover.rs",
+        "docs/reference/types.md",
+        "CONTRIBUTING.md",
+    ] {
+        let p = plan(&[path]);
+        assert_eq!(p.other_os, None, "{path}");
+        assert!(p.after_merge.is_some(), "{path}");
+    }
+    // Comments only in OS-specific code: the queue checked Linux only.
+    let paths = vec!["crates/velt_rt/src/http/server.rs".to_string()];
+    let p = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
+    assert!(p.after_merge.is_some());
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_when_the_build_cache_changes() {
+    // Every OS in the queue, but only a push to main saves the caches the toolchain and the
+    // dependencies key.
+    for path in [
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+        ".github/actions/setup/action.yml",
+    ] {
+        let p = plan(&[path]);
+        assert!(p.other_os.is_some(), "{path}");
+        let reason = p.after_merge.unwrap_or_default();
+        assert!(reason.contains("build cache"), "{path}: {reason}");
+    }
+    let p = plan(&["crates/velt_rt/src/http.rs", "Cargo.lock"]);
+    assert!(p.after_merge.is_some());
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_when_the_change_is_unknown() {
+    // Nobody knows which OSes the queue checked.
+    assert!(Plan::unknown_changes("no base revision")
+        .after_merge
+        .is_some());
+    assert!(Plan::everything("--full").after_merge.is_some());
+}
