@@ -108,6 +108,8 @@ struct Order {
     list_ids: u64,
     /// The `now` of the timers pass under way (none between passes).
     pass: Option<u64>,
+    /// The last [`Order::next`] passed over the lists of a busy task.
+    skipped: bool,
     /// The gate of the task that took the last turn, and the count of its polls that had ended
     /// then: the turn is held until that poll ends.
     holder: Option<(Arc<Gate>, u64)>,
@@ -134,6 +136,7 @@ impl Order {
             seq: 0,
             list_ids: 0,
             pass: None,
+            skipped: false,
             holder: None,
         }
     }
@@ -168,6 +171,20 @@ impl Order {
     /// Insert a timer of `task` with delay `ms`, started at `start`, at the end of its list.
     fn insert_at(&mut self, ms: u64, start: u64, task: Option<Arc<Gate>>) -> Key {
         let gate = task.as_ref().map_or(0, |g| Arc::as_ptr(g) as GateId);
+        // Mostly the list exists: the timer goes at its end, and no list moves.
+        if let Some(list) = self
+            .groups
+            .get_mut(&gate)
+            .and_then(|g| g.lists.get_mut(&ms))
+        {
+            self.seq += 1;
+            list.timers.insert(self.seq, Entry { start, waker: None });
+            return Key {
+                gate,
+                ms,
+                seq: self.seq,
+            };
+        }
         let before = self.groups.get(&gate).and_then(Group::first);
         let group = self.groups.entry(gate).or_insert_with(|| Group {
             gate: task,
@@ -257,11 +274,13 @@ impl Order {
             Some(p) => (p, false),
             None => (clock(), true),
         };
+        self.skipped = false;
         loop {
             let mut found = None;
             for &(lk, gate) in &self.heads {
                 let group = &self.groups[&gate];
                 if skip_busy && group.busy_elsewhere(current) {
+                    self.skipped = true;
                     continue;
                 }
                 if lk.0 > now {
@@ -309,9 +328,13 @@ impl Order {
     /// not busy in another poll, and the next one of all (its task may be busy, and then runs
     /// it once that poll has ended).
     fn wake_next(&mut self, current: Option<&Arc<Gate>>) {
+        let first = self.next(current, true, &mut clock_ms);
+        // The next one of all is another only if a busy task's lists were passed over.
+        let busy = self.skipped;
         let nexts = [
-            self.next(current, true, &mut clock_ms),
-            self.next(current, false, &mut clock_ms),
+            first,
+            busy.then(|| self.next(current, false, &mut clock_ms))
+                .flatten(),
         ];
         for k in nexts.into_iter().flatten() {
             if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
