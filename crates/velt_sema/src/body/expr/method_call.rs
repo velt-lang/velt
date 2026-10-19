@@ -331,6 +331,15 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot.
+        if let Some(f) = self.iface_field_of(recv.ty, &prop.name) {
+            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. }) {
+                return match self.field_access(recv, prop, Want::Borrow, span) {
+                    Some(f) => self.call_value(f, args, span),
+                    None => self.error_expr(span),
+                };
+            }
+        }
         if crate::collect::exports::member_maybe_dropped(self.cx, recv.ty, &prop.name) {
             // The parser may have dropped its declaration (`Ctx::recovered`).
             for a in args {

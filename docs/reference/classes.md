@@ -443,7 +443,9 @@ literal where a `Point` is expected. A struct has no constructor and no inherita
 (`implements` is allowed). Like every object it is a reference
 ([Memory model](memory.md#values-and-references)): assigning or passing it shares it. The
 compiler stores it inline (no heap allocation, no count) as long as the program never shares a
-value of the type, or never changes one in place.
+value of the type, or never changes one in place. `==` compares structs by identity, as for
+every object, but `Map` and `Set` keys of a struct type compare and hash by content, field by
+field ([Map](../std/prelude.md#map)).
 
 **Planned** ([semantics](../internals/design/semantics.md#js-fidelity-decisions)): the `struct`
 keyword is removed (use `class`, or `type Name = { … }` with `extend Name { … }` for plain data).

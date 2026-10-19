@@ -42,7 +42,16 @@ pub(super) fn patch_calls(
         let span = e.span;
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
-                if fixed_callee(cx, callee, args) {
+                // A closure literal passed to a parameter of a generic type may be kept as a
+                // `T` (`forward<T>(sink, t)` handing it to a method that stores it), so it
+                // escapes (`super::kept_fns`).
+                let generic = super::kept_fns::generic_param_args(cx, callee, args);
+                for (a, g) in args.iter().zip(&generic) {
+                    if let (E::Closure(def), true) = (&a.kind, *g) {
+                        changed |= super::fn_values::escape_closure(cx, *def);
+                    }
+                }
+                if super::kept_fns::may_keep_args(cx, callee, args) {
                     // A promise the call returns may run the callee after this frame is gone
                     // (unless it is awaited right here): it may keep every argument.
                     let keeps = match returns_promise && !awaited.contains(&span) {
@@ -99,7 +108,7 @@ pub(super) fn patch_calls(
 /// Is the callee reached through a function value or a dynamically dispatched method? Its
 /// parameter modes are fixed (borrowed), whatever it does with an argument: a generic `T` it
 /// keeps may be instantiated with a function type.
-fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+pub(super) fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
     match callee {
         Callee::Indirect(_) => true,
         Callee::Intrinsic(_) => false,
@@ -129,7 +138,10 @@ fn escape_literal_args(
                 Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
                 _ => false,
             };
-            if !forwards || keeps.get(k).copied().unwrap_or(false) {
+            // A program that keeps borrowed function values lets no closure stay in a frame
+            // where a callee with fixed modes may keep it (`super::kept_fns`).
+            let kept = cx.kept_fns.on || keeps.get(k).copied().unwrap_or(false);
+            if !forwards || kept {
                 changed |= super::fn_values::escape_closure(cx, def);
             }
         }
@@ -167,12 +179,12 @@ fn generic_params(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<bool> {
 }
 
 /// Where a call's callee modes come from, when known statically.
-enum Target {
+pub(super) enum Target {
     Fn(DefId),
     Iface(DefId, u32),
 }
 
-fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
+pub(super) fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
     match callee {
         Callee::Def(d, _) => Some(Target::Fn(*d)),
         Callee::Virtual { slot } => {

@@ -63,6 +63,10 @@ pub(crate) struct State {
     pub(crate) stuck: bool,
     /// Where each deferred type was first written (reductions report there).
     pub(crate) op_sites: std::collections::HashMap<TyId, Span>,
+    /// The sites of the deferred intersections (`op_sites`) one reduction of which was
+    /// reported: a reduction at an instantiation, with no use to report at, is not reported
+    /// again.
+    pub(crate) failed_sites: std::collections::HashSet<Span>,
     /// The module each deferred intersection was written in (its object type is made there).
     pub(crate) op_modules: std::collections::HashMap<TyId, usize>,
     /// The parts of each object type an intersection made (`A & { id: string }`), so inference
@@ -179,8 +183,22 @@ impl Ctx<'_> {
                 .or(self.type_level.use_site)
                 .or_else(|| self.type_level.op_sites.get(&t).copied())
                 .unwrap_or(Span::DUMMY);
+            let written = self.type_level.op_sites.get(&t).copied();
+            // Reduced where it was written (at an instantiation), after a use of it with other
+            // type arguments failed: reported once, at that use.
+            let unplaced =
+                self.type_level.alias_site.is_none() && self.type_level.use_site.is_none();
+            let quiet =
+                unplaced && written.is_some_and(|w| self.type_level.failed_sites.contains(&w));
+            let before = self.diags.len();
             let r = self.reduce_intersection(t, args, span);
+            if quiet {
+                self.diags.truncate(before);
+            } else if let Some(w) = written.filter(|_| self.diags.len() > before) {
+                self.type_level.failed_sites.insert(w);
+            }
             self.type_level.reduced.insert(t, r);
+            self.link_part_ifaces(r);
             return r;
         };
         let span = self

@@ -1,0 +1,60 @@
+// check: no leaks
+// The only keeper is a generic interface method (`Keeper<T>.keep` stores its `T`), here given
+// closures that capture local strings, arrays and a variable assigned afterwards, directly and
+// through a generic function. Deep recursion reuses the stack before the kept closures run.
+type G = () => string;
+
+interface K<T> {
+  keep(t: T): void;
+}
+
+class Keeper<T> implements K<T> {
+  items: T[] = [];
+  keep(t: T): void {
+    this.items.push(t);
+  }
+}
+
+function viaFn<T>(k: K<T>, t: T): void {
+  k.keep(t);
+}
+
+function direct(k: K<G>): void {
+  let n = 1;
+  const str = "abc".repeat(3);
+  k.keep(() => "direct n=" + n + " " + str);
+  n = 2;
+}
+
+function forwarded(k: K<G>): void {
+  let n = 1;
+  const str = "q".repeat(2);
+  const nums = [1, 2, 3];
+  viaFn(k, () => "forwarded n=" + n + " " + str + " " + nums.join(","));
+  viaFn(k, () => str + nums.length);
+  n = 3;
+}
+
+// A function-typed parameter handed on to a generic parameter.
+function relay(k: K<G>, f: G): void {
+  viaFn(k, f);
+}
+
+function relayed(k: K<G>): void {
+  let n = 1;
+  const str = "r".repeat(2);
+  relay(k, () => "relayed n=" + n + " " + str);
+  n = 4;
+}
+
+function deep(n: number): number {
+  const a = [n, n + 1];
+  return n <= 0 ? 0 : a[1] + deep(n - 1) - n;
+}
+
+const kk = new Keeper<G>();
+direct(kk);
+forwarded(kk);
+relayed(kk);
+console.log(deep(3000));
+for (const k of kk.items) console.log(k());

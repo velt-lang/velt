@@ -44,6 +44,7 @@ declare function velt_simd_i32x4_lt(a: i32x4, b: i32x4): mask32x4;
 declare function velt_simd_i32x4_le(a: i32x4, b: i32x4): mask32x4;
 declare function velt_simd_i32x4_gt(a: i32x4, b: i32x4): mask32x4;
 declare function velt_simd_i32x4_ge(a: i32x4, b: i32x4): mask32x4;
+declare function velt_simd_i32x4_reverse_bytes(v: i32x4): i32x4;
 declare function velt_simd_i32x4_zip_low(a: i32x4, b: i32x4): i32x4;
 declare function velt_simd_i32x4_zip_high(a: i32x4, b: i32x4): i32x4;
 declare function velt_simd_i32x4_widen_low(v: i32x4): i64x2;
@@ -251,6 +252,14 @@ extend i32x4 {
       velt_simd_i32x4_lane(this, 3);
   }
 
+  /**
+   * The bytes of each lane in reverse order: big-endian 32-bit words read with `load`
+   * become their values, and back (`rev32`, `pshufb`).
+   */
+  reverseBytes(): i32x4 {
+    return velt_simd_i32x4_reverse_bytes(this);
+  }
+
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
   zipLow(other: i32x4): i32x4 {
     return velt_simd_i32x4_zip_low(this, other);
@@ -327,6 +336,7 @@ declare function velt_simd_u32x4_lt(a: u32x4, b: u32x4): mask32x4;
 declare function velt_simd_u32x4_le(a: u32x4, b: u32x4): mask32x4;
 declare function velt_simd_u32x4_gt(a: u32x4, b: u32x4): mask32x4;
 declare function velt_simd_u32x4_ge(a: u32x4, b: u32x4): mask32x4;
+declare function velt_simd_u32x4_reverse_bytes(v: u32x4): u32x4;
 declare function velt_simd_u32x4_zip_low(a: u32x4, b: u32x4): u32x4;
 declare function velt_simd_u32x4_zip_high(a: u32x4, b: u32x4): u32x4;
 declare function velt_simd_u32x4_widen_low(v: u32x4): u64x2;
@@ -524,6 +534,14 @@ extend u32x4 {
       velt_simd_u32x4_lane(this, 3);
   }
 
+  /**
+   * The bytes of each lane in reverse order: big-endian 32-bit words read with `load`
+   * become their values, and back (`rev32`, `pshufb`).
+   */
+  reverseBytes(): u32x4 {
+    return velt_simd_u32x4_reverse_bytes(this);
+  }
+
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
   zipLow(other: u32x4): u32x4 {
     return velt_simd_u32x4_zip_low(this, other);
@@ -599,6 +617,7 @@ declare function velt_simd_i64x2_lt(a: i64x2, b: i64x2): mask64x2;
 declare function velt_simd_i64x2_le(a: i64x2, b: i64x2): mask64x2;
 declare function velt_simd_i64x2_gt(a: i64x2, b: i64x2): mask64x2;
 declare function velt_simd_i64x2_ge(a: i64x2, b: i64x2): mask64x2;
+declare function velt_simd_i64x2_reverse_bytes(v: i64x2): i64x2;
 declare function velt_simd_i64x2_zip_low(a: i64x2, b: i64x2): i64x2;
 declare function velt_simd_i64x2_zip_high(a: i64x2, b: i64x2): i64x2;
 declare function velt_simd_i64x2_as_u64x2(v: i64x2): u64x2;
@@ -784,6 +803,14 @@ extend i64x2 {
     return velt_simd_i64x2_lane(this, 0) + velt_simd_i64x2_lane(this, 1);
   }
 
+  /**
+   * The bytes of each lane in reverse order: big-endian 64-bit words read with `load`
+   * become their values, and back (`rev64`, `pshufb`).
+   */
+  reverseBytes(): i64x2 {
+    return velt_simd_i64x2_reverse_bytes(this);
+  }
+
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
   zipLow(other: i64x2): i64x2 {
     return velt_simd_i64x2_zip_low(this, other);
@@ -835,6 +862,7 @@ declare function velt_simd_u64x2_lt(a: u64x2, b: u64x2): mask64x2;
 declare function velt_simd_u64x2_le(a: u64x2, b: u64x2): mask64x2;
 declare function velt_simd_u64x2_gt(a: u64x2, b: u64x2): mask64x2;
 declare function velt_simd_u64x2_ge(a: u64x2, b: u64x2): mask64x2;
+declare function velt_simd_u64x2_reverse_bytes(v: u64x2): u64x2;
 declare function velt_simd_u64x2_zip_low(a: u64x2, b: u64x2): u64x2;
 declare function velt_simd_u64x2_zip_high(a: u64x2, b: u64x2): u64x2;
 declare function velt_simd_u64x2_as_i64x2(v: u64x2): i64x2;
@@ -1013,6 +1041,14 @@ extend u64x2 {
   /** The sum of the lanes, wrapping on overflow. */
   sum(): u64 {
     return velt_simd_u64x2_lane(this, 0) + velt_simd_u64x2_lane(this, 1);
+  }
+
+  /**
+   * The bytes of each lane in reverse order: big-endian 64-bit words read with `load`
+   * become their values, and back (`rev64`, `pshufb`).
+   */
+  reverseBytes(): u64x2 {
+    return velt_simd_u64x2_reverse_bytes(this);
   }
 
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */

@@ -1,12 +1,10 @@
-// Closures and overridden / interface methods have fixed borrowed params, so they cannot keep a
-// function they receive: a closure passed to them may point into its caller's frame.
+// check: no leaks
+// Closures and overridden / interface methods have fixed borrowed params, yet they may keep a
+// function they receive (a copy, a spawned call, a capture): the program then passes them only
+// closures that own their environment.
 function apply(h: (g: () => string) => void) {
   let n = 1;
   h(() => `n=${n}`);
-}
-
-async function later(f: () => string): Promise<void> {
-  console.log(f());
 }
 
 interface Sink {
@@ -27,7 +25,7 @@ function main() {
     kept.push(g.clone());
   });
   apply((g) => {
-    spawn(later(g));
+    kept.push(g);
   });
   apply((g) => {
     kept.forEach((k) => {
@@ -35,6 +33,10 @@ function main() {
       console.log(k(), c());
     });
   });
-  const s: Sink = new Store();
-  s.put(() => "x");
+  const store = new Store();
+  const s: Sink = store;
+  const tag = "x".repeat(2);
+  s.put(() => tag);
+  for (const k of kept) console.log(k());
+  console.log(store.fs[0]());
 }

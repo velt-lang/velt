@@ -53,7 +53,9 @@ captures (§6).
   structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
   (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
   `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
-  key counts it (boxing/), so its pointer is the object wherever the map moves it.
+  key counts it (boxing/), so its pointer is the object wherever the map moves it. A type
+  declared with `struct` is a value type there: its keys compare and hash by content, field
+  by field (#641).
 
 ## 3. Lowering: representation
 
@@ -73,7 +75,7 @@ shares lower once. `ShareKind` (boxing/kinds.rs):
 | struct / object literal that is assigned somewhere (`AdtDef::assigned`), has `[Symbol.dispose]` or holds a `Mutex` | count + 1 | boxed like arrays (`Ptr` to the fields) |
 | other struct / object literal, `T \| null`, unions, tuples | field-wise share (`Glue::Share`) | parts as needed; an object type compared by identity is boxed instead |
 | function value | env count + 1 (heap envs are always counted; a frame env is copied to the heap) | — |
-| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data, copy immutable data) | — |
+| interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data; data never changed in place, such as an object literal of methods, is shared part by part in a new box, so its methods keep the variables they captured) | — |
 | `shared<T>` | its own atomic count | — |
 | `Promise` | never shared (sema) | — |
 
@@ -309,4 +311,5 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   stored into the value from a captured variable stays shared with the variable (it cannot
   be copied, and a callback cannot move what it captured even though `with` calls it once).
 - `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
-  arrays, by identity). Object keys compare by identity (#1257, see §7).
+  arrays, by identity). Object keys compare by identity (#1257, see §7); `struct` keys by
+  content (#641).

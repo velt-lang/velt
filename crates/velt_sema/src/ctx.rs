@@ -49,6 +49,7 @@ pub(crate) struct Ctx<'m> {
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -202,6 +203,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Function values kept by functions with fixed modes (`crate::ownership::KeptFns`).
+    pub kept_fns: crate::ownership::KeptFns,
     /// Memoized purity of functions that initialize module constants (`body::pure_init`).
     pub pure_fns: crate::body::pure_init::PurityMemo,
     /// The member names symbols give (`crate::symbols`).
@@ -286,6 +289,7 @@ impl<'m> Ctx<'m> {
             extensions: vec![],
             impls: vec![],
             iface_writes: Default::default(),
+            part_ifaces: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
@@ -355,6 +359,7 @@ impl<'m> Ctx<'m> {
             recovered: HashMap::new(),
             poisoned: HashSet::new(),
             shared_memo: HashMap::new(),
+            kept_fns: Default::default(),
             pure_fns: HashMap::new(),
             symbol_keys: Default::default(),
             matching_context: false,

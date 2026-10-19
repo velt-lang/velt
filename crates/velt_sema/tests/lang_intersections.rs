@@ -364,10 +364,15 @@ fn a_type_parameter_part_is_reduced_where_its_argument_is_known() {
 }
 
 #[test]
-fn members_of_a_deferred_intersection_are_not_available_in_generic_code_yet() {
-    let e =
-        err_src("function f<T>(x: T & { id: string }): string { return x.id; } function main() {}");
-    assert!(e.contains("not available yet (#350)"), "{e}");
+fn members_of_a_deferred_intersections_object_parts_are_available_in_generic_code() {
+    ok_src("function f<T>(x: T & { id: string }): string { x.id = x.id + \"!\"; return x.id; } function main() { console.log(f({ a: 1, id: \"k\" })); }");
+    let e = err_src(
+        "function f<T>(x: T & { id: string }): string { return x.name; } function main() {}",
+    );
+    assert!(
+        e.contains("has only the members of its object parts"),
+        "{e}"
+    );
 }
 
 #[test]
