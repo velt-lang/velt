@@ -123,20 +123,16 @@ Promises behave like JavaScript's, at Rust's cost:
     hold (an object or an array used again afterwards, or built from a promise used again, such
     as `[p, p]`), nor a closure capturing a promise: ``a spawned call cannot take a value
     holding a promise``. Await the promise first and pass its result.
-  - Another holder of a shared promise passed to a spawned call or sent over a channel
-    (`const q = p; spawn(f(q))`, `spawn(q)`, a promise read from a `Map`, `ch.send(q)`) is
-    awaited there through a copy: the promise still runs on its own task, and the other task
-    gets the result transferred like a `spawn` argument (moved, or copied while the first task
-    still uses it), so `(await p) === (await q)` holds only on one task. This needs a result
-    that holds an object or a string.
-  - Any other way a holder reaches another task stops the program with ``a promise shared on
-    one task was used on another``, rather than using its result from two threads: a result
-    of a plain value (`Promise<number>`), a closure capturing the holder that runs there (a
-    [timer](../std/timers.md) callback runs as a task of its own), or sharing a handed-over
-    holder again on the other task (`const r = q` there). Await the promise on its own task
-    and pass the result instead.
-
-  (**Planned**: the cases that stop, #212.)
+  - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
+    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
+    capturing it, which runs as a task of its own) is awaited there through a copy: the promise
+    still runs on its own task, and the other task gets the result transferred like a `spawn`
+    argument (moved, or copied while the first task still uses it), so `(await p) === (await q)`
+    holds only on one task. On the other task the holder is a promise of that task: it may be
+    shared again there, and handed on to a third task in turn.
+  - The holders of a pending promise are queued when it settles, in the order they started
+    waiting, as Node queues a promise's reactions: a `Promise.race` over a holder takes it before
+    a promise that settles later.
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited

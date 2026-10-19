@@ -1,23 +1,42 @@
-// A timer callback capturing a shared promise (#212): the callback runs as a task of its own,
-// which awaiting the promise there is not supported for yet, so the runtime stops the program
-// instead of using the result from two threads.
+// check: no leaks
+// Timer callbacks capturing a holder of a shared promise (#212): a callback runs as a task of
+// its own, so the holder it captured is handed over to it and awaited there through a copy of
+// the result made on this task; each run of the callback shares it again there. Node prints
+// the same (the timers are far apart, so their order does not depend on timer ties).
 class Obj {
   n: number;
   constructor(n: number) {
     this.n = n;
   }
 }
-async function val(): Promise<Obj> {
+async function val(n: number): Promise<Obj> {
   await sleep(5);
-  return new Obj(7);
+  return new Obj(n);
+}
+async function count(n: number): Promise<number> {
+  await sleep(5);
+  return n;
 }
 async function main() {
-  const p = val();
+  const p = val(7);
   const q = p;
   setTimeout(async () => {
     console.log("t", (await q).n);
-  }, 20);
-  const mine = await p;
-  await sleep(40);
-  console.log("m", mine.n);
+  }, 10);
+  await sleep(100);
+  const c = count(3);
+  const d = c;
+  setTimeout(async () => {
+    const again = d;
+    console.log("c", (await d) + (await again));
+  }, 10);
+  await sleep(100);
+  const r = val(9);
+  const s = r;
+  const every = setInterval(async () => {
+    console.log("i", (await s).n);
+  }, 100);
+  await sleep(150);
+  clearInterval(every);
+  console.log("m", (await p).n, await c, (await r).n);
 }

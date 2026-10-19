@@ -1,5 +1,13 @@
-// A shared promise of a plain value handed to a spawned call (#212): only a result that holds
-// an object or a string is copied for the other task, so the runtime stops the program here.
+// check: no leaks
+// A shared promise of a plain value handed to a spawned call, directly or inside an object
+// (#212): the holder is handed over as one of an object result is, and the result copied for
+// the other task. Node prints the same.
+class Box {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
 async function make(n: number): Promise<number> {
   await Promise.resolve();
   return n;
@@ -7,9 +15,16 @@ async function make(n: number): Promise<number> {
 async function use(p: Promise<number>): Promise<number> {
   return (await p) + 1;
 }
+async function unbox(b: Box): Promise<number> {
+  return (await b.p) * 2;
+}
 async function main() {
   const p = make(1);
   const q = p;
   console.log(await spawn(use(q)));
   console.log(await p);
+  const r = make(5);
+  const s = r;
+  console.log(await spawn(s));
+  console.log(await spawn(unbox(new Box(r))));
 }

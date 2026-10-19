@@ -270,7 +270,9 @@ surprise ([Error handling](errors.md)).
 - A promise is a shared value, as in TypeScript: `const q = p`, `m.get(k)` on a `Map` of
   promises, `arr[i]`, a class or object field read by several callers, and `p.then(f); await p`
   all hold the same promise, and every `await` of it gets the result (the same object for an
-  object result). Awaiting a shared promise from another task is not supported yet (#212).
+  object result). A holder that goes to another task (`spawn`, a channel, a timer callback) is
+  awaited there through a copy of the result
+  ([Promises](../reference/async.md#promises)).
 - Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
