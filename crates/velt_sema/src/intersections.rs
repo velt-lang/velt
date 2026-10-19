@@ -121,11 +121,18 @@ impl Ctx<'_> {
     /// known reduced: `Signal<{ value: V }>` (`T & { $set(v: T): void }`) in a generic function
     /// is the object type `{ value: V; $set(v: { value: V }): void }`, as if written out.
     pub(crate) fn reduce_known_intersection(&mut self, t: TyId) -> TyId {
+        match self.reducible_now(t) {
+            true => self.reduce_op(t),
+            false => t,
+        }
+    }
+
+    /// Is `t` a deferred intersection none of whose parts is a type parameter or deferred (its
+    /// fields may mention type parameters): it can be reduced to an object type now.
+    pub(crate) fn reducible_now(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
-            TyKind::Op(TyOp::Intersect, parts) if !parts.iter().any(|&p| self.deferred_part(p)) => {
-                self.reduce_op(t)
-            }
-            _ => t,
+            TyKind::Op(TyOp::Intersect, parts) => !parts.iter().any(|&p| self.deferred_part(p)),
+            _ => false,
         }
     }
 

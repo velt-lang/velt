@@ -129,7 +129,10 @@ impl Ctx<'_> {
                 let op = self.ty.intern(TyKind::Op(o, args));
                 let mut ps = vec![];
                 crate::types::collect_params(&self.ty, op, &mut ps);
-                let out = if ps.is_empty() {
+                // An intersection whose parts are all known object types is reduced even when
+                // their fields still mention type parameters: `Signal<T>` at `T = { data: D }`
+                // in a generic function is `{ data: D; $set(v: { data: D }): void }`.
+                let out = if ps.is_empty() || self.reducible_now(op) {
                     self.reduce_op(op)
                 } else {
                     op

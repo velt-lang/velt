@@ -1066,7 +1066,10 @@ with an unbounded `T` is not an `object` (at `T = string` it is a branded `strin
 `TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
 that rules primitives out, as sigx's `signal` does). A generic alias used at
 type parameters (`Signal<{ value: V }>` in `function f<V>`) is the object type its intersection
-makes, as if written out. `Omit<T, never>` and `Pick<T, never>` name no fields.
+makes, as if written out. So is a generic function's result `Signal<T>` at a `T` that mentions
+the caller's type parameters (`signal({ st: "idle", data: d as D | null })` in
+`function cell<D>`): its fields are read, written, destructured and reached with `?.`, and
+`$set` is called, on the same value. `Omit<T, never>` and `Pick<T, never>` name no fields.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };
