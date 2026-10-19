@@ -107,9 +107,9 @@ async function* chunks(el: Element): AsyncGenerator<u8[], RenderError> {
 function pushParts(
   node: Element,
   stack: Element[],
-): Promise<Element, RenderError> | null throws RenderError {
+): Promise<Element, RenderError> | undefined throws RenderError {
   if (node.rest == null) {
-    return null;
+    return undefined;
   }
   if (node.rest.failure != null) {
     throw node.rest.failure.clone();

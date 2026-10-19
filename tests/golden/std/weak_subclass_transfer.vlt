@@ -5,7 +5,7 @@ class Cache extends WeakMap<V, V> { hits: number = 0; }
 function mk(keep: V): () => number {
   const c = new Cache();
   c.set(keep, keep);
-  return () => { const x = c.get(keep); return x === null ? -1 : x.n; };
+  return () => { const x = c.get(keep); return x === undefined ? -1 : x.n; };
 }
 async function run(f: () => number): Promise<number> { return f(); }
 async function main() {

@@ -138,6 +138,14 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
   code without it (std/prelude/map.vlt: a `Map` whose `V` excludes null keeps its VIR).
+- Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
+  predicate `v is P` whose `P` has only primitive members and `x` has the type of a type
+  parameter `T`, has the condition `Logical { And, g(x), Call { Intrinsic(MayHoldPrimitive),
+  [x] } }`. `MayHoldPrimitive` is a constant per instantiation: `false` when `T` is a struct,
+  class, object type, array, tuple, map or function type. Where it is `false`, the `if` evaluates
+  `g(x)`, stops with a `TypeError` if that returned `true` (the predicate was wrong), and runs
+  only `B`; `A` is not lowered for that instantiation (a generic function that calls itself as
+  `signal({ value: x })` in `A` has finitely many instantiations).
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).
@@ -525,7 +533,11 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
   arrays, structs, object literals, interface and function values — by identity; `T | null`,
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
-  (`__intrinsic_eq`, `deepEqual`, `assertEq`, `Map` keys). Structs are never Copy
+  (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Map` and `Set` keys compare with
+  `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
+  and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
+  identity). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
+  number `NaN` equal to `NaN`). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
 
 ## ES private names
@@ -739,7 +751,7 @@ entry is an `ICE:`.
   `AnyNumber (data) -> f64` (booleans, numbers and strings) and `AnyHash (data) -> u64` (agrees
   with SameValueZero: numbers of every width hash their value as a float). Tables are memoized
   per concrete type, so equal tables mean equal types. `===` / `Intrinsic::Same` and
-  `Intrinsic::Eq` / `Intrinsic::Hash` on a dynamic type (generic code, `Set` / `Map` keys)
+  `Intrinsic::KeyEq` / `Intrinsic::Hash` on a dynamic type (generic code, `Set` / `Map` keys)
   compare the values held, as `AnyStrictEq` does (keys: numbers by SameValueZero).
 - An enum without payloads is boxed as its value (`Match` over its members, each boxing its
   number or string), and an `AnyTo` an enum is a chain of `AnyStrictEq` tests against those

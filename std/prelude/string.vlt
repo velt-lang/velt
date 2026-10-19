@@ -206,14 +206,13 @@ extend string {
   }
 
   /**
-   * Like `charAt`, but a negative `i` counts from the end, and past the end is null (JS:
-   * `undefined`).
+   * Like `charAt`, but a negative `i` counts from the end, and past the end is `undefined`.
    */
-  at(i: i64): string | null {
+  at(i: i64): string | undefined {
     const n = this.length as i64;
     const k = i < 0 ? i + n : i;
     if (k < 0 || k >= n) {
-      return null;
+      return undefined;
     }
     return this.charAt(k);
   }

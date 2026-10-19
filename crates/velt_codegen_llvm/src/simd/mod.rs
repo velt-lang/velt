@@ -11,6 +11,7 @@ use masks::mask;
 use reshape::{convert, narrow, widen, zip};
 
 mod masks;
+mod partial;
 mod reshape;
 
 /// The instruction sets a helper's body depends on.
@@ -171,6 +172,11 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
                 .push_str(&format!("  store {ty} {x}, ptr {p}, align {align}\n"));
             return None;
         }
+        Op::StorePartial => {
+            partial::store(b, lanes);
+            return None;
+        }
+        Op::LoadPartial => return Some(partial::load(b, lanes)),
         // These give something other than this vector type.
         Op::Fits => return Some(fits(b, lanes.count())),
         Op::As(_) => return Some("%a0".to_string()),
@@ -183,6 +189,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::Narrow => return Some(narrow(b, lanes)),
         Op::Convert(to) => return Some(convert(b, lanes, to)),
         Op::Splat => splat(b, lanes, "%a0"),
+        Op::Index => index(b, lanes),
         Op::Load => {
             let p = element(b, lane, 0);
             b.inst(format!("load {ty}, ptr {p}, align {}", lanes.bits() / 8))
@@ -201,6 +208,25 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// The vector whose lanes are their own indices.
+fn index(b: &mut Body, lanes: Lanes) -> String {
+    let (lane, ty, _) = spell(lanes);
+    let values: Vec<String> = (0..lanes.count())
+        .map(|k| match lanes.is_float() {
+            true => format!(
+                "{lane} {}",
+                crate::types::float_literal(lanes.scalar(), f64::from(k))
+            ),
+            false => format!("{lane} {k}"),
+        })
+        .collect();
+    // An instruction (not a constant operand), so that every operation's value is a name.
+    b.inst(format!(
+        "select i1 true, {ty} <{}>, {ty} zeroinitializer",
+        values.join(", ")
+    ))
 }
 
 /// A vector of `lanes` with every lane the scalar `value`.

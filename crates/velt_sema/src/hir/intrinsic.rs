@@ -46,11 +46,21 @@ pub enum Intrinsic {
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
     /// any more must be cut off with it before the array is dropped.
     ArraySetLen,
-    /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
+    /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
+    /// keys): numbers, bool and strings by value, objects by identity, unions, options and
+    /// tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`
-    /// keys, `deepEqual`, `assertEq`
+    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`,
+    /// `deepEqual`, `assertEq`
     Eq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
+    /// (`__intrinsic_key_eq`): `Same` with floats compared so that `NaN` equals itself and `0`
+    /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
+    KeyEq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
+    /// (`__intrinsic_includes_eq`): `Same`, except that a number `NaN` equals `NaN` (a number
+    /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
+    IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
     /// class instances, arrays, object types, interface and function values — by identity;
     /// `T | null`, unions and tuples part by part; strings and numbers by value
@@ -112,6 +122,13 @@ pub enum Intrinsic {
     /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
     /// either nothing once instantiated.
     IsNullish,
+    /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
+    /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
+    /// type, array, tuple, map or function type; `true` for anything else, unions and `any`
+    /// included)? The probe is not evaluated. Only as the right operand of `g(x) && _` in the
+    /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
+    /// (hir_encodings.md "Type predicates on a type parameter").
+    MayHoldPrimitive,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

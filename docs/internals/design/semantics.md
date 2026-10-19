@@ -174,8 +174,8 @@ of doing things, even when ported code must change (with a precise error and a f
 - **`null` and `undefined`, as in Node** (owner decision on #930; phases 1 and 2 implemented).
   `T | undefined` is its own type with the same layout as `T | null` (hir_encodings.md
   "Undefined"); `typeof`, comparisons, printing and JSON follow Node. Optional fields and
-  parameters (`a?: T`) are `T | undefined` (phase 2); the standard library still gives `null`
-  for a missing value until phase 3. JSON's "absent vs explicit null" is visible through
+  parameters (`a?: T`) are `T | undefined` (phase 2), and the standard library gives `undefined`
+  for a missing value where lib.d.ts does (`Map.get`, `find`, `pop`, phase 3). JSON's "absent vs explicit null" is visible through
   `JsonValue` (`has(key)` vs `isNull()`) and through an `a?: T | null` field.
 - **Truthiness** (implemented, #758). Conditions and `!`, `||`, `&&` test values of any type
   with JavaScript's rules (`0`, `-0`, `NaN`, `""`, `null` and `undefined` are falsy; objects always truthy),

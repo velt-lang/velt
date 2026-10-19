@@ -3,7 +3,7 @@ POST /todos -> 201 (application/json) {"id":2,"title":"Ship v1","done":false,"pr
 POST /todos -> 400 (application/json) {"error":{"code":"invalid","message":"title must not be empty"}}
 POST /todos -> 400 (application/json) {"error":{"code":"invalid","message":"priority must be low, normal or high (got \"asap\")"}}
 POST /todos -> 400 (application/json) {"error":{"code":"bad_json","message":"expected string at $.title"}}
-POST /todos -> 400 (application/json) {"error":{"code":"bad_json","message":"expected object at $"}}
+POST /todos -> 400 (application/json) {"error":{"code":"bad_json","message":"Unexpected token 'o', \"not json\" is not valid JSON"}}
 PATCH /todos/1 -> 200 (application/json) {"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}
 GET /todos?done=true -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
 GET /todos?tag=docs -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]

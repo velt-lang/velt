@@ -11,6 +11,7 @@
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
 //! | SameValue | `(a: ptr, b: ptr) -> bool`         | `Object.is`: Same with floats by SameValue (same.rs) |
 //! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
+//! | KeySame   | `(a: ptr, b: ptr) -> bool`         | Same with floats compared by SameValueZero: `Map` keys (same.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
 //! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b` and free it, or the boxed value `b` (drop_depth.rs) |
@@ -75,6 +76,7 @@ pub(crate) enum Glue {
     Same,
     SameValue,
     KeyEq,
+    KeySame,
     Hash,
     ObjDrop,
     QueuedDrop,
@@ -135,6 +137,7 @@ impl Glue {
             Glue::Same => "same",
             Glue::SameValue => "samevalue",
             Glue::KeyEq => "keyeq",
+            Glue::KeySame => "keysame",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::QueuedDrop => "queueddrop",
@@ -192,7 +195,9 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq => (vec![Ptr, Ptr], Bool),
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame => {
+                (vec![Ptr, Ptr], Bool)
+            }
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
             Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
@@ -231,6 +236,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Same => lw.same_body(args[0], args[1], ty),
             Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
             Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
+            Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),

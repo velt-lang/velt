@@ -17,7 +17,7 @@ impl FnLower<'_, '_> {
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
         if self.cx.is_dynamic(ty) {
-            return self.any_same_places(a, b, false);
+            return self.any_same_places(a, b, self.key_mode);
         }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
@@ -34,8 +34,32 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `Object.is(a, b)` for the values of concrete type `ty` at two places: `same_values` with
-    /// floats compared by SameValue (Bool operand).
+    /// `Intrinsic::KeyEq` (JS SameValueZero, `Map` and `Set` keys): `same_values` with floats
+    /// compared so that `NaN` equals itself and `0` equals `-0` (Bool operand).
+    pub(super) fn key_same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.key_mode, true);
+        let r = self.same_values(a, b, ty);
+        self.key_mode = outer;
+        r
+    }
+
+    /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
+    /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
+    /// types compare their parts as `===` does (Bool operand).
+    pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let keyed = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
+            _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
+        };
+        if keyed {
+            self.key_same_values(a, b, ty)
+        } else {
+            self.same_values(a, b, ty)
+        }
+    }
+
+    /// `Object.is(a, b)` (`Intrinsic::SameValue`) for the values of concrete type `ty` at two
+    /// places: `same_values` with floats compared by SameValue (Bool operand).
     pub(super) fn same_value_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let outer = std::mem::replace(&mut self.value_mode, true);
         let r = self.same_values(a, b, ty);
@@ -45,9 +69,12 @@ impl FnLower<'_, '_> {
 
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-        let g = match self.value_mode {
-            true => Glue::SameValue,
-            false => Glue::Same,
+        let g = if self.value_mode {
+            Glue::SameValue
+        } else if self.key_mode {
+            Glue::KeySame
+        } else {
+            Glue::Same
         };
         self.call_glue(g, ty, vec![pa, pb])
     }
@@ -95,6 +122,12 @@ impl FnLower<'_, '_> {
         self.eq_body(pa, pb, ty);
     }
 
+    /// `Glue::KeySame`: `same_body` with floats compared by SameValueZero.
+    pub(super) fn key_same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
+        self.key_mode = true;
+        self.same_body(pa, pb, ty);
+    }
+
     /// `Glue::SameValue`: `Glue::Same` with floats compared by SameValue.
     pub(super) fn same_value_body(
         &mut self,
@@ -112,6 +145,20 @@ impl super::Cx<'_> {
     pub(super) fn is_object(&self, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Array(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
+            _ => false,
+        }
+    }
+
+    /// Is every value of `t` an object, never a primitive (a struct, class, object type,
+    /// array, tuple, map or function type)? `Intrinsic::MayHoldPrimitive` is its negation.
+    pub(super) fn object_only(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
             _ => false,
         }

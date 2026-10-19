@@ -533,6 +533,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArraySetLen
         | I::Hash
         | I::Eq
+        | I::KeyEq
+        | I::IncludesEq
         | I::Same
         | I::SameValue
         | I::Share
@@ -546,6 +548,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Truthy
         | I::IsNull
         | I::IsNullish
+        | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::ClosureSibling(_)
         | I::Sqrt

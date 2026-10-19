@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
@@ -103,6 +103,26 @@ impl FnCx<'_, '_> {
         self.cx.error(diag);
     }
 
+    /// Is `t` a union of strings and symbols (`string | symbol`, a proxy trap's key)? Such a
+    /// key goes through `any`: a string names a member, and a symbol known only at run time
+    /// stops the program with a `TypeError` (not supported yet), never a wrong member.
+    pub(crate) fn string_or_symbol(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        let str_ = self.cx.ty.str_;
+        let mut symbol = false;
+        for m in members {
+            let w = self.cx.widened(m);
+            if matches!(self.cx.ty.kind(w), TyKind::Symbol) {
+                symbol = true;
+            } else if w != str_ {
+                return false;
+            }
+        }
+        symbol
+    }
+
     /// The key `name` as a string literal.
     fn key_lit(&mut self, name: &str, span: Span) -> hir::Expr {
         let ty = self.cx.ty.str_;
@@ -143,6 +163,18 @@ impl FnCx<'_, '_> {
             _ => None,
         };
         let (obj, any) = self.dynamic_receiver(obj, Some(key))?;
+        // A symbol constant (`o[KEY]`, `o[Symbol.iterator]`) names the member it keys.
+        if let Some(name) = self.symbol_key_of(index) {
+            let Some(any) = any else {
+                return Ok(self.error_expr(span));
+            };
+            if want == Want::BorrowMut {
+                self.dynamic_write_error(span);
+                return Ok(self.error_expr(span));
+            }
+            let key = self.key_lit(&name, index.span);
+            return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, key], any, span));
+        }
         let k = self.expr(index, None, Want::Borrow);
         let Some(any) = any else {
             return Ok(self.error_expr(span));
@@ -164,6 +196,10 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_numeric(kt) {
             let k = self.coerce_number(k, f64_);
             return Ok(self.intrinsic(Intrinsic::AnyIndex, vec![obj, k], any, span));
+        }
+        if self.string_or_symbol(k.ty) {
+            let k = self.coerce(k, any);
+            return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
         let tn = self.cx.display(k.ty);
         self.cx.error(

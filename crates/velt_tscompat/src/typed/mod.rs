@@ -2,22 +2,19 @@
 //! ([`velt_sema::ide::Analysis`]: `type_of`, `view`, `fields`, `def_of`) about the nodes one
 //! walk over each module ([`velt_syntax::visit`]) hands them.
 //!
-//! - [`numbers`] for `int-division`, `default-sort`;
-//! - [`nulls`] for `strict-null-eq` and `undefined-into-null` (and which expressions are
-//!   `undefined` in JavaScript);
-//! - [`slots`] for `undefined-into-null` in arguments and fields;
-//! - [`templates`] for `object-in-template`, `nullable-in-template`, `json-map`;
+//! - [`numbers`] for `int-division`, `default-sort` (with the call arguments [`args`] collects);
+//! - [`templates`] for `object-in-template`, `json-map`;
 //! - [`strings`] for `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in
 //!   [`prelude`];
 //! - [`catch`] for `catch-unknown`.
 
+mod args;
 mod catch;
 mod globals;
-mod nulls;
 mod numbers;
 mod prelude;
-mod slots;
+mod returns;
 mod strings;
 mod templates;
 
@@ -33,8 +30,6 @@ use crate::{Finding, LintModule, Program};
 
 /// What the typed rules need to know about declarations anywhere in the program.
 pub(crate) struct Decls {
-    /// Declaring identifiers of optional parameters and fields (`x?: T`).
-    optional: HashSet<Span>,
     /// The parameters (declaring identifiers) of each function, method and class constructor,
     /// by the declaring identifier of the function, method or class.
     params: HashMap<Span, Vec<Span>>,
@@ -44,7 +39,6 @@ impl Decls {
     pub(crate) fn collect(program: &Program) -> Decls {
         let mut collect = CollectDecls {
             decls: Decls {
-                optional: HashSet::new(),
                 params: HashMap::new(),
             },
         };
@@ -52,11 +46,6 @@ impl Decls {
             visit::walk_module(&m.ast, &mut collect);
         }
         collect.decls
-    }
-
-    /// Whether the declaration whose identifier is at `span` is optional (`x?: T`).
-    fn is_optional(&self, span: Span) -> bool {
-        self.optional.contains(&span)
     }
 }
 
@@ -66,18 +55,8 @@ struct CollectDecls {
 
 impl CollectDecls {
     fn sig(&mut self, owner: Span, sig: &ast::FnSig) {
-        for p in &sig.params {
-            if p.optional {
-                self.decls.optional.insert(p.name.span);
-            }
-        }
         let params = sig.params.iter().map(|p| p.name.span).collect();
         self.decls.params.insert(owner, params);
-    }
-
-    fn fields(&mut self, fields: &[ast::Field]) {
-        let optional = fields.iter().filter(|f| f.optional).map(|f| f.name.span);
-        self.decls.optional.extend(optional);
     }
 }
 
@@ -85,13 +64,11 @@ impl<'a> Visit<'a> for CollectDecls {
     fn item(&mut self, item: &'a ast::Item) {
         match &item.kind {
             ast::ItemKind::Class(t) | ast::ItemKind::Struct(t) => {
-                self.fields(&t.fields);
                 if let Some(ctor) = &t.constructor {
                     self.sig(t.name.span, &ctor.sig);
                 }
             }
             ast::ItemKind::Interface(i) => {
-                self.fields(&i.fields);
                 for m in i.methods.iter().filter(|m| m.body.is_none()) {
                     self.sig(m.sig.name.span, &m.sig);
                 }
@@ -104,20 +81,6 @@ impl<'a> Visit<'a> for CollectDecls {
     fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
         self.sig(sig.name.span, sig);
     }
-
-    fn expr(&mut self, e: &'a ast::Expr) {
-        if let E::Arrow { params, .. } = &e.kind {
-            let optional = params.iter().filter(|p| p.optional).map(|p| p.name.span);
-            self.decls.optional.extend(optional);
-        }
-    }
-
-    fn ty(&mut self, t: &'a ast::TypeExpr) {
-        if let ast::TypeExprKind::Object(fields) = &t.kind {
-            let optional = fields.iter().filter(|f| f.optional).map(|f| f.name.span);
-            self.decls.optional.extend(optional);
-        }
-    }
 }
 
 /// Every typed finding in `module`.
@@ -127,25 +90,13 @@ pub(crate) fn lint_module(module: &LintModule, program: &Program, decls: &Decls)
             cx: Cx::new(module.src),
             program,
             decls,
-            undefined_locals: HashSet::new(),
             truncated: HashSet::new(),
             int_positions: HashSet::new(),
             catch: catch::State::default(),
         },
-        returns: vec![],
     };
     visit::walk_module(module.ast, &mut walk);
-    // Returned values are checked once every local is known: `return v` comes after the
-    // `const v = m.get(k)` that makes `v` such a value, which the walk sees after the
-    // function itself. A value Velt has narrowed to non-null (`if (v === null) return 0;
-    // return v;`) goes to a declared `T`, not a `T | null`.
-    let Walk { mut t, returns } = walk;
-    for e in returns {
-        if matches!(t.view_of(e), TypeView::Nullable(_)) {
-            nulls::check_into_null(e, &mut t);
-        }
-    }
-    t.cx.findings
+    walk.t.cx.findings
 }
 
 /// What the typed rules share while walking one module.
@@ -153,9 +104,6 @@ pub(crate) struct Typed<'a> {
     pub(crate) cx: Cx<'a>,
     program: &'a Program<'a>,
     decls: &'a Decls,
-    /// Declaring identifiers of locals initialized with a value that is `undefined` in
-    /// JavaScript (`const v = m.get(k)`).
-    undefined_locals: HashSet<Span>,
     /// `a / b` directly inside `Math.trunc(…)`, which truncates in both languages.
     truncated: HashSet<(u32, u32)>,
     /// Expressions that go where an integer is declared ([`numbers::int_position`]).
@@ -213,9 +161,6 @@ impl Typed<'_> {
 /// The visitor: hands nodes to the rules.
 struct Walk<'a> {
     t: Typed<'a>,
-    /// The values functions with a declared return type return, which TypeScript checks
-    /// against it: `undefined-into-null` looks at them after the walk.
-    returns: Vec<&'a ast::Expr>,
 }
 
 impl<'a> Walk<'a> {
@@ -227,14 +172,13 @@ impl<'a> Walk<'a> {
                 numbers::int_position(e, &mut self.t);
             }
         }
-        self.returns.extend(values);
     }
 }
 
 impl<'a> Visit<'a> for Walk<'a> {
     fn function(&mut self, sig: &'a ast::FnSig, body: &'a ast::Block) {
         if let Some(ret) = &sig.ret {
-            self.declared_returns(ret, nulls::returned(body));
+            self.declared_returns(ret, returns::returned(body));
         }
     }
 
@@ -258,7 +202,6 @@ impl<'a> Visit<'a> for Walk<'a> {
                 numbers::int_position(init, &mut self.t);
             }
         }
-        nulls::var_decl(v, &mut self.t);
         visit::walk_pattern(&v.pattern, self);
     }
 
@@ -268,7 +211,6 @@ impl<'a> Visit<'a> for Walk<'a> {
             E::Binary { op, lhs, rhs } => {
                 numbers::operand_positions(*op, lhs, rhs, &mut self.t);
                 numbers::binary(e, *op, lhs, rhs, &mut self.t);
-                nulls::strict_eq(e, *op, lhs, rhs, &mut self.t);
                 catch::binary(*op, lhs, rhs, &mut self.t);
             }
             E::Assign { op, target, value } => {
@@ -276,7 +218,6 @@ impl<'a> Visit<'a> for Walk<'a> {
                     numbers::int_position(value, t);
                 }
                 numbers::assign(e, *op, target, value, t);
-                slots::assign(target, value, t);
             }
             E::Template { exprs, .. } => templates::template(exprs, t),
             E::Call {
@@ -287,10 +228,9 @@ impl<'a> Visit<'a> for Walk<'a> {
             } => {
                 numbers::call(e, callee, args, t);
                 templates::call(callee, args, t);
-                slots::call(callee, args, t);
+                args::call(callee, args, t);
                 globals::call(callee, type_args, t);
             }
-            E::New { class, args } => slots::new(class, args, t),
             E::Member { object, prop, .. } => {
                 strings::member(object, t);
                 globals::member(e, object, prop, t);
@@ -300,17 +240,15 @@ impl<'a> Visit<'a> for Walk<'a> {
                 strings::index(object, t);
                 catch::member(object, t);
             }
-            E::Object(props) => {
-                numbers::object(e, props, t);
-                slots::object(props, t);
-            }
+            E::New { class, args } => args::new(class, args, t),
+            E::Object(props) => numbers::object(e, props, t),
             E::Ident(id) => globals::ident(id, t),
             E::Cond { cond, then, .. } => catch::cond(cond, then, t),
             E::Arrow {
                 ret: Some(ret),
                 body,
                 ..
-            } => self.declared_returns(ret, nulls::arrow_returned(body)),
+            } => self.declared_returns(ret, returns::arrow_returned(body)),
             _ => {}
         }
         if let E::Arrow { params, .. } = &e.kind {

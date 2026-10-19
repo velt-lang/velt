@@ -424,10 +424,11 @@ one that stops early, or a sum of floats, whose order it must keep.
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it
   captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
-  made by one loop differ). `indexOf`, `includes` and `Map` keys agree with `==`. Comparing
-  costs only the programs that do it: there, an arrow without captures gets an empty
-  environment of its own when it is created, and a struct converted to an interface value
-  that is compared is counted, so the interface value refers to it rather than to a copy.
+  made by one loop differ). `indexOf`, `includes`, `Set` elements and `Map` keys agree with
+  `==` (`includes` and keys also find `NaN`, as in JS). Comparing costs only the programs
+  that do it: there, an arrow without captures gets an empty environment of its own when it
+  is created, and a struct converted to an interface value that is compared is counted, so
+  the interface value refers to it rather than to a copy.
 
   ```ts
   function main() {
@@ -526,8 +527,8 @@ of a value that may itself be `undefined` and `JSON.parse` into a type holding `
 the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
 other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
 a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
-of it, directly or through what it calls (a `T | undefined` for `Map.set`,
-`Array.prototype.find` or a generic function holding a `T | null`), which includes a generic
+of it, directly or through what it calls (a `T | undefined` for `Map.set`
+or a generic function holding a `T | null`), which includes a generic
 alias applied that way (`type Nullable<T> = T | null` as `Nullable<number | undefined>`). The
 other way round is supported: a generic holding a `U | undefined` at `U = T | null` holds a
 `T | null | undefined`. Also not supported yet, although TypeScript accepts them:
@@ -535,34 +536,41 @@ other way round is supported: a generic holding a `U | undefined` at `U = T | nu
 - `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for a parameter
   with a default (`f(undefined)` for `function f(x = 5)`): leave the argument out (an optional
   parameter, `f(x?: number)`, takes `undefined`);
-- a `T | null` from the standard library where a `T | undefined` is expected
-  (`return m.get(k);` in a function returning `number | undefined`): write `m.get(k) ?? undefined`;
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
   reach the comparator;
 - `JSON.stringify` of a value holding a class whose `toJSON()` may return `undefined` (its
   own or a subclass's).
 
-### Silent differences until phase 3
+### The standard library
 
-These compile and print or test differently from Node, with no error, until later phases of
-[issue #930](https://github.com/velt-lang/velt/issues/930) give them `undefined`:
+Where TypeScript's lib.d.ts says `undefined`, so does Velt's standard library, as in Node: a
+missing key of a `Map` (`m.get("z")`) or of an open `Record` (`r["z"]`), `find` / `findLast`
+with no match, `pop` / `shift` of an empty array, `at` out of range (arrays, strings, typed
+arrays), the `value` of a finished iterator's result, `WeakMap.get`, `WeakRef.deref` of a freed
+target, `Symbol.keyFor` and `description` of a symbol without one, and an unset
+`process.env.X`. Each gives a `T | undefined` (a `T | null | undefined` when `T` holds `null`:
+`m.get("a")` of a `Map<string, number | null>` tells a stored `null` from a missing key).
+Velt's own collections follow the same rule (`Deque`, `PriorityQueue`, `SortedMap`). APIs whose
+lib.d.ts result is `null` keep it: `RegExp.exec`, `String.match`, `Headers.get`,
+`URLSearchParams.get`.
 
-- a missing key of a `Map`: `m.get("z")` is `null` where Node gives `undefined` (`console.log`
-  prints `null`, `typeof` gives `"object"`), whatever the value type (`Map<string, number>`,
-  `Map<string, number | null>`);
-- a missing key of a `Record`: `r["z"]` on a `Record<string, number>` or
-  `Record<string, number | null>` is `null` likewise;
-- the rest of the standard library (`find`, `at`, `pop`, `shift`, …) gives `null` where Node
-  gives `undefined`.
+```ts
+const m = new Map<string, number | null>([["a", null]]);
+console.log(m.get("a"), m.get("z"), m.get("z") === undefined); // null undefined true
+const xs = [1, 2, 3];
+const none: number[] = [];
+console.log(xs.find((x) => x > 5), none.pop(), xs.at(9));     // undefined undefined undefined
+```
 
-`x == null` tests for either nothing and `x ?? d` treats both alike, so code written with them
-behaves as in Node.
+Indexing past the end of an array (`xs[9]`) still panics: TypeScript types it as `T`, not
+`T | undefined`. The helpers `isNull`, `unwrap`, `unwrapOr` and `map` work on these results as on
+a `T | null` ([prelude](../std/prelude.md)).
 
 ### Optional values
 
-Optional fields and parameters (`a?: T`) hold `undefined` when left out, as in TypeScript; the
-standard library still gives `null` (see above). `??`, `?.`, `!` and `x != null` treat both
+Optional fields and parameters (`a?: T`) hold `undefined` when left out, as in TypeScript, and
+so do the standard library's lookups (see above). `??`, `?.`, `!` and `x != null` treat both
 nothings alike:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result may be `undefined`),
@@ -1526,26 +1534,25 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
   and values, and a repeated key keeps its first position and its last value) or from any
   iterable of them (`new Map(pairs())`), `set`,
-  `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
+  `get(k): V | undefined` (the stored value itself, as in JS; `undefined` for a missing key), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
-  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances, interface and
-  function values (by identity, as `==` compares them),
-  and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
-  two equal object literals are two different keys). Float keys compare like JS's
-  (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
-  after insertion makes its entry unreachable
+  `getOrInsert(k, () => v)`. Keys compare as in JS: numbers, `bool` and `string` by value,
+  objects (class instances, object types, arrays, maps, records, interface and function
+  values) by identity, as `===` compares them, so two equal object literals are two keys and a
+  key changed after insertion keeps its entry; tuples compare part by part. Float keys compare
+  like JS's (SameValueZero: `0` and `-0` are one key, `NaN` finds itself)
   ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
   include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
   `null` is present like any other (`has` is true, it is counted, iterated and printed), and
-  `get` gives `null` both for it and for a missing key (use `has` to tell them apart). If
+  `get` gives `null` for it and `undefined` for a missing key, as in JS. If
   such an entry holding `null` has a content key that changed after insertion, then while the
   map has deleted entries not yet compacted away, `forEach`, `for...of` and `console.log` skip
   it (`keys()`, `values()` and `entries()` list it).
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
-  With `string` keys a record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v`
+  With `string` keys a record is *open*: `r[k]` and `r.name` are `V | undefined`, `r[k] = v`
   inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
   key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
   open record: say what a missing key starts from with `r[k] = (r[k] ?? 0) + 1` (JS would give
@@ -1564,7 +1571,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
   `i = 3` has the key `"3.5"`); a symbol made at run time is an error, and so is a key of any
   other type (`{ [true]: v }`, TypeScript's TS2464). In generic code, where the key type is a type
-  parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
+  parameter `K`, reads are `V | undefined` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
   and `Object.entries(r)` return arrays in JavaScript's order: keys that are array indices
@@ -1589,12 +1596,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   above holds (any key may be read, written and deleted; keys are listed in JavaScript's
   order, array-index keys such as `"2"` first). A generic
   interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
-  there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
-  (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
-  missing key, `d.k === undefined` is a compile error, and `d[k] ?? 0`, `d[k] || 0` and
-  `d[k]?.push(x)` work as in JavaScript. The value type may include `null` (`{ [k: string]:
-  number | null }`): a key holding `null` is present (listed by `Object.keys`, written by
-  `JSON.stringify`), and reading it gives `null` as for a missing key. As for `readonly T[]`, a `readonly`
+  there gives `undefined`, as in JavaScript, so a read is `V | undefined` (TypeScript types it
+  `V`): `d.k === undefined` is `true` and `typeof d.k` is `"undefined"` for a missing key, and
+  `d[k] ?? 0`, `d[k] || 0` and `d[k]?.push(x)` work as in JavaScript. The value type may include
+  `null` (`{ [k: string]: number | null }`): a key holding `null` is present (listed by
+  `Object.keys`, written by `JSON.stringify`) and reads `null`, a missing key `undefined`. As for `readonly T[]`, a `readonly`
   index signature is not checked for writes yet. Not supported yet (each is an error): named
   members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
   which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
@@ -1960,8 +1966,8 @@ instance of a generic class against that very instantiation (`Box<number>`, so a
 `Record<string, number>` converts only from a record of that type: an object of a fixed shape
 stops with a `TypeError` for now, #1219; Node reads any object as a record); into a
 union or a literal type such as `"red" | "green"` the value takes the first member it is: a
-`typeof` test for `number`, `string` and `boolean`, `instanceof` for a class, `===` for a
-literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
+`typeof` test for `number`, `string`, `boolean` and `symbol` (`k as string | symbol`),
+`instanceof` for a class, `===` for a literal), `typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness,
 `===`, `!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`) on any
 operand whose type is `any` or `unknown` (a variable, a field, an element, a call), and
 `console.log`. An object is itself in an `any` whatever its static type was when it was
@@ -2084,15 +2090,61 @@ function main(): void {
 }
 ```
 
-**Planned** (#924): compound assignments and `++` on members, arithmetic and comparison
-operators, `String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, iteration, `any` converted to interface types and the
-warning on a written `any`; until then each is a compile error.
+`<`, `>`, `<=` and `>=` with an `any` operand compare as JavaScript does: two strings by their
+UTF-16 code units, any other pair as numbers, each converted with `ToNumber` (`true` is 1,
+`null` is 0, `undefined` and a string that is not a number are `NaN`, and every comparison with
+`NaN` is `false`). Comparing a symbol stops with Node's `TypeError: Cannot convert a Symbol value
+to a number`; comparing an object or a function (which JavaScript converts with `valueOf` /
+`toString`) stops with a `TypeError` naming #924 for now.
+
+```ts
+function main(): void {
+  const n: any = 5;
+  const s: any = "10";
+  const u: any = undefined;
+  console.log(n < 7, s > 9, s < "9", n < u, n >= u); // true true true false false
+}
+```
+
+A template literal or a string `+` / `+=` writes an `any` as `String(x)` does, except that a
+symbol stops with Node's `TypeError: Cannot convert a Symbol value to a string` (only
+`String(s)` writes it, as `Symbol(desc)`).
+
+`Object.is(a, b)` with an `any` or `unknown` operand is SameValue, as in JavaScript: `===`,
+except that `NaN` is itself and `0` is not `-0`.
+
+`for (const x of v)` over an `any` holding an array visits its elements as `any`s, reading
+the length before each step as JavaScript's array iterator does. Another value (a string, a
+`Map`, an iterable object) stops with a `TypeError` naming #924 for now.
+
+**Planned** (#924): compound assignments and `++` on members, arithmetic operators,
+`String(x)`, `JSON.stringify` of an `any` and `JSON.parse` into one, `any` converted to
+interface types and the warning on a written `any`; until then each is a compile error.
 
 `key in x` on an `any` asks the value held: a class instance or object type has its fields,
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
 `Record<string, V>` its keys, an array its `length`. A `null` or `undefined` value stops with
 Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
 (which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+
+A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
+`const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member
+the symbol keys, as on a typed object. A key of type `string | symbol` (a proxy trap's `prop`)
+reads, writes and tests the member a string names; a symbol known only at run time stops with
+a `TypeError` naming #924 for now.
+
+```ts
+const BRAND = Symbol("brand");
+
+function isBranded(v: any): boolean {
+  return v !== null && typeof v === "object" && v[BRAND] === true;
+}
+
+function main(): void {
+  const b = { [BRAND]: true, name: "b" };
+  console.log(isBranded(b), isBranded({ name: "c" }), BRAND in (b as any)); // true false true
+}
+```
 
 ### Generic interfaces with `unknown` arguments
 

@@ -345,3 +345,19 @@ fn optional_parameters_with_both_nothings() {
 const g = (p?: string | null | undefined) => p;",
     );
 }
+
+/// String and template escapes keep their spelling (#1265): `"\d"` is `"d"` once cooked, but the
+/// source still says `\d`, and a line continuation stays where it was written.
+#[test]
+fn string_escapes_keep_their_spelling() {
+    let src = r#"const a = "b(\d)\q\ \x41\u{42}";
+const b = 'it\'s \d';
+const c = `\d${a}\q\
+z`;
+const d = "one \
+two";
+"#;
+    let out = velt_fmt::format_source(src).unwrap();
+    assert_eq!(out, src.replace(r"'it\'s \d'", r#""it's \d""#));
+    holds(src);
+}

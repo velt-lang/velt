@@ -1,0 +1,14 @@
+generic_recursion_guard_growing.vlt:17:21: error: instantiating `depth<Box<T>>` from `depth<T>` grows without end
+`depth` calls itself with `Box<T>`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_guard_growing.vlt:23:26: error: instantiating `small<{ value: T }>` from `small<T>` grows without end
+`small` calls itself with `{ value: T }`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_guard_growing.vlt:29:30: error: instantiating `other<T, { value: U }>` from `other<T, U>` grows without end
+`other` calls itself with `{ value: U }`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_guard_growing.vlt:35:30: error: instantiating `maybe<T | null>` from `maybe<T>` grows without end
+`maybe` calls itself with `T | null`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_guard_growing.vlt:41:31: error: instantiating `negated<{ value: T }>` from `negated<T>` grows without end
+`negated` calls itself with `{ value: T }`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`

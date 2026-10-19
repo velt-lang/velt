@@ -69,3 +69,30 @@ executed (cachegrind, Linux arm64, `VELT_THREADS=1`):
 
 The Velt code works on SIMD vectors (docs/std/simd.md), sixteen bytes per step when encoding
 and 32 digits when decoding; the crate goes digit by digit through a table.
+
+## Ported
+
+A runtime helper is replaced only where the Velt code is no slower on x86-64 Linux as well as
+arm64, in instructions and wall time (#1055). Instructions executed (cachegrind,
+`VELT_THREADS=1`) on an i9-12900HK (AVX2) with Ubuntu 24.04 in WSL, merge base against this
+code, from `bench/simd_bytes/cases.sh`:
+
+| benchmark | was | x86-64: before | now |
+|---|---|---:|---:|
+| bytes_search | `memchr` | 1,080.4 M | 957.3 M |
+| utf8_decode | Velt byte loop | 7,768.4 M | 7,768.4 M |
+| utf8_valid | `str::from_utf8` | 3,850.8 M | 3,850.8 M |
+
+`indexOf` and `includes` (`bytes_search`) are Velt code on `u8x16` when at most 208 bytes are
+left from the start position: the first vector is tested on its own (most searches end within a
+few bytes), then four vectors per step, and the last bytes are covered by one vector that ends
+at the array's end instead of a byte loop. Longer searches still go to the runtime's `memchr`,
+which takes 32 bytes per vector with AVX2 and is faster there (the Velt vectors executed 2.4 to 2.65 times as
+many instructions on 4 KiB and 1 MiB). `bench/simd_bytes/cases.sh` measures both sides of that
+length.
+
+`utf8_decode` (Cyrillic text with single spaces, and with ", ") is the row for text whose ASCII
+comes in short runs. `utf8DecodeLossy` keeps its byte loop: skipping ASCII 16 and 64 bytes at
+a time took 2.4 times fewer instructions on ASCII text but 4 to 16 % more on text with short
+ASCII runs, also with runs of up to four bytes stepped over one at a time. `xorMask` and `utf8Valid` keep
+their runtime helpers.

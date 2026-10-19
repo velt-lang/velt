@@ -457,7 +457,7 @@ impl FnCx<'_, '_> {
                     parts.push(self.error_expr(h.span));
                     continue;
                 }
-                let part = self.js_text(h, "a template literal");
+                let part = self.implicit_any_text(h, "a template literal");
                 parts.push(self.implicit_text(part));
             }
         }

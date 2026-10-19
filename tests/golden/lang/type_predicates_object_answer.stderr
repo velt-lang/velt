@@ -1,0 +1,1 @@
+TypeError: the type predicate `isNumber` returned true for an object, which its type rules out

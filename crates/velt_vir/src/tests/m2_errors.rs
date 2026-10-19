@@ -208,7 +208,7 @@ fn uncaught_error_in_main() {
     let out = run(&pb.finish());
     assert_eq!(
         (out.stdout.as_str(), out.stderr.as_str(), out.code),
-        ("before\n", "Uncaught BadThing: oh no\n", 1)
+        ("before\n", "Uncaught BadThing { message: 'oh no' }\n", 1)
     );
 }
 

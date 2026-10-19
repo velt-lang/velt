@@ -1,0 +1,45 @@
+// A `const` used by a closure created inside another closure of its initializer (#750): every
+// closure on the way shares the constant's cell, so the inner one reads the value assigned
+// after the initializer. A read on a path that does not run is no read: the check is at the
+// read itself, as in JavaScript. The objects hold closures capturing them (a documented
+// reference cycle), so there is no leak check.
+interface H {
+  val: number;
+  cb: () => number;
+}
+
+class C {
+  val = 7;
+  cb: () => number = () => 0;
+}
+
+function mk(f: () => () => number): H {
+  return { val: 5, cb: f() };
+}
+
+let ready = false;
+function call(f: () => number): number {
+  return f();
+}
+
+function run(): void {
+  const m: H = (() => {
+    const q: H = { val: 5, cb: () => 0 };
+    q.cb = () => m.val;
+    return q;
+  })();
+  const n: H = mk(() => () => n.val + 1);
+  const c: C = (() => {
+    const q = new C();
+    q.cb = () => c.val;
+    return q;
+  })();
+  console.log(m.cb(), n.cb(), c.cb());
+  const x: number = call(() => (ready ? x : 1));
+  const y: number = call(() => {
+    return ready ? y : 2;
+  });
+  ready = true;
+  console.log(x, y);
+}
+run();

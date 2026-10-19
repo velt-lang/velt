@@ -165,6 +165,9 @@ impl FnCx<'_, '_> {
     /// captured by every closure frame in between).
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
+            if !self.f.late.caps.is_empty() {
+                self.late_lookup(None, l, l, name, span);
+            }
             return Some(l);
         }
         let j = (0..self.outer.len())
@@ -177,6 +180,7 @@ impl FnCx<'_, '_> {
             Some((k, l)) => (k, l),
             None => (j, prev),
         };
+        let declared = (j, prev);
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         // A variable some closure assigns is not narrowed in the closures that capture it: the
         // check outside may no longer hold when they run (TS does not narrow it there either).
@@ -218,6 +222,7 @@ impl FnCx<'_, '_> {
         if method {
             self.f.method_values.insert(inner);
         }
+        self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)
     }
 

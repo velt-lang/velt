@@ -578,6 +578,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::ArrayTruncate
         | I::Hash
         | I::Eq
+        | I::KeyEq
+        | I::IncludesEq
         | I::Same
         | I::SameValue
         | I::Clone
@@ -592,6 +594,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Truthy
         | I::IsNull
         | I::IsNullish
+        | I::MayHoldPrimitive
         | I::FnCapturesNothing
         | I::Sqrt
         | I::Floor

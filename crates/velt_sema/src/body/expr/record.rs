@@ -2,7 +2,7 @@
 //! with TypeScript's object syntax. `K` is `string` (an *open* record: keys may be missing) or a
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!
-//! - `r[k]`, `r.name`: `r.__get(k)` (`V | null`) on open records, `r.__at(k)` (`V`) on closed
+//! - `r[k]`, `r.name`: `r.__get(k)` (`V | undefined`) on open records, `r.__at(k)` (`V`) on closed
 //!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
 //! - `r[k] = v`: `r.__set(k, v)`; on closed records `r[k] op= v` and `++`/`--` are
 //!   `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects (like
@@ -13,7 +13,7 @@
 //! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
 //!   t.__extend(spread); t }` (`record_literal.rs`).
 //! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
-//!   null`), but cannot start empty (except from a spread) or lose a key.
+//!   undefined`), but cannot start empty (except from a spread) or lose a key.
 //!
 //! Inside the class itself (`this.entries`) none of this applies. The calls and the rule
 //! against writing them by hand are in `record_call.rs`; key types in `crate::record_keys`.

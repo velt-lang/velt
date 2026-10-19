@@ -50,7 +50,10 @@ captures (§6).
   caller whose variable is dead hands it over for free, and only a caller that uses its variable
   again pays one count increment.
 - `==` / `!=` on non-primitive types is `Intrinsic::Same` (JS `===`, §7); `__intrinsic_eq` stays
-  structural (`deepEqual`, `assertEq`, `Map` keys).
+  structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
+  (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
+  `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
+  key counts it (boxing/), so its pointer is the object wherever the map moves it.
 
 ## 3. Lowering: representation
 
@@ -305,6 +308,5 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   argument they modify; summaries cover direct calls only. A resource without `clone()`
   stored into the value from a captured variable stays shared with the variable (it cannot
   be copied, and a callback cannot move what it captured even though `with` calls it once).
-- `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
-  (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances
-  compare by identity.
+- `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
+  arrays, by identity). Object keys compare by identity (#1257, see §7).

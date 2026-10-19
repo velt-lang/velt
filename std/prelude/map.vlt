@@ -70,10 +70,10 @@ const NULL_PROTO: u64 = 0x8000000000000000;
 /**
  * A collection of key/value pairs that remembers insertion order, with JS `Map` semantics:
  * re-setting a key keeps its position, and float keys compare like JS (`NaN` finds itself, `0`
- * and `-0` are one key). Numbers, `bool` and strings compare by value; class instances,
- * interface and function values by identity, as in JS; unlike JS, structs, object types,
- * tuples, arrays, maps and records compare by content, like `deepEqual` (don't change such a key
- * while it is in a map: it is hashed when inserted).
+ * and `-0` are one key). Numbers, `bool` and strings compare by value; objects (class instances,
+ * object types, arrays, maps, records, interface and function values) by identity, as in JS, so
+ * a key changed in place keeps its entry. Unlike JS, tuples compare part by part, as `===` does
+ * (a tuple key is hashed when inserted: don't change it while it is in a map).
  */
 export class Map<K, V> {
   // Number of live entries (read through the `size` getter; kept up to date by the mutating
@@ -131,15 +131,15 @@ export class Map<K, V> {
   }
 
   /**
-   * The value stored for `key`, or null. Like JS it is the stored value itself: an object is
-   * shared (another reference to it), a number or string is copied.
+   * The value stored for `key`, or `undefined` when it has none. Like JS it is the stored value
+   * itself: an object is shared (another reference to it), a number or string is copied.
    */
-  get(key: K): V | null {
+  get(key: K): V | undefined {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
-      return null;
+      return undefined;
     }
-    return __intrinsic_share(this.entryValues[e as usize]);
+    return sharedValue(this.entryValues[e as usize]);
   }
 
   /**
@@ -477,7 +477,10 @@ export class Map<K, V> {
       if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
         const o = other.lookup(this.entryKeys[e], p);
-        if (o < 0 || !__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+        if (o < 0) {
+          return this.deepEqualsByContent(other);
+        }
+        if (!__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
           return false;
         }
       }
@@ -485,21 +488,45 @@ export class Map<K, V> {
     return true;
   }
 
-  /**
-   * The hash glue's hash of a map, consistent with `__deepEquals`: its size and its keys, in
-   * any order (a map used as a map key compares by content, like an array key).
-   */
-  __deepHash(): u64 {
-    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
-      return this.liveDeepHash();
+  // `__deepEquals` once a key of this map is not a key of `other`: an object key is matched by
+  // identity, so, as in Node's `isDeepStrictEqual`, each such entry is paired with a distinct
+  // entry of `other` whose key and value are deeply equal.
+  private deepEqualsByContent(other: Map<K, V>): bool {
+    const used: bool[] = __intrinsic_array_with_capacity(other.entryKeys.length);
+    for (let o: usize = 0; o < other.entryKeys.length; o++) {
+      used.push(false);
     }
-    let h = this._size as u64;
+    const misses: usize[] = [];
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
-        h = h ^ __intrinsic_hash(this.entryKeys[e]);
+      if (this.__liveAt(e)) {
+        const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
+        if (o < 0) {
+          misses.push(e);
+        } else if (__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+          used[o as usize] = true;
+        } else {
+          return false;
+        }
       }
     }
-    return h;
+    for (const e of misses) {
+      let found = false;
+      for (let o: usize = 0; o < other.entryKeys.length && !found; o++) {
+        if (
+          !used[o] &&
+          other.__liveAt(o) &&
+          __intrinsic_eq(this.entryKeys[e], other.entryKeys[o]) &&
+          __intrinsic_eq(this.entryValues[e], other.entryValues[o])
+        ) {
+          used[o] = true;
+          found = true;
+        }
+      }
+      if (!found) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -514,7 +541,7 @@ export class Map<K, V> {
   // Which entry positions are live, as a bitset read from the slot words in one pass: every live
   // entry has a slot and a deleted one has none (a delete removes the slot at once). For maps
   // whose `V` includes null that have tombstones, where a null value does not tell; an entry
-  // holding a value is live anyway. No key is hashed, so an entry whose content key changed
+  // holding a value is live anyway. No key is hashed, so an entry whose tuple key changed
   // since it was set is found too.
   private liveBits(): u64[] {
     const words = (this.entryKeys.length + 63) / 64;
@@ -532,9 +559,9 @@ export class Map<K, V> {
     return bits;
   }
 
-  // `__livePositions`, `keys()`, `values()`, `entries()`, `__deepEquals` and `__deepHash` with
-  // `liveBits`. They are methods of their own so that the code of maps whose `V` excludes null
-  // declares no more locals.
+  // `__livePositions`, `keys()`, `values()`, `entries()` and `__deepEquals` with `liveBits`.
+  // They are methods of their own so that the code of maps whose `V` excludes null declares no
+  // more locals.
   private livePositionsBits(): usize[] {
     const live = this.liveBits();
     const out: usize[] = __intrinsic_array_with_capacity(this._size);
@@ -588,7 +615,10 @@ export class Map<K, V> {
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       if (this.entryValues[e] != null || bitAt(live, e)) {
         const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
-        if (o < 0 || !__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+        if (o < 0) {
+          return this.deepEqualsByContent(other);
+        }
+        if (!__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
           return false;
         }
       }
@@ -596,22 +626,11 @@ export class Map<K, V> {
     return true;
   }
 
-  private liveDeepHash(): u64 {
-    const live = this.liveBits();
-    let h = this._size as u64;
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (this.entryValues[e] != null || bitAt(live, e)) {
-        h = h ^ __intrinsic_hash(this.entryKeys[e]);
-      }
-    }
-    return h;
-  }
-
   // Whether entry `e`, whose value is null and whose `V` includes null, is live (holds a null
   // value) rather than deleted: true when the map has no tombstones, else when a slot of the
   // index still points at it (a delete removes the entry's slot at once but leaves its key). It
   // probes from the home of the entry's key's current hash, so while the map has tombstones it
-  // misses an entry whose content key changed since it was set (`forEach`, `for...of` and the
+  // misses an entry whose tuple key changed since it was set (`forEach`, `for...of` and the
   // formatting and JSON glue then skip it; the bulk readers use `liveBits`).
   private liveNull(e: usize): bool {
     if (this.dead == 0) {
@@ -656,7 +675,7 @@ export class Map<K, V> {
       }
       if (((w ^ p) >> 32) == 0) {
         const e = ((w & POS_MASK) - 1) as usize;
-        if (__intrinsic_eq(this.entryKeys[e], key)) {
+        if (__intrinsic_key_eq(this.entryKeys[e], key)) {
           return e as i64;
         }
       }

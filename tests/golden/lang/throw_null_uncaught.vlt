@@ -1,0 +1,12 @@
+// check: no leaks
+// A thrown `null` is reported as `null`, as Node prints it when nothing catches it (#1265);
+// `undefined` likewise prints `undefined`.
+function lookup(key: string): string | null {
+  return key == "known" ? "value" : null;
+}
+
+function main() {
+  console.log("start", lookup("known"));
+  const v = lookup("missing");
+  throw v;
+}

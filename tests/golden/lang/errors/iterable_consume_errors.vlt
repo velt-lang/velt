@@ -38,9 +38,9 @@ function main() {
     total += 1;
     yield total;
   };
-  const walk = function* walk(k: i64): Generator<i64> {
+  const walk = function* walker(k: i64): Generator<i64> {
     if (k > 0) {
-      yield* walk(k - 1);
+      yield* walker(k - 1);
     }
     yield k;
   };

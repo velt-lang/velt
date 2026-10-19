@@ -27,6 +27,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::inst_sites::{carry_guard, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
@@ -50,6 +51,8 @@ struct Uses {
     /// Types given to the JSON intrinsics, `console.log` and `===` directly.
     direct: Vec<(TyId, Span, Need)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
+    /// The guard bits of each of `calls` (`inst_sites::carry_guard`).
+    guards: Vec<u64>,
     closures: Vec<DefId>,
     /// Every type the body mentions (expressions and type arguments of calls), with its first
     /// span: the methods of class types among them may be dispatched dynamically.
@@ -72,8 +75,9 @@ impl Uses {
     }
 }
 
-/// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form.
-type Needs = HashMap<DefId, Vec<(TyId, Need)>>;
+/// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form, with
+/// their guard bits (`inst_sites::carry_guard`).
+type Needs = HashMap<DefId, Vec<(TyId, Need, u64)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
@@ -105,11 +109,11 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         let (f, u) = &uses[i];
         work += u.size();
         let mut grew = false;
-        for (t, span, parse) in requirements(cx, u, &needs) {
+        for (t, span, parse, guard) in requirements(cx, u, &needs) {
             if has_param(cx, t) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(t, parse)) {
-                    n.push((t, parse));
+                if !n.contains(&(t, parse, guard)) {
+                    n.push((t, parse, guard));
                     grew = true;
                 }
             } else if let Need::Seen(how) = parse {
@@ -138,22 +142,28 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic
 /// functions it calls (substituted), closures it creates and methods the class types it
 /// mentions dispatch dynamically to (instantiated with those types' arguments).
-fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need)> {
-    let mut reqs: Vec<(TyId, Span, Need)> = u.direct.clone();
-    for (d, targs, span) in &u.calls {
-        for (t, parse) in needs.get(d).into_iter().flatten() {
-            reqs.push((cx.subst(*t, targs), *span, *parse));
+fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need, u64)> {
+    let mut reqs: Vec<(TyId, Span, Need, u64)> =
+        u.direct.iter().map(|(t, s, n)| (*t, *s, *n, 0)).collect();
+    for ((d, targs, span), site) in u.calls.iter().zip(&u.guards) {
+        for (t, parse, need) in needs.get(d).into_iter().flatten() {
+            if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                reqs.push((cx.subst(*t, targs), *span, *parse, g));
+            }
         }
     }
     for c in &u.closures {
-        for (t, parse) in needs.get(c).into_iter().flatten() {
-            reqs.push((*t, cx.def_spans[c.0 as usize], *parse));
+        for (t, parse, need) in needs.get(c).into_iter().flatten() {
+            reqs.push((*t, cx.def_spans[c.0 as usize], *parse, *need));
         }
     }
     for (m, args, span) in &u.dyn_calls {
-        for (need, parse) in needs.get(m).into_iter().flatten() {
-            if let Some(need) = instantiate(cx, *need, args) {
-                reqs.push((need, *span, *parse));
+        for (t, parse, need) in needs.get(m).into_iter().flatten() {
+            let Some(g) = carry_guard(cx, *need, args, 0) else {
+                continue;
+            };
+            if let Some(t) = instantiate(cx, *t, args) {
+                reqs.push((t, *span, *parse, g));
             }
         }
     }
@@ -184,7 +194,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         let mut u = Uses::default();
         let mut seen: HashSet<TyId> = HashSet::new();
         ids.f = DefId(i as u32);
+        let guards = guards_of(ids.tys, &mut f.body.block);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            let calls = u.calls.len();
             if seen.insert(e.ty) {
                 u.types.push((e.ty, e.span));
             }
@@ -203,6 +215,10 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                 }
             }
             uses_of(&mut u, e, looks);
+            if u.calls.len() > calls {
+                let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
+                u.guards.push(guard);
+            }
             if looks {
                 ids.uses(&mut u.direct, e);
             }
@@ -236,12 +252,18 @@ fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
                     i @ (Intrinsic::Print
                     | Intrinsic::PrintErr
                     | Intrinsic::Same
-                    | Intrinsic::SameValue),
+                    | Intrinsic::SameValue
+                    | Intrinsic::KeyEq
+                    | Intrinsic::IncludesEq),
                 ),
             args,
         } if looks => {
             let how = match i {
-                Intrinsic::Same | Intrinsic::SameValue => Seen::Identity,
+                // `IncludesEq`: `includes`; `KeyEq`: `Map` keys, which `Hash` shows too.
+                Intrinsic::Same
+                | Intrinsic::SameValue
+                | Intrinsic::KeyEq
+                | Intrinsic::IncludesEq => Seen::Identity,
                 _ => Seen::Printed,
             };
             for a in args {

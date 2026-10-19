@@ -109,6 +109,11 @@ impl FnCx<'_, '_> {
             self.cx
                 .err(format!("`Object.{name}` takes no type arguments"), span);
         }
+        if name == "is" {
+            if let Some(h) = self.object_is_dynamic(args, span) {
+                return Some(h);
+            }
+        }
         if let Some(h) = self.reject_dynamic_args(&format!("Object.{name}"), args, span) {
             return Some(h);
         }

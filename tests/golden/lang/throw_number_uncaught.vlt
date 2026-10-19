@@ -1,0 +1,6 @@
+// check: no leaks
+// A thrown number is reported as its value, as Node prints it when nothing catches it (#1265).
+function main() {
+  console.log("start");
+  throw 42.5;
+}

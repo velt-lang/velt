@@ -26,6 +26,7 @@ mod operand;
 mod place;
 mod rounding;
 mod simd;
+mod simd_partial;
 mod stmt;
 #[cfg(test)]
 mod storage_tests;

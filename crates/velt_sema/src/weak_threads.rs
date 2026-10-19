@@ -30,6 +30,7 @@ use crate::body::GenCopy;
 use crate::ctx::Ctx;
 use crate::dispatch::{instantiate, Dispatch, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::inst_sites::carry_guard;
 use crate::types::collect_params;
 use crate::visit::{self, VisitMut};
 
@@ -437,39 +438,45 @@ fn instantiations(
             .map(move |d| (i, d))
     });
     let mut rounds = Rounds::new(facts.len(), reads);
-    let mut needs: HashMap<DefId, Vec<(TyId, Need)>> = HashMap::new();
+    let mut needs: HashMap<DefId, Vec<(TyId, Need, u64)>> = HashMap::new();
     let mut found_at: HashSet<(Span, TyId, Need)> = HashSet::new();
     while let Some(i) = rounds.pop() {
         let (f, fx) = &facts[i];
-        let mut reqs: Vec<Req> = own
+        // With guard bits (`inst_sites::carry_guard`).
+        let mut reqs: Vec<(Req, u64)> = own
             .get(f)
             .into_iter()
             .flatten()
-            .map(|n| (n.clone(), None))
+            .map(|n| ((n.clone(), None), 0))
             .collect();
-        for (d, targs, span) in &fx.calls {
-            for (t, n) in needs.get(d).into_iter().flatten() {
-                reqs.push(((cx.subst(*t, targs), n.clone()), Some((*span, *d))));
+        for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
+            for (t, n, need) in needs.get(d).into_iter().flatten() {
+                if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                    reqs.push((((cx.subst(*t, targs), n.clone()), Some((*span, *d))), g));
+                }
             }
         }
         for (m, args, span) in &fx.dyn_calls {
-            for (t, n) in needs.get(m).into_iter().flatten() {
+            for (t, n, need) in needs.get(m).into_iter().flatten() {
+                let Some(g) = carry_guard(cx, *need, args, 0) else {
+                    continue;
+                };
                 if let Some(t) = instantiate(cx, *t, args) {
-                    reqs.push(((t, n.clone()), Some((*span, *m))));
+                    reqs.push((((t, n.clone()), Some((*span, *m))), g));
                 }
             }
         }
         for c in &fx.closures {
-            for n in needs.get(c).into_iter().flatten() {
-                reqs.push((n.clone(), None));
+            for (t, n, need) in needs.get(c).into_iter().flatten() {
+                reqs.push((((*t, n.clone()), None), *need));
             }
         }
         let mut grew = false;
-        for ((t, n), at) in reqs {
+        for (((t, n), at), guard) in reqs {
             if is_generic(cx, t) {
                 let ns = needs.entry(*f).or_default();
-                if !ns.contains(&(t, n.clone())) {
-                    ns.push((t, n));
+                if !ns.contains(&(t, n.clone(), guard)) {
+                    ns.push((t, n, guard));
                     grew = true;
                 }
             } else if let Some((span, callee)) = at {
