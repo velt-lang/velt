@@ -1,0 +1,50 @@
+// check: no leaks
+// An `any` or `unknown` converted to `T | null | undefined` keeps `null` apart from
+// `undefined` (#1275): `null` is the `null`, `undefined` the `undefined`, as in Node.
+function id<T>(x: T): T {
+  return x;
+}
+
+function main(): void {
+  const k: any = null;
+  const u: any = undefined;
+  const n2: number | null | undefined = k;
+  const n3: number | null | undefined = u;
+  const n4: number | null | undefined = 5 as any;
+  console.log(n2, n3, n4, id<number | null | undefined>(k), id<number | null | undefined>(u));
+  const s1: string | null | undefined = k;
+  console.log(s1, typeof s1, s1 === null, s1 === undefined);
+  const un: unknown = null;
+  console.log(un as number | null | undefined, un as string | null | undefined);
+  const rn: number | null = k;
+  console.log(id<number | null | undefined>(rn as any));
+
+  // Fields of an object in an `any`.
+  const jv: { a: number | null; b: number } = JSON.parse('{"a":null,"b":3}');
+  const j: any = jv;
+  const ja: number | null | undefined = j.a;
+  const jb: number | null | undefined = j.b;
+  const jc: number | null | undefined = j.c;
+  console.log(ja, jb, jc);
+  const src: { a: number | null | undefined } = { a: null };
+  const j2: any = src;
+  const o: { a: number | null | undefined } = j2;
+  console.log(o.a, o);
+
+  // Into `any` and back: each nothing stays itself.
+  const back: any = n2;
+  const n6: number | null | undefined = back;
+  const back2: any = n3;
+  const n7: number | null | undefined = back2;
+  console.log(back, back === null, n6, n7, back2 === undefined);
+
+  // A union of literal types with both nothings.
+  const lu: "a" | "b" | null | undefined = k;
+  const lu2: "a" | "b" | null | undefined = "b" as any;
+  const lu3: "a" | "b" | null | undefined = u;
+  console.log(lu, lu2, lu3);
+
+  const xa: any[] = [1, null, undefined];
+  const xs: (number | null | undefined)[] = xa.map((x) => x);
+  console.log(xs, xs[0], xs[1], xs[2]);
+}

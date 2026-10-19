@@ -1,0 +1,27 @@
+// check: no leaks
+// `x.toString()` on a union whose members all have it (#1275): a class's own `toString`, a
+// primitive's text, also through `?.` on a union that may be `null` or `undefined`.
+class X {
+  toString(): string {
+    return "X!";
+  }
+}
+class Y {
+  v = 1;
+}
+
+function f(i: number): X | string | null | undefined {
+  return i === 0 ? new X() : i === 1 ? "s" : i === 2 ? null : undefined;
+}
+
+function g(i: number): X | Y | string | number | boolean {
+  return i === 0 ? new X() : i === 1 ? new Y() : i === 2 ? "t" : i === 3 ? 4.5 : true;
+}
+
+function main(): void {
+  for (let i = 0; i < 4; i++) {
+    const d = f(i);
+    console.log(d?.toString(), d?.toString().length);
+  }
+  for (let i = 0; i < 5; i++) console.log(g(i).toString());
+}

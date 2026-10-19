@@ -70,6 +70,11 @@ impl FnCx<'_, '_> {
         let Some(elem) = elem else {
             return self.error_expr(span);
         };
+        let mut plain: Vec<Option<hir::Expr>> = elems.iter().map(|_| None).collect();
+        let elem = match exp_elem {
+            Some(_) => elem,
+            None => self.spread_plain_union(elems, &mut plain, elem, span),
+        };
         for (e, src) in elems.iter().zip(&mut sources) {
             let (et, is_array) = match src {
                 Some(Src::Array(_, et)) => (*et, true),
@@ -123,7 +128,7 @@ impl FnCx<'_, '_> {
                 out_l
             }
         };
-        for (e, src) in elems.iter().zip(sources) {
+        for ((e, src), checked) in elems.iter().zip(sources).zip(plain) {
             let stmt = match (src, &e.kind) {
                 (Some(Src::Array(src, et)), _) => {
                     self.push_all(out_l, arr_ty, src, (et, elem), e.span)
@@ -145,7 +150,10 @@ impl FnCx<'_, '_> {
                 }
                 (None, ast::ExprKind::Spread(_)) => continue,
                 (None, _) => {
-                    let v = self.expr_coerce(e, elem, Want::Move);
+                    let v = match checked {
+                        Some(h) => self.coerce(h, elem),
+                        None => self.expr_coerce(e, elem, Want::Move),
+                    };
                     self.push_stmt(out_l, arr_ty, v)
                 }
             };

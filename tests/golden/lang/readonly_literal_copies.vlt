@@ -1,0 +1,22 @@
+// check: no leaks
+// An array of literal types (`as const`) where only reading is possible takes a copy of its
+// strings: a `readonly string[]` variable, an `Iterable<string>` parameter, and the array a
+// `new Set` copies from (#1271 review).
+function joined(xs: Iterable<string>): string {
+  let r = "";
+  for (const x of xs) r += x;
+  return r;
+}
+
+function main(): void {
+  const s = new Set<string>(["a"] as const);
+  const t: readonly string[] = ["a"] as const;
+  const t2: readonly string[] = ["a", "b"] as const;
+  const c = ["q"] as const;
+  const t3: readonly string[] = c;
+  const c2 = ["q", "r"] as const;
+  const t4: readonly string[] = c2;
+  console.log(s, t, t2, t3, t4);
+  console.log(joined(["x", "y"] as const), joined(["z"] as const), joined(c), joined(c2));
+  console.log(new Set<string>(c2), new Set<string>(c), c, c2);
+}

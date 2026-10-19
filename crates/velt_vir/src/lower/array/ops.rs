@@ -56,6 +56,10 @@ impl FnLower<'_, '_> {
                 let pa = self.elem_place_checked(&arr, aty, ia, ta);
                 let pb = self.elem_place_checked(&arr, aty, ib, tb);
                 let vt = self.cx.ty(elem);
+                if vt == Ty::Unit {
+                    // Zero-sized elements (a single literal type): nothing to exchange.
+                    return unit();
+                }
                 let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
                 self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
                 self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));

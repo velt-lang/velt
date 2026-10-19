@@ -22,7 +22,7 @@ fn array_literals_index_and_intrinsics() {
         .any(|e| matches!(&e.kind, E::Index { index, .. } if matches!(index.kind, E::Cast(_)))));
     let r = err_src("function main() { const xs = []; }");
     assert!(r.contains("cannot infer the element type of `[]`"), "{r}");
-    let r = err_src("function main() { const xs = [1, \"a\"]; }");
+    let r = err_src("function main() { const xs: number[] = [1, \"a\"]; }");
     assert!(r.contains("mismatched types"), "{r}");
     let r = err_src("function main() { const xs = [1]; xs[\"a\"]; }");
     assert!(r.contains("array index must be an integer"), "{r}");

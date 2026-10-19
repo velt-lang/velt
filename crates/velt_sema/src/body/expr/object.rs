@@ -7,7 +7,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::ops::untyped;
+use super::mixed_array::first_typed_elem;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
@@ -56,12 +56,16 @@ impl FnCx<'_, '_> {
         let elem = match exp_elem {
             Some(e) => e,
             None => {
-                let first = elems.iter().position(|e| !untyped(e)).unwrap_or(0);
+                if let Some(t) = self.all_nothings_ty(elems) {
+                    return self.nothings_array(elems, t, span);
+                }
+                let first = first_typed_elem(elems);
                 let h = self.expr(&elems[first], first_hint, Want::Move);
                 // `[c.kind, "x"]` is a `string[]`: literal types widen for inference.
                 let t = self.cx.widened(h.ty);
                 out[first] = Some(h);
-                t
+                // `[1, null]` is a `(number | null)[]`.
+                self.with_literal_nothings(elems, t)
             }
         };
         // `[x, y]` with `x: A` (narrowed) and `y: A | null`: an `(A | null)[]`, as in TS.
@@ -88,6 +92,9 @@ impl FnCx<'_, '_> {
             }
             _ => elem,
         };
+        if exp_elem.is_none() && !self.is_fn_elem(elem) {
+            return self.mixed_array(elems, out, elem, span);
+        }
         let mut hs = vec![];
         for (i, e) in elems.iter().enumerate() {
             let h = match out[i].take() {
@@ -115,7 +122,7 @@ impl FnCx<'_, '_> {
         }
         for (i, e) in elems.iter().enumerate() {
             if out[i].is_none() {
-                out[i] = Some(self.expr(e, Some(first), Want::Move));
+                out[i] = Some(self.mixed_elem(e, first));
             }
             let ty = out[i].as_ref().map_or(first, |h| h.ty);
             if ty != first && self.cx.ty.core(ty) == Some(first) {

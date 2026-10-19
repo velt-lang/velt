@@ -96,6 +96,12 @@ impl FnCx<'_, '_> {
                 }
                 return self.no_method(recv, prop, args, span);
             }
+            if prop.name == "toString" && args.is_empty() && !getter {
+                return match self.union_to_string(recv, span) {
+                    Ok(h) => h,
+                    Err(recv) => self.no_method(recv, prop, args, span),
+                };
+            }
             return self.no_method(recv, prop, args, span);
         };
         // `g.throw(e)` with `e: never` (from the `catch` of a `try` that cannot throw) cannot
@@ -421,5 +427,27 @@ impl FnCx<'_, '_> {
             .any(|n| self.cx.prelude_adt(n) == Some(owner));
         let name = self.cx.fn_info(def).name.rsplit('.').next().unwrap_or("");
         weak && matches!(name, "set" | "get" | "has" | "delete" | "add")
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `x.toString()` on a union (#1275): every member has it, and on each of them it gives
+    /// what `String(x)` does (a class's own `toString`, a primitive's text), so it is written
+    /// as `String(x)`. `Err` gives `recv` back for a type that is not such a union (an array
+    /// member is written as `String(x)` writes an array only outside a union).
+    fn union_to_string(&mut self, recv: hir::Expr, span: Span) -> Result<hir::Expr, hir::Expr> {
+        let Some(members) = self.cx.union_members(recv.ty) else {
+            return Err(recv);
+        };
+        let plain = members.iter().all(|&m| {
+            !matches!(self.cx.ty.kind(m), TyKind::Array(_))
+                && self.cx.ty.nothing_of(m).is_none()
+                && self.cx.dynamic(m).is_none()
+        });
+        if !plain {
+            return Err(recv);
+        }
+        let part = self.js_text(recv, "`x.toString()`");
+        Ok(self.concat_parts(vec![part], span))
     }
 }

@@ -1,0 +1,8 @@
+Set(1) { 'a' } 1 true
+Set(1) { 'a' } 1
+Set(1) { 'a' } [ 'a' ] [ 'a' ]
+a
+Map(1) { 'a' => 1 } 1
+a b
+[ 'a' ] [ 'b' ] true
+0

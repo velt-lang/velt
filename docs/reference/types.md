@@ -475,10 +475,13 @@ one, `x == null` both, and `typeof`, printing and `JSON.stringify` see which one
 and an `undefined` arm (`i === 1 ? null : i === 2 ? undefined : i`) is a `T | null | undefined`.
 A generic union whose type argument brings a nothing (`T | string | undefined` at
 `T = number | null`) holds it like the union written out (`number | string | null | undefined`):
-`== null`, `===`, `??` and narrowing see it, inside the generic function too. `undefined`
+`== null`, `===`, `??` and narrowing see it, inside the generic function too. An `any` or
+`unknown` converted to it (`const n: number | null | undefined = v`, `v as T | null |
+undefined`) gives `null` for a `null` and `undefined` for an `undefined`. `undefined`
 alone is a type too (its only value is `undefined`), and an
 `undefined` with no type to take has it (`const u = undefined`, `[1, undefined]` is a
-`(number | undefined)[]`). A `let x: T | undefined;` without an initializer starts as
+`(number | undefined)[]`), and a conditional of `null` and `undefined` with no type to take is
+a `null | undefined` (`const d = c ? null : undefined`). A `let x: T | undefined;` without an initializer starts as
 `undefined`. `null` alone is a type as well, as in TypeScript's discriminated unions where a
 field is always `null` in one member (`{ st: "idle"; value: null } | { st: "ready"; value:
 number }`).
@@ -520,7 +523,7 @@ type is inferred, that returns values and also `return;` or can reach its end, r
 expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
-`null | undefined` alone as a type, `JSON.stringify`
+`null | undefined` alone as a written type, `JSON.stringify`
 of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
 `x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
 `undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
@@ -731,11 +734,12 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
-- `e as const` is accepted and keeps the value as it is. An array literal of strings (two or
-  more different ones) keeps their literal types and is read-only, like TypeScript's
-  `readonly ["a", "b"]`: `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"`, so
+- `e as const` is accepted and keeps the value as it is. An array literal of strings keeps
+  their literal types and is read-only, like TypeScript's `readonly ["a", "b"]`:
+  `const NAMES = ["a", "b"] as const` is an array of `"a" | "b"` (and `["a"] as const` of `"a"`), so
   `for (const n of NAMES) f(n)` and `f(NAMES[0])` pass a `"a" | "b"` parameter, and a
-  `readonly string[]` parameter takes it (as a copy of strings, which the callee cannot tell
+  `readonly string[]` parameter or variable, an `Iterable<string>` parameter and the array
+  `new Set<string>(…)` copies from take it, or any array of a literal type (as a copy of strings, which the callee cannot tell
   apart, since it cannot write through the parameter). Other values need no `readonly` or
   literal-type annotation for it.
 
@@ -746,9 +750,16 @@ the nullable type; `void` cannot be a member.
 
 - **Widening** is implicit: a member value (also a subclass of a class member, or a value
   implementing an interface member) converts to the union, and a union converts to a wider
-  union. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
+  union. An array literal with no type from context whose elements have different types
+  is an array of their union, as in TypeScript (`[1, "a"]` is a `(number | string)[]`, and
+  `[a, d]` of a `number | undefined` and a `string | null` holds all four). `null` and
+  `undefined` elements make it allow them (`[1, null]` is a `(number | null)[]`), a nested
+  array literal keeps its own type (`[[1], ["a"]]` is a `(number[] | string[])[]`), and
+  `[...xs, true]` adds `boolean` to the spread arrays' element type. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
   members match.
-- **Narrowing**: using a member's fields or methods needs that member.
+- **Narrowing**: using a member's fields or methods needs that member, except `x.toString()`,
+  which every member has: it gives what `String(x)` does (a class's own `toString()`, a
+  primitive's text), also as `x?.toString()` on a union that may be `null`.
   - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
     `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
     `"object"`; closures are `"function"`. An impossible tag is an error. On a value that is
