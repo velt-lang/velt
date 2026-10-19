@@ -186,6 +186,16 @@ def vector(l,n):
     return {terms};
   }}
 """)
+    if not f and bits(l)>=16:
+        decl("reverse_bytes",f"v: {T}",T)
+        m.append(f"""  /**
+   * The bytes of each lane in reverse order: big-endian {bits(l)}-bit words read with `load`
+   * become their values, and back (`rev{bits(l)}`, `pshufb`).
+   */
+  reverseBytes(): {T} {{
+    return {P}reverse_bytes(this);
+  }}
+""")
     decl("zip_low",f"a: {T}, b: {T}",T); decl("zip_high",f"a: {T}, b: {T}",T)
     m.append(f"""  /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
   zipLow(other: {T}): {T} {{

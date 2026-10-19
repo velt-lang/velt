@@ -1,0 +1,16 @@
+// `T.shuffle` takes integer literals as lane indices (they are compiled into the instruction),
+// each a lane of the first vector or of the second, and one per lane; masks have no shuffle.
+
+import { u32x4, mask32x4 } from "velt:simd";
+
+function main() {
+  const v = u32x4.splat(1);
+  const k = 2;
+  const a = u32x4.shuffle(v, v, 0, 1, k, 3);
+  const b = u32x4.shuffle(v, v, 0, 1, 2, 8);
+  const c = u32x4.shuffle(v, v, 0, 1, 2);
+  const d = u32x4.shuffle(v, 1, 0, 1, 2, 3);
+  const m = mask32x4.shuffle(v.eq(v), v.eq(v), 0, 1, 2, 3);
+  const ok = u32x4.shuffle(v, v, 0, 1, 2, 3u8);
+  console.log(ok.lane(0));
+}

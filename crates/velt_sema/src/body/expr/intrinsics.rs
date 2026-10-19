@@ -154,6 +154,10 @@ impl FnCx<'_, '_> {
         let arr = ty.array(t);
         let (usize_, f64_, str_, unit, bool_) = (ty.usize, ty.f64, ty.str_, ty.unit, ty.bool_);
         Some(match i {
+            I::SimdShuffle(simd, _) => {
+                let v = ty.intern(TyKind::Simd(simd));
+                (vec![(v, C), (v, C)], v, false)
+            }
             I::ArrayWithCapacity => (vec![(usize_, C)], arr, true),
             I::ArrayLen => (vec![(arr, B)], usize_, true),
             I::ArrayPush => (vec![(arr, M), (t, O)], unit, true),

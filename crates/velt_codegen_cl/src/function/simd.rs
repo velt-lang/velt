@@ -4,7 +4,7 @@
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_module::Module;
-use velt_vir::simd::{Lanes, MaskOp, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, Lanes, MaskOp, Op, SimdCall};
 use velt_vir::vir::{Callee, Const, Operand, Ty};
 
 use super::place::mem_flags;
@@ -147,6 +147,8 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::WithLane => self.simd_with_lane(lanes, &args[1], values),
             Op::As(_) => values[0],
             Op::ZipLow | Op::ZipHigh => self.simd_zip(lanes, op == Op::ZipHigh, values),
+            Op::ReverseBytes => self.simd_shuffle(&reversed_bytes(lanes), values[0], values[0]),
+            Op::Shuffle(mask) => self.simd_shuffle(&mask, values[0], values[1]),
             Op::Narrow => self.simd_narrow(lanes, values),
             Op::Select => {
                 let x = self.lanes_of(values[1], ty);
@@ -266,6 +268,12 @@ impl<M: Module> Translator<'_, '_, M> {
         }
         let mask = self.builder.func.dfg.immediates.push(bytes.into());
         self.builder.ins().shuffle(values[0], values[1], mask)
+    }
+
+    /// Byte `i` of the result is byte `mask[i]` of the 32 bytes of `a` followed by `b`.
+    fn simd_shuffle(&mut self, mask: &[u8; 16], a: ir::Value, b: ir::Value) -> ir::Value {
+        let mask = self.builder.func.dfg.immediates.push(mask.to_vec().into());
+        self.builder.ins().shuffle(a, b, mask)
     }
 
     /// The lanes of both vectors at half the width, clamped. Unsigned lanes are capped first:
