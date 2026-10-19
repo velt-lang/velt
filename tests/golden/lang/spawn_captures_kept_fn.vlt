@@ -1,0 +1,15 @@
+// check: no leaks
+// A spawned closure keeps a function parameter of a closure: the function passed to the
+// closure owns its environment, which the task gets a copy of.
+function start(use: (cb: (x: i64) => void) => void) {
+  const tag = "t".repeat(3);
+  use((x) => console.log(tag, x));
+}
+
+function main() {
+  start((cb) => {
+    spawn(async () => {
+      cb(1);
+    });
+  });
+}

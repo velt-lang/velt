@@ -66,16 +66,19 @@ pub(super) fn borrowed_fn_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<Local
                 ty: f.body.locals[l.0 as usize].ty,
                 span: Span::default(),
             };
-            borrowed_fn_copy(cx, f, &info.local_kinds, info.keeps_fn_params, &e).is_some()
+            borrowed_fn_copy(cx, d, f, &info.local_kinds, info.keeps_fn_params, &e).is_some()
         })
         .collect()
 }
 
 /// The error for keeping a copy of `e` (an explicit `.clone()` or an async-call argument), if
 /// `e` is a borrowed function-typed parameter or capture of `f`: the closure behind it may live
-/// in a caller's frame.
+/// in a caller's frame. Not when the variable comes from a local or, once the program keeps
+/// such parameters, from a parameter that only ever holds a closure with its own environment
+/// (`super::kept_fns`): the copy is then a share.
 pub(super) fn borrowed_fn_copy(
     cx: &Ctx,
+    d: DefId,
     f: &FnDef,
     kinds: &[LocalKind],
     keeps_fn_params: bool,
@@ -88,6 +91,13 @@ pub(super) fn borrowed_fn_copy(
         return None;
     }
     if keeps_fn_params && matches!(kinds.get(l.0 as usize), Some(LocalKind::Param)) {
+        return None;
+    }
+    let fn_local = matches!(
+        kinds.get(l.0 as usize),
+        Some(LocalKind::Param | LocalKind::Capture)
+    );
+    if fn_local && super::kept_fns::sharable(cx, d, f, l) {
         return None;
     }
     let name = &f.body.locals[l.0 as usize].name;

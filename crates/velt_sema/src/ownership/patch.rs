@@ -99,7 +99,7 @@ pub(super) fn patch_calls(
 /// Is the callee reached through a function value or a dynamically dispatched method? Its
 /// parameter modes are fixed (borrowed), whatever it does with an argument: a generic `T` it
 /// keeps may be instantiated with a function type.
-fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+pub(super) fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
     match callee {
         Callee::Indirect(_) => true,
         Callee::Intrinsic(_) => false,
@@ -129,7 +129,10 @@ fn escape_literal_args(
                 Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
                 _ => false,
             };
-            if !forwards || keeps.get(k).copied().unwrap_or(false) {
+            // A program that keeps borrowed function values lets no closure stay in a frame
+            // where a callee with fixed modes may keep it (`super::kept_fns`).
+            let kept = cx.kept_fns.on || keeps.get(k).copied().unwrap_or(false);
+            if !forwards || kept {
                 changed |= super::fn_values::escape_closure(cx, def);
             }
         }
