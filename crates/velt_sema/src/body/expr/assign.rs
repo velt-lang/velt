@@ -254,6 +254,11 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let wanted = exp != Some(self.cx.ty.unit);
+        if wanted && !is_plain_path(target) {
+            if let Some(h) = self.element_assign_value(op, target, value, span) {
+                return h;
+            }
+        }
         let (a, valued) = self.assign_as(op, target, value, wanted, span);
         if valued || !wanted || self.cx.ty.is_bottom(a.ty) {
             return a;

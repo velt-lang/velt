@@ -18,10 +18,8 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> HashSet<DefId> {
         };
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
-                if let E::Field { base, .. } = &place.kind {
-                    if let TyKind::Adt(d, _) = cx.ty.kind(base.ty) {
-                        out.insert(*d);
-                    }
+                if let Some(d) = written_object(cx, place) {
+                    out.insert(d);
                 }
             }
         });
@@ -46,4 +44,17 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> HashSet<DefId> {
         }
     }
     out
+}
+
+/// The object type whose field `place` writes: directly (`x.f = …`) or a part of it held inline,
+/// such as a tuple's element (`x.t[0] = …`, `x.t[1][0] = …`), which changes the field's value.
+fn written_object(cx: &Ctx, place: &Expr) -> Option<DefId> {
+    let E::Field { base, .. } = &place.kind else {
+        return None;
+    };
+    match cx.ty.kind(base.ty) {
+        TyKind::Adt(d, _) => Some(*d),
+        TyKind::Tuple(_) => written_object(cx, base),
+        _ => None,
+    }
 }

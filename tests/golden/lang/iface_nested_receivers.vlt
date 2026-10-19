@@ -53,3 +53,58 @@ async function go(): Promise<void> {
   console.log(ys.length);
 }
 await go();
+
+// Object-type and class receivers behind `as`, `!`, a conditional, `find(…)!` or a call write
+// into the object they name, also when an interface has a field of the same name (`t`).
+type S = { s: [number, string] };
+function objects(): void {
+  const os: O[] = [{ t: [1, "a"] }, { t: [2, "b"] }];
+  const ss: S[] = [{ s: [1, "a"] }, { s: [2, "b"] }];
+  (os[1] as O).t[0] = 8;
+  (ss[1] as S).s[0] = 8;
+  os[0]!.t[0] = 5;
+  ss[0]!.s[0] = 5;
+  let o: O | undefined = { t: [1, "o"] };
+  let s: S | undefined = { s: [1, "o"] };
+  o!.t[0] = 6;
+  s!.s[0] = 6;
+  const po = { t: [1, "p"] as [number, string] };
+  (po as O).t[1] = "pp";
+  (po as O).t[0] = 2;
+  console.log(os[1].t[0], ss[1].s[0], os[0].t[0], ss[0].s[0], o!.t[0], s!.s[0], po.t[1], po.t[0]);
+  const c = os.length > 1;
+  (c ? os[0] : os[1]).t[0] = 7;
+  (c ? ss[0] : ss[1]).s[0] = 7;
+  (c ? ss[1] : ss[0]).s[1] += "!";
+  (c ? ss[1] : ss[0]).s[0]++;
+  os.find((q) => q.t[1] === "b")!.t[1] = "ob";
+  ss.find((q) => q.s[1] === "b!")!.s[1] = "ob";
+  const pick = (): S => ss[1];
+  pick().s[0] += 10;
+  const cs: (C | undefined)[] = [new C()];
+  cs[0]!.t[0] = 9;
+  (cs[0] as C).t[1] += "x";
+  console.log(os[0].t[0], os[1].t[1], ss[0].s[0], ss[1].s[0], ss[1].s[1], cs[0]!.t[0], cs[0]!.t[1]);
+}
+objects();
+
+// An element or member assignment used as a value: the receiver and indexes run once.
+function values(): void {
+  let n = 0;
+  const at = (): number => { n++; return 0; };
+  const c = new C();
+  const get = (): C => { n += 10; return c; };
+  const arr = [1, 2];
+  const strs = ["x"];
+  const v = (c.t[0] = 5);
+  const z = (c.t[1] += "z");
+  const a = (arr[0] = 7);
+  const b = (arr[at()] += 3);
+  const g = (get().t[0] = 9);
+  const s = (strs[at()] += "y");
+  const os: O[] = [{ t: [1, "a"] }];
+  const w = (os[at()].t[0] = 11);
+  const k = ((os.length > 0 ? os[0] : os[0]).t[1] += "k");
+  console.log(v, z, a, b, g, s, w, k, n, c.t[0], c.t[1], arr[0], strs[0], os[0].t[0], os[0].t[1]);
+}
+values();

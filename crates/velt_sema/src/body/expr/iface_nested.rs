@@ -298,7 +298,7 @@ impl FnCx<'_, '_> {
         }
         let mut stmts = vec![];
         self.push_scope();
-        let target = self.hoist(target, true, &mut stmts);
+        let target = self.hoist(target, true, false, &mut stmts);
         let (h, valued) = match w {
             NestedWrite::Assign(op, v) => self.assign_as(op, &target, v, as_value, span),
             NestedWrite::Update(op, prefix) => {
@@ -324,7 +324,10 @@ impl FnCx<'_, '_> {
         let mut cur = inner(target);
         while let Some(c) = cur {
             if let Some((object, prop)) = member_view(bare(c)) {
-                if !peekable(object) && self.cx.copied_field_name(&prop.name) {
+                if !peekable(object)
+                    && self.cx.copied_field_name(&prop.name)
+                    && !self.object_receiver(object)
+                {
                     return true;
                 }
             }
@@ -333,10 +336,45 @@ impl FnCx<'_, '_> {
         false
     }
 
+    /// Is `e` (a receiver that cannot be checked an extra time) known to be a class or object
+    /// type value from its form alone (`x as O`, `xs[0]!`, `o!`)? Its fields are places, so the
+    /// write takes the normal path.
+    fn object_receiver(&mut self, e: &ast::Expr) -> bool {
+        let Some(t) = self.receiver_ty(e) else {
+            return false;
+        };
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        self.adt_of(t).is_some()
+    }
+
+    /// The type of receiver `e` where its form gives it without checking `e` again: an `as`
+    /// type, or a non-null assertion of a receiver that may be checked again.
+    fn receiver_ty(&mut self, e: &ast::Expr) -> Option<hir::TyId> {
+        // Checked again where it is used: its errors are reported there.
+        let mark = self.cx.diags.len();
+        let t = match &bare(e).kind {
+            ast::ExprKind::Cast { ty, .. } => Some(self.resolve(ty)),
+            ast::ExprKind::NonNull(inner) if peekable(inner) => {
+                Some(self.expr(inner, None, Want::Borrow).ty)
+            }
+            ast::ExprKind::NonNull(inner) => self.receiver_ty(inner),
+            _ => None,
+        };
+        self.cx.diags.truncate(mark);
+        t.filter(|&t| !self.cx.ty.has_error(t))
+    }
+
     /// `e` (a part of the target; `top`: the target itself) with its receiver and the indexes
     /// below it that have an effect bound to temporaries (appended to `stmts`), in evaluation
-    /// order.
-    fn hoist(&mut self, e: &ast::Expr, top: bool, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+    /// order. `strict`: also a receiver that may be checked again but not evaluated again (a
+    /// call).
+    fn hoist(
+        &mut self,
+        e: &ast::Expr,
+        top: bool,
+        strict: bool,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
         let b = bare(e);
         let kind = match &b.kind {
             ast::ExprKind::Member {
@@ -344,7 +382,7 @@ impl FnCx<'_, '_> {
                 prop,
                 optional: false,
             } => ast::ExprKind::Member {
-                object: Box::new(self.hoist(object, false, stmts)),
+                object: Box::new(self.hoist(object, false, strict, stmts)),
                 prop: prop.clone(),
                 optional: false,
             },
@@ -353,7 +391,7 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let object = Box::new(self.hoist(object, false, stmts));
+                let object = Box::new(self.hoist(object, false, strict, stmts));
                 let index = if top || is_pure_value(index) || literal_key(index).is_some() {
                     index.clone()
                 } else {
@@ -365,7 +403,7 @@ impl FnCx<'_, '_> {
                     optional: false,
                 }
             }
-            _ if top || peekable(b) => return e.clone(),
+            _ if top || (!strict && peekable(b)) || is_plain_path(b) => return e.clone(),
             _ => return self.bind_hoisted(e, stmts),
         };
         ast::Expr {
@@ -373,6 +411,64 @@ impl FnCx<'_, '_> {
             kind,
             span: b.span,
         }
+    }
+
+    /// `target = value` / `target op= value` used as a value, on an element or a member of
+    /// something other than a variable (`(c.t[0] = 5)`, `(xs[f()] += 1)`): the receiver and
+    /// every index with an effect (the target's own too) bound to temporaries in evaluation
+    /// order, the assignment, then the target, now free of effects, read again. `None`: not an
+    /// element or member target.
+    pub(super) fn element_assign_value(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let t = bare(target);
+        let mut stmts = vec![];
+        self.push_scope();
+        let t = match &t.kind {
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+            } => {
+                let object = Box::new(self.hoist(object, false, true, &mut stmts));
+                let index = match is_pure_value(index) || literal_key(index).is_some() {
+                    true => index.clone(),
+                    false => Box::new(self.bind_hoisted(index, &mut stmts)),
+                };
+                let kind = ast::ExprKind::Index {
+                    object,
+                    index,
+                    optional: false,
+                };
+                ast::Expr {
+                    id: t.id,
+                    kind,
+                    span: t.span,
+                }
+            }
+            ast::ExprKind::Member {
+                optional: false, ..
+            } => self.hoist(t, true, true, &mut stmts),
+            _ => {
+                self.pop_scope();
+                return None;
+            }
+        };
+        let (a, valued) = self.assign_as(op, &t, value, true, span);
+        let (unit, ty) = (self.cx.ty.unit, a.ty);
+        let value = if valued || self.cx.ty.is_bottom(ty) || self.cx.ty.has_error(ty) {
+            a
+        } else {
+            stmts.push(stmt(hir::StmtKind::Expr(a), span));
+            self.expr(&t, None, Want::Borrow)
+        };
+        self.pop_scope();
+        let ty = if value.ty == unit { unit } else { value.ty };
+        Some(self.mk(H::Block(block(stmts, Some(value), span)), ty, span))
     }
 
     /// `let <iface hoisted k> = e` (appended to `stmts`), named by the result.
