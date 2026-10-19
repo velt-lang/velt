@@ -1,0 +1,15 @@
+// check: no leaks
+// A constant whose initializer starts a promise that reads the constant through a closure: an
+// object holding a promise is shared with the closure like any object (#212).
+interface A {
+  n: number;
+  started: Promise<number>;
+}
+
+async function run(): Promise<void> {
+  const a: A = { n: 3, started: (async () => { await Promise.resolve(); return a.n; })() };
+  console.log(await a.started);
+}
+async function main() {
+  await run();
+}
