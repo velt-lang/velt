@@ -83,9 +83,10 @@ Verdict: APPROVE
 Verdict: CHANGES NEEDED
 ```
 
-That line is what the maintainer loop reads to know where a pull request stands, so write it
-plainly (no other text on the line) and only in reviews, and judge the head the review was
-posted on. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
+That line is what the maintainer loop reads to know where a pull request stands, so write it in
+this plain form, with nothing else on the line, and only in reviews; it judges the head the review
+was posted on. Older reviews wrote it in bold (`**Verdict: APPROVE**`); the status command below
+still reads those. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
 opening a pull request") gets it as a required change.
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
