@@ -341,13 +341,13 @@ fn closures_and_function_values_carry_error_types() {
         "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
     );
     assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
-    // Values that are not errors are inferred too (#1154).
-    let p = ok_src(
-        "function run(f: () => void) { f(); } function main() { try { run(() => { throw \"x\"; }); } catch (e) {} }",
+    // Only `Error` classes are inferred: a thrown string is still reported.
+    let r = err_src(
+        "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
     );
     assert!(
-        func(&p, "run").throws.is_some(),
-        "a call through `f` throws a string"
+        r.contains("but the function type it is used as does not allow throwing"),
+        "{r}"
     );
     // The errors come through other function types and through untyped `let`s.
     let p = ok_src(

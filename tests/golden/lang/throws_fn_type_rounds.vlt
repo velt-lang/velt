@@ -2,7 +2,7 @@
 // Function types written without `throws` throw what is stored into them (#1154), also when
 // the errors reach a site through other sites: a chain of twelve function types, each closure
 // calling the next, the last one throwing; a recursive function calling through one; a `let`
-// without a type assigned a closure that throws; and values that are not `Error`s.
+// without a type assigned a closure that throws; and errors of several classes.
 class End extends Error {
   constructor(m: string) {
     super(m);
@@ -114,16 +114,15 @@ function untyped() {
   }
 }
 
-// Values that are not errors: the `catch` variable's union has them, and an assertion to
-// `Error` still reads the errors' messages.
+// Errors of several classes: the `catch` variable's union has them.
 function run(f: () => void) {
   try {
     f();
   } catch (e) {
-    if (e instanceof Error) {
-      console.log("error", e.message);
+    if (e instanceof End) {
+      console.log("end", e.message);
     } else {
-      console.log("value", e);
+      console.log("error", (e as Error).message);
     }
   }
 }
@@ -141,10 +140,7 @@ function values() {
     throw new End("an error");
   });
   run(() => {
-    throw "a string";
-  });
-  run(() => {
-    throw 42;
+    throw new RangeError("a range error");
   });
   runMessage(() => {
     throw new End("only errors here");

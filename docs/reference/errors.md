@@ -104,10 +104,9 @@ what a function stored there may throw.
   throws, whatever `T` is, and so does another function type of the same shape, which a
   closure's type can't tell apart. When nothing stored into the type throws, it throws nothing
   and calls through it need no error check. For a type whose result is a `Promise`, the
-  inferred errors are the promise's rejection type. What is inferred includes values that are
-  not `Error`s (`throw "x"`): the `catch` variable's union has them, and `(e as Error).message`
-  reads an error's message (the assertion fails at run time for a value that is no `Error`).
-  The errors also come through other such types (a closure calling through one) and through
+  inferred errors are the promise's rejection type. Only `Error` classes are inferred: a closure
+  stored there that throws another value (`throw "x"`, `throw null`) is reported, since the
+  inferred errors reach every function type of the same shape. The errors also come through other such types (a closure calling through one) and through
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
   such a type too. Function types of the standard library are not inferred this way:
   `queueMicrotask` takes a callback that may throw (what it throws is uncaught, as in Node),

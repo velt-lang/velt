@@ -205,10 +205,15 @@ impl Ctx<'_> {
 
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
-    /// `err` can't be kept (then the use is reported).
+    /// `err` can't be kept (then the use is reported). Only `Error` classes are kept: the sets
+    /// reach every function type of the same shape, and a value that is no `Error` (`null`)
+    /// would reach `catch` blocks and standard library callbacks that never see it.
     pub(crate) fn seed_fn_sites(&mut self, used_as: TyId, err: TyId) -> bool {
         let mut members = vec![];
         for m in self.error_members(err) {
+            if !self.is_error_class(m) {
+                return false;
+            }
             match self.port(m, 0) {
                 Some(p) => members.push(p),
                 None => return false,
@@ -381,6 +386,24 @@ impl Ctx<'_> {
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))
+    }
+
+    /// Is `t` the prelude's `Error` or a class extending it?
+    fn is_error_class(&mut self, t: TyId) -> bool {
+        let Some(root) = self.prelude_adt("Error") else {
+            return false;
+        };
+        let mut cur = t;
+        for _ in 0..64 {
+            if matches!(self.ty.kind(cur), TyKind::Adt(d, _) if *d == root) {
+                return true;
+            }
+            match self.base_of(cur) {
+                Some(b) => cur = b,
+                None => return false,
+            }
+        }
+        false
     }
 
     /// `from` and `to` are function types that differ only in what they throw: `Some(true)`
