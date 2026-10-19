@@ -28,18 +28,19 @@ function pick(xs: number[], i: number): number | undefined {
 console.log(label(pick([1, 2], 2)), label(pick([1, 2], 7), "em"), label(undefined, undefined));
 
 interface Rec {
-  redirect(location: string, status?: number): Rec;
+  redirect(location: string, status?: number): void;
 }
 
 const r: Rec = {
   redirect(location: string, status = 302) {
     const o: { location: string; status: number } = { location, status };
     console.log(o);
-    return r;
   },
 };
 
-r.redirect("/x").redirect("/y", 301).redirect("/z", undefined);
+r.redirect("/x");
+r.redirect("/y", 301);
+r.redirect("/z", undefined);
 
 function inc(n: number | undefined = 7): number {
   return n + 1;
