@@ -75,7 +75,7 @@ fn spawned_promises(cx: &mut Ctx, f: &mut crate::hir::FnDef) -> Vec<velt_common:
     });
     places
         .into_iter()
-        .filter(|&(_, t)| cx.holds_promise(t))
+        .filter(|&(_, t)| crate::body::expr::spawn_promises::direct_promise(cx, t))
         .map(|(s, _)| s)
         .collect()
 }

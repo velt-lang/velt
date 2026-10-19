@@ -445,6 +445,7 @@ impl FnCx<'_, '_> {
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
             self.no_spawned_generators(&e);
+            self.no_spawned_promise_holders(&e);
             if let H::Call { args, .. } = &mut e.kind {
                 if let [p] = args.as_mut_slice() {
                     self.hand_on_spawned_callee(p);
@@ -462,7 +463,9 @@ impl FnCx<'_, '_> {
             TyKind::FnPtr { params, ret, .. }
                 if params.is_empty() && self.cx.ty.promise_payload(ret).is_some() =>
             {
-                self.intrinsic(Intrinsic::Spawn, vec![f], ret, span)
+                let e = self.intrinsic(Intrinsic::Spawn, vec![f], ret, span);
+                self.no_spawned_promise_holders(&e);
+                e
             }
             TyKind::Error => self.error_expr(span),
             _ => {
@@ -621,7 +624,7 @@ impl FnCx<'_, '_> {
         for (t, at, pspan, coerced, using) in checks {
             // A promise is not shared with a task (a shared promise is awaited on one task,
             // #212): it moves there (`crate::ownership::soften_moves` keeps it a move too).
-            if self.cx.holds_promise(t) {
+            if super::spawn_promises::direct_promise(self.cx, t) {
                 self.f.soft_moves.retain(|s| *s != pspan);
             }
             self.no_generator_copy(t, crate::body::GenCopy::Task, at);

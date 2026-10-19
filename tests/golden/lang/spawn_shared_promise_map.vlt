@@ -1,0 +1,24 @@
+// A promise read from a `Map` (a share of the one the map holds) passed to a spawned call
+// is used on another task: the runtime stops the program instead of using the result from two
+// threads (#212).
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await Promise.resolve();
+  return new Obj(n);
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  const o = await p;
+  return o.n;
+}
+async function main() {
+  const m = new Map<string, Promise<Obj>>();
+  m.set("a", make(1));
+  const t = spawn(use(m.get("a")!));
+  console.log(await t);
+  console.log((await m.get("a")!).n);
+}

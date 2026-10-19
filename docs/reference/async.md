@@ -116,8 +116,17 @@ Promises behave like JavaScript's, at Rust's cost:
   Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
   only when every holder dropped it without awaiting it. A promise that is never shared costs
   what it did before; a shared one costs a small side record and one share of the result per
-  `await`. A promise passed into a spawned call (`spawn(f(p))`) moves to the new task, so using
-  it afterwards is an error. (**Planned**: awaiting a shared promise from another task, #212.)
+  `await`. A promise stays on the task that shares it:
+  - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
+    using it afterwards is an error.
+  - A spawned call cannot take a value that holds a promise inside it (an object, an array, a
+    closure's captures): ``a spawned call cannot take a value holding a promise``. Await the
+    promise first and pass its result.
+  - A shared promise that still reaches another task (`const q = p; spawn(f(q))`, a promise read
+    from a `Map`, a channel) stops the program with ``a promise shared on one task was used on
+    another``, rather than using its result from two threads.
+
+  (**Planned**: awaiting a shared promise from another task, #212.)
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited

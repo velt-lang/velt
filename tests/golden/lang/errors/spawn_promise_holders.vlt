@@ -1,0 +1,54 @@
+// A spawned call cannot take a value holding a promise inside it (#212): a closure capturing
+// one, a class instance, an interface value, an array of promises, a closure returning one.
+// Awaiting a promise from another task is not supported yet.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await Promise.resolve();
+  return new Obj(n);
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  const o = await p;
+  return o.n;
+}
+class Holder {
+  p: Promise<Obj>;
+  constructor(p: Promise<Obj>) {
+    this.p = p;
+  }
+}
+interface Entry {
+  p: Promise<Obj>;
+}
+async function useHolder(h: Holder): Promise<number> {
+  return (await h.p).n;
+}
+async function useEntry(e: Entry): Promise<number> {
+  return (await e.p).n;
+}
+async function useAll(ps: Promise<Obj>[]): Promise<number> {
+  let s = 0;
+  for (const p of ps) {
+    s += (await p).n;
+  }
+  return s;
+}
+async function useFn(f: () => Promise<Obj>): Promise<number> {
+  return (await f()).n;
+}
+async function main() {
+  const p = make(1);
+  const q = p;
+  const t1 = spawn(async () => (await q).n);
+  const h = new Holder(make(2));
+  const t2 = spawn(useHolder(h));
+  const e: Entry = { p: make(3) };
+  const t3 = spawn(useEntry(e));
+  const t4 = spawn(useAll([p, p]));
+  const t5 = spawn(useFn(() => p));
+  console.log(await t1, await t2, await t3, await t4, await t5, (await h.p).n, (await e.p).n);
+}

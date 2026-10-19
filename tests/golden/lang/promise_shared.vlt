@@ -13,7 +13,7 @@ class User {
 }
 
 async function fetchUser(id: number): Promise<User> {
-  await sleep(5);
+  await sleep(id * 5);
   console.log(`fetch ${id}`);
   return new User(`user${id}`);
 }

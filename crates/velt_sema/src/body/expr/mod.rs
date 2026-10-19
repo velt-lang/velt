@@ -95,6 +95,7 @@ mod record_literal;
 mod record_logical;
 mod regex_args;
 mod setters;
+pub(crate) mod spawn_promises;
 mod spread;
 mod spread_args;
 mod spread_array;

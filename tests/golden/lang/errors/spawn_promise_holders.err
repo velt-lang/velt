@@ -1,0 +1,6 @@
+spawn_promise_holders.vlt:46:20: error: a spawned call cannot take a value holding a promise (`Promise<Obj>`)
+spawn_promise_holders.vlt:48:30: error: a spawned call cannot take a value holding a promise (`Holder`)
+spawn_promise_holders.vlt:50:29: error: a spawned call cannot take a value holding a promise (`Entry`)
+spawn_promise_holders.vlt:51:27: error: a spawned call cannot take a value holding a promise (`Promise<Obj>[]`)
+spawn_promise_holders.vlt:52:26: error: a spawned call cannot take a value holding a promise (`Promise<Obj>`)
+await the promise here and pass its result to the spawned call
