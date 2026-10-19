@@ -666,7 +666,8 @@ impl Ctx<'_> {
             );
             return self.ty.error;
         }
-        self.subst(body, &args)
+        let t = self.subst(body, &args);
+        self.reduce_known_intersection(t)
     }
 
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or

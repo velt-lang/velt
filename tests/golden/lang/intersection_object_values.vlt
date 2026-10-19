@@ -1,0 +1,74 @@
+// check: no leaks
+// Intersections whose parts are object types and type parameters, as sigx's `signal()` writes
+// them (#1304): such an intersection is an `object` (a `T extends object` argument, a
+// `WeakSet` member), `x as T & object` keeps the value itself, and a generic alias used at
+// type parameters (`Signal<{ value: V }>`) is substituted once. Expected output: Node's.
+type Signal<T> = T & { $set: (newValue: T) => void };
+type Primitive = string | number | boolean | null | undefined;
+
+const marked = new WeakSet<object>();
+
+function markSignal<T extends object>(handle: T): T {
+  marked.add(handle);
+  return handle;
+}
+
+function isPrimitive(v: unknown): v is Primitive {
+  return v === null || (typeof v !== "object" && typeof v !== "function");
+}
+
+// `Signal<{ value: V }>` in a generic function is `{ value: V; $set(v: { value: V }): void }`.
+let sets = 0;
+function boxed<V>(x: V): Signal<{ value: V }> {
+  const s: Signal<{ value: V }> = {
+    value: x,
+    $set: (v: { value: V }) => {
+      sets++;
+    },
+  };
+  return s;
+}
+
+// `{ value: V } & { $set: … }` is an `object`: `markSignal` takes it.
+function signalOf<V>(x: V): Signal<{ value: V }> {
+  return markSignal(boxed(x));
+}
+
+// `target as T & object` after a primitive test: the same value, not a copy.
+const raws = new WeakMap<object, string>();
+function remember<T>(target: T, name: string): number {
+  if (isPrimitive(target)) {
+    return 0;
+  }
+  const objectTarget = target as T & object;
+  raws.set(objectTarget, name);
+  return 1;
+}
+
+function asObject<T>(target: T): T & object {
+  return target as T & object;
+}
+
+const n = signalOf(1);
+n.$set({ value: 5 });
+console.log(n.value, sets, marked.has(n));
+const t = signalOf("a");
+t.value = "b";
+console.log(t.value, marked.has(t), marked.has({}));
+
+class Point {
+  x = 1;
+}
+const o = { a: 1 };
+const p = new Point();
+const xs = [1, 2];
+console.log(remember(o, "o"), remember(p, "p"), remember(xs, "xs"), remember(3, "n"), remember(true, "b"));
+console.log(remember(null, "z"), remember(undefined, "u"));
+console.log(raws.get(o), raws.get(p), raws.get(xs), raws.has({}));
+
+const oo = asObject(o);
+oo.a = 2;
+const pp = asObject(p);
+pp.x = 7;
+asObject(xs).push(3);
+console.log(o.a, oo === o, p.x, pp === p, xs.join(","));
