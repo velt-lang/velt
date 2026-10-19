@@ -178,10 +178,16 @@ impl FnCx<'_, '_> {
                     && self.readonly_copy_elem(&h, target).is_some())
             {
                 self.readonly_array_arg(h, target)
-            } else if p.mode != PassMode::Owned {
-                self.object_arg_coerce(h, target)
             } else {
-                self.coerce(h, target)
+                let h = match p.default.as_ref() {
+                    Some(d) => self.default_where_undefined(h, target, d, &type_args),
+                    None => Err(h),
+                };
+                match h {
+                    Ok(h) => h,
+                    Err(h) if p.mode != PassMode::Owned => self.object_arg_coerce(h, target),
+                    Err(h) => self.coerce(h, target),
+                }
             };
             if let Some(d) = &p.default {
                 h = self.default_on_undefined(h, arg_ty, d, &type_args);
@@ -265,7 +271,7 @@ impl FnCx<'_, '_> {
     /// Is `h` the dynamic `undefined` (`dynamic_nothing`)? The default of an optional dynamic
     /// parameter, and of one whose function applies its default itself (`defaults::in_callee`):
     /// testing a passed argument for `undefined` changes nothing there.
-    fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
+    pub(super) fn is_undefined_lit(&self, h: &hir::Expr) -> bool {
         match &h.kind {
             H::ToDyn { expr, .. } => self.is_undefined_lit(expr),
             H::Lit(hir::Lit::Null) => self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined),

@@ -1,0 +1,57 @@
+// check: no leaks
+// JavaScript applies a parameter's default where the argument is `undefined` (#930): a value
+// that may be `undefined` passed for a parameter with a default takes the default there, and
+// a parameter whose type allows `undefined` (written, or from an interface's `status?: number`)
+// may have a default, which the function applies itself.
+function mount(v: string, before: string | null = null, ns: boolean = false): void {
+  console.log(v, before, ns);
+}
+
+function patch(v: string, ns: boolean | undefined = undefined): void {
+  mount(v, null, ns);
+}
+
+patch("a");
+patch("b", true);
+patch("c", undefined);
+mount("d", undefined);
+mount("e", undefined, undefined);
+
+function label(n: number = 1, unit: string = "px"): string {
+  return `${n}${unit}`;
+}
+
+function pick(xs: number[], i: number): number | undefined {
+  return xs.find((x) => x === i);
+}
+
+console.log(label(pick([1, 2], 2)), label(pick([1, 2], 7), "em"), label(undefined, undefined));
+
+interface Rec {
+  redirect(location: string, status?: number): Rec;
+}
+
+const r: Rec = {
+  redirect(location: string, status = 302) {
+    const o: { location: string; status: number } = { location, status };
+    console.log(o);
+    return r;
+  },
+};
+
+r.redirect("/x").redirect("/y", 301).redirect("/z", undefined);
+
+function inc(n: number | undefined = 7): number {
+  return n + 1;
+}
+
+console.log(inc(), inc(1), inc(undefined), inc(pick([3], 3)));
+
+class Box {
+  scale(by: number | undefined = 2, name: string = "box"): string {
+    return `${name}*${by}`;
+  }
+}
+
+const b = new Box();
+console.log(b.scale(), b.scale(undefined, undefined), b.scale(5, pick([], 0) === undefined ? "u" : "v"));
