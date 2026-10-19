@@ -407,6 +407,9 @@ impl FnLower<'_, '_> {
             let vt = self.cx.ty(ty);
             return self.zero_value(vt);
         }
+        if matches!(self.cx.kind(ty), TyKind::Never) {
+            return self.any_to_never(v, from, ty);
+        }
         if self.cx.is_dynamic(ty) {
             if self.is_object_ty(ty) && !self.cx.is_narrow_dynamic(from) {
                 // `any` / `unknown` to `object` (issue #926): a primitive is a `TypeError`;
@@ -475,6 +478,7 @@ impl FnLower<'_, '_> {
                 self.move_into(o, out);
             }
             TyKind::Unit => self.any_nothing_into(hir::Nothing::Undefined, out),
+            TyKind::Never => self.terminate(Terminator::Unreachable),
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
@@ -568,22 +572,6 @@ impl FnLower<'_, '_> {
     /// Is `t` TypeScript's `object` (issue #926)?
     pub(super) fn is_object_ty(&self, t: TyId) -> bool {
         matches!(self.cx.kind(t), TyKind::Dyn(d, args) if args.is_empty() && Some(d) == self.cx.hir.object)
-    }
-
-    /// Stop with a `TypeError` when the dynamic value at `p` holds a boolean, number, string
-    /// or symbol (converted to `object`, `ty`).
-    fn check_not_primitive(&mut self, p: &Place, ty: TyId) {
-        let desc = Operand::Copy(proj(p, Proj::Field(1)));
-        let tag = self.any_tag_of(desc.clone());
-        let lo = cint(TAG_BOOLEAN as i128, Ty::U64);
-        let k = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, tag, lo));
-        let n = cint((TAG_SYMBOL - TAG_BOOLEAN) as i128, Ty::U64);
-        let bad = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, k, n));
-        let (bad_bb, ok_bb) = (self.new_block(), self.new_block());
-        self.branch(bad, bad_bb, ok_bb);
-        self.switch_to(bad_bb);
-        self.any_type_error(desc, ty);
-        self.switch_to(ok_bb);
     }
 
     /// The value of type `ty` the `any` at `p` (owned, consumed here) holds.
@@ -726,7 +714,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Stop with `TypeError: the value is not <ty> (it is <found>)`.
-    fn any_type_error(&mut self, desc: Operand, ty: TyId) {
+    pub(super) fn any_type_error(&mut self, desc: Operand, ty: TyId) {
         let want = self.any_target_name(ty);
         let an = article(&want);
         // A value of the expected generic class (or an array) with other type arguments is

@@ -36,10 +36,19 @@ impl Ctx<'_> {
         parts: &[ast::TypeExpr],
         env: &TyEnv,
     ) -> TyId {
+        // In an alias expanded at known arguments, the parts are those arguments' types. At
+        // arguments that are still type parameters (`Signal<{ value: V }>` in a generic
+        // function) the parts stay in the alias's parameters, which the alias substitutes once:
+        // substituting here too would replace `V` (the function's first parameter) by the
+        // alias's first argument again.
+        let known = !env.args.iter().any(|a| self.has_type_params(*a));
         let mut operands: Vec<(TyId, Span)> = vec![];
         for p in parts {
             let ty = self.resolve_type(p, env);
-            let ty = self.subst(ty, &env.args);
+            let ty = match known {
+                true => self.subst(ty, &env.args),
+                false => ty,
+            };
             if ty == self.ty.error {
                 return ty;
             }
@@ -58,11 +67,66 @@ impl Ctx<'_> {
         self.intersect(operands, names, env.module, t.span)
     }
 
+    /// The function type operands of an intersection with object types made callable object
+    /// types (`crate::callables`); false (reported at `span`) when there is more than one
+    /// function type (overloads, not supported).
+    fn callable_operands(
+        &mut self,
+        operands: &mut [(TyId, Span)],
+        module: usize,
+        span: Span,
+    ) -> bool {
+        let is_fn = |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. });
+        let fns: Vec<TyId> = operands
+            .iter()
+            .map(|&(o, _)| o)
+            .filter(|&o| is_fn(self, o))
+            .collect();
+        if fns.is_empty() || operands.len() < 2 {
+            return true;
+        }
+        let mut calls: Vec<TyId> = fns.clone();
+        for &(o, _) in operands.iter() {
+            if let Some(c) = self.call_type(o) {
+                calls.push(c);
+            }
+        }
+        calls.dedup();
+        if fns.len() == operands.len() || calls.iter().any(|&c| c != calls[0]) {
+            self.error(
+                Diagnostic::error(
+                    "intersections of function types (overloads) are not supported",
+                    span,
+                )
+                .with_note("declare one function type with the parameter types every call needs"),
+            );
+            return false;
+        }
+        for op in operands.iter_mut() {
+            if is_fn(self, op.0) {
+                op.0 = self.callable_part(op.0, module);
+            }
+        }
+        true
+    }
+
     /// Is `t` an intersection's part that defers it (#350): a type parameter or a deferred type,
     /// also with `null` (`T | null`).
     fn deferred_part(&self, t: TyId) -> bool {
         let t = self.ty.opt_payload(t).unwrap_or(t);
         matches!(self.ty.kind(t), TyKind::Param(_) | TyKind::Op(..))
+    }
+
+    /// `t`, a generic alias's body at its arguments, with an intersection the arguments made
+    /// known reduced: `Signal<{ value: V }>` (`T & { $set(v: T): void }`) in a generic function
+    /// is the object type `{ value: V; $set(v: { value: V }): void }`, as if written out.
+    pub(crate) fn reduce_known_intersection(&mut self, t: TyId) -> TyId {
+        match self.ty.kind(t) {
+            TyKind::Op(TyOp::Intersect, parts) if !parts.iter().any(|&p| self.deferred_part(p)) => {
+                self.reduce_op(t)
+            }
+            _ => t,
+        }
     }
 
     /// `T & { … }` with a part that is a type parameter: the deferred `TyOp::Intersect`, reduced
@@ -76,7 +140,9 @@ impl Ctx<'_> {
         span: Span,
     ) -> TyId {
         for (&(ty, at), name) in operands.iter().zip(names) {
+            // A function type makes a function with properties once the parts are known.
             if self.deferred_part(ty)
+                || matches!(self.ty.kind(ty), TyKind::FnPtr { .. })
                 || self.brandable(ty)
                 || self.dynamic(ty).is_some()
                 || self.has_type_params_at_head(ty)
@@ -164,16 +230,31 @@ impl Ctx<'_> {
         self.ty.intern(k)
     }
 
-    /// Is every value of `t` an object: an intersection with an `object` part, or with a type
-    /// parameter part in `object_params` (`T extends object`)?
+    /// Is every value of `t` an object? An intersection is when a part is `object` or a type
+    /// parameter in `object_params` (`T extends object`), or when a part is an object type and
+    /// no part may be a primitive: `{ value: T } & { $set(v: T): void }` is, but
+    /// `T & { __brand: "Id" }` with an unbounded `T` is not (at `T = string` it is a branded
+    /// `string`).
     pub(crate) fn holds_objects(&self, t: TyId, object_params: &[u32]) -> bool {
         use crate::any::Dynamic;
         match self.ty.kind(t) {
             TyKind::Op(TyOp::Intersect, parts) => {
-                parts.iter().any(|&p| self.holds_objects(p, object_params))
+                let closed = |cx: &Self, p: TyId| match cx.ty.kind(p) {
+                    TyKind::Param(n) => object_params.contains(n),
+                    TyKind::Op(TyOp::Intersect, _) => cx.holds_objects(p, object_params),
+                    _ => cx.dynamic(p) == Some(Dynamic::Object),
+                };
+                if parts.iter().any(|&p| closed(self, p)) {
+                    return true;
+                }
+                let open = |cx: &Self, p: TyId| {
+                    let p = cx.ty.opt_payload(p).unwrap_or(p);
+                    matches!(cx.ty.kind(p), TyKind::Param(_) | TyKind::Op(..))
+                };
+                !parts.iter().any(|&p| open(self, p)) && parts.iter().any(|&p| self.is_object_ty(p))
             }
             TyKind::Param(n) => object_params.contains(n),
-            _ => self.dynamic(t) == Some(Dynamic::Object),
+            _ => self.is_object_ty(t),
         }
     }
 
@@ -232,20 +313,11 @@ impl Ctx<'_> {
             }
             _ => None,
         };
-        // A function with properties: an interface or object type with call signatures and
-        // members (`{ (): T; stop(): void }`, which the parser writes as this intersection).
-        let is_fn =
-            |cx: &Self, t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_));
-        if operands.iter().any(|&(o, _)| is_fn(self, o))
-            && operands.iter().any(|&(o, _)| self.is_object_type(o))
-        {
-            self.error(
-                Diagnostic::error(
-                    "a function with properties (call signatures next to members) is not supported yet (#921)",
-                    span,
-                )
-                .with_note("pass the function and the members separately, or an object with the function as a method"),
-            );
+        // A function with properties (#921): an interface or object type with a call signature
+        // and members (`{ (): T; stop(): void }`, which the parser writes as this
+        // intersection). The function type is the callable object type `{ #call: F }`
+        // (`crate::callables`), which merges with the members as any object type does.
+        if !self.callable_operands(&mut operands, module, span) {
             return self.ty.error;
         }
         for (&(ty, at), name) in operands.iter().zip(&names) {
@@ -269,6 +341,11 @@ impl Ctx<'_> {
                     );
                     return self.ty.error;
                 }
+            }
+        }
+        if self.is_object_type(acc) {
+            if let Some(fields) = Self::call_field_first(&self.public_fields(acc)) {
+                acc = self.anon_type_with(&fields, module);
             }
         }
         self.declare_intersection_fields(acc, &operands);

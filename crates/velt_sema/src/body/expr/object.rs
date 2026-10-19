@@ -493,7 +493,10 @@ impl FnCx<'_, '_> {
             let (ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k)) = p else {
                 continue;
             };
-            if crate::symbols::is_computed_key(k) {
+            // A callable object's hidden function (`expr::callables`), never written.
+            if crate::symbols::is_computed_key(k)
+                || (k.name == crate::callables::CALL_FIELD && k.span.lo == k.span.hi)
+            {
                 continue;
             }
             if k.name == "__proto__" && matches!(p, ast::ObjectProp::KeyValue(..)) {
@@ -675,6 +678,10 @@ impl FnCx<'_, '_> {
                 // `{ b?: T }` is `{ b: T | null }`: an object literal may leave such a field out.
                 (None, None) if anon && self.cx.ty.opt_payload(fty).is_some() => {
                     self.mk(H::Lit(hir::Lit::Null), fty, span)
+                }
+                (None, None) if self.callable_def(d) => {
+                    self.missing_member(&sname, &f.name, span);
+                    self.error_expr(span)
                 }
                 (None, None) => {
                     self.cx.err(

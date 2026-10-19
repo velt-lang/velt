@@ -694,6 +694,17 @@ impl<'m> Ctx<'m> {
                         .fields
                         .iter()
                         .map(|f| {
+                            // A function with properties shows its call signature (#921).
+                            if f.name == crate::callables::CALL_FIELD {
+                                if let TyKind::FnPtr { params, ret, .. } = self.ty.kind(f.ty) {
+                                    let ps: Vec<String> = params
+                                        .iter()
+                                        .map(|p| self.display_in(*p, &bound))
+                                        .collect();
+                                    let ret = self.display_in(*ret, &bound);
+                                    return format!("({}): {ret}", ps.join(", "));
+                                }
+                            }
                             let name = self
                                 .key_spelling(&f.name)
                                 .unwrap_or_else(|| display_key(&f.name));

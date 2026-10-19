@@ -56,6 +56,49 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `x as T & object` for an `x` whose type is the type parameter `T` (or `T | null`)
+    /// without an `object` bound: sigx's `target as T & object` after a primitive test.
+    /// `T & object` is `T` at an object type and `never` at a primitive, so the value is
+    /// first `x as object`, checked at run time ([`param_as_object`](Self::param_as_object):
+    /// a primitive is a `TypeError`), then that object as `T & object`. The value is shared,
+    /// not copied. `Err(h)` for other casts.
+    pub(super) fn param_as_object_part(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        use crate::any::Dynamic;
+        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let hir::TyKind::Op(hir::TyOp::Intersect, parts) = self.cx.ty.kind(target).clone() else {
+            return Err(h);
+        };
+        let mut objects = None;
+        let mut rest = vec![];
+        for p in parts {
+            match self.cx.ty.kind(p) {
+                hir::TyKind::Op(hir::TyOp::Intersect, ps) => rest.extend(ps.iter().copied()),
+                _ => rest.push(p),
+            }
+        }
+        rest.retain(|&p| match self.cx.dynamic(p) {
+            Some(Dynamic::Object) => {
+                objects = Some(p);
+                false
+            }
+            _ => true,
+        });
+        let Some(object) = objects else {
+            return Err(h);
+        };
+        if !matches!(self.cx.ty.kind(inner), hir::TyKind::Param(_))
+            || rest.iter().any(|&p| p != inner)
+        {
+            return Err(h);
+        }
+        let boxed = self.param_as_object(h, object)?;
+        self.coerce_dynamic(boxed, target, true)
+    }
+
     /// Is `target` a member of union `u`?
     fn has_member(&mut self, u: TyId, target: TyId) -> bool {
         self.cx

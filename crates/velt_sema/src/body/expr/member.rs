@@ -166,6 +166,12 @@ impl FnCx<'_, '_> {
                 "objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys",
             );
         }
+        if matches!(
+            self.cx.ty.kind(t),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        ) {
+            d = d.with_note(super::callables::FN_PROPERTY_NOTE);
+        }
         if let Some(note) = self.narrowing_note(t) {
             d = d.with_note(note);
         }
@@ -583,6 +589,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let target = self.resolve(ty);
+        if let Some(h) = self.callable_cast(expr, target, span) {
+            return h;
+        }
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
@@ -649,6 +658,7 @@ impl FnCx<'_, '_> {
         let coerced = self
             .try_coerce(inner, target)
             .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span));
         match coerced {
             Ok(h) => h,

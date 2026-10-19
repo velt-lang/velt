@@ -1,0 +1,9 @@
+// `T & { __brand: "UserId" }` with an unbounded `T` is not known to hold objects (#1304): at
+// `T = string` it is a branded `string`, so it is no `object` (tsc accepts the assignment, and
+// Node prints `string`; Velt rejects it rather than stop at run time).
+type UserId = string & { __brand: "UserId" };
+function tag<T>(x: T & { __brand: "UserId" }): string {
+  const o: object = x;
+  return typeof o;
+}
+console.log(tag<string>("u1" as UserId));
