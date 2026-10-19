@@ -445,7 +445,7 @@ impl FnCx<'_, '_> {
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
             self.no_spawned_generators(&e);
-            self.no_spawned_promise_holders(&e);
+            self.spawned_promises(&e);
             if let H::Call { args, .. } = &mut e.kind {
                 if let [p] = args.as_mut_slice() {
                     self.hand_on_spawned_callee(p);
@@ -464,7 +464,7 @@ impl FnCx<'_, '_> {
                 if params.is_empty() && self.cx.ty.promise_payload(ret).is_some() =>
             {
                 let e = self.intrinsic(Intrinsic::Spawn, vec![f], ret, span);
-                self.no_spawned_promise_holders(&e);
+                self.spawned_promises(&e);
                 e
             }
             TyKind::Error => self.error_expr(span),
@@ -622,11 +622,6 @@ impl FnCx<'_, '_> {
             checks.push((a.ty, a.span, place.span, coerced.map(|c| c.ty), using));
         }
         for (t, at, pspan, coerced, using) in checks {
-            // A promise is not shared with a task (a shared promise is awaited on one task,
-            // #212): it moves there (`crate::ownership::soften_moves` keeps it a move too).
-            if super::spawn_promises::direct_promise(self.cx, t) {
-                self.f.soft_moves.retain(|s| *s != pspan);
-            }
             self.no_generator_copy(t, crate::body::GenCopy::Task, at);
             // A generator behind an interface value made here (`spawn(sum(gen()))` with
             // `sum(it: Iterable<T>)`): the same.

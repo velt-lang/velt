@@ -12,9 +12,12 @@ use crate::body::FnCx;
 use crate::hir::{self, Def, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `spawn(e)`: report the arguments of the spawned call (`e` itself for a task body) and
-    /// the captures of a closure among them that hold a promise inside another value.
-    pub(super) fn no_spawned_promise_holders(&mut self, spawn: &hir::Expr) {
+    /// `spawn(e)` (or the standard library's `__intrinsic_spawn_handled(e)`): a promise passed
+    /// to the spawned call moves to the task (its place is no soft move, so a parameter it comes
+    /// from is owned; `crate::ownership::soften_moves` keeps it a move too), and the arguments
+    /// of the call (`e` itself for a task body) and the captures of a closure among them that
+    /// hold a promise inside another value are reported.
+    pub(super) fn spawned_promises(&mut self, spawn: &hir::Expr) {
         let H::Call { args, .. } = &spawn.kind else {
             return;
         };
@@ -22,6 +25,7 @@ impl FnCx<'_, '_> {
             return;
         };
         let mut found: Vec<(TyId, Span)> = vec![];
+        let mut moved: Vec<Span> = vec![];
         if let H::Closure(d) = p.kind {
             self.closure_promises(d, p.span, &mut found);
         }
@@ -31,10 +35,13 @@ impl FnCx<'_, '_> {
             let (place, _) = arg_place(a);
             if let H::Closure(d) = place.kind {
                 self.closure_promises(d, a.span, &mut found);
-            } else if self.cx.holds_promise(a.ty) && !direct_promise(self.cx, a.ty) {
+            } else if direct_promise(self.cx, a.ty) {
+                moved.push(place.span);
+            } else if self.cx.holds_promise(a.ty) {
                 found.push((a.ty, a.span));
             }
         }
+        self.f.soft_moves.retain(|s| !moved.contains(s));
         for (t, span) in found {
             let shown = self.cx.display(t);
             self.cx.error(

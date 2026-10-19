@@ -58,7 +58,10 @@ fn spawned_promises(cx: &mut Ctx, f: &mut crate::hir::FnDef) -> Vec<velt_common:
     let mut places = vec![];
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
         let E::Call {
-            callee: crate::hir::Callee::Intrinsic(crate::hir::Intrinsic::Spawn),
+            callee:
+                crate::hir::Callee::Intrinsic(
+                    crate::hir::Intrinsic::Spawn | crate::hir::Intrinsic::SpawnHandled,
+                ),
             args,
         } = &e.kind
         else {

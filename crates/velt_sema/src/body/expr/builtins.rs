@@ -139,7 +139,11 @@ impl FnCx<'_, '_> {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
         }
-        self.intrinsic(i, ck.args, ck.ret, span)
+        let e = self.intrinsic(i, ck.args, ck.ret, span);
+        if i == Intrinsic::SpawnHandled {
+            self.spawned_promises(&e);
+        }
+        e
     }
 
     /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
