@@ -1,9 +1,8 @@
-type_level.vlt:20:32: error: a mapped type over a type parameter is not supported yet
-type_level.vlt:15:28: error: a conditional type over a type parameter is not supported yet
 type_level.vlt:10:33: error: mismatched types
 type_level.vlt:11:46: error: no field `getAge` on type `{ getName: () => string }`
 type_level.vlt:11:44: error: missing field `getName` in `{ getName: () => string }` literal
 type_level.vlt:12:44: error: mismatched types
 type_level.vlt:13:39: error: mismatched types
+type_level.vlt:16:10: error: mismatched types
 type_level.vlt:23:22: error: a template literal type with a `string` hole is not supported yet outside the `extends` clause of a conditional type (#934)
 type_level.vlt:24:12: error: `infer` declarations are only permitted in the `extends` clause of a conditional type

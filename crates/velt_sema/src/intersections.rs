@@ -406,6 +406,16 @@ impl Ctx<'_> {
         if operands.iter().any(|&(o, _)| o == never) {
             return Some(never);
         }
+        // `undefined` or `null` alone (an option of `never`, as an optional field of a mapped
+        // type reads) with a part that is not one has no value either: `undefined & string`.
+        let nothing_alone = |cx: &Self, o: TyId| cx.ty.opt_payload(o) == Some(never);
+        if operands.iter().any(|&(o, _)| nothing_alone(self, o))
+            && operands
+                .iter()
+                .any(|&(o, _)| self.ty.opt_payload(o).is_none())
+        {
+            return Some(never);
+        }
         if operands
             .iter()
             .any(|&(o, _)| matches!(self.dynamic(o), Some(Dynamic::Object)))

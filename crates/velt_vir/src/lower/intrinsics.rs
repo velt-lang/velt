@@ -40,6 +40,8 @@ impl FnLower<'_, '_> {
             (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
             (I::SymbolRegistry, []) => self.symbol_registry(),
             (I::SpreadObject, parts) => self.spread_object(parts, ty),
+            (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
+            (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
             (I::FieldAbsent, []) => {
                 // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
                 let t = self.sub(ty);

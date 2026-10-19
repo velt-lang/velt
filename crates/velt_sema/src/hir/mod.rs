@@ -128,6 +128,10 @@ pub enum TyOp {
     /// Never a value's type: the requirement that an `Upcast` from the first argument to the
     /// second keeps one object type at every instantiation (reduced to the second, #350).
     Convert,
+    /// A conditional, mapped, indexed access, `keyof` or utility type written in a generic
+    /// definition, not in an alias, that needs its type parameters (`{ [K in keyof M]: V<M[K]> }`
+    /// in a signature, #350): sema's form #n, its arguments the definition's type parameters.
+    Inline(u32),
 }
 
 /// The value of a literal type.

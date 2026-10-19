@@ -82,6 +82,13 @@ pub enum Intrinsic {
     /// last part that has it (an optional field only while present, as JavaScript copies only
     /// the keys an object has).
     SpreadObject,
+    /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
+    /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
+    /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
+    KeyRead,
+    /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
+    /// generic body, as for `KeyRead`; lowering writes that field.
+    KeyWrite,
     /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
     /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
     FieldAbsent,

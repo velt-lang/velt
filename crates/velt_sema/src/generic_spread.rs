@@ -60,15 +60,21 @@ impl Ctx<'_> {
             };
             for f in fields {
                 match out.iter_mut().find(|g| g.name == f.name) {
-                    // An optional field keeps the earlier value while it is absent, so its type
-                    // is either one (TypeScript: `{ ...{ a: 1 }, ...p }` with `p: { a?: string }`
-                    // has `a: number | string`).
-                    Some(_) if f.optional => {
-                        let msg = format!("this generic function spreads an optional field `{}` over an earlier value of it, which is not supported yet at this instantiation (#350)", f.name);
-                        self.error(Diagnostic::error(msg, span).with_note(
-                            "JavaScript keeps the earlier value while the field is absent; spread the optional value first, or give the field a value explicitly",
-                        ));
-                        return self.ty.error;
+                    // An optional field overrides the earlier value only while present (a
+                    // present `undefined` too), so the field keeps the earlier one's type and
+                    // optionality; a present `undefined` over a required field is a `TypeError`
+                    // (lowering, `spread_object`). TypeScript's `number | string` for one of
+                    // another type is a union Velt doesn't build here.
+                    Some(g) if f.optional => {
+                        if self.canon(g.ty) != self.canon(f.ty) {
+                            let (gt, ft) = (self.display(g.ty), self.display(f.ty));
+                            let msg = format!("this generic function spreads an optional field `{}` of type `{ft}` over an earlier value of type `{gt}`, which is not supported yet at this instantiation (#350)", f.name);
+                            self.error(Diagnostic::error(msg, span).with_note(
+                                "JavaScript keeps the earlier value while the field is absent, so the field would hold either type; give both the same type",
+                            ));
+                            return self.ty.error;
+                        }
+                        g.readonly = false;
                     }
                     Some(g) => {
                         g.ty = f.ty;

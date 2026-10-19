@@ -1,0 +1,27 @@
+// check: no leaks
+// Reads and writes `x[k]` through a key of a type parameter in generic bodies (#350): `T[K]` and
+// `keyof T` in signatures are evaluated per instantiation, `K` is inferred as the literal key,
+// and the read or write is the field's own (`===` keeps identity; writes reach the object).
+function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
+  return source[key];
+}
+function set<T extends object, K extends keyof T>(target: T, key: K, v: T[K]): void {
+  target[key] = v;
+}
+function copyField<T extends object, K extends keyof T>(dst: T, src: T, key: K): void {
+  dst[key] = src[key];
+}
+function pluck<T extends object, K extends keyof T>(xs: T[], key: K): T[K][] {
+  return xs.map((x) => x[key]);
+}
+const st = { count: 0, name: "a", tags: ["x"] };
+set(st, "count", get(st, "count") + 2);
+set(st, "name", get(st, "name") + "b");
+console.log(st.count, st.name, get(st, "tags") === st.tags);
+const other = { count: 7, name: "o", tags: ["y"] };
+copyField(st, other, "tags");
+copyField(st, other, "count");
+other.tags.push("z");
+console.log(JSON.stringify(st), st.tags === other.tags);
+const users = [{ id: 1, name: "ann" }, { id: 2, name: "bob" }];
+console.log(JSON.stringify(pluck(users, "name")), JSON.stringify(pluck(users, "id")));

@@ -26,6 +26,7 @@ use crate::hir::{LitValue, Nothing, TyId, TyKind, TyOp};
 use crate::resolve::TyEnv;
 use crate::types::collect_params;
 
+pub(crate) mod inline;
 pub(crate) mod instances;
 pub(crate) mod key_kinds;
 mod relate;
@@ -76,6 +77,8 @@ pub(crate) struct State {
     pub(crate) converts: std::collections::HashMap<(TyId, TyId), TyId>,
     /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
     pub(crate) reduced: std::collections::HashMap<TyId, TyId>,
+    /// The deferred forms written outside aliases (`TyOp::Inline`).
+    pub(crate) inline: inline::Forms,
 }
 
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
@@ -125,27 +128,6 @@ impl Ctx<'_> {
         None
     }
 
-    /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
-    pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
-        let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
-        let TyOp::Alias(a) = o else {
-            return args.join(crate::generic_spread::op_sep(o));
-        };
-        format!(
-            "{}<{}>",
-            self.aliases[a as usize].decl.name.name,
-            args.join(", ")
-        )
-    }
-
-    /// Does `t` hold a deferred type (`TyKind::Op`)?
-    pub(crate) fn mentions_op(&self, t: TyId) -> bool {
-        let mut found = false;
-        self.ty
-            .visit(t, &mut |k| found |= matches!(k, TyKind::Op(..)));
-        found
-    }
-
     /// A form needs a type argument that is still a type parameter. Inside an alias expanded
     /// with such an argument, the alias is deferred (`true`: nothing to report); `true` also
     /// while unused aliases are checked on their own. `false`: report the form.
@@ -176,6 +158,16 @@ impl Ctx<'_> {
         };
         if args.iter().any(|x| self.ty.has_error(*x)) {
             return self.ty.error;
+        }
+        if let TyOp::Inline(i) = o {
+            let span = self
+                .type_level
+                .op_sites
+                .get(&t)
+                .copied()
+                .unwrap_or(Span::DUMMY);
+            let r = self.reduce_inline(i, args, span);
+            return *self.type_level.reduced.entry(t).or_insert(r);
         }
         let TyOp::Alias(a) = o else {
             // At the argument whose expected type needs it, else where it was written.

@@ -1,0 +1,21 @@
+// check: no leaks
+// An optional field spread over an earlier value of it in a generic body (#350): an absent field
+// keeps the earlier value, a present one overrides it, a present `undefined` too.
+function merge<A extends object, B extends object>(a: A, b: B) {
+  return { ...a, ...b };
+}
+type Opt = { name?: string; tags?: string[] };
+const base: { name: string; tags: string[] } = { name: "base", tags: ["x"] };
+const none: Opt = {};
+const some: Opt = { name: "patched" };
+const undef: Opt = { name: undefined };
+const m1 = merge(base, none);
+console.log(JSON.stringify(m1), m1.tags === base.tags);
+const m2 = merge(base, some);
+console.log(JSON.stringify(m2));
+const both = merge(none, some);
+console.log(JSON.stringify(both), "name" in both, "tags" in both);
+const o3 = merge(some, undef);
+console.log(JSON.stringify(o3), "name" in o3, o3.name === undefined);
+const o4 = merge(none, none);
+console.log(JSON.stringify(o4), "name" in o4);

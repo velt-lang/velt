@@ -1,0 +1,9 @@
+// `x[k]` in a generic body at an instantiation whose key type names several fields (#350):
+// tsc accepts it, and Node reads whichever field the key holds. Velt reads one field per
+// instantiation, so this is an error at that instantiation until such reads are supported.
+function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
+  return source[key];
+}
+const st = { count: 0, name: "a" };
+const k: "count" | "name" = st.count > 0 ? "count" : "name";
+console.log(get(st, k), get(st, "count"));

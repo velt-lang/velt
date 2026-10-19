@@ -171,6 +171,12 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
+        if let Some(h) = op
+            .is_none()
+            .then(|| self.generic_key_write(object, index, value, span))
+        {
+            return h;
+        }
         self.with_union_key(object, index, span, |s, keys, key| {
             let Some(fty) = s.one_field_ty(object, index, keys) else {
                 s.expr(value, None, Want::Move);
@@ -363,6 +369,9 @@ impl FnCx<'_, '_> {
             .string_literals(h.ty)
             .filter(|keys| keys.iter().all(|k| self.field_ty(t, k).is_some()));
         let Some(keys) = keys else {
+            if let Some(read) = self.generic_key_read(object, t, h, span) {
+                return Some(read);
+            }
             // As the ordinary rules report it (`o[s]` with `s: string`).
             let tn = self.cx.display(t);
             let mut d =

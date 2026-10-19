@@ -60,7 +60,8 @@ impl Uses {
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
-    let converts = cx.type_level.converts.clone();
+    let mut converts = cx.type_level.converts.clone();
+    converts.extend(cx.type_level.inline.reads.iter().map(|(&k, &v)| (k, v)));
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
@@ -118,8 +119,17 @@ fn convert_site(
     e: &Expr,
     converts: &HashMap<(TyId, TyId), TyId>,
 ) {
-    if let crate::hir::ExprKind::Upcast(inner) = &e.kind {
-        if let Some(&op) = converts.get(&(inner.ty, e.ty)) {
+    use crate::hir::{ExprKind as H, Intrinsic};
+    let key = match &e.kind {
+        H::Upcast(inner) => Some((inner.ty, e.ty)),
+        H::Call {
+            callee: crate::hir::Callee::Intrinsic(Intrinsic::KeyRead | Intrinsic::KeyWrite),
+            args,
+        } => Some((args[0].ty, args[1].ty)),
+        _ => None,
+    };
+    if let Some(key) = key {
+        if let Some(&op) = converts.get(&key) {
             if seen.insert(op) {
                 u.types.push((op, e.span));
             }

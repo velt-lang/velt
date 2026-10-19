@@ -372,6 +372,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.keyed_read(object, index, want, span) {
             return h;
         }
+        if let Some(h) = self.generic_key_index(object, index, want, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = self.index_of(r.recv, index, want, span);

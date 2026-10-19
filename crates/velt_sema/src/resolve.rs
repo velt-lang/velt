@@ -54,6 +54,18 @@ impl TyEnv {
 impl Ctx<'_> {
     /// Resolve a written type. Reports and returns `Error` for unknown / invalid types.
     pub fn resolve_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        use ast::TypeExprKind as K;
+        let form = matches!(
+            t.kind,
+            K::Indexed { .. } | K::KeyOf(_) | K::Conditional(_) | K::Mapped(_)
+        );
+        if form && self.inline_deferrable(env) {
+            return self.resolve_inline(t, env, |cx| cx.resolve_form(t, env));
+        }
+        self.resolve_form(t, env)
+    }
+
+    fn resolve_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
         match &t.kind {
             ast::TypeExprKind::Void => self.ty.unit,
             // `x is T` returns a `boolean`; `asserts x is T` returns nothing (it throws instead
@@ -442,6 +454,18 @@ impl Ctx<'_> {
             }
             _ => args,
         };
+        let args = match item {
+            Item::Alias(a) if !self.aliases[a as usize].outer.is_empty() => {
+                let Some(mut outer) = self.outer_alias_args(a, env) else {
+                    let n = &self.aliases[a as usize].outer[0];
+                    self.err(format!("cannot find type `{n}` in this scope"), t.span);
+                    return self.ty.error;
+                };
+                outer.extend(args);
+                outer
+            }
+            _ => args,
+        };
         self.item_type_args(item, name, args, t)
     }
 
@@ -476,6 +500,11 @@ impl Ctx<'_> {
             "Result" => return Some(self.removed_result(t)),
             "ReturnType" | "Parameters" => {
                 return Some(self.resolve_fn_operator(t, name, args, env))
+            }
+            n if crate::utility_types::OPERATORS.contains(&n) && self.inline_deferrable(env) => {
+                return Some(
+                    self.resolve_inline(t, env, |cx| cx.resolve_utility(t, name, args, env)),
+                )
             }
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
@@ -591,9 +620,26 @@ impl Ctx<'_> {
         }
     }
 
-    fn expand_alias(&mut self, a: u32, args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
+    /// The arguments for the enclosing functions' type parameters an alias declared in a
+    /// generic body takes (`AliasInfo::outer`), at a use in `env`; `None` where one isn't known.
+    fn outer_alias_args(&mut self, a: u32, env: &TyEnv) -> Option<Vec<TyId>> {
+        let outer = self.aliases[a as usize].outer.clone();
+        let mut out = vec![];
+        for n in &outer {
+            let i = env.params.iter().rposition(|p| p == n)?;
+            let p = self.ty.param(i as u32);
+            out.push(match env.args.is_empty() {
+                true => p,
+                false => self.subst(p, &env.args),
+            });
+        }
+        Some(out)
+    }
+
+    fn expand_alias(&mut self, a: u32, mut args: Vec<TyId>, t: &ast::TypeExpr) -> TyId {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
+        let outer: Vec<TyId> = args.drain(..info.outer.len().min(args.len())).collect();
         if info.expanding {
             if let Some(own) = self.recursive_union_ref(a) {
                 return own;
@@ -611,6 +657,7 @@ impl Ctx<'_> {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
         }
+        let args = [outer, args].concat();
         if let Some(own) = self.recursive_union(a, t.span) {
             return own;
         }
@@ -624,7 +671,8 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let decl = info.decl;
         let module = info.module;
-        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        let own = decl.generics.iter().map(|g| g.name.name.clone());
+        let names: Vec<String> = info.outer.iter().cloned().chain(own).collect();
         self.aliases[a as usize].used = true;
         self.aliases[a as usize].expanding = true;
         let mut env = TyEnv::new(module, &names);

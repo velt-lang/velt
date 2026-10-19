@@ -57,6 +57,7 @@ mod intrinsics;
 mod js_list;
 mod json_layout;
 pub(crate) mod jsx;
+mod key_index;
 mod lit;
 mod literal_keys;
 mod literal_types;

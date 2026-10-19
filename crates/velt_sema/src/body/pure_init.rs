@@ -587,6 +587,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::FieldAbsent
         | I::FieldPresent
         | I::SpreadObject
+        | I::KeyRead
+        | I::KeyWrite
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias
