@@ -104,7 +104,8 @@ review.
 - Queue a stack bottom-up. When the bottom pull request merges, the next one is retargeted to
   `main` and runs its checks again.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
-  test cutting every golden at every character, `VELT_ROBUSTNESS=full`), the Cranelift memory
+  test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
+  goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
   Windows, and the `tsc` oracle for `velt check --ts-compat`
   (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
