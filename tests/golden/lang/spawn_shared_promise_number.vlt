@@ -1,0 +1,15 @@
+// A shared promise of a plain value handed to a spawned call (#212): only a result that holds
+// an object or a string is copied for the other task, so the runtime stops the program here.
+async function make(n: number): Promise<number> {
+  await Promise.resolve();
+  return n;
+}
+async function use(p: Promise<number>): Promise<number> {
+  return (await p) + 1;
+}
+async function main() {
+  const p = make(1);
+  const q = p;
+  console.log(await spawn(use(q)));
+  console.log(await p);
+}

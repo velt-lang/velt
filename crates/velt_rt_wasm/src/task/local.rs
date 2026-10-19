@@ -51,6 +51,9 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
 /// passes the mark to its children; a second mark, and any other future, is ignored.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+    if super::shared::is_shared(f) {
+        return super::shared::hand_over(f, transfer);
+    }
     if super::race::pass_transfer(f, transfer) {
         return;
     }
@@ -139,7 +142,8 @@ unsafe fn adopt(
     (*trailer(f)).started = Rc::into_raw(st.clone());
     *f = VeltFut::new(started_poll, started_drop);
     executor::count_local(true);
-    let id = executor::spawn(new_leaf(driver(f, st.clone())), 0, None);
+    let logical = Some(executor::logical_task()).filter(|l| *l != 0);
+    let id = executor::spawn_for(new_leaf(driver(f, st.clone())), 0, None, logical);
     st.borrow_mut().task = id;
     (id, st)
 }

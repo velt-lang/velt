@@ -1,0 +1,36 @@
+// A spawned task that shares a promise and returns before it settles (#212): the task's
+// promises go on after its body returned, and a holder released there is the last one.
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(() => r(), ms));
+}
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function val(n: number): Promise<Obj> {
+  await delay(20);
+  return new Obj(n);
+}
+async function work(): Promise<number> {
+  const p = val(7);
+  const q = p;
+  q.then((o) => console.log("q", o.n));
+  p.then((o) => console.log("p", o.n));
+  return 1;
+}
+async function last(p: Promise<Obj>): Promise<void> {
+  const o = await p;
+  console.log("last", o.n);
+}
+async function main() {
+  console.log(await spawn(work()));
+  await delay(60);
+  const p = val(8);
+  const q = p;
+  const t = last(q);
+  console.log((await p).n);
+  console.log("end");
+}
+// check: no leaks

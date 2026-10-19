@@ -1,0 +1,23 @@
+// Holders of a shared promise that outlive `main` (#212): `then` callbacks and unawaited
+// async calls awaiting it run after `main` returned, on the same task, as in Node.
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(() => r(), ms));
+}
+async function val(): Promise<number> {
+  await delay(20);
+  return 7;
+}
+async function waiter(name: string, p: Promise<number>): Promise<void> {
+  console.log(name, await p);
+}
+async function main() {
+  const p = val();
+  const q = p;
+  q.then((v) => console.log("q", v));
+  p.then((v) => console.log("p", v));
+  const r = val();
+  const a = waiter("a", r);
+  const b = waiter("b", r);
+  console.log("main done");
+}
+// check: no leaks

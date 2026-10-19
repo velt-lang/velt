@@ -166,14 +166,21 @@ shares a promise never calls it, and its futures are unchanged.
   completion, and its own result drop reports an unhandled rejection. A waiting holder that is
   dropped wakes the others, so the first of them drives the promise.
 - The runtime functions that recognize boxed promises by their header (`velt_rt_fut_start`,
-  `velt_rt_futs_handled`, `velt_rt_fut_transfer`) treat a holder as some other future.
-  `velt_rt_fut_peek` reads the settled result.
+  `velt_rt_futs_handled`) treat a holder as some other future. `velt_rt_fut_peek` reads the
+  settled result.
+- `velt_rt_fut_transfer` of a holder (the holder goes to another task: `spawn`, a channel, a
+  closure capturing it) hands it over: a new holder awaits the promise on this task inside a
+  started promise of its own (the proxy), whose result `transfer` moves or copies for the other
+  task as for any promise handed over (#160). The holder handed over forwards its polls and its
+  drop to the proxy, so the other task gets a copy made on the promise's task.
 - Every holder has the same `poll` and `drop` entries, which say only that a future is shared.
   An original future is found in the runtime's table of hubs by its address, and a handle never
   is.
-- A shared promise stays on the task where it was shared. A holder that is polled, shared or
-  dropped on another task stops the program with a fatal error (exit code 101). Awaiting a
-  shared promise from several tasks is not supported yet (#212).
+- A shared promise stays on the logical task where it was shared (`velt_rt_task_id`: the
+  orphan task driving a task's promises after its root returned has the same one; on
+  WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
+  dropped on another task without having been handed over (above), or a holder handed over that
+  is shared again there, stops the program with a fatal error (exit code 101).
 
 ## 2. Tasks
 

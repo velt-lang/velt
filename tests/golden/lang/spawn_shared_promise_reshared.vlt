@@ -1,0 +1,24 @@
+// A holder of a shared promise handed to another task is awaited there through a copy of the
+// result (#212); sharing it again on that task is not supported yet: the runtime stops the
+// program instead of using the result from two threads.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await Promise.resolve();
+  return new Obj(n);
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  const again = p;
+  return (await again).n + (await p).n;
+}
+async function main() {
+  const p = make(1);
+  const q = p;
+  const t = spawn(use(q));
+  console.log(await t);
+  console.log((await p).n);
+}

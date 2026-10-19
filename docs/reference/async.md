@@ -116,17 +116,27 @@ Promises behave like JavaScript's, at Rust's cost:
   Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
   only when every holder dropped it without awaiting it. A promise that is never shared costs
   what it did before; a shared one costs a small side record and one share of the result per
-  `await`. A promise stays on the task that shares it:
+  `await`. A shared promise is driven on the task that shares it:
   - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
     using it afterwards is an error.
-  - A spawned call cannot take a value that holds a promise inside it (an object, an array, a
-    closure's captures): ``a spawned call cannot take a value holding a promise``. Await the
-    promise first and pass its result.
-  - A shared promise that still reaches another task (`const q = p; spawn(f(q))`, a promise read
-    from a `Map`, a channel) stops the program with ``a promise shared on one task was used on
-    another``, rather than using its result from two threads.
+  - A spawned call cannot take a value holding a promise inside it that the caller may still
+    hold (an object or an array used again afterwards, or built from a promise used again, such
+    as `[p, p]`), nor a closure capturing a promise: ``a spawned call cannot take a value
+    holding a promise``. Await the promise first and pass its result.
+  - Another holder of a shared promise passed to a spawned call or sent over a channel
+    (`const q = p; spawn(f(q))`, `spawn(q)`, a promise read from a `Map`, `ch.send(q)`) is
+    awaited there through a copy: the promise still runs on its own task, and the other task
+    gets the result transferred like a `spawn` argument (moved, or copied while the first task
+    still uses it), so `(await p) === (await q)` holds only on one task. This needs a result
+    that holds an object or a string.
+  - Any other way a holder reaches another task stops the program with ``a promise shared on
+    one task was used on another``, rather than using its result from two threads: a result
+    of a plain value (`Promise<number>`), a closure capturing the holder that runs there (a
+    [timer](../std/timers.md) callback runs as a task of its own), or sharing a handed-over
+    holder again on the other task (`const r = q` there). Await the promise on its own task
+    and pass the result instead.
 
-  (**Planned**: awaiting a shared promise from another task, #212.)
+  (**Planned**: the cases that stop, #212.)
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited

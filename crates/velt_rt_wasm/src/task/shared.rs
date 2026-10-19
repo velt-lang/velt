@@ -4,6 +4,10 @@
 //! handle of its own (the hub in front of its header). The first waiter drives the original
 //! future; when it settles, the others are woken in the order they started waiting, and each
 //! delivery writes a fresh share of the result into the holder's slot.
+//!
+//! A shared promise stays on its logical task, as on native targets: the tasks share the one
+//! thread here, but a holder used on another task (`spawn`, a channel) stops the program the
+//! same way, so two tasks never use one result object (docs/reference/async.md).
 
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -25,6 +29,8 @@ struct Hub {
     size: usize,
     share: Option<ShareFn>,
     result_drop: Option<ResultDropFn>,
+    /// The logical task the promise is shared on (`executor::logical_task`; 0: not known yet).
+    task: u64,
     holders: usize,
     done: bool,
     result: Vec<u128>,
@@ -97,6 +103,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
             size: result_size as usize,
             share,
             result_drop,
+            task: super::executor::logical_task(),
             holders: 1,
             done: false,
             result: Vec::new(),
@@ -107,6 +114,12 @@ pub unsafe extern "C" fn velt_rt_fut_share(
         (*f).drop = Wide(holder_drop);
         h
     };
+    on_its_task(&h);
+    new_handle(h)
+}
+
+/// A new holder of the promise of `h`: a handle of its own.
+unsafe fn new_handle(h: HubRef) -> *mut VeltFut {
     let size = {
         let mut s = h.borrow_mut();
         s.holders += 1;
@@ -129,11 +142,119 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 
 /// `poll` of every holder, the original future and the handles alike.
 unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    if let Some((p, size)) = forwarded(f) {
+        if super::velt_rt_fut_poll(p, cx) != READY {
+            return PENDING;
+        }
+        std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
+        return READY;
+    }
     poll_holder(&hub(f), f, cx)
+}
+
+/// A holder handed to another task ([`hand_over`]).
+struct Forward {
+    /// The started promise of the promise's own task that awaits it there and delivers a
+    /// transferred result.
+    proxy: *mut VeltFut,
+    size: usize,
+    /// The holder is the original future (not a handle).
+    is_orig: bool,
+    /// For an original future: its own entries, once its hub released everything else.
+    orig: Option<(FutPollFn, FutDropFn)>,
+}
+
+thread_local! {
+    /// The holders handed to another task, by address.
+    static FORWARDS: RefCell<HashMap<usize, Forward>> = RefCell::new(HashMap::new());
+}
+
+fn forwarded(f: *mut VeltFut) -> Option<(*mut VeltFut, usize)> {
+    FORWARDS.with(|m| m.borrow().get(&(f as usize)).map(|w| (w.proxy, w.size)))
+}
+
+/// The owner hands holder `f` to another task (velt_rt's task/shared.rs `hand_over`): its
+/// holder role goes to a started promise of this task, which awaits the promise here and
+/// finishes with a share of the result that `transfer` moves or copies for the other task, so
+/// two tasks never use one result object, as on native targets.
+///
+/// # Safety
+/// `f` must be a live holder of a shared promise, owned by the caller; `transfer` must match
+/// its result.
+pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: ResultDropFn) {
+    if forwarded(f).is_some() {
+        return;
+    }
+    let h = hub(f);
+    on_its_task(&h);
+    let (size, result_drop) = {
+        let s = h.borrow();
+        (s.size, s.result_drop)
+    };
+    let role = new_handle(h.clone());
+    let state_size = size.max(8).next_multiple_of(16);
+    let mut state = vec![0u128; state_size / 16];
+    (state.as_mut_ptr() as *mut *mut VeltFut).write(role);
+    let proxy = super::boxed::velt_rt_fut_box(
+        proxy_poll,
+        proxy_drop,
+        state.as_ptr() as *const u8,
+        state_size as u64,
+        16,
+    );
+    let is_orig = orig_hub(f).is_some();
+    FORWARDS.with(|m| {
+        m.borrow_mut().insert(
+            f as usize,
+            Forward {
+                proxy,
+                size,
+                is_orig,
+                orig: None,
+            },
+        )
+    });
+    release(h, f);
+    super::local::velt_rt_fut_start(proxy, result_drop);
+    super::local::velt_rt_fut_transfer(proxy, transfer);
+}
+
+unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
+    let role = *(state as *mut *mut VeltFut);
+    if super::velt_rt_fut_poll(role, cx) != READY {
+        return PENDING;
+    }
+    let size = handle_hub(role).borrow().size;
+    std::ptr::copy_nonoverlapping(slot(role), state, size);
+    super::velt_rt_fut_drop(role);
+    READY
+}
+
+unsafe extern "C" fn proxy_drop(state: *mut u8) {
+    super::velt_rt_fut_drop(*(state as *mut *mut VeltFut));
 }
 
 /// `drop` of every holder: a handle also frees its own block.
 unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
+    if let Some(fwd) = FORWARDS.with(|m| m.borrow_mut().remove(&(f as usize))) {
+        super::velt_rt_fut_drop(fwd.proxy);
+        match fwd.orig {
+            Some((poll, orig_drop)) => {
+                (*f).poll = Wide(poll);
+                (*f).drop = Wide(orig_drop);
+                orig_drop(f);
+            }
+            None if fwd.is_orig => {}
+            None => {
+                let base = (f as *mut u8).sub(FRONT);
+                let h = (base as *mut HubRef).read();
+                let l = handle_layout(h.borrow().size);
+                drop(h);
+                std::alloc::dealloc(base, l);
+            }
+        }
+        return;
+    }
     if let Some(h) = orig_hub(f) {
         return release(h, f);
     }
@@ -144,7 +265,25 @@ unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
     std::alloc::dealloc(base, l);
 }
 
+/// Stop the program when the promise of `h` is used on another logical task than the one it is
+/// shared on (velt_rt's task/shared.rs `on_its_task`). Outside a task anything goes.
+fn on_its_task(h: &HubRef) {
+    let now = super::executor::logical_task();
+    if now == 0 {
+        return;
+    }
+    let mut s = h.borrow_mut();
+    if s.task == 0 {
+        s.task = now;
+    } else if s.task != now {
+        crate::panic::fatal(
+            "a promise shared on one task was used on another (`spawn`, a channel): awaiting a              shared promise from another task is not supported yet (#212); await it on its own              task and pass the result",
+        );
+    }
+}
+
 unsafe fn poll_holder(h: &HubRef, f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    on_its_task(h);
     let me = f as usize;
     let w = context(cx).waker().clone();
     if !h.borrow().done {
@@ -192,6 +331,7 @@ unsafe fn poll_holder(h: &HubRef, f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 unsafe fn release(h: HubRef, f: *mut VeltFut) {
+    on_its_task(&h);
     let me = f as usize;
     let mut s = h.borrow_mut();
     s.holders -= 1;
@@ -219,6 +359,17 @@ unsafe fn release(h: HubRef, f: *mut VeltFut) {
             d(result.as_mut_ptr() as *mut u8);
         }
     }
+    let kept = FORWARDS.with(|m| match m.borrow_mut().get_mut(&(orig as usize)) {
+        Some(w) => {
+            w.orig = Some((poll, drop_fn));
+            true
+        }
+        None => false,
+    });
+    if kept {
+        // Handed to another task: the holder there drops it.
+        return;
+    }
     (*orig).poll = Wide(poll);
     (*orig).drop = Wide(drop_fn);
     drop_fn(orig);
@@ -230,7 +381,15 @@ unsafe fn release(h: HubRef, f: *mut VeltFut) {
 /// # Safety
 /// `f` must be a live holder of a shared promise.
 pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
+    if let Some((p, size)) = forwarded(f) {
+        if super::local::velt_rt_fut_peek(p) == 0 {
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
+        return true;
+    }
     let h = hub(f);
+    on_its_task(&h);
     let s = h.borrow();
     if s.done {
         std::ptr::copy_nonoverlapping(s.result.as_ptr() as *const u8, slot(f), s.size);

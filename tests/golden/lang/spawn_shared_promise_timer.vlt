@@ -1,0 +1,22 @@
+// A timer callback capturing a shared promise (#212): the callback runs as a task of its own,
+// which awaiting the promise there is not supported for yet, so the runtime stops the program
+// instead of using the result from two threads.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function val(): Promise<Obj> {
+  await sleep(5);
+  return new Obj(7);
+}
+async function main() {
+  const p = val();
+  const q = p;
+  setTimeout(async () => {
+    console.log("t", (await q).n);
+  }, 20);
+  console.log("m", (await p).n);
+  await sleep(40);
+}

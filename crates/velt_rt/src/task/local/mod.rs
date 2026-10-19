@@ -99,12 +99,11 @@ fn current_set() -> *mut LocalSet {
     unsafe { *(*tcx).set }
 }
 
-/// Which task is being polled: the address of its set slot, fixed for the task's life (0 outside
-/// a task). Shared promises (task/shared.rs) check that they stay on one task.
-pub(crate) fn task_key() -> usize {
-    let tcx = CURRENT.with(Cell::get);
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
-    unsafe { tcx.as_ref() }.map_or(0, |t| t.set as usize)
+/// Which logical task is being polled (0 outside a task): its [`velt_rt_task_id`], never reused,
+/// and kept by the task's local promises when they outlive its root (the orphan task driving
+/// them has the same id). Shared promises (task/shared.rs) check that they stay on one task.
+pub(crate) fn task_key() -> u64 {
+    velt_rt_task_id()
 }
 
 /// The turn of the task being polled (0 outside a task).
@@ -451,6 +450,9 @@ fn current_set_or_new() -> *mut LocalSet {
 /// to transfer.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+    if crate::task::shared::is_shared(f) {
+        return crate::task::shared::hand_over(f, transfer);
+    }
     if crate::task::race::pass_transfer(f, transfer) {
         return;
     }
@@ -467,6 +469,11 @@ pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
         return crate::task::shared::peek(f) as u8;
     }
     node::peek(f) as u8
+}
+
+/// [`velt_rt_fut_peek`] of a promise that is not shared.
+pub(crate) unsafe fn peek_node(f: *mut VeltFut) -> bool {
+    node::peek(f)
 }
 
 /// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
