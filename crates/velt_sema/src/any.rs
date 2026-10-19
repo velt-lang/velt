@@ -139,11 +139,8 @@ impl Ctx<'_> {
             | TyKind::FnPtr { .. }
             | TyKind::Closure(_) => true,
             TyKind::Dyn(..) => self.dynamic(t) != Some(Dynamic::Unknown),
-            // A deferred intersection with a part whose values are objects (`{ value: T } &
-            // { $set(v: T): void }`, `T & object`): every instance's values are objects.
-            TyKind::Op(crate::hir::TyOp::Intersect, parts) => {
-                parts.iter().any(|&p| self.is_object_ty(p))
-            }
+            // A deferred intersection, through its parts (`Ctx::holds_objects`).
+            TyKind::Op(crate::hir::TyOp::Intersect, _) => self.holds_objects(t, &[]),
             TyKind::Adt(d, _) => {
                 if let Some((_, members)) = self.union_def(t) {
                     return members.iter().all(|m| self.is_object_ty(*m));

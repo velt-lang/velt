@@ -478,6 +478,7 @@ impl FnLower<'_, '_> {
                 self.move_into(o, out);
             }
             TyKind::Unit => self.any_nothing_into(hir::Nothing::Undefined, out),
+            TyKind::Never => self.terminate(Terminator::Unreachable),
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));

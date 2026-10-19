@@ -1059,10 +1059,11 @@ at a `number` is `PrimitiveSignal<number>`; `never & X` is `never`. In a generic
 `T & object` is `T` under a `T extends object` bound (an overload returning `Signal<T>` fits an
 implementation returning `Signal<T & object>`), and a value of `T & object` (or of an
 intersection with such a part) is an `object`, so it can be a `WeakMap` key. So is an
-intersection with a part that is an object type (`{ value: T } & { $set(v: T): void }`): it
-satisfies `T extends object`. `x as T & object`, for an `x` of a type parameter `T` without an
+intersection with a part that is an object type and no part that is a type parameter
+(`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
+with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`). `x as T & object`, for an `x` of a type parameter `T` without an
 `object` bound, is checked at run time: the value itself (not a copy) when it is an object, a
-`TypeError` when it is a primitive (TypeScript keeps such a value; write the cast after a test
+`TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
 that rules primitives out, as sigx's `signal` does). A generic alias used at
 type parameters (`Signal<{ value: V }>` in `function f<V>`) is the object type its intersection
 makes, as if written out. `Omit<T, never>` and `Pick<T, never>` name no fields.

@@ -185,13 +185,28 @@ impl Ctx<'_> {
         self.ty.intern(k)
     }
 
-    /// Is every value of `t` an object: an intersection with a part whose values are objects
-    /// (`object`, an object type, `{ value: T }`), or with a type parameter part in
-    /// `object_params` (`T extends object`)?
+    /// Is every value of `t` an object? An intersection is when a part is `object` or a type
+    /// parameter in `object_params` (`T extends object`), or when a part is an object type and
+    /// no part may be a primitive: `{ value: T } & { $set(v: T): void }` is, but
+    /// `T & { __brand: "Id" }` with an unbounded `T` is not (at `T = string` it is a branded
+    /// `string`).
     pub(crate) fn holds_objects(&self, t: TyId, object_params: &[u32]) -> bool {
+        use crate::any::Dynamic;
         match self.ty.kind(t) {
             TyKind::Op(TyOp::Intersect, parts) => {
-                parts.iter().any(|&p| self.holds_objects(p, object_params))
+                let closed = |cx: &Self, p: TyId| match cx.ty.kind(p) {
+                    TyKind::Param(n) => object_params.contains(n),
+                    TyKind::Op(TyOp::Intersect, _) => cx.holds_objects(p, object_params),
+                    _ => cx.dynamic(p) == Some(Dynamic::Object),
+                };
+                if parts.iter().any(|&p| closed(self, p)) {
+                    return true;
+                }
+                let open = |cx: &Self, p: TyId| {
+                    let p = cx.ty.opt_payload(p).unwrap_or(p);
+                    matches!(cx.ty.kind(p), TyKind::Param(_) | TyKind::Op(..))
+                };
+                !parts.iter().any(|&p| open(self, p)) && parts.iter().any(|&p| self.is_object_ty(p))
             }
             TyKind::Param(n) => object_params.contains(n),
             _ => self.is_object_ty(t),
