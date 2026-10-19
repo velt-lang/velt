@@ -511,6 +511,10 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   an internal error, and a base class value whose dynamic class is opaque (or holds an opaque
   value) is written as its static class (`json/dynamic.rs`). Other `private` fields are
   written, as in Node.
+- `AdtDef::declared_struct` (additive): the type is declared with `struct` (kind `Struct`,
+  but not a field-only interface or a struct sema made for an interface literal or a brand).
+  `Map` and `Set` keys of such a type compare (`Intrinsic::KeyEq`) and hash
+  (`Intrinsic::Hash`) by content, field by field; `===` still compares it by identity.
 - `AdtDef::to_string`, `to_json`, `inspect` (additive): a class's `toString()`, `toJSON()` and
   `__inspect()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
   instance methods with no type parameters of their own, neither async nor generators, that
@@ -536,7 +540,8 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   (`__intrinsic_eq`, `deepEqual`, `assertEq`). `Map` and `Set` keys compare with
   `Intrinsic::KeyEq` (`__intrinsic_key_eq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
-  identity). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
+  identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by
+  content, field by field). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
   number `NaN` equal to `NaN`). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
 

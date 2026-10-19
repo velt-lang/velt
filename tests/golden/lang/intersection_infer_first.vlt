@@ -1,0 +1,29 @@
+// check: no leaks
+// `T` inferred from a `Signal<T>` argument (`T & { $set: (v: T) => void }`, #1304) before a
+// literal is checked against it, whatever the argument order, as TypeScript infers it: the
+// object parts' fields fix `T`, so `{ st: "done", data: null }` is a `{ st: string; data:
+// number | null }`. Expected output: Node's.
+type Signal<T> = T & { $set: (v: T) => void };
+
+function reset<T extends object>(s: Signal<T>, v: T): void {
+  s.$set(v);
+}
+
+function resetLast<T extends object>(v: T, s: Signal<T>): void {
+  s.$set(v);
+}
+
+let got = "";
+const s: Signal<{ st: string; data: number | null }> = {
+  st: "idle",
+  data: 1,
+  $set: (v) => {
+    got = `${v.st} ${v.data}`;
+  },
+};
+reset(s, { st: "done", data: null });
+console.log(got);
+resetLast({ st: "again", data: 2 }, s);
+console.log(got);
+resetLast({ st: "last", data: null }, s);
+console.log(got, s.st, s.data);

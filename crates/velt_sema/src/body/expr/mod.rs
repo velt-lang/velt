@@ -3,6 +3,7 @@
 
 mod access;
 mod accessor_rmw;
+mod arg_order;
 mod args;
 mod array_ctor;
 mod assign;
@@ -96,6 +97,7 @@ mod record_literal;
 mod record_logical;
 mod regex_args;
 mod setters;
+mod simd_call;
 mod spread;
 mod spread_args;
 mod spread_array;

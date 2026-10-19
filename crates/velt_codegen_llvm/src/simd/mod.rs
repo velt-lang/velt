@@ -3,7 +3,7 @@
 //! LLVM vector instruction or intrinsic, and reinterprets the result back. After inlining
 //! nothing of the helper or the reinterpretation is left.
 
-use velt_vir::simd::{Lanes, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, Lanes, Op, SimdCall};
 use velt_vir::vir::Ty;
 
 use crate::types::{abi_ret, abi_type};
@@ -188,6 +188,9 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         Op::WidenLow | Op::WidenHigh => return Some(widen(b, lanes, op == Op::WidenHigh)),
         Op::Narrow => return Some(narrow(b, lanes)),
         Op::Convert(to) => return Some(convert(b, lanes, to)),
+        // Byte shuffles: the helper's own `<16 x i8>` arguments, nothing to reinterpret.
+        Op::ReverseBytes => return Some(byte_shuffle(b, &reversed_bytes(lanes), false)),
+        Op::Shuffle(mask) => return Some(byte_shuffle(b, &mask, true)),
         Op::Splat => splat(b, lanes, "%a0"),
         Op::Index => index(b, lanes),
         Op::Load => {
@@ -208,6 +211,16 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op) -> Option<String> {
         }
     };
     Some(b.bytes(&value, &ty))
+}
+
+/// The bytes `mask` picks from the arguments (`%a0` followed by `%a1`, or only `%a0`).
+fn byte_shuffle(b: &mut Body, mask: &[u8; 16], two: bool) -> String {
+    let picks: Vec<String> = mask.iter().map(|m| format!("i32 {m}")).collect();
+    let second = if two { "%a1" } else { "poison" };
+    b.inst(format!(
+        "shufflevector <16 x i8> %a0, <16 x i8> {second}, <16 x i32> <{}>",
+        picks.join(", ")
+    ))
 }
 
 /// The vector whose lanes are their own indices.

@@ -57,6 +57,7 @@ mod infer;
 mod inst_sites;
 mod instantiation_cycles;
 mod interface_merge;
+mod intersection_members;
 mod intersections;
 mod js_api;
 mod json;
