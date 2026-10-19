@@ -601,11 +601,11 @@ impl Moves<'_> {
         let d = Diagnostic::error(format!("use of moved value `{name}`"), span);
         if self.promise.get(i).copied().unwrap_or(false) {
             let d = match moved_at {
-                Some((at, _)) => d.with_label(at, "the promise was taken here"),
+                Some((at, _)) => d.with_label(at, "the promise moved here"),
                 None => d,
             };
             return d.with_note(format!(
-                "a promise has one consumer in Velt: `then`, `catch`, `finally`, `await` and the combinators each take it, while TypeScript lets several share one promise; chain the calls (`{name}.then(f).then(g)`), or keep the promise `then` returns and use that"
+                "a promise passed to a spawned call moves to the new task: a promise is awaited on one task (awaiting it from several tasks is planned, #212); await `{name}` on one task and pass its result to the other"
             ));
         }
         match moved_at {

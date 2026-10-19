@@ -1,0 +1,14 @@
+// A promise passed into a spawned call moves to the new task (a shared promise is awaited on
+// one task, #212): awaiting it afterwards is a use of a moved value.
+async function work(): Promise<number> {
+  return 1;
+}
+async function fire(p: Promise<number>): Promise<void> {
+  console.log(await p);
+}
+async function main() {
+  const p = work();
+  const t = spawn(fire(p));
+  console.log(await p);
+  await t;
+}
