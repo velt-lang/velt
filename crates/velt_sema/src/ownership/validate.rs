@@ -102,7 +102,6 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
             super::shares::share_captures(cx, c, &pinned);
         }
     }
-    fn_values(cx);
 }
 
 /// Of the captures an async closure deep-copies (`deep_copies`: the copy's span and type),
@@ -365,48 +364,4 @@ fn array_move(span: Span) -> Diagnostic {
         span,
     )
     .with_note("elements stay owned by the array; `xs[i].clone()` makes an owned copy")
-}
-
-/// Function values borrow their arguments; the value's thunk takes another reference to the
-/// ones a function owns (#224), which a value holding a promise (one owner) cannot give. A
-/// generic function is checked at its type arguments; a parameter type that still mentions a
-/// type parameter (a value taken inside a generic function) may hold a promise, so it is
-/// rejected.
-fn fn_values(cx: &mut Ctx) {
-    let values = cx.fn_values.clone();
-    for (d, args, span) in values {
-        let params: Vec<(String, TyId)> = cx
-            .fn_info(d)
-            .params
-            .iter()
-            .filter(|p| p.mode == PassMode::Owned)
-            .map(|p| (p.name.clone(), p.ty))
-            .collect();
-        let mut found = None;
-        for (pname, t) in params {
-            let t = cx.subst(t, &args);
-            if cx.mentions_params(t) {
-                found = Some((
-                    pname,
-                    "its type depends on a type parameter, which may be a promise",
-                ));
-                break;
-            }
-            if !cx.is_copy(t) && !cx.is_shared_value(t) {
-                found = Some((pname, "a promise has one owner"));
-                break;
-            }
-        }
-        let Some((pname, why)) = found else {
-            continue;
-        };
-        let fname = cx.fn_info(d).name.clone();
-        cx.error(
-            Diagnostic::error(
-                format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
-                span,
-            )
-            .with_note(format!("function values borrow their arguments, and {why}; call the function directly")),
-        );
-    }
 }

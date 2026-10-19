@@ -1,6 +1,7 @@
-// A closure created inside another closure assigns a captured promise: a promise cannot live in
-// a shared variable, so this is one error (not also a move of `p` out of the closure and a use
-// of `p` after it moved).
+// check: no leaks
+// A closure created inside another closure assigns a captured promise. A promise is a shared
+// value (#212), so the variable lives in a shared cell like any other: `main` awaits the promise
+// the inner closure stored (as in Node).
 async function main() {
   let p: Promise<number> = Promise.resolve(1);
   const f = () => {

@@ -1,6 +1,6 @@
-// A named function can be a function value even when it keeps its object arguments (#224), but
-// not when a parameter takes ownership of a promise: function values borrow their arguments,
-// and a promise has one owner.
+// check: no leaks
+// A named function that takes ownership of a promise used as a function value (#224): the
+// value's thunk passes it another holder of the caller's promise (#212).
 
 async function wait(p: Promise<i64>): Promise<i64> {
   return await p;

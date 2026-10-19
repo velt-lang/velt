@@ -1,7 +1,7 @@
-// A generic function is checked as a function value at its type arguments (#224): `keep<T>`
-// keeps its argument, so at `T = Promise<i64>` it would take a second reference to a promise
-// (one owner). Inside a generic function the argument type still depends on a type parameter,
-// which may be a promise.
+// check: no leaks
+// A generic function used as a function value (#224) at a promise type: the value's thunk takes
+// another reference to the argument, which for a promise is another holder of it (#212). Inside
+// a generic function the argument type still depends on a type parameter.
 
 function keep<T>(x: T): T[] {
   return [x];
