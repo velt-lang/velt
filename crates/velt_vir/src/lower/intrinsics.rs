@@ -172,7 +172,11 @@ impl FnLower<'_, '_> {
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
-                let c = self.share_value(v, t);
+                // Another reference to a frozen value would count it: a copy (frozen.rs).
+                let c = match self.frozen_root(a) {
+                    true => self.clone_value(v, t),
+                    false => self.share_value(v, t),
+                };
                 self.own_value(c, t)
             }
             (I::Eq, [a, b]) => {

@@ -29,26 +29,10 @@ impl FnLower<'_, '_> {
         {
             return self.shared_read_owned(&args[0]);
         }
-        // A part of a value inside a `shared` box, consumed: other tasks still read it, so the
-        // consumer gets a deep copy of the part, read in place (#36).
-        if frozen_part(e) {
-            // Read with the part's own use borrowed: a move would leave the all-zero value in
-            // the box, which other tasks are reading.
-            let mut read = e.clone();
-            match &mut read.kind {
-                K::Field { mode, .. }
-                | K::Index { mode, .. }
-                | K::UnwrapSome(_, mode)
-                | K::UnwrapVariant { mode, .. } => *mode = UseMode::Borrow,
-                _ => {}
-            }
-            let v = self.expr(&read);
-            // A part holding counted objects was copied already (`frozen_part_read`).
-            if let Operand::Copy(p) = &v {
-                if self.take_temp(&p.clone()) {
-                    return v;
-                }
-            }
+        // A frozen value or a part of one, consumed: other tasks still read it, so the consumer
+        // gets a deep copy, read in place (frozen.rs).
+        if self.frozen_root(e) {
+            let v = self.frozen_read(e);
             let ty = self.sub(e.ty);
             return self.clone_value(v, ty);
         }
@@ -628,27 +612,5 @@ fn float_to_int(v: f64, to: Ty) -> i128 {
         0
     } else {
         (v as i128).clamp(lo, hi)
-    }
-}
-
-/// Is `e` a field, element or payload of a value read out of a `shared<T>`
-/// (`Intrinsic::SharedRead`)?
-pub(super) fn frozen_part(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Field { base, .. }
-        | K::Index { base, .. }
-        | K::UnwrapSome(base, _)
-        | K::UnwrapVariant { expr: base, .. }
-        | K::Downcast(base) => {
-            matches!(
-                base.kind,
-                K::Call {
-                    callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
-                    ..
-                }
-            ) || frozen_part(base)
-        }
-        _ => false,
     }
 }

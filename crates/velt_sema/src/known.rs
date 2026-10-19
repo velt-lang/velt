@@ -267,6 +267,10 @@ impl Ctx<'_> {
         if !seen.insert(t) {
             return true;
         }
+        // `any` / `unknown` may hold anything at run time.
+        if self.dynamic(t).is_some() {
+            return false;
+        }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Shared(_) => return true,
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Promise(..) | TyKind::Param(_) => {

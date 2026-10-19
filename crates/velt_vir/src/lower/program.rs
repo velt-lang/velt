@@ -247,6 +247,7 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::EnvClone(d, _)
         | Work::EnvTransfer(d, _)
         | Work::Tracked(d, _, _)
+        | Work::Frozen(d, _, _, _)
         | Work::Poll(d, _)
         | Work::AsyncDrop(d, _)
         | Work::AsyncCloseStart(d, _)

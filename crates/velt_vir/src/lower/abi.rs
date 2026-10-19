@@ -61,6 +61,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             throws: None,
             div_zero_bbs: vec![],
             ref_bindings: FxHashSet::default(),
+            frozen: FxHashSet::default(),
+            frozen_args: false,
+            proj_hold: None,
+            frozen_binds: false,
             scope_ends: FxHashMap::default(),
             asyncx: None,
             lazy_call: false,
@@ -90,8 +94,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn build(cx: &'c mut Cx<'h>, work: &Work) -> Function {
         match work {
-            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None),
-            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at)),
+            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0),
+            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0),
+            Work::Frozen(def, targs, mask, at) => Self::lower_fn(cx, *def, targs, *at, *mask),
             Work::Glue(g, t) => Self::build_glue(cx, *g, *t),
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
@@ -153,11 +158,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         def: DefId,
         targs: &[TyId],
         caller: Option<SrcLoc>,
+        frozen: u64,
     ) -> Function {
         let hir_prog = cx.hir;
         let hir::Def::Fn(f) = hir_prog.def(def) else {
             ice("function instance is not a Def::Fn")
         };
+        if frozen != 0 && (f.is_generator || f.is_async) {
+            ice("a frozen instance of an async function or generator");
+        }
         if f.is_generator {
             return Self::build_gen_fn(cx, def, targs);
         }
@@ -181,6 +190,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
+        // Bit `i`: `params[i]`, whose leading entries are the captures (bound to their inner
+        // locals).
+        lw.frozen = (0..f.params.len().min(64))
+            .filter(|i| frozen & (1 << i) != 0)
+            .map(|i| match f.captures.get(i) {
+                Some(c) => c.inner,
+                None => f.params[i].local,
+            })
+            .collect();
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
             for p in &f.params {
@@ -194,6 +212,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if let Some(at) = caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
             symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col));
+        }
+        if frozen != 0 {
+            // `_Z` follows no mangled name, list or `_L` suffix either.
+            symbol.push_str(&format!("_Z{frozen:x}"));
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;

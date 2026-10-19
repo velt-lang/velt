@@ -1,0 +1,93 @@
+// check: no leaks
+// A `shared<T>` whose `T` holds counted objects (`Item` and `string[]` are shared between
+// variables below), read by several tasks at once through ordinary functions (#36, #708): each
+// call goes to an instance that neither changes nor counts the shared value, so nothing races
+// on its reference counts. Covers calls, `Map.get`, `switch` arms, closures, `const` bindings
+// by reference, owned params (which get copies) and identity.
+type Shape = { kind: "box"; side: i64 } | { kind: "bag"; items: string[] };
+
+class Item {
+  id: i64;
+  name: string;
+  tags: string[];
+  shape: Shape;
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+    this.tags = [name, "all"];
+    this.shape = id % 2 == 0 ? { kind: "box", side: id } : { kind: "bag", items: [name] };
+  }
+}
+
+class Store {
+  items: Item[] = [];
+  byName: Map<string, Item> = new Map<string, Item>();
+
+  add(i: Item) {
+    this.items.push(i);
+    this.byName.set(i.name, i);
+  }
+}
+
+function weight(s: Shape): i64 {
+  switch (s.kind) {
+    case "box":
+      return s.side;
+    case "bag":
+      return s.items.length as i64;
+  }
+}
+
+function score(i: Item): i64 {
+  const tags = i.tags;
+  return i.id + (tags.length as i64) + weight(i.shape);
+}
+
+// Keeps its argument: gets a copy, and changing it changes nothing shared.
+function renamed(i: Item): Item {
+  i.name = "x";
+  return i;
+}
+
+function total(s: Store, first: Item): i64 {
+  let t: i64 = 0;
+  for (const i of s.items) {
+    t += score(i);
+    if (i === first) {
+      t += 1000;
+    }
+  }
+  t += s.items.filter((i) => i.id % 3 == 0).length as i64;
+  t += s.items.map((i) => i.tags.length).length as i64;
+  const found = s.byName.get("n7");
+  if (found != null) {
+    t += found.id;
+  }
+  const r = renamed(s.items[0]);
+  t += r.name.length as i64;
+  return t;
+}
+
+async function work(s: shared<Store>, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let r: i64 = 0; r < rounds; r++) {
+    t += total(s, s.items[0]);
+  }
+  return t;
+}
+
+async function main() {
+  const st = new Store();
+  for (let i: i64 = 0; i < 40; i++) {
+    st.add(new Item(i, `n${i}`));
+  }
+  const alias = st.items;
+  console.log(alias.length);
+  const s = shared(st);
+  const tasks: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    tasks.push(spawn(work(s, 50)));
+  }
+  const rs = await Promise.all(tasks);
+  console.log(rs[0], rs.every((r) => r == rs[0]), s.items[0].name, s.byName.size);
+}
