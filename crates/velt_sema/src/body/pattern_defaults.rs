@@ -419,10 +419,14 @@ fn call(callee: Expr, args: Vec<Expr>) -> Expr {
 /// The callee of `#undefined_or(value, default)`: `value`, or `default` where it is
 /// `undefined` (not `null`, which a default never replaces). The name can't be written in
 /// source; sema checks the call as `FnCx::undefined_or`.
-pub(super) const UNDEFINED_OR: &str = "#undefined_or";
+pub(crate) const UNDEFINED_OR: &str = "#undefined_or";
 
-/// A destructuring default: `#undefined_or(lhs, rhs)`.
+/// A destructuring default: `#undefined_or(lhs, rhs)`; `lhs` itself for a default of
+/// `undefined` (a destructuring assignment binds its places so, `assign_pattern.rs`).
 fn nullish(lhs: Expr, rhs: Expr) -> Expr {
+    if matches!(rhs.kind, E::Lit(ast::Lit::Undefined)) {
+        return lhs;
+    }
     let span = lhs.span;
     call(
         mk(E::Ident(ident(UNDEFINED_OR, span)), span),

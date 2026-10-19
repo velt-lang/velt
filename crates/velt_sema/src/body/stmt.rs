@@ -213,7 +213,13 @@ impl FnCx<'_, '_> {
 
     /// Expression in statement position (value discarded).
     pub fn expr_stmt(&mut self, e: &ast::Expr) -> hir::Expr {
+        let unit = Some(self.cx.ty.unit);
         match &e.kind {
+            ast::ExprKind::Update { .. } | ast::ExprKind::Assign { op: Some(_), .. }
+                if self.late_let_rmw(e) =>
+            {
+                self.expr(e, unit, Want::Borrow)
+            }
             ast::ExprKind::Update { op, prefix, target } => {
                 self.update(*op, *prefix, target, false, e.span)
             }

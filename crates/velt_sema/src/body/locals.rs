@@ -163,6 +163,11 @@ impl FnCx<'_, '_> {
 
     /// A local visible here: the current frame's, or one of an enclosing function (which is then
     /// captured by every closure frame in between).
+    /// Is `name` a local of this function's frame (no capture is recorded)?
+    pub(crate) fn declares_here(&self, name: &str) -> bool {
+        frame_lookup(&self.f, name).is_some()
+    }
+
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
             if !self.f.late.caps.is_empty() {

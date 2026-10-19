@@ -41,18 +41,48 @@ pub(super) fn cover_init(p: &ast::ObjectProp) -> Option<(&ast::Ident, &ast::Expr
     }
 }
 
+/// One place a destructuring assignment writes, in order (module docs).
+struct Step {
+    /// The hidden variable holding the value for the place.
+    name: String,
+    /// The place (a variable, field or element), or a nested pattern with a default, which is
+    /// taken apart from the hidden variable when its turn comes.
+    place: ast::Expr,
+    /// The default, applied when the hidden variable is `undefined`.
+    default: Option<ast::Expr>,
+}
+
 /// A target turned into a pattern: the pattern, and the places its hidden variables go to.
 struct Split {
-    places: Vec<(String, ast::Expr)>,
+    steps: Vec<Step>,
     at: u32,
 }
 
 impl Split {
-    fn hidden(&mut self, place: &ast::Expr) -> ast::Pattern {
-        let name = format!("<destructured {} {}>", self.at, self.places.len());
+    fn hidden(&mut self, place: &ast::Expr, default: Option<&ast::Expr>) -> ast::Pattern {
+        let name = format!("<destructured {} {}>", self.at, self.steps.len());
         let span = place.span;
-        self.places.push((name.clone(), place.clone()));
-        pattern_of(ast::PatternKind::Ident(ident(&name, span)), span)
+        self.steps.push(Step {
+            name: name.clone(),
+            place: place.clone(),
+            default: default.cloned(),
+        });
+        let id = pattern_of(ast::PatternKind::Ident(ident(&name, span)), span);
+        match default {
+            // Bound as `T | undefined` (a default of `undefined`); the real default is applied
+            // when the place is assigned, after the places before it.
+            Some(d) => {
+                let undefined = expr_of(ast::ExprKind::Lit(ast::Lit::Undefined), d.span);
+                pattern_of(
+                    ast::PatternKind::Default {
+                        pattern: Box::new(id),
+                        value: Box::new(undefined),
+                    },
+                    span,
+                )
+            }
+            None => id,
+        }
     }
 
     /// The pattern for target `t`, or `None` for a target no pattern can express.
@@ -60,15 +90,25 @@ impl Split {
         use ast::ExprKind as E;
         let kind = match &t.kind {
             E::Paren(inner) => return self.pattern(inner),
-            E::Ident(_) | E::Member { .. } | E::Index { .. } => return Some(self.hidden(t)),
+            E::Ident(_) | E::Member { .. } | E::Index { .. } => return Some(self.hidden(t, None)),
             E::Assign {
                 op: None,
                 target,
                 value,
-            } => ast::PatternKind::Default {
-                pattern: Box::new(self.pattern(target)?),
-                value: value.clone(),
-            },
+            } => {
+                let mut inner = &**target;
+                while let E::Paren(x) = &inner.kind {
+                    inner = x;
+                }
+                return match &inner.kind {
+                    E::Ident(_)
+                    | E::Member { .. }
+                    | E::Index { .. }
+                    | E::Array(_)
+                    | E::Object(_) => Some(self.hidden(inner, Some(value))),
+                    _ => None,
+                };
+            }
             E::Array(items) => {
                 let mut elems = vec![];
                 let mut rest = None;
@@ -76,6 +116,9 @@ impl Split {
                     match &x.kind {
                         E::Spread(r) if i + 1 == items.len() => {
                             rest = Some(self.rest(r)?);
+                        }
+                        _ if is_hole(x) => {
+                            elems.push(pattern_of(ast::PatternKind::Wildcard, x.span))
                         }
                         _ => elems.push(self.pattern(x)?),
                     }
@@ -89,25 +132,15 @@ impl Split {
                     match p {
                         _ if cover_init(p).is_some() => {
                             let (k, value) = cover_init(p)?;
-                            let ast::ObjectProp::KeyValue(_, v) = p else {
-                                return None;
-                            };
-                            let ast::ExprKind::Assign { target, .. } = &v.kind else {
-                                return None;
-                            };
-                            let inner = self.hidden(target);
-                            let kind = ast::PatternKind::Default {
-                                pattern: Box::new(inner),
-                                value: Box::new(value.clone()),
-                            };
-                            fields.push((k.clone(), pattern_of(kind, v.span)));
+                            let place = expr_of(E::Ident(k.clone()), k.span);
+                            fields.push((k.clone(), self.hidden(&place, Some(value))));
                         }
                         ast::ObjectProp::KeyValue(k, v) => {
                             fields.push((k.clone(), self.pattern(v)?))
                         }
                         ast::ObjectProp::Shorthand(k) => {
                             let place = expr_of(E::Ident(k.clone()), k.span);
-                            fields.push((k.clone(), self.hidden(&place)));
+                            fields.push((k.clone(), self.hidden(&place, None)));
                         }
                         ast::ObjectProp::Spread(r) if i + 1 == props.len() => {
                             rest = Some(self.rest(r)?);
@@ -130,6 +163,11 @@ impl Split {
             _ => None,
         }
     }
+}
+
+/// Is `x` a hole of an array target (`[a, , b]`)?
+fn is_hole(x: &ast::Expr) -> bool {
+    matches!(&x.kind, ast::ExprKind::Ident(i) if i.name == velt_syntax::ARRAY_HOLE)
 }
 
 fn ident(name: &str, span: Span) -> ast::Ident {
@@ -178,7 +216,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let mut split = Split {
-            places: vec![],
+            steps: vec![],
             at: span.lo,
         };
         let pattern = match split.pattern(inner) {
@@ -192,7 +230,7 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
         };
-        let mut stmts = vec![ast::Stmt {
+        let decl = ast::Stmt {
             kind: ast::StmtKind::Var(ast::VarDecl {
                 kind: ast::VarKind::Const,
                 pattern,
@@ -201,23 +239,39 @@ impl FnCx<'_, '_> {
                 span,
             }),
             span,
-        }];
-        for (name, place) in &split.places {
-            let read = expr_of(ast::ExprKind::Ident(ident(name, place.span)), place.span);
-            let assign = ast::ExprKind::Assign {
-                op: None,
-                target: Box::new(place.clone()),
-                value: Box::new(read),
-            };
-            stmts.push(ast::Stmt {
-                kind: ast::StmtKind::Expr(expr_of(assign, place.span)),
-                span: place.span,
-            });
-        }
+        };
         let mut out = vec![];
         self.push_scope();
-        for s in &stmts {
-            self.stmt(s, &mut out);
+        self.stmt(&decl, &mut out);
+        for step in &split.steps {
+            // The pattern did not take the value apart (reported): nothing to assign.
+            if !self.declares_here(&step.name) {
+                continue;
+            }
+            let at = step.place.span;
+            let mut read = expr_of(ast::ExprKind::Ident(ident(&step.name, at)), at);
+            if let Some(d) = &step.default {
+                let callee = ast::ExprKind::Ident(ident(crate::body::UNDEFINED_OR, at));
+                read = expr_of(
+                    ast::ExprKind::Call {
+                        callee: Box::new(expr_of(callee, at)),
+                        type_args: vec![],
+                        args: vec![read, d.clone()],
+                        optional: false,
+                    },
+                    at,
+                );
+            }
+            let assign = ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(step.place.clone()),
+                value: Box::new(read),
+            };
+            let s = ast::Stmt {
+                kind: ast::StmtKind::Expr(expr_of(assign, at)),
+                span: at,
+            };
+            self.stmt(&s, &mut out);
         }
         self.pop_scope();
         let block = hir::Block {
@@ -228,15 +282,34 @@ impl FnCx<'_, '_> {
         Some(self.mk(H::Block(block), self.cx.ty.unit, span))
     }
 
-    /// `{ a = 1 }` outside an assignment pattern (module docs): TypeScript's TS1312.
-    pub(super) fn reject_cover_inits(&mut self, props: &[ast::ObjectProp]) {
+    /// `{ a = 1 }` outside an assignment pattern (module docs): TypeScript's TS1312. The
+    /// properties with each such one as `a: <error>`, so nothing more is reported for it; `None`
+    /// when there is none.
+    pub(super) fn reject_cover_inits(
+        &mut self,
+        props: &[ast::ObjectProp],
+    ) -> Option<Vec<ast::ObjectProp>> {
+        if !props.iter().any(|p| cover_init(p).is_some()) {
+            return None;
+        }
+        let mut out = vec![];
         for p in props {
-            if let Some((k, _)) = cover_init(p) {
-                self.cx.err(
-                    "`=` after a shorthand property is only allowed in a destructuring assignment (`({ a = 1 } = o)`); did you mean `:`? (TypeScript's TS1312)",
-                    k.span,
-                );
+            match cover_init(p) {
+                Some((k, _)) => {
+                    self.cx.err(
+                        "`=` after a shorthand property is only allowed in a destructuring assignment (`({ a = 1 } = o)`); did you mean `:`? (TypeScript's TS1312)",
+                        k.span,
+                    );
+                    let err = expr_of(ast::ExprKind::Ident(ident(REPORTED, k.span)), k.span);
+                    out.push(ast::ObjectProp::KeyValue(k.clone(), err));
+                }
+                None => out.push(p.clone()),
             }
         }
+        Some(out)
     }
 }
+
+/// The name of an expression already reported, checked as an error without a message (no
+/// source can write it).
+pub(super) const REPORTED: &str = "#reported";

@@ -17,6 +17,15 @@ mod work;
 
 use std::collections::HashMap;
 
+/// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
+/// prints as nothing and no source can name it. Only a destructuring assignment target takes
+/// one (`[a, , b] = xs`).
+pub const ARRAY_HOLE: &str = "";
+
+/// The name of the hidden loop variable of `for (target of xs)` (a target declared elsewhere),
+/// assigned to the target first thing in the body; no source can name it.
+pub const FOR_TARGET: &str = "#of";
+
 use velt_common::{Diagnostics, FileId};
 
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level

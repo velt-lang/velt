@@ -792,8 +792,9 @@ function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
   }
 }
 
-// Kept last, so the lines above keep their numbers in panic locations.
 extend<T> Array<T> {
+  // Kept last, so the lines above keep their numbers in panic locations.
+
   /**
    * `this[index]` read where the program expects `T | undefined` (the compiler calls it, sema
    * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
