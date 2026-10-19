@@ -302,7 +302,9 @@ value or for literals of different types). Objects built without it don't have i
 `console.log` shows it only where it is set, spreads copy it, `VNODE in v` tests it, and it is
 read and written through `any` (`(v as any)[VNODE] === true`, `(v as any)[VNODE] = true` on an
 object of a type that has the field). The key is resolved in the module of the literal, so the
-type may be declared where `VNODE` is not imported.
+type may be declared where `VNODE` is not imported. Reading such a key through `any` from a
+value without fields (a string, number, boolean, array or function) gives `undefined`, as in
+Node.
 
 ```ts
 const BRAND: unique symbol = Symbol("brand");
@@ -1820,7 +1822,8 @@ tests it for a key the copy left out, since Node would find it on the original. 
 field of a dynamic type (`b?: any`, `b?: unknown`) holds its own `undefined` and keeps no
 presence flag, while Node also finds a key that holds `undefined`. So a program that tests such
 a field with `in` and somewhere stores a value that may be `undefined` in a field of that name
-(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`) is an error
+(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, also an `any`
+or `unknown` value, which may hold `undefined`, stored in a `b?: any` field) is an error
 (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the first such
 store and says how many others there are): store the value only when there is one
 (`if (v !== undefined) o.b = v`), or test the value (`o.b !== undefined`). A primitive

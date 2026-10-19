@@ -181,8 +181,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
-    /// ones it leaves absent.
     /// Does the copy have the source's fields (`copied`, in the expected type's order), in the
     /// source's order, each of the same type (no nested copy)?
     fn in_order(&self, from: TyId, copied: &[String], slots: &[Slot]) -> bool {
@@ -197,6 +195,8 @@ impl FnCx<'_, '_> {
             && (slots.iter()).all(|s| !matches!(s, Slot::Field { from, to, .. } if from != to))
     }
 
+    /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
+    /// ones it leaves absent.
     fn copied_names(&self, exp: TyId, slots: &[Slot]) -> (Vec<String>, Vec<String>) {
         let (mut copied, mut absent) = (vec![], vec![]);
         let TyKind::Adt(d, _) = self.cx.ty.kind(exp) else {

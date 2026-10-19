@@ -16,6 +16,9 @@
 //! - a field an object literal fills from something else that may be null (a spread of a
 //!   `b: T | null` field).
 //!
+//! A dynamic value (`any`, `unknown`) may hold `undefined`, so storing one in a `b?: any` field
+//! is a store; a typed value boxed into it is one only when the typed value may be null.
+//!
 //! A value of a type without null, a field left out and the same optional field copied from
 //! another object by a spread or a conversion (absent there, absent here) are not stores.
 
@@ -23,6 +26,7 @@ use std::collections::HashSet;
 
 use velt_common::{Diagnostic, Span};
 
+use crate::any::Dynamic;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, TyId, TyKind, UseMode};
@@ -157,8 +161,13 @@ impl<'a, 'm> Walk<'a, 'm> {
                     let Some(name) = self.watched_field(*def, i as u32) else {
                         continue;
                     };
-                    // A field left out (a `null` the program wrote is `Copies::null_literals`).
-                    if !matches!(v.kind, E::Lit(Lit::Null)) && self.may_be_null(v, name, true) {
+                    // A field left out, also a `b?: any` one (the dynamic `undefined`); a
+                    // `null` the program wrote is `Copies::null_literals`.
+                    let left_out = match &v.kind {
+                        E::ToDyn { expr, .. } => matches!(expr.kind, E::Lit(Lit::Null)),
+                        k => matches!(k, E::Lit(Lit::Null)),
+                    };
+                    if !left_out && self.may_be_null(v, name, true) {
                         self.stores.push((name.to_string(), v.span));
                     }
                 }
@@ -209,6 +218,8 @@ impl<'a, 'm> Walk<'a, 'm> {
     fn may_be_null(&self, v: &Expr, name: &str, copies: bool) -> bool {
         match &v.kind {
             E::WrapSome(inner) => self.nullable(inner.ty),
+            // A typed value boxed into `any`: null only when it may be.
+            E::ToDyn { expr, .. } => self.may_be_null(expr, name, copies),
             E::Field { base, index, .. } if copies => self.watched(base.ty, *index) != Some(name),
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Share | Intrinsic::Clone),
@@ -226,9 +237,11 @@ impl<'a, 'm> Walk<'a, 'm> {
         }
     }
 
-    /// May a value of type `t` be null (a type parameter may stand for a nullable type)?
+    /// May a value of type `t` be null (a type parameter may stand for a nullable type, and a
+    /// dynamic value may hold `undefined`)?
     fn nullable(&self, t: TyId) -> bool {
         self.cx.ty.opt_payload(t).is_some()
+            || matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
             || matches!(self.cx.ty.kind(t), TyKind::Param(_) | TyKind::Error)
     }
 }

@@ -488,10 +488,38 @@ impl FnLower<'_, '_> {
                 self.any_box_into(f, f64_, &outp);
                 self.ret_status(ST_OK);
                 self.switch_to(next);
+                self.program_symbol_undefined(key, &outp);
                 self.ret_status(ST_UNSUPPORTED);
             }
-            _ => self.ret_status(ST_UNSUPPORTED),
+            _ => {
+                self.program_symbol_undefined(key, &outp);
+                self.ret_status(ST_UNSUPPORTED);
+            }
         }
+    }
+
+    /// A key naming a symbol the program made (U+FFFF first, `symbols.rs` in sema) on a value
+    /// without fields (a string, number, boolean, array, function, ...): no such property, so
+    /// `undefined`, as Node reads a brand from a primitive. Continues in the block for another
+    /// key.
+    fn program_symbol_undefined(&mut self, key: vir::Local, out: &Place) {
+        let k = Operand::Copy(Place::local(key));
+        let unit = Place::local(self.temp(Ty::I64));
+        self.call_rt(
+            Rt::StrCharCodeAt,
+            vec![k, cint(0, Ty::I64)],
+            Some(unit.clone()),
+        );
+        let m = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(unit), cint(0xffff, Ty::I64)),
+        );
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(m, yes, no);
+        self.switch_to(yes);
+        self.any_nothing_into(Nothing::Undefined, out);
+        self.ret_status(ST_OK);
+        self.switch_to(no);
     }
 
     /// `r[key]` on a `Record<string, V>`: its `__get` (a missing key is `undefined`). A record

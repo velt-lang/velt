@@ -9,6 +9,7 @@ use velt_syntax::ast;
 
 use super::mixed_array::first_typed_elem;
 use super::setters::synth;
+use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::defs::FieldInfo;
@@ -285,12 +286,22 @@ impl FnCx<'_, '_> {
         if !watched {
             return h;
         }
-        let given = match &h.kind {
-            H::WrapSome(inner) => inner.ty,
-            _ => h.ty,
+        // A typed value boxed into `any` is null only when the typed value may be; another
+        // dynamic value may hold `undefined`.
+        let v = match &h.kind {
+            H::ToDyn { expr, .. } => &**expr,
+            _ => &h,
         };
-        let nullable = matches!(h.kind, H::Lit(hir::Lit::Null))
+        let given = match &v.kind {
+            H::WrapSome(inner) => inner.ty,
+            _ => v.ty,
+        };
+        let nullable = matches!(v.kind, H::Lit(hir::Lit::Null))
             || self.cx.ty.opt_payload(given).is_some()
+            || matches!(
+                self.cx.dynamic(given),
+                Some(Dynamic::Any | Dynamic::Unknown)
+            )
             || matches!(self.cx.ty.kind(given), TyKind::Param(_));
         if nullable {
             let store = (name.name.clone(), h.span);
