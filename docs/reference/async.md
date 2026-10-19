@@ -253,7 +253,8 @@ before it closes the body), except for calls queued behind a running one: such a
 step later than in Node, and the code after an `await` of an earlier call can run after it
 rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
 task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
-`resolve` called later resumes its waiters at the executor's next step.
+`resolve` called later resumes its waiters at the executor's next step, and so does a shared promise
+that settles (its other awaiters can run after callbacks queued later than in Node).
 
 ```ts
 class Failed extends Error {}

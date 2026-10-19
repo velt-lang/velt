@@ -21,13 +21,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), and a
-/// `resolve` called later resumes its waiters at the executor's next step instead of queueing
-/// them as microtasks (docs/reference/async.md).
+/// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
+/// next step instead of queueing them as microtasks (docs/reference/async.md).
 const UNSUPPORTED: &[&str] = &[
     "tcp_echo",
     "http_server",
     "console_std_handles",
     "await_order_resolve",
+    "promise_shared_inflight",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
