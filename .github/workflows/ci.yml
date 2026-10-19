@@ -6,7 +6,8 @@
 # merge queue. The label `ci:full` makes them check everything, the parser's robustness test
 # cutting every golden at every character too (add it before pushing, or close and reopen the
 # pull request). The WebAssembly goldens run only when the change touches WebAssembly code, in
-# pull requests and in the queue; the nightly gate and the checks after merging run them.
+# pull requests and in the queue; the nightly runs them all (on Linux, Windows and macOS), and so
+# do the checks after merging when they run.
 #
 # The merge queue checks everything against the pull request merged with the latest main, as two
 # jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
@@ -14,10 +15,9 @@
 # `ci`, which summarizes whichever jobs ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
-# Each push to main checks everything on Windows and macOS (opening an issue when that fails),
-# which covers the changes the queue checked on Linux only, and refreshes the build cache every
-# other run restores (a cache saved on a pull request or queue branch can't be restored anywhere
-# else).
+# Each push to main checks everything on Windows and macOS when the queue checked the change on
+# Linux only (opening an issue when that fails), and refreshes the build cache every other run
+# restores (a cache saved on a pull request or queue branch can't be restored anywhere else).
 name: ci
 
 on:
@@ -186,15 +186,57 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: cargo xtask check --full ${{ matrix.args }}
 
-  # After each push to main: the whole gate on Windows and macOS (the queue may have checked the
-  # change on Linux only), and on all three OSes the build cache, saved even when a check fails.
-  main:
+  # Which OSes the push to main checks. Only a commit the merge queue tested (a ci run on it that
+  # passed: the queue's head is the commit that lands) can skip any; a direct push or an admin
+  # merge runs every OS. The queue tested it against its base_sha, which is HEAD^1 here, so
+  # `affected --base HEAD^1` is the queue's plan: Windows and macOS run when it checked Linux only
+  # (or the change refreshes their build cache; crates/xtask/src/os.rs). No plan: every OS.
+  main-plan:
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      os: ${{ steps.plan.outputs.main_os }}
+    steps:
+      - id: queued
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          runs=
+          for _ in 1 2 3; do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success" \
+              --jq .total_count) && break
+            runs=; sleep 10
+          done
+          echo "merge queue runs that passed on $SHA: ${runs:-unknown}"
+          echo "tested=$([ "${runs:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.queued.outputs.tested == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: plan
+        if: steps.queued.outputs.tested == 'true'
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo xtask affected --base HEAD^1 --github
+
+  # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
+  # and macOS the whole gate (and their caches) when main-plan says the queue didn't run it there.
+  # Without a plan (not a queue commit, or main-plan failed) every OS runs.
+  main:
+    needs: main-plan
+    if: ${{ !cancelled() && github.event_name == 'push' }}
     name: main (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: >-
+          ${{ fromJSON(needs.main-plan.outputs.os
+          || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     permissions:

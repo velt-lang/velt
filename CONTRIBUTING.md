@@ -80,18 +80,19 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   changed runs the tests and doctests of its crate (and of the crates compiling its sources),
   clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. The WebAssembly
   goldens (`wasm_goldens`, about half of the test time) run only for changes to WebAssembly code
-  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly gate and
-  the checks after merging run them all. Changes to the
-  build, the toolchain, CI or the scripts select everything. `cargo xtask affected` prints the plan
-  and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes
-  release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+  (a path containing `wasm`, or LLVM's target setup) and for changed goldens; the nightly run
+  checks them all on Linux, Windows and macOS. Changes to the build, the toolchain, CI or the
+  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
+  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
+  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
-  OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
-  only when you want that certainty before queueing. The queue skips the WebAssembly goldens
-  when the change doesn't touch WebAssembly code (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests
-  the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
-  script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
+  OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
+  only, so you need it locally only when you want that certainty before queueing. The queue
+  skips the WebAssembly goldens when the change doesn't touch WebAssembly code
+  (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
+  WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the script with `--dir
+  /mnt/d/...` to keep it on the bigger disk, see below);
   `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
   PostgreSQL and Redis so the database tests run).
 
@@ -240,20 +241,23 @@ its own.
 ## Commits and pull requests
 
 Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
-Reference the issue it resolves (`Closes #123`) and say which gate you ran.
+Reference the issue it resolves (`Closes #123`), and go through the self-check below before
+opening it.
 
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
   (below) is also linted (fmt, clippy) on Windows and macOS, so `cfg(windows)`-only findings
   show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
-  request is ready, add it to the **merge queue**: the queue runs the whole gate against the pull
+  request is approved, the maintainer who approves it adds it to the **merge queue** in the same
+  step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
   linking, `veltc`, `vpm`, the standard library, goldens; comment-only edits don't count;
   `cargo xtask affected` says which).
-  Every push to `main` then runs the whole gate on Windows and macOS and opens an issue when it
-  fails. A nightly run adds PostgreSQL and Redis so the database tests run too.
+  When the queue checked Linux only, the push to `main` then runs the whole gate on Windows and
+  macOS and opens an issue when it fails. A nightly run adds PostgreSQL and Redis so the
+  database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
@@ -279,8 +283,40 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   layers. Each layer gets its own CI and review, and when the bottom one merges the next is
   retargeted to `main`. Changes that don't depend on each other stay separate pull requests, so
   the merge queue can test them in parallel.
+- **Size**: keep a pull request under about **1,500 changed lines** (added plus deleted, tests
+  included); split larger work into a stack. Small pull requests get reviewed sooner and need
+  fewer change rounds. `hygiene` notes a larger one in the checks summary without failing.
+- **Reviews** end with a line `Verdict: APPROVE` or `Verdict: CHANGES NEEDED`. After `CHANGES
+  NEEDED`, push fixes for every required item and say in a comment which commit addresses which
+  item; the re-review looks at the new commits and those items, and an approval queues the pull
+  request at once.
 - Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
   language semantics need a maintainer's review (see `.github/CODEOWNERS`).
+
+### Before opening a pull request
+
+Most required changes in reviews are things the author could have checked. Before opening a pull
+request, run `cargo xtask precheck` (or let the pre-push hook run it) and `scripts/check.sh`, and
+go through this list:
+
+1. **Node**: every new or changed golden that is valid TypeScript was run with Node
+   (`node --experimental-strip-types <file>.ts`, a copy of the `.vlt` file) and prints the same
+   output; where Velt deliberately differs, the golden or the docs say why.
+2. **Docs**: user-visible changes are in the docs (the reference, `docs/`, the README), with
+   compiling `ts` examples; otherwise there is no user-visible change.
+3. **Tests**: each bug fix has a regression test that fails without the fix.
+4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `velt.json`,
+   command-line arguments, files, the network); `expect("ICE: …")` only for invariants.
+5. **Performance**: a change on a hot path (the runtime, generated code, the compiler's inner
+   loops) comes with benchmark numbers before and after (`bench/`), within ±3%.
+6. **Timing**: tests and goldens order events by awaits, channels or observed state, not by
+   sleeps or wall-clock limits.
+7. **Size**: under about 1,500 changed lines, or split into a stack.
+
+Post the result as the first comment on the pull request: each item with what you did (or "n/a"),
+and the gate you ran. Keep it out of the description: the description becomes the commit message
+and says what the change does and how it was tested, not the review process. A missing self-check
+comment is a required change in review.
 
 ## Releases
 

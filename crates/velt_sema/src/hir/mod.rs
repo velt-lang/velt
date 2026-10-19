@@ -344,6 +344,11 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
+    /// Declared with `struct` (kind `Struct`, but not a field-only interface or a struct sema
+    /// made for an interface literal or a brand): a Velt value type, so its `Map` and `Set`
+    /// keys compare and hash by content, field by field (`Intrinsic::KeyEq`, `Intrinsic::Hash`),
+    /// while `===` still compares it by identity.
+    pub declared_struct: bool,
     /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
     /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
     /// and could forge the runtime handles std types keep in private fields.

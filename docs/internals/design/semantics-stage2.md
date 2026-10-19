@@ -53,7 +53,9 @@ captures (§6).
   structural (`deepEqual`, `assertEq`). `Map` and `Set` keys compare with `__intrinsic_key_eq`
   (`Intrinsic::KeyEq`, JS SameValueZero: `Same` with `NaN` equal to itself) and hash with
   `__intrinsic_hash`, which hashes an object's identity; hashing an object type or array as a
-  key counts it (boxing/), so its pointer is the object wherever the map moves it.
+  key counts it (boxing/), so its pointer is the object wherever the map moves it. A type
+  declared with `struct` is a value type there: its keys compare and hash by content, field
+  by field (#641).
 
 ## 3. Lowering: representation
 
@@ -309,4 +311,5 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   stored into the value from a captured variable stays shared with the variable (it cannot
   be copied, and a callback cannot move what it captured even though `with` calls it once).
 - `Map` (and `Set`) keys of tuple type compare part by part, as `===` compares tuples (JS:
-  arrays, by identity). Object keys compare by identity (#1257, see §7).
+  arrays, by identity). Object keys compare by identity (#1257, see §7); `struct` keys by
+  content (#641).
