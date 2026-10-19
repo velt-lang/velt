@@ -285,13 +285,7 @@ impl FnCx<'_, '_> {
         if !watched {
             return h;
         }
-        let given = match &h.kind {
-            H::WrapSome(inner) => inner.ty,
-            _ => h.ty,
-        };
-        let nullable = matches!(h.kind, H::Lit(hir::Lit::Null))
-            || self.cx.ty.opt_payload(given).is_some()
-            || matches!(self.cx.ty.kind(given), TyKind::Param(_));
+        let nullable = crate::absent_fields::literal_may_be_null(self.cx, &h);
         if nullable {
             let store = (name.name.clone(), h.span);
             self.cx.object_copies.null_literals.push(store);

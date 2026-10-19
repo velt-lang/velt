@@ -171,7 +171,13 @@ fn run() -> Result<(), String> {
 
 fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
     if args.full {
-        return Ok(Plan::everything("--full"));
+        let mut plan = Plan::everything("--full");
+        if std::env::var("VELT_WASM_GOLDENS").as_deref() == Ok("skip") {
+            plan.wasm = false;
+            plan.reasons
+                .push("VELT_WASM_GOLDENS=skip: no WebAssembly goldens".into());
+        }
+        return Ok(plan);
     }
     let graph = Graph::load(root)?;
     if let Some(paths) = &args.paths {
@@ -217,7 +223,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, empty unless
 /// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
-/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`).
+/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
+/// whether the WebAssembly goldens run (`wasm_goldens`: `VELT_WASM_GOLDENS`).
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     let (os, other_os) = if plan.other_os.is_some() {
@@ -243,6 +250,8 @@ fn github_output_text(plan: &Plan) -> String {
         let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
         text.push_str(&format!("{output}={value}\n"));
     }
+    let wasm = if plan.wasm { "" } else { "skip" };
+    text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
 }
 
@@ -367,7 +376,7 @@ name = \"a\"
         let mut plan = Plan::everything("test");
         let text = github_output_text(&plan);
         assert!(
-            text.ends_with("\nrobustness=\nrobustness_files=\n"),
+            text.contains("\nrobustness=\nrobustness_files=\n"),
             "{text}"
         );
         plan.sweep = plan::Sweep::Sampled(
@@ -377,7 +386,7 @@ name = \"a\"
         );
         let text = github_output_text(&plan);
         assert!(
-            text.ends_with(
+            text.contains(
                 "\nrobustness=\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n"
             ),
             "{text}"
@@ -385,8 +394,18 @@ name = \"a\"
         plan.sweep = plan::Sweep::Full;
         let text = github_output_text(&plan);
         assert!(
-            text.ends_with("\nrobustness=full\nrobustness_files=\n"),
+            text.contains("\nrobustness=full\nrobustness_files=\n"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_queue_learns_whether_the_webassembly_goldens_run() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(text.ends_with("\nwasm_goldens=\n"), "{text}");
+        plan.wasm = false;
+        let text = github_output_text(&plan);
+        assert!(text.ends_with("\nwasm_goldens=skip\n"), "{text}");
     }
 }
