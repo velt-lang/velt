@@ -48,9 +48,9 @@ fn turns_follow_deadline_then_creation_order() {
 
         // An interval's next run goes behind the timers queued before it.
         let a = velt_rt_timer_new(0);
-        // SAFETY: live handles.
-        unsafe { velt_rt_timer_again(a, 2) };
         let b = velt_rt_timer_new(2);
+        // SAFETY: a live handle.
+        unsafe { velt_rt_timer_again(a, 2) };
         let hs2 = [a, b];
         assert_eq!(turns(&hs2, &[1, 0]).await, [1, 0]);
         // A timer that took its turn is ready again at once.

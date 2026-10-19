@@ -172,7 +172,7 @@ fn driver(f: *mut VeltFut, st: Rc<RefCell<Started>>) -> impl FnMut(&mut Context<
     move |cx: &mut Context<'_>| unsafe { drive(f, &st, cx) }
 }
 
-unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) -> Poll<()> {
+unsafe fn drive(f: *mut VeltFut, st: &Rc<RefCell<Started>>, cx: &mut Context<'_>) -> Poll<()> {
     if st.borrow().done {
         return Poll::Ready(());
     }
@@ -274,6 +274,9 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     boxed::free(f);
 }
 
+/// A promise that rejected while nobody waited for it, and its shared state.
+type Watched = (*mut VeltFut, Rc<RefCell<Started>>);
+
 thread_local! {
     /// The started promise whose result is being dropped right now (null: none).
     static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
@@ -282,7 +285,7 @@ thread_local! {
         const { RefCell::new(VecDeque::new()) };
     /// Promises that rejected while their owner did not wait for them (`drive`): reported once
     /// the microtask queue is drained unless the owner claimed them by then.
-    static WATCHED: RefCell<VecDeque<(*mut VeltFut, Rc<RefCell<Started>>)>> =
+    static WATCHED: RefCell<VecDeque<Watched>> =
         const { RefCell::new(VecDeque::new()) };
 }
 
