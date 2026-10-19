@@ -22,7 +22,7 @@ use super::narrow::Fact;
 use super::FnCx;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnSource};
-use crate::hir::{self, DefId, ExprKind as H, LocalId, PatKind as P, TyId, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, LocalId, PatKind as P, TyId, TyKind, UseMode};
 use crate::resolve::TyEnv;
 
 /// A predicate call whose result narrows a local (`Frame::checked_predicates`).
@@ -383,6 +383,80 @@ impl FnCx<'_, '_> {
         let t = self.cx.resolve_type(ty, &TyEnv::new(module, &[]));
         mark.rollback(self.cx);
         (!self.cx.ty.has_error(t)).then_some((Some(t), index))
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The condition `c` of `if (g(x))` (`cond` in the source), where `g` is a type predicate
+    /// whose type has only primitive members and `x` a local of a type parameter's type, as
+    /// `g(x) && MayHoldPrimitive(x)` (hir_encodings.md "Type predicates on a type parameter"):
+    /// an instantiation of the function with an object type for that parameter does not lower
+    /// the branch (issue #1251). Any other condition is `c` itself.
+    pub(super) fn primitive_guard(&mut self, cond: &ast::Expr, c: hir::Expr) -> hir::Expr {
+        let ast::ExprKind::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } = &cond.kind
+        else {
+            return c;
+        };
+        let Some((Some(target), index)) = self.predicate_of(callee, false) else {
+            return c;
+        };
+        let Some(l) = args.get(index).and_then(|a| self.named_local(a)) else {
+            return c;
+        };
+        let ty = self.local_ty(l);
+        if !matches!(self.cx.ty.kind(ty), TyKind::Param(_)) || !self.cx.primitive_only(target) {
+            return c;
+        }
+        let (b, span) = (self.cx.ty.bool_, c.span);
+        let probe = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+        let may = self.intrinsic(hir::Intrinsic::MayHoldPrimitive, vec![probe], b, span);
+        let kind = H::Logical {
+            op: hir::LogicOp::And,
+            lhs: Box::new(c),
+            rhs: Box::new(may),
+        };
+        self.mk(kind, b, span)
+    }
+}
+
+impl crate::ctx::Ctx<'_> {
+    /// Does every value of `t` hold a primitive (string, number, boolean, bigint, symbol,
+    /// `null`, `undefined`, a literal or a brand of one)?
+    pub(crate) fn primitive_only(&mut self, t: TyId) -> bool {
+        let t = self.ty.core(t).unwrap_or(t);
+        if let Some(members) = self.union_members(t) {
+            return members.into_iter().all(|m| self.primitive_only(m));
+        }
+        match self.ty.kind(t) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(_)
+            | TyKind::Symbol
+            | TyKind::Never => true,
+            _ => self.brand_base(t).is_some(),
+        }
+    }
+
+    /// Is every value of `t` an object (a struct, class, object type, array, tuple, map or
+    /// function type), never a primitive? What `MayHoldPrimitive` is `false` for once `t` is
+    /// a type argument; `t` may still mention type parameters inside.
+    pub(crate) fn object_only(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => self.adt(*d).is_some() && self.brand_base(t).is_none(),
+            _ => false,
+        }
     }
 }
 

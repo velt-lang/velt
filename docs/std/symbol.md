@@ -7,8 +7,8 @@ also name members of objects ([Symbols](../reference/types.md#symbols)).
 |---|---|
 | `Symbol(description?)` | a new symbol, different from every other one |
 | `Symbol.for(key)` | the registry's symbol for `key`, the same on every call |
-| `Symbol.keyFor(s)` | the key of a symbol `Symbol.for` made, else `null` (`undefined` in Node) |
-| `s.description` | the description given to `Symbol(...)`, or `null` (`undefined` in Node) |
+| `Symbol.keyFor(s)` | the key of a symbol `Symbol.for` made, else `undefined` |
+| `s.description` | the description given to `Symbol(...)`, or `undefined` |
 | `s.toString()`, `String(s)` | `Symbol(description)` |
 | `Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.toStringTag`, `Symbol.hasInstance`, `Symbol.toPrimitive`, `Symbol.species`, `Symbol.isConcatSpreadable`, `Symbol.match`, `Symbol.matchAll`, `Symbol.replace`, `Symbol.search`, `Symbol.split`, `Symbol.unscopables` | the well-known symbols |
 

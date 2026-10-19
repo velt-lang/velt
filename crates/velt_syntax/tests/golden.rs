@@ -53,6 +53,7 @@ fn golden_m1_files_parse() {
                 | "cast_union_number_literal.vlt"
                 | "function_expression_errors.vlt"
                 | "function_expression_this_errors.vlt"
+                | "string_escape_octal.vlt"
         ) {
             continue;
         }
@@ -102,7 +103,11 @@ fn golden_hello_shape() {
 }
 
 #[test]
-fn strings_golden_unknown_escape_kept() {
-    let e = expr(r#""esc: \"q\" \ \t|""#);
+fn strings_golden_escapes() {
+    // `strings.vlt` writes `\\` for its backslash; an unknown escape such as `\ ` is the
+    // character alone, as in JS.
+    let e = expr(r#""esc: \"q\" \\ \t|""#);
     assert_eq!(sx(&e), format!("{:?}", "esc: \"q\" \\ \t|"));
+    let e = expr(r#""esc: \ \d|""#);
+    assert_eq!(sx(&e), format!("{:?}", "esc:  d|"));
 }

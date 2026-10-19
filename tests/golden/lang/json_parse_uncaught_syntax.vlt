@@ -1,0 +1,8 @@
+// check: no leaks
+// An uncaught `JSON.parse` failure on text that is not JSON is reported as Node reports it:
+// `SyntaxError: <Node's message>` (#1265).
+function main() {
+  console.log("start");
+  const v = JSON.parse("[1, 2") as number[];
+  console.log(v.length);
+}

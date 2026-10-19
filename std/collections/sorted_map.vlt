@@ -37,11 +37,11 @@ export class SortedMap<K extends Comparable<K>, V> {
     }
   }
 
-  /** A clone of the value for `key`, or null. */
-  get(key: K): V | null {
+  /** A clone of the value for `key`, or `undefined`. */
+  get(key: K): V | undefined {
     const i = this.indexOf(key);
     if (i < 0) {
-      return null;
+      return undefined;
     }
     return this.vals[i as usize].clone();
   }
@@ -90,36 +90,36 @@ export class SortedMap<K extends Comparable<K>, V> {
     }
   }
 
-  /** A clone of the smallest key, or null if empty. */
-  first(): K | null {
+  /** A clone of the smallest key, or `undefined` if empty. */
+  first(): K | undefined {
     if (this.sortedKeys.length == 0) {
-      return null;
+      return undefined;
     }
     return this.sortedKeys[0].clone();
   }
 
-  /** A clone of the largest key, or null if empty. */
-  last(): K | null {
+  /** A clone of the largest key, or `undefined` if empty. */
+  last(): K | undefined {
     if (this.sortedKeys.length == 0) {
-      return null;
+      return undefined;
     }
     return this.sortedKeys[this.sortedKeys.length - 1].clone();
   }
 
-  /** The largest key <= `key` (a clone), or null. */
-  floorKey(key: K): K | null {
+  /** The largest key <= `key` (a clone), or `undefined`. */
+  floorKey(key: K): K | undefined {
     const i = this.upperBound(key);
     if (i == 0) {
-      return null;
+      return undefined;
     }
     return this.sortedKeys[i - 1].clone();
   }
 
-  /** The smallest key >= `key` (a clone), or null. */
-  ceilingKey(key: K): K | null {
+  /** The smallest key >= `key` (a clone), or `undefined`. */
+  ceilingKey(key: K): K | undefined {
     const i = this.lowerBound(key);
     if (i == this.sortedKeys.length) {
-      return null;
+      return undefined;
     }
     return this.sortedKeys[i].clone();
   }

@@ -247,8 +247,8 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(payload).is_none() {
             return h;
         }
-        // The standard library's `T | null` results are JavaScript's `undefined` when absent
-        // (`Map.get`, `find`, `pop`, a `Record` index).
+        // A Velt-only standard library result that is `null` when absent (`Channel.receive` of
+        // a closed channel) is `undefined` in an `any`, as JavaScript's "nothing there" is.
         let nothing = if self.std_result(&h) {
             Nothing::Undefined
         } else {

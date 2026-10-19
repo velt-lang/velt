@@ -49,7 +49,7 @@ async function main() {
   o.m.set("a", (v: string) => { last = `${v}${last.length}`; });
   const a = await serve({ port: 0 }, async (req) => {
     const f = m.get("a");
-    if (f !== null) { f("x"); }
+    if (f !== undefined) { f("x"); }
     return new Response("ok");
   });
   await a.shutdown();

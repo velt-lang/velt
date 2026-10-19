@@ -355,7 +355,7 @@ export class MemoryStorage implements ActorStorage {
   next: i64 = 0;
 
   async load(type: string, key: string): Promise<StoredRecord | null> {
-    return this.records.get(`${type}\u0000${key}`);
+    return this.records.get(`${type}\u0000${key}`) ?? null;
   }
 
   async save(

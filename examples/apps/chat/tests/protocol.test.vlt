@@ -27,7 +27,7 @@ export function test_bad_client_messages() {
   assertEq(clientError(`{"type":"dance"}`), `expected one of "join", "say", "leave" at $.type`);
   assertEq(clientError(`{}`), `expected field "type" at $`);
   assertEq(clientError(`{"type":"join","name":5}`), "expected string at $.name");
-  assertEq(clientError(`[`), "invalid JSON at $: unexpected end of input (byte 1)");
+  assertEq(clientError(`[`), "Unexpected end of JSON input");
 }
 
 export function test_server_messages_round_trip() {

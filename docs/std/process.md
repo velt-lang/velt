@@ -5,11 +5,9 @@ import, as in Node:
 
 - `process.stdout.write(s)`, `process.stderr.write(s)`: write a string without a newline, ordered
   with `console.log` / `console.error`. They return `true`, like Node.
-- `process.env.NAME`, `process.env[name]`: the variable as `string | null`. An unset variable is
-  `null` where Node has `undefined`, so `process.env.NAME ?? "default"` reads the same, but
-  `process.env.NOPE !== null` is `false` in Velt and `true` in Node. Each read asks the
-  operating system again, so a check doesn't narrow a second read: read the variable into a
-  `const` and test that. On Windows names ignore case, as in Node.
+- `process.env.NAME`, `process.env[name]`: the variable as `string | undefined`; an unset
+  variable is `undefined`, as in Node. Each read asks the operating system again, so a check
+  doesn't narrow a second read: read the variable into a `const` and test that. On Windows names ignore case, as in Node.
 - `process.argv`: Node's layout, `[runtime, script, ...args]`, so `process.argv.slice(2)` is the
   arguments. The runtime is the running executable, with symbolic links resolved (`velt` under
   `velt dev`). The script is the source file under `velt run` / `velt dev`, the test file under

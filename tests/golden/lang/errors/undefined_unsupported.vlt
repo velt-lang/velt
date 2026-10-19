@@ -20,7 +20,7 @@ function mapOfUndefined() {
   m.set("k", undefined);
 }
 
-// `=== undefined` on a `T | null`: its `null` may be JavaScript's `undefined` (`Map.get`).
+// `=== undefined` on a `T | null` (`Map.get` gives `T | undefined`, which may be tested so).
 function strictOnNull(b: number | null, m: Map<string, number>) {
   console.log(b === undefined, m.get("k") !== undefined, typeof b === "undefined");
 }
@@ -182,9 +182,4 @@ function conditionals(name: string, c: boolean) {
 
 
 
-}
-
-// A `T | null` the standard library gives where Node gives `undefined` (phase 3).
-function lookup(m: Map<string, number>, k: string): number | undefined {
-  return m.get(k);
 }
