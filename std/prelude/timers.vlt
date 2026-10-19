@@ -163,8 +163,11 @@ function newState(): shared<Mutex<TimerState>> {
   return state;
 }
 
-/** Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first. */
-export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
+/**
+ * Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first. An
+ * error it throws is uncaught, as in Node.
+ */
+export function setTimeout<E>(task: () => Promise<void, E>, ms: i64): Timer {
   const state = newState();
   spawn(fireOnce(ms, task, state.clone(), velt_rt_task_gate()));
   return new Timer(state, false);
@@ -180,7 +183,7 @@ export function clearTimeout(t: Timer) {
  * Node: on a fixed schedule, also while an earlier run's promise is still pending. Runs that
  * overlap interleave at their `await`s on the timer's task; they never run in parallel.
  */
-export function setInterval(task: () => Promise<void>, ms: i64): Timer {
+export function setInterval<E>(task: () => Promise<void, E>, ms: i64): Timer {
   const state = newState();
   spawn(fireEvery(ms < 1 ? 1 : ms, task, state.clone(), velt_rt_task_gate()));
   return new Timer(state, true);
@@ -194,12 +197,12 @@ export function clearInterval(t: Timer) {
 // `gate`: the creating task's (runtime handle, released here). Once due, the callback waits until
 // that task's current poll is over, so it never runs before the callbacks (microtasks) the
 // task queued, as in Node.
-async function fireOnce(
+async function fireOnce<E>(
   ms: i64,
-  task: () => Promise<void>,
+  task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
   gate: u64,
-): Promise<void> {
+): Promise<void, E> {
   if (ms > 0) {
     await sleep(ms);
   } else {
@@ -214,9 +217,9 @@ async function fireOnce(
   state.with((s) => s.end(true));
 }
 
-async function fireEvery(
+async function fireEvery<E>(
   ms: i64,
-  task: () => Promise<void>,
+  task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
   gate: u64,
 ): Promise<void> {
@@ -232,8 +235,21 @@ async function fireEvery(
   }
 }
 
-// One run of an interval: ends it in the state when its promise settles.
-async function runOnce(task: () => Promise<void>, state: shared<Mutex<TimerState>>): Promise<void> {
-  await task();
+// One run of an interval: ends it in the state when its promise settles. An error is uncaught,
+// as in Node (the run is not awaited by the interval's task).
+async function runOnce<E>(
+  task: () => Promise<void, E>,
+  state: shared<Mutex<TimerState>>,
+): Promise<void> {
+  try {
+    await task();
+  } catch (e) {
+    spawn(rethrow(e));
+  }
   state.with((s) => s.end(false));
+}
+
+// Rejects with `e`: spawned, an error nothing catches.
+async function rethrow<E>(e: E): Promise<void, E> {
+  throw e;
 }

@@ -10,7 +10,7 @@ import { AbortController, AbortSignal } from "velt:task";
 export { Timer, setTimeout, clearTimeout, setInterval, clearInterval } from "velt:prelude/timers";
 
 /** Calls `task` as soon as possible on its own task (after the current task yields). */
-export function setImmediate(task: () => Promise<void>): Timer {
+export function setImmediate<E>(task: () => Promise<void, E>): Timer {
   return setTimeout(task, 0);
 }
 
