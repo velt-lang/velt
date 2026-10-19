@@ -42,6 +42,7 @@ mod errors;
 mod fn_union_call;
 mod gen_closure;
 mod gen_value;
+mod generic_spread;
 mod hidden_nothings;
 mod hoist;
 pub(crate) mod iface_adapt;

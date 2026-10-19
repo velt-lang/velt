@@ -48,6 +48,7 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_spread;
 mod holds_promise;
 mod hooks;
 pub mod ide;

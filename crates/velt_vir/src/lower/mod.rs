@@ -85,6 +85,7 @@ mod same;
 mod sequence;
 mod share;
 mod simd;
+mod spread_object;
 mod srcloc;
 mod stabilize;
 mod stmt;

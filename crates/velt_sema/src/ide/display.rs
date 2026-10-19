@@ -100,6 +100,18 @@ impl Names {
                 .map(|t| self.show(*t, param))
                 .collect::<Vec<_>>()
                 .join(" & "),
+            TyKind::Op(crate::hir::TyOp::Spread, args) => {
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|t| format!("...{}", self.show(*t, param)))
+                    .collect();
+                format!("{{ {} }}", parts.join(", "))
+            }
+            TyKind::Op(crate::hir::TyOp::Convert, args) => args
+                .iter()
+                .map(|t| self.show(*t, param))
+                .collect::<Vec<_>>()
+                .join(" as "),
             TyKind::FnPtr {
                 params,
                 ret,

@@ -131,7 +131,9 @@ impl Ctx<'_> {
     /// fields may mention type parameters): it can be reduced to an object type now.
     pub(crate) fn reducible_now(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
-            TyKind::Op(TyOp::Intersect, parts) => !parts.iter().any(|&p| self.deferred_part(p)),
+            TyKind::Op(TyOp::Intersect | TyOp::Spread, parts) => {
+                !parts.iter().any(|&p| self.deferred_part(p))
+            }
             _ => false,
         }
     }

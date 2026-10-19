@@ -647,6 +647,28 @@ it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else 
 arguments), the reduced type sema computed for every instantiation the program reaches. A missing
 entry is an `ICE:`.
 
+## Spreads and conversions in generic bodies (#350)
+- `{ ...t, tag: e }` with a spread source whose fields are known only per instantiation (a type
+  parameter, or a deferred intersection or spread) is a `Call` of `Intrinsic::SpreadObject`
+  whose type is `TyOp::Spread` over the parts' types. Every argument is a place of an object
+  type, bound to a temporary in written order (a spread source that already is a place is
+  borrowed as it is): a spread source, or a run of explicit properties as an object literal of
+  their own. Sema reduces `TyOp::Spread` per instantiation to the object type of the merged
+  fields (public, non-private fields of each part in order; a later part's field overrides an
+  earlier one and keeps its position); a part that isn't an anonymous object type, struct or
+  class, and an optional field over an earlier value of it, are errors at that instantiation.
+  Lowering (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from
+  the last part that has it, its presence flag copied (set for a class field).
+- A value of a generic body used as another type of that body, where TypeScript accepts it and
+  the fields are known only per instantiation (`s: T & { tag }` as `T` or as `{ tag }`, `{ ...t }`
+  as `T`, `{ ...t, tag }` as `T & { tag }`), is an `Upcast` of it: the same value. Sema records
+  the requirement `TyOp::Convert(from, to)` (never the type of an expression) as a type the body
+  mentions, so `type_level::instances` reduces it at every instantiation: to `to` when both are
+  one object type there (the same canonical type, or the same layout), else it reports the
+  instantiation, since a value can't be seen as an object type with other fields without a copy,
+  and a copy would be another object where TypeScript passes the same one. Lowering's `Upcast` is
+  the value itself.
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

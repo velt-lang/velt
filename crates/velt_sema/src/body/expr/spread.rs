@@ -55,6 +55,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.spreads_deferred(props) {
+            return self.deferred_spread(props, exp, span);
+        }
         let mut lets = vec![];
         let mut entries: Vec<(String, Value)> = vec![];
         let mut explicit: Vec<String> = vec![];

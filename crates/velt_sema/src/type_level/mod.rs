@@ -72,6 +72,8 @@ pub(crate) struct State {
     /// The parts of each object type an intersection made (`A & { id: string }`), so inference
     /// through `T & { id: string }` binds `T` to `A`, as TypeScript does (`Ctx::match_ty`).
     pub(crate) intersection_parts: std::collections::HashMap<TyId, Vec<TyId>>,
+    /// Each conversion's requirement (`TyOp::Convert`) by (from, to) (`crate::generic_spread`).
+    pub(crate) converts: std::collections::HashMap<(TyId, TyId), TyId>,
     /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
     pub(crate) reduced: std::collections::HashMap<TyId, TyId>,
 }
@@ -127,7 +129,7 @@ impl Ctx<'_> {
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
         let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
         let TyOp::Alias(a) = o else {
-            return args.join(" & ");
+            return args.join(crate::generic_spread::op_sep(o));
         };
         format!(
             "{}<{}>",
@@ -191,7 +193,7 @@ impl Ctx<'_> {
             let quiet =
                 unplaced && written.is_some_and(|w| self.type_level.failed_sites.contains(&w));
             let before = self.diags.len();
-            let r = self.reduce_intersection(t, args, span);
+            let r = self.reduce_part_op(o, t, args, span);
             if quiet {
                 self.diags.truncate(before);
             } else if let Some(w) = written.filter(|_| self.diags.len() > before) {

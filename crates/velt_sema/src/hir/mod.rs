@@ -121,6 +121,13 @@ pub enum TyOp {
     /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
     /// reduces to the object type `crate::intersections` builds from them.
     Intersect,
+    /// `{ ...t, $set }` with a part known only per instantiation (#350): the parts' types in
+    /// order (explicit properties as object types), reduced to the spread's object type; its
+    /// value is an `Intrinsic::SpreadObject` (hir_encodings.md "Spreads and conversions").
+    Spread,
+    /// Never a value's type: the requirement that an `Upcast` from the first argument to the
+    /// second keeps one object type at every instantiation (reduced to the second, #350).
+    Convert,
 }
 
 /// The value of a literal type.

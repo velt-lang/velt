@@ -1092,7 +1092,41 @@ implementation returning `Signal<T & object>`), and a value of `T & object` (or 
 intersection with such a part) is an `object`, so it can be a `WeakMap` key. So is an
 intersection with a part that is an object type and no part that is a type parameter
 (`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
-with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`). `x as T & object`, for an `x` of a type parameter `T` without an
+with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`).
+
+**Spreads in generic code.** `{ ...t }` and `{ ...t, tag: "x" }` with `t: T` build a new object
+at each instantiation, as Node copies an object's own properties: the fields of `T`'s type
+argument, then the explicit ones (a later field overrides an earlier one and keeps its position),
+with nested objects and arrays shared rather than copied. The literal is a `T`, or a
+`T & { tag: string }`, as in TypeScript, so explicit properties are checked against the expected
+type (`$set: (v) => …` gets its parameter type from `Signal<T>`). An instantiation whose `T` is
+not an object type (`{ ...t }` at `T = number`) is an error there, and so is one where an
+optional field of a later part would override an earlier value of it.
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function withSet<T extends object>(t: T, log: string[]): Signal<T> {
+  return {
+    ...t,
+    $set: (v) => {
+      log.push(JSON.stringify(v));
+    },
+  };
+}
+
+const log: string[] = [];
+const s = withSet({ n: 1 }, log);
+s.$set({ n: 2 });
+console.log(s.n, log); // 1 [ '{"n":2}' ]
+```
+
+A value of a generic body used as one of its parts (`s: T & { tag: string }` returned as a `T` or
+passed as a `{ tag: string }`, `{ ...t }` returned as a `T`) is the same value. TypeScript always
+passes the same object; Velt's object types have fixed layouts, so this is allowed only at
+instantiations where both are one object type (a `T` that already has `tag`, or `{ ...t }` at any
+object type), and an instantiation where they differ (`T = { a: number }`, whose values would
+have to be copied, losing identity and writes) is an error at the generic function. `x as T & object`, for an `x` of a type parameter `T` without an
 `object` bound, is checked at run time: the value itself (not a copy) when it is an object, a
 `TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
 that rules primitives out, as sigx's `signal` does). A generic alias used at

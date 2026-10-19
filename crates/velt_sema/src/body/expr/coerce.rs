@@ -205,6 +205,10 @@ impl FnCx<'_, '_> {
         {
             return self.adapt_fn(h, exp);
         }
+        let h = match self.deferred_convert(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,

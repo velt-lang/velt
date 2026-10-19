@@ -60,6 +60,7 @@ impl Uses {
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
+    let converts = cx.type_level.converts.clone();
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
@@ -82,6 +83,7 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             add_site(&mut u, &mut news, &mut seen, e, guard);
+            convert_site(&mut u, &mut seen, e, &converts);
         });
         out.push((DefId(i as u32), u, news));
     }
@@ -89,6 +91,7 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
     for_each_init(cx, &mut |d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         add_site(u, news, seen, e, 0);
+        convert_site(u, seen, e, &converts);
     });
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
@@ -104,6 +107,24 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
             (d, u)
         })
         .collect()
+}
+
+/// Records the requirement (`TyOp::Convert`) of conversion `e` (an `Upcast` between two types
+/// whose fields are known only per instantiation, `crate::generic_spread`) as a type `e`
+/// mentions, so each instantiation reduces it.
+fn convert_site(
+    u: &mut Uses,
+    seen: &mut HashSet<TyId>,
+    e: &Expr,
+    converts: &HashMap<(TyId, TyId), TyId>,
+) {
+    if let crate::hir::ExprKind::Upcast(inner) = &e.kind {
+        if let Some(&op) = converts.get(&(inner.ty, e.ty)) {
+            if seen.insert(op) {
+                u.types.push((op, e.span));
+            }
+        }
+    }
 }
 
 /// Records what expression `e` mentions and instantiates in `u` (`news`: the types it

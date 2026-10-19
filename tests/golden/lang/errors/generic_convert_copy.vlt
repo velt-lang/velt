@@ -1,0 +1,18 @@
+// Conversions in generic bodies that would need a copy at an instantiation (#350): returning a
+// `T & { tag }` as `T` where `T` lacks `tag`, using it as its `{ tag }` part, and spreading a
+// `T` that is a number. tsc accepts them; Velt would have to copy the object (TypeScript passes
+// the same one), so each instantiation is an error.
+type Tagged<T> = T & { tag: string };
+
+function unwrap<T>(s: Tagged<T>): T {
+  return s;
+}
+function tagPart<T>(s: Tagged<T>): { tag: string } {
+  return s;
+}
+function spreadNum<T>(t: T): T {
+  return { ...t };
+}
+
+const x: Tagged<{ a: number }> = { a: 1, tag: "t" };
+console.log(unwrap(x).a, tagPart(x).tag, spreadNum(5));
