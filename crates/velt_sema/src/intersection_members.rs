@@ -118,6 +118,23 @@ impl Ctx<'_> {
         f.generics.constraints.get(n as usize).copied().flatten()
     }
 
+    /// Is `t` a deferred intersection with a type parameter part whose other parts hold no
+    /// deferred type (`T & { $set: (v: T) => void }`): an argument fixes `T` through it
+    /// (`Ctx::match_ty`).
+    pub(crate) fn intersection_pattern(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Op(TyOp::Intersect, parts) => {
+                parts
+                    .iter()
+                    .any(|&p| matches!(self.ty.kind(p), TyKind::Param(_)))
+                    && parts.iter().all(|&p| {
+                        matches!(self.ty.kind(p), TyKind::Param(_)) || !self.mentions_op(p)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// Member `name` of `t`, an intersection with a part that is a type parameter, found in one
     /// of its object parts: the interface made of that part (its arguments are the type
     /// parameters the part mentions) and the field's index there.

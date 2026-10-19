@@ -1079,7 +1079,9 @@ through such a parameter comes from the fields the object part names (`T = { n: 
 `Signal<{ n: number }>`), else from the argument's parts the pattern doesn't name (`T = A`
 for a value declared `A & { id: string }`), else from the whole argument
 (`T = { a: number; id: string }` for `{ a: 1, id: "x" }` against `T & { id: string }`), as in
-TypeScript. `any`, `unknown` and
+TypeScript. Such an argument is inferred from before the other arguments are checked, so
+`reset(s, { st: "done", data: null })` with `reset<T>(s: Signal<T>, v: T)` checks the literal
+against the `T` that `s` fixes. `any`, `unknown` and
 `object` parts intersect as in TypeScript: `any & X` is `any`, `unknown & X` is `X`, and
 `object & X` is `X` when `X` is an object type (so `T & object` at an object type `T` is `T`).
 `object & X` keeps only the members of `X` that are objects, and has no value (`never`) when
