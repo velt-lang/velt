@@ -67,11 +67,13 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
             adds: &mut adds,
         };
         visit::walk_module(&m.ast, &mut scan);
-        // A string constant's key names a string field, which the type declares or not.
+        // A string constant's key names a string field, which the type declares or not; a key
+        // that is not a module constant is reported where the literal is.
         let (strings, asserted) = (scan.strings, scan.asserted);
+        let consts = module_consts(&m.ast);
         for a in asserted {
             let key = &a.1.name[1..a.1.name.len() - 1];
-            if strings.contains(key) {
+            if strings.contains(key) || !consts.contains(key) {
                 continue;
             }
             cast_keys.push((i, key.to_string()));
@@ -354,6 +356,38 @@ impl Scan<'_> {
             self.adds.push((type_name.clone(), field, ty));
         }
     }
+}
+
+/// The names of `module`'s constants and imports: the names a computed key may resolve to
+/// (a script's top-level constants are in its generated `main`).
+fn module_consts(module: &ast::Module) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut add = |v: &ast::VarDecl| {
+        if let (ast::VarKind::Const, ast::PatternKind::Ident(n)) = (v.kind, &v.pattern.kind) {
+            names.insert(n.name.clone());
+        }
+    };
+    let mut imported = vec![];
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Var(v) => add(v),
+            ast::ItemKind::Function(f)
+                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
+            {
+                for s in &f.body.stmts {
+                    if let ast::StmtKind::Var(v) = &s.kind {
+                        add(v);
+                    }
+                }
+            }
+            ast::ItemKind::Import(i) => {
+                imported.extend(i.names.iter().map(|n| n.alias.as_ref().unwrap_or(&n.name)));
+            }
+            _ => {}
+        }
+    }
+    names.extend(imported.into_iter().map(|n| n.name.clone()));
+    names
 }
 
 /// [`add_members`] for the declarations among `stmts` (and in their blocks).

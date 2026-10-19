@@ -310,6 +310,17 @@ impl FnCx<'_, '_> {
             let b = self.cx.ty.bool_;
             return self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], b, span);
         }
+        if self.cx.dynamic(field.ty).is_some() {
+            // `k?: any` left out holds the dynamic `undefined` (`object.rs`).
+            let b = self.cx.ty.bool_;
+            let undef = self.dynamic_nothing(hir::Nothing::Undefined, field.ty, span);
+            let eq = self.intrinsic(hir::Intrinsic::AnyStrictEq, vec![field, undef], b, span);
+            let not = H::Unary {
+                op: hir::UnOp::Not,
+                expr: Box::new(eq),
+            };
+            return self.mk(not, b, span);
+        }
         let payload = self.cx.ty.core(field.ty).unwrap_or(field.ty);
         let wild = self.pat(P::Wildcard, payload, span);
         let some = self.present_pat(wild, field.ty, span);

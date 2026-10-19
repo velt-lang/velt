@@ -87,6 +87,10 @@ impl FnCx<'_, '_> {
                     self.intrinsic(Intrinsic::FieldAbsent, vec![], ty, span)
                 }
                 Slot::Absent(ty, true) => self.intrinsic(Intrinsic::FieldAbsent, vec![], ty, span),
+                // `b?: any` left out: the dynamic `undefined`, as in an object literal.
+                Slot::Absent(ty, false) if self.cx.dynamic(ty).is_some() => {
+                    self.dynamic_nothing(hir::Nothing::Undefined, ty, span)
+                }
                 Slot::Absent(ty, false) => self.mk(H::Lit(hir::Lit::Null), ty, span),
             };
             values.push(v);
