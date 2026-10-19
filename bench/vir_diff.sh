@@ -20,7 +20,18 @@ BASE=$1
 HEAD=$2
 WORK=${3:-$(mktemp -d)}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PYTHON=${PYTHON:-python3}
+# The normalizer needs Python 3; a missing or failing one must not read as "identical".
+if [ -z "${PYTHON:-}" ]; then
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null; then
+    PYTHON=python3
+  elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(sys.version_info[0] != 3)' 2>/dev/null; then
+    PYTHON=python
+  else
+    echo "bench/vir_diff.sh: Python 3 not found (set PYTHON)" >&2
+    exit 2
+  fi
+fi
+export PYTHONIOENCODING=utf-8
 mkdir -p "$WORK"
 
 # normalize <file>: the VIR with definition numbers replaced by `#`.
@@ -49,8 +60,16 @@ while IFS= read -r src; do
   fi
   "$BASE" build "$src" --emit vir > "$WORK/$name.base.raw" 2>&1
   "$HEAD" build "$src" --emit vir > "$WORK/$name.head.raw" 2>&1
-  normalize "$WORK/$name.base.raw" > "$WORK/$name.base"
-  normalize "$WORK/$name.head.raw" > "$WORK/$name.head"
+  for side in base head; do
+    if ! normalize "$WORK/$name.$side.raw" > "$WORK/$name.$side"; then
+      echo "bench/vir_diff.sh: normalizing $WORK/$name.$side.raw failed" >&2
+      exit 2
+    fi
+    if [ -s "$WORK/$name.$side.raw" ] && [ ! -s "$WORK/$name.$side" ]; then
+      echo "bench/vir_diff.sh: normalizing $WORK/$name.$side.raw gave nothing" >&2
+      exit 2
+    fi
+  done
   if cmp -s "$WORK/$name.base" "$WORK/$name.head"; then
     same=$((same + 1))
   else
