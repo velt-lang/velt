@@ -1,0 +1,19 @@
+11 12 function
+12
+paused,resumed,stopped function stop,pause,resume
+run
+6 a+b true
+s deps,flags,label
+42 7 undefined
+true
+3
+14 9
+42 41 count
+HI up 1 function
+101 102
+102
+{"n":7} ["id","queued"]
+flags 1, deps 0
+effect ran
+1
+{"a":1,"b":[null,null]} [null]
