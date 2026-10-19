@@ -1,0 +1,133 @@
+// check: no leaks
+// A function type written without `throws` throws what the closures stored into it throw
+// (#1154): calls through fields, parameters, variables, array elements, Map values and
+// interface members propagate the errors, and `try`/`catch` around them catches them as in
+// JavaScript.
+class Bad extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "Bad";
+  }
+}
+
+type Check = (n: number) => number;
+
+function positive(n: number): number {
+  if (n < 0) {
+    throw new Bad(`negative ${n}`);
+  }
+  return n;
+}
+
+const checks: Check[] = [
+  (n) => n * 2,
+  (n) => positive(n),
+  (n) => {
+    if (n > 100) {
+      throw new RangeError("too big");
+    }
+    return n;
+  },
+];
+
+function runAll(cs: Check[], v: number): number {
+  let s = 0;
+  for (const c of cs) {
+    s += c(v);
+  }
+  return s;
+}
+
+// Two layers: the callbacks pass through `runAll` before they are called.
+function outer(cs: Check[], v: number): string {
+  try {
+    return `ok ${runAll(cs, v)}`;
+  } catch (e) {
+    return `caught ${(e as Error).name}: ${(e as Error).message}`;
+  }
+}
+
+console.log(outer(checks, 3));
+console.log(outer(checks, -1));
+console.log(outer(checks, 200));
+
+const byName = new Map<string, Check>();
+byName.set("pos", (n) => positive(n));
+try {
+  byName.get("pos")!(-5);
+} catch (e) {
+  console.log("map", e instanceof Bad);
+}
+
+class Holder {
+  f: (s: string) => string;
+  constructor(f: (s: string) => string) {
+    this.f = f;
+  }
+}
+
+const h = new Holder((s) => {
+  if (s === "") {
+    throw new TypeError("empty");
+  }
+  return s + "!";
+});
+console.log(h.f("x"));
+try {
+  h.f("");
+} catch (e: unknown) {
+  console.log("holder", (e as Error).message);
+}
+
+interface Parser<T> {
+  name: string;
+  parse: (s: string) => T;
+}
+
+const num: Parser<number> = {
+  name: "num",
+  parse: (s) => {
+    const n = Number(s);
+    if (Number.isNaN(n)) {
+      throw new Bad(`not a number: ${s}`);
+    }
+    return n;
+  },
+};
+const json: Parser<string[]> = { name: "json", parse: (s) => JSON.parse(s) as string[] };
+
+function parseWith<T>(p: Parser<T>, s: string): T | null {
+  try {
+    return p.parse(s);
+  } catch (e) {
+    console.log(`${p.name} failed: ${(e as Error).name}`);
+    return null;
+  }
+}
+
+console.log(parseWith(num, "12"), parseWith(num, "x"));
+console.log(parseWith(json, '["a"]'), parseWith(json, "["));
+
+function apply<T>(f: () => T): T {
+  return f();
+}
+try {
+  apply((): number => JSON.parse("{"));
+} catch (e) {
+  console.log("generic", (e as Error).name);
+}
+
+let handler: (n: number) => void = (n) => console.log("first", n);
+handler(1);
+handler = (n) => {
+  throw new Bad(`second ${n}`);
+};
+try {
+  handler(2);
+} catch (e) {
+  console.log((e as Error).message);
+}
+
+// Nothing throwing is stored into this type: calls through it need no error check.
+const safe: (a: number, b: number) => number = (a, b) => a + b;
+console.log(safe(1, 1));

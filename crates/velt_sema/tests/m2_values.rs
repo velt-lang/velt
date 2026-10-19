@@ -327,11 +327,26 @@ fn closures_and_function_values_carry_error_types() {
     let p =
         ok_src("function f(x: i64): i64 { throw \"x\"; } function main() { const g = f; g(1); }");
     assert!(func(&p, "main").throws.is_some());
-    let r = err_src(
+    // A function type written without `throws` throws what is stored into it (#1154).
+    let p = ok_src(
         "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
     );
     assert!(
-        r.contains("but the function type it is used as does not allow throwing"),
+        func(&p, "run").throws.is_some(),
+        "a call through `f` throws"
+    );
+    assert!(func(&p, "main").throws.is_some());
+    let p = ok_src(
+        "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
+    );
+    assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
+    // A written `throws` clause still bounds what may be stored.
+    let r = err_src(
+        "class A extends Error {} function run(f: () => void throws A) { f(); }
+         function main() { try { run(() => { throw \"x\"; }); } catch (e) {} }",
+    );
+    assert!(
+        r.contains("but the function type it is used as allows only `A`"),
         "{r}"
     );
 }

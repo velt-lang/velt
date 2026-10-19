@@ -142,6 +142,10 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
+    pub fn_sites: crate::throws::FnSites,
+    /// How many definitions declarations made, before any body was checked.
+    pub collected_defs: usize,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
     /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
@@ -327,6 +331,8 @@ impl<'m> Ctx<'m> {
             provisional_slots: vec![],
             iface_adapters: HashMap::new(),
             throw_checks: vec![],
+            fn_sites: Default::default(),
+            collected_defs: 0,
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),

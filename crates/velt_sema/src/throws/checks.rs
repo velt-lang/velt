@@ -104,6 +104,12 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
             ),
         };
         let used_as = closure_type(cx, d, allowed);
+        // A function type written without `throws` throws what is stored into it: the program
+        // is checked again with this one's errors (`fn_types`), which drops this report.
+        if let Some(own) = own_final(cx, d) {
+            cx.seed_fn_sites(used_as, own);
+        }
+        let used_as = cx.display(used_as);
         Diagnostic::error(
             format!("this function throws `{mn}`, but the function type it is used as {what}"),
             at,
@@ -122,8 +128,8 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
     cx.error(d);
 }
 
-/// The function type closure `d` has (with the errors it may throw), for messages.
-fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> String {
+/// The function type closure `d` has (with the errors it may throw).
+fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> TyId {
     let f = cx.fn_info(d);
     let (params, ret, is_async) = (
         f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
@@ -136,12 +142,11 @@ fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> String {
         Some(v) => (cx.ty.promise_rejecting(v, err), never),
         None => (ret, err),
     };
-    let t = cx.ty.intern(crate::hir::TyKind::FnPtr {
+    cx.ty.intern(crate::hir::TyKind::FnPtr {
         params,
         ret,
         throws,
-    });
-    cx.display(t)
+    })
 }
 
 /// A closure created without an expected error type took what its body was known to throw;

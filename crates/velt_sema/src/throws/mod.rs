@@ -16,6 +16,7 @@
 
 mod checks;
 mod conventions;
+mod fn_types;
 mod groups;
 mod infer;
 mod inits;
@@ -25,6 +26,8 @@ use std::collections::HashSet;
 
 use velt_common::Span;
 
+pub(crate) use fn_types::FnSites;
+pub(crate) use fn_types::FnTypeSeeds;
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;

@@ -81,7 +81,7 @@ impl Ctx<'_> {
                 ret,
                 throws,
                 rest: false,
-            } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
+            } => self.resolve_fn_type(params, ret, throws.as_deref(), env, t.span),
             ast::TypeExprKind::TupleRest(_) => {
                 self.error(
                     velt_common::Diagnostic::error(
@@ -149,39 +149,6 @@ impl Ctx<'_> {
                 self.ty.undefined()
             }
         }
-    }
-
-    /// `(params) => ret [throws E]`. After a `Promise` result, `throws E` is the promise's
-    /// rejection type (calling an async function never throws; awaiting its promise does).
-    fn resolve_fn_type(
-        &mut self,
-        params: &[ast::TypeExpr],
-        ret: &ast::TypeExpr,
-        throws: Option<&ast::TypeExpr>,
-        env: &TyEnv,
-    ) -> TyId {
-        let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
-        let mut ret = self.resolve_type(ret, env);
-        let never = self.ty.never;
-        let err = throws.map(|t| {
-            let e = self.resolve_type(t, env);
-            self.no_void_error(e, t.span);
-            e
-        });
-        let err = self.canon_error(err).unwrap_or(never);
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, e) if err != never => {
-                let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
-                ret = self.ty.promise_rejecting(v, e);
-                never
-            }
-            _ => err,
-        };
-        self.ty.intern(TyKind::FnPtr {
-            params,
-            ret,
-            throws,
-        })
     }
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.

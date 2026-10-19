@@ -253,8 +253,9 @@ fn check_on_current_thread(
     let null_proto = modules
         .iter()
         .any(|m| !m.is_std && calls_object_create_null(&m.ast));
-    let new_cx = |held_borrows: bool| {
+    let new_cx = |held_borrows: bool, seeds: &throws::FnTypeSeeds| {
         let mut cx = ctx::Ctx::new(modules, root);
+        cx.fn_sites = throws::FnSites::new(seeds.clone());
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
@@ -285,9 +286,19 @@ fn check_on_current_thread(
         }
         (cx, entry)
     };
-    let (mut cx, mut entry) = new_cx(true);
+    // Function types written without `throws` throw what the closures stored into them throw
+    // (`throws::fn_types`): check again while those sets grow.
+    let mut seeds = throws::FnTypeSeeds::default();
+    let (mut cx, mut entry) = new_cx(true, &seeds);
+    for _ in 0..FN_SITE_ROUNDS {
+        let Some(grown) = cx.fn_sites.grown() else {
+            break;
+        };
+        seeds = grown;
+        (cx, entry) = new_cx(true, &seeds);
+    }
     if retry_sharing(&cx) {
-        (cx, entry) = new_cx(false);
+        (cx, entry) = new_cx(false, &seeds);
     }
     if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -337,6 +348,11 @@ fn check_on_current_thread(
     (Some(program), diags)
 }
 
+/// How many times a program is checked again for the error types of function types written
+/// without `throws` (each check finds the errors of the closures whose errors come through
+/// such a type that the previous one inferred).
+pub(crate) const FN_SITE_ROUNDS: usize = 8;
+
 /// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
 fn analyze(
     cx: &mut ctx::Ctx,
@@ -367,6 +383,7 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
+    cx.collected_defs = cx.defs.len();
     body::check_bodies(cx);
     module_scripts::declare(cx);
     absent_fields::check(cx);

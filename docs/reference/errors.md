@@ -92,12 +92,38 @@ compiler knows exactly what each function and each `try` block can throw.
 
 ## Dynamic calls
 
-Function types carry an error type: `(x: T) => U throws E`. Without `throws`, the function
-cannot throw.
+Function types carry an error type: `(x: T) => U throws E`. A written `throws` clause bounds
+what a function stored there may throw.
 
+- A function type written without `throws` (as TypeScript writes them) throws what the
+  closures stored into it throw, inferred over the whole program: a closure that throws may be
+  used as a value of such a type (a field, parameter, variable, interface member, array element
+  or `Map` value), and calls through the type throw its errors, so a `try` around them catches
+  them as in JavaScript. The error type belongs to the written type: every value of
+  `revive: (s: string) => T` in `interface Reviver<T>` throws what any closure stored into one
+  throws, whatever `T` is, and so does another function type of the same shape, which a
+  closure's type can't tell apart. When nothing stored into the type throws, it throws nothing
+  and calls through it need no error check. For a type whose result is a `Promise`, the
+  inferred errors are the promise's rejection type. Function types of the standard library
+  (proxy traps, timer and promise executor callbacks) are not inferred this way.
+
+  ```ts
+  interface Reviver<T> {
+    name: string;
+    revive: (s: string) => T;
+  }
+
+  const url: Reviver<URL> = { name: "URL", revive: (s) => new URL(s) };
+  console.log(url.revive("https://example.com/a").pathname); // /a
+  try {
+    url.revive("not a url");
+  } catch (e) {
+    console.log((e as Error).name); // TypeError
+  }
+  ```
 - A closure gets the error type of the function type expected where it is written (and must
-  not throw more); otherwise, what its body throws. A named function used as a value may throw
-  less than its function type allows.
+  not throw more than a written `throws` allows); otherwise, what its body throws. A named
+  function used as a value may throw less than its function type allows.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the

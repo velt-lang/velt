@@ -1,0 +1,14 @@
+ok 12
+caught Bad: negative -1
+caught RangeError: too big
+map true
+x!
+holder empty
+num failed: Bad
+12 null
+json failed: SyntaxError
+[ 'a' ] null
+generic SyntaxError
+first 1
+second 2
+2

@@ -95,8 +95,9 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let closures = crate::nested_closures::rewrite(modules);
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
-    let new_cx = |held_borrows: bool| {
+    let new_cx = |held_borrows: bool, seeds: &crate::throws::FnTypeSeeds| {
         let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+        cx.fn_sites = crate::throws::FnSites::new(seeds.clone());
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
         if let Some(l) = &lifted {
@@ -121,11 +122,20 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
         }
         cx
     };
-    let mut cx = new_cx(true);
+    // As in `crate::check_with`: the error types of function types written without `throws`.
+    let mut seeds = crate::throws::FnTypeSeeds::default();
+    let mut cx = new_cx(true, &seeds);
+    for _ in 0..crate::FN_SITE_ROUNDS {
+        let Some(grown) = cx.fn_sites.grown() else {
+            break;
+        };
+        seeds = grown;
+        cx = new_cx(true, &seeds);
+    }
     // As in `crate::check_with`: borrowing in held closures never rejects a program.
     let retried = crate::retry_sharing(&cx);
     if retried {
-        cx = new_cx(false);
+        cx = new_cx(false, &seeds);
     }
     (snapshot::build(cx), retried)
 }
