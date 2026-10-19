@@ -57,6 +57,7 @@ impl FnCx<'_, '_> {
         }
         .filter(|s| !s.starts_with('<'));
         let fresh = crate::fresh_returns::fresh_callees(&h).is_some_and(|c| c.is_empty());
+        let in_order = self.in_order(from, &fields, &slots);
         self.cx.object_copies.copies.push(Copy {
             from,
             to: exp,
@@ -65,6 +66,7 @@ impl FnCx<'_, '_> {
             span,
             source,
             fresh,
+            in_order,
         });
         let mut lets = vec![];
         let mut base = match path {
@@ -177,6 +179,20 @@ impl FnCx<'_, '_> {
 
     /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
     /// ones it leaves absent.
+    /// Does the copy have the source's fields (`copied`, in the expected type's order), in the
+    /// source's order, each of the same type (no nested copy)?
+    fn in_order(&self, from: TyId, copied: &[String], slots: &[Slot]) -> bool {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(from) else {
+            return false;
+        };
+        let Some(a) = self.cx.adt(*d) else {
+            return false;
+        };
+        a.fields.len() == copied.len()
+            && a.fields.iter().zip(copied).all(|(f, c)| f.name == *c)
+            && (slots.iter()).all(|s| !matches!(s, Slot::Field { from, to, .. } if from != to))
+    }
+
     fn copied_names(&self, exp: TyId, slots: &[Slot]) -> (Vec<String>, Vec<String>) {
         let (mut copied, mut absent) = (vec![], vec![]);
         let TyKind::Adt(d, _) = self.cx.ty.kind(exp) else {

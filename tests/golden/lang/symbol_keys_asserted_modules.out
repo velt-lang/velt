@@ -1,0 +1,12 @@
+{
+  type: 'div',
+  children: [
+    { type: 'span', children: [], [Symbol(sigx:vnode)]: true },
+    { type: 'raw', children: [] }
+  ],
+  [Symbol(sigx:vnode)]: true
+}
+[ true, false ]
+vnode cell other other
+{ value: 4, [Symbol(sigx.cell)]: 1 } true {"value":4} [ 'value' ]
+true

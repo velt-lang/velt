@@ -52,6 +52,8 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
     let mut brands = Brands::default();
     // (type name, field, written type): the members to add.
     let mut adds: Vec<(String, ast::Ident, ast::TypeExpr)> = vec![];
+    // (module, key) of each symbol member an asserted literal adds.
+    let mut cast_keys: Vec<(usize, String)> = vec![];
     for (i, m) in modules.iter().enumerate() {
         if m.is_std {
             continue;
@@ -59,10 +61,30 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
         let mut scan = Scan {
             module: i,
             declared: vec![],
+            strings: HashSet::new(),
+            asserted: vec![],
             brands: &mut brands,
             adds: &mut adds,
         };
         visit::walk_module(&m.ast, &mut scan);
+        // A string constant's key names a string field, which the type declares or not.
+        let (strings, asserted) = (scan.strings, scan.asserted);
+        for a in asserted {
+            let key = &a.1.name[1..a.1.name.len() - 1];
+            if strings.contains(key) {
+                continue;
+            }
+            cast_keys.push((i, key.to_string()));
+            // Literals with different types for one member make it an `any`.
+            let same = |b: &(String, ast::Ident, ast::TypeExpr)| b.0 == a.0 && b.1.name == a.1.name;
+            if let Some(b) = adds.iter_mut().find(|b| same(b)) {
+                if type_text(&b.2) != type_text(&a.2) {
+                    b.2 = named_type("any", b.2.span);
+                }
+                continue;
+            }
+            adds.push(a);
+        }
     }
     if adds.is_empty() {
         return (brands, None);
@@ -88,6 +110,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
             .filter(|b| b.module == i)
             .map(|b| b.key.name.as_str())
             .filter(|k| adds.iter().any(|a| a.1.name == format!("[{k}]")))
+            .chain(cast_keys.iter().filter(|c| c.0 == i).map(|c| c.1.as_str()))
             .collect();
         hoist_keys(&mut m.ast, &keys);
     }
@@ -190,6 +213,10 @@ struct Scan<'b> {
     /// Variables declared with a named type (`const cell: Cell = …`, `… as Cell`): name and
     /// type name, in source order (the last one wins).
     declared: Vec<(String, String)>,
+    /// The constants initialized with a string (`const NAME = "name"`).
+    strings: HashSet<String>,
+    /// The members asserted literals add ([`Scan::cast`]), before the string keys are dropped.
+    asserted: Vec<(String, ast::Ident, ast::TypeExpr)>,
     brands: &'b mut Brands,
     adds: &'b mut Vec<(String, ast::Ident, ast::TypeExpr)>,
 }
@@ -199,6 +226,12 @@ impl<'a> Visit<'a> for Scan<'_> {
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return;
         };
+        if matches!(
+            v.init.as_ref().map(|e| &e.kind),
+            Some(E::Lit(ast::Lit::Str(_)) | E::Template { .. })
+        ) {
+            self.strings.insert(name.name.clone());
+        }
         let written = v.ty.as_ref().or(match v.init.as_ref().map(|e| &e.kind) {
             Some(E::Cast { ty, .. }) => Some(ty),
             _ => None,
@@ -220,6 +253,7 @@ impl<'a> Visit<'a> for Scan<'_> {
                     }
                 }
             }
+            E::Cast { expr, ty } => self.cast(expr, ty),
             E::Object(props) => {
                 for p in props {
                     if let ast::ObjectProp::KeyValue(k, _) = p {
@@ -239,6 +273,41 @@ impl<'a> Visit<'a> for Scan<'_> {
 }
 
 impl Scan<'_> {
+    /// `{ ..., [KEY]: v } as T` (#923): TypeScript allows members `T` doesn't declare in an
+    /// asserted literal, and the object keeps them, so a symbol-keyed member with a literal
+    /// value becomes the optional field `[KEY]?: V` of `T`, as for a `defineProperty` brand
+    /// (enumerable, as a literal's members are). Nothing is added when `T` declares the key.
+    fn cast(&mut self, expr: &ast::Expr, ty: &ast::TypeExpr) {
+        let mut inner = expr;
+        while let E::Paren(e) = &inner.kind {
+            inner = e;
+        }
+        let (E::Object(props), Some(type_name)) = (&inner.kind, type_name(ty)) else {
+            return;
+        };
+        for p in props {
+            let ast::ObjectProp::KeyValue(k, v) = p else {
+                continue;
+            };
+            let Some(key) = computed(&k.name) else {
+                continue;
+            };
+            // Another value is an `any` (only `any` and `in` see the member).
+            let t = literal_type(v).unwrap_or_else(|| named_type("any", v.span));
+            if !key
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+            {
+                continue;
+            }
+            let field = ast::Ident {
+                name: k.name.clone(),
+                span: k.span,
+            };
+            self.asserted.push((type_name.clone(), field, t));
+        }
+    }
+
     /// `Object.defineProperty(obj, KEY, { ... })`.
     fn call(&mut self, callee: &ast::Expr, args: &[ast::Expr]) {
         let E::Member { object, prop, .. } = &callee.kind else {
@@ -312,10 +381,9 @@ fn computed(name: &str) -> Option<&str> {
     (!inner.starts_with("Symbol.")).then_some(inner)
 }
 
-/// The type of a literal brand value, as written (`true` → `boolean`).
-fn literal_type(e: &ast::Expr) -> Option<ast::TypeExpr> {
-    let span = e.span;
-    let named = |n: &str| ast::TypeExpr {
+/// The named type `n` (`boolean`, `any`).
+fn named_type(n: &str, span: Span) -> ast::TypeExpr {
+    ast::TypeExpr {
         kind: ast::TypeExprKind::Named {
             path: vec![ast::Ident {
                 name: n.to_string(),
@@ -324,7 +392,21 @@ fn literal_type(e: &ast::Expr) -> Option<ast::TypeExpr> {
             args: vec![],
         },
         span,
-    };
+    }
+}
+
+/// A type [`literal_type`] or [`named_type`] made, for comparing (`null` for `null`).
+fn type_text(t: &ast::TypeExpr) -> &str {
+    match &t.kind {
+        ast::TypeExprKind::Named { path, .. } => path.last().map_or("", |i| i.name.as_str()),
+        _ => "null",
+    }
+}
+
+/// The type of a literal brand value, as written (`true` → `boolean`).
+fn literal_type(e: &ast::Expr) -> Option<ast::TypeExpr> {
+    let span = e.span;
+    let named = |n: &str| named_type(n, span);
     Some(match &e.kind {
         E::Lit(ast::Lit::Bool(_)) => named("boolean"),
         E::Lit(ast::Lit::Str(_)) => named("string"),
