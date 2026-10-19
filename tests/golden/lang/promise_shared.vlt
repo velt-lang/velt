@@ -13,7 +13,7 @@ class User {
 }
 
 async function fetchUser(id: number): Promise<User> {
-  await sleep(id * 5);
+  await sleep(5);
   console.log(`fetch ${id}`);
   return new User(`user${id}`);
 }
@@ -60,7 +60,8 @@ async function useLoader(l: Loader, tag: string): Promise<void> {
 
 async function main() {
   await twice();
-  await Promise.all([caller("a", 2), caller("b", 2), caller("c", 3)]);
+  await Promise.all([caller("a", 2), caller("b", 2)]);
+  await caller("c", 3);
   const l = new Loader();
   const m = l;
   await useLoader(l, "x");
