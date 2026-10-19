@@ -4,7 +4,8 @@
 //! one home (it has a single owner), so its identity is the address of the place holding it.
 //! An object type that is copied when shared (never changed in place) would lose its identity
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
-//! Interface and function values: see `ref_identity`.
+//! Interface and function values: see `ref_identity`. As `Map` and `Set` keys (`KeyEq`), a type
+//! declared with `struct` compares by content instead, field by field.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -18,6 +19,10 @@ impl FnLower<'_, '_> {
         // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
         if self.cx.is_dynamic(ty) {
             return self.any_same_places(a, b, self.key_mode);
+        }
+        // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
+        if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
+            return self.same_glue(a, b, ty);
         }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
@@ -146,6 +151,17 @@ impl super::Cx<'_> {
         match self.types.kind(t) {
             TyKind::Array(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
+            _ => false,
+        }
+    }
+
+    /// Is `t` a type declared with `struct`, whose `Map` and `Set` keys compare and hash by
+    /// content (`hir::AdtDef::declared_struct`)?
+    pub(super) fn content_key(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Adt(d, _) => {
+                matches!(self.hir.def(*d), hir::Def::Adt(a) if a.declared_struct)
+            }
             _ => false,
         }
     }

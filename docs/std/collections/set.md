@@ -3,8 +3,8 @@
 `Set` is a global, as in Node (or `import { Set } from "velt:collections/set"`). An
 insertion-ordered hash set with JS `Set` semantics plus the ES2025 set algebra. It is built on
 the prelude `Map`, so elements compare as [map keys](../prelude.md#map) do: numbers, bool and
-strings by value, objects (class instances, object types, arrays) by identity, as in JS, and
-tuples part by part.
+strings by value, objects (class instances, object types, arrays) by identity, as in JS,
+structs (Velt value types) by content, and tuples part by part.
 
 - `new Set<T>()`, `new Set(values)` (leaves `values` as it is and shares the elements, like JS;
   `values` may also be any iterable, `new Set(gen())`, whose values it takes),
