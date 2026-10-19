@@ -1,0 +1,14 @@
+// check: no leaks
+// A class of the program's own named `JsonError` is not the one `JSON.parse` throws: an
+// uncaught one is reported with its own name, as in Node (#1265).
+class JsonError extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "JsonError";
+  }
+}
+
+function main() {
+  console.log("start");
+  throw new JsonError("mine");
+}

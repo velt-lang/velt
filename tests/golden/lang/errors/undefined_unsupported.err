@@ -5,7 +5,6 @@ undefined_unsupported.vlt:15:18: error: `JSON.parse` into a type that may hold `
 undefined_unsupported.vlt:19:13: error: `f64 | undefined` as a type argument of `Map` is not supported yet
 undefined_unsupported.vlt:20:3: error: `f64 | undefined` as a type argument of `Map.set` is not supported yet
 undefined_unsupported.vlt:25:15: error: `=== undefined` on a `f64 | null` is not supported yet (#930)
-undefined_unsupported.vlt:25:32: error: `!== undefined` on a `f64 | null` is not supported yet (#930)
 undefined_unsupported.vlt:25:58: error: `typeof` compared with "undefined" on a `f64 | null` is not supported yet (#930)
 undefined_unsupported.vlt:30:10: error: `case null` on a value of type `f64 | undefined`, which is never null
 undefined_unsupported.vlt:42:28: error: type `f64 | undefined` is not assignable to type `f64 | null` (TypeScript's TS2322)
@@ -25,4 +24,3 @@ undefined_unsupported.vlt:128:20: error: `JSON.stringify` of a value whose `toJS
 undefined_unsupported.vlt:152:23: error: `undefined` passed for a parameter with a default is not supported yet (#930)
 undefined_unsupported.vlt:166:21: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
 undefined_unsupported.vlt:167:12: error: this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)
-undefined_unsupported.vlt:189:10: error: a `f64 | null` from the standard library where a `f64 | undefined` is expected is not supported yet (#930)

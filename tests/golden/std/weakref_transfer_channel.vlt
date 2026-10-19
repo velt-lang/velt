@@ -4,7 +4,7 @@ import { channel } from "velt:channel";
 class V { n: number; constructor(n: number) { this.n = n; } }
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
-  return () => { const x = r.deref(); return x === null ? -1 : x.n; };
+  return () => { const x = r.deref(); return x === undefined ? -1 : x.n; };
 }
 async function main() {
   const keep = new V(7);

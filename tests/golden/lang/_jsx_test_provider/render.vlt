@@ -137,7 +137,7 @@ export async function render(el: Element): Promise<string> {
   el.parts.reverse();
   while (el.parts.length > 0) {
     const p = el.parts.pop();
-    if (p === null) {
+    if (p === undefined) {
       break;
     }
     if (typeof p === "string") {

@@ -2,8 +2,8 @@
 3
 true
 42
-bad: invalid JSON at $: unexpected character 'x' (byte 0)
-skip: invalid JSON at $: unexpected character 'y' (byte 0)
+bad: Unexpected token 'x', "x" is not valid JSON
+skip: Unexpected token 'y', "y" is not valid JSON
 3.5
 7 true 0.25
 3

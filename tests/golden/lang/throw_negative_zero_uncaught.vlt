@@ -1,0 +1,7 @@
+// check: no leaks
+// A thrown number is reported as `String(x)` writes it, as Node does when nothing catches it
+// (#1265): `throw -0` reports `Uncaught 0`, though `console.log(-0)` prints `-0`.
+function main() {
+  console.log(-0);
+  throw -0;
+}

@@ -1,0 +1,8 @@
+string_escape_octal.vlt:5:14: error: Octal escape sequences are not allowed. Use the syntax '\x01'.
+string_escape_octal.vlt:6:14: error: Octal escape sequences are not allowed. Use the syntax '\x41'.
+string_escape_octal.vlt:7:14: error: Octal escape sequences are not allowed. Use the syntax '\x00'.
+string_escape_octal.vlt:8:14: error: Escape sequence '\9' is not allowed.
+string_escape_octal.vlt:9:15: error: Octal escape sequences are not allowed. Use the syntax '\x0a'.
+string_escape_octal.vlt:10:17: error: Hexadecimal digit expected.
+string_escape_octal.vlt:11:18: error: Hexadecimal digit expected.
+string_escape_octal.vlt:12:17: error: An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive.

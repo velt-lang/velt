@@ -85,7 +85,10 @@ export function test_bad_rows_are_server_errors() {
     const db = open(path);
     db.exec("UPDATE todos SET tags = 'not json'");
     db.close();
-    assertEq(getError(store, 1), "500 db_error: todo 1 has malformed tags: expected array at $");
+    assertEq(
+      getError(store, 1),
+      `500 db_error: todo 1 has malformed tags: Unexpected token 'o', "not json" is not valid JSON`,
+    );
     assertEq(getError(store, 2), "404 not_found: todo 2 not found");
   }
   removeDb(path);

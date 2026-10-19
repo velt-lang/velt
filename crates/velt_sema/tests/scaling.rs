@@ -58,7 +58,7 @@ fn generic_chains(n: usize) -> String {
         };
         out += &format!(
             "function k{i}<K>(s: string): number {{\n  return {keys};\n}}\n\
-             function p{i}<T>(xs: T[]): T | null {{\n  return {first};\n}}\n"
+             function p{i}<T>(xs: T[]): T | undefined {{\n  return {first};\n}}\n"
         );
     }
     out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n}\n"

@@ -11,6 +11,7 @@
 //! element. Each `<` records the mode stack it starts in, so lexing can restart there.
 
 mod entities;
+mod escapes;
 mod jsx;
 mod literals;
 mod regex;
