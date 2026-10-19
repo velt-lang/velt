@@ -40,6 +40,9 @@ pub(crate) fn box_cells(
     if work.is_empty() {
         return;
     }
+    // Smallest first (`pop` takes the last): the errors come in definition order, not in the
+    // hash map's.
+    work.sort_unstable_by(|a, b| b.cmp(a));
     let parents = enclosing_fns(cx);
     let mut threaded = None;
     let mut done = FxHashSet::default();

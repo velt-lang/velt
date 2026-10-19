@@ -229,12 +229,14 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         // A `for (let …)` variable cannot be one cell (each iteration has its own, copied into
         // the next one): when it needs one only because a closure created inside an escaping
         // closure assigns it, and not anyway, it is an error.
-        let cannot: Vec<LocalId> = m
+        let mut cannot: Vec<LocalId> = m
             .boxed
             .iter()
             .copied()
             .filter(|l| nested_only.contains(l) && out.per_iteration.contains(&(def, *l)))
             .collect();
+        // In declaration order, not the hash set's: the errors come in that order.
+        cannot.sort_unstable();
         if !cannot.is_empty() {
             let (boxed, errors, reused) = (m.boxed.clone(), m.errors.len(), m.reused.clone());
             m.writers = &own_writers;
