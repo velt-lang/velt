@@ -84,6 +84,7 @@ mod replaced_holders;
 mod resolve;
 mod suggest;
 mod symbols;
+mod synth_ifaces;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
@@ -302,6 +303,7 @@ fn check_on_current_thread(
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
+    let (upcasts, upcast_impls) = cx.upcast_tables();
     let ctx::Ctx {
         ty,
         defs,
@@ -336,6 +338,8 @@ fn check_on_current_thread(
         dyn_members,
         generator_throw: gen_throw,
         super_calls,
+        upcasts,
+        upcast_impls,
     };
     (Some(program), diags)
 }

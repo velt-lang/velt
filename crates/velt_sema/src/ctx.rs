@@ -50,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
+    /// Interfaces made for intersections and `Pick`s of interfaces with methods.
+    pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -290,6 +292,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
+            synth_ifaces: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: HashMap::new(),
@@ -724,6 +727,9 @@ impl<'m> Ctx<'m> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(d, args) if self.synth_display(*d, args, names).is_some() => {
+                self.synth_display(*d, args, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) => match self.iface(*d) {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),

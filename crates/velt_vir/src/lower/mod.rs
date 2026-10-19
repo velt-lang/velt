@@ -97,6 +97,7 @@ mod track_caller;
 mod transfer;
 mod truthy;
 mod types;
+mod upcast;
 mod weak;
 mod weak_object;
 mod widen;

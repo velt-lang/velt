@@ -693,6 +693,26 @@ entry is an `ICE:`.
   field the key's string literal type names, as `x.name` does, switching on the key's tag for a
   union of keys.
 
+## Interface intersections and upcasts (#350)
+
+- An intersection with an interface with methods (`I & { errors: unknown }`, `A & B`), and
+  `Pick<I, K>` / `Omit<I, K>` of one, is `TyKind::Dyn` of an interface sema makes
+  (`velt_sema` `synth_ifaces.rs`), one per form, generic over the type parameters its parts
+  mention. Its `InterfaceDef` is an ordinary one: the members of every part (an intersection
+  also lists the interface parts as parents), in slot order. Nothing new reaches lowering
+  except the conversions below. An object literal implements it as any interface; a class
+  implementing every interface part implements it through an `ImplDef` whose slots are the
+  methods of those implementations and the getters of the class's fields.
+- `Upcast(e)` with `e: Dyn(A, X)` and the result `Dyn(B, Y)`, `A != B` (additive): `B`'s members
+  are members of `A` with the same types (a part of an intersection, a `Pick` of it, an
+  interface `A` extends). The value is the same data pointer with `B`'s table for the concrete
+  type. `Program::upcasts[A]` lists the targets of `A`, in order; `Program::upcast_impls[i]`, for
+  each implementation `i` of `A`, the implementation of each target for the same type (sema
+  makes one when none exists, its slots the slots of `A`'s implementation for the same members).
+  Each table of `A` holds the table of target `k` at slot `n + k`, `n` being the number of
+  slots of `A`'s implementations; lowering loads it. Sema never records both `A` to `B` and `B`
+  to `A`. Values of `A` are compared by identity when values of a target are.
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

@@ -29,7 +29,7 @@ mod field_only;
 pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
-mod iface_extends;
+pub(crate) mod iface_extends;
 mod impls;
 mod imports;
 mod iterable;
@@ -67,6 +67,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     cx.check_deferred_ts_returns();
     sigs::resolve_sigs(cx, &items);
     iface_extends::flatten_all(cx);
+    cx.fill_synth_ifaces();
     field_only::fill(cx);
     classes::check_classes(cx);
     extend_shadow::check(cx);

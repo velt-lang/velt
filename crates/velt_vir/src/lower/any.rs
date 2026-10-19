@@ -402,6 +402,17 @@ impl FnLower<'_, '_> {
     pub(super) fn any_to(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
         let from = self.sub(a.ty);
         let ty = self.sub(ty);
+        // A value boxed and converted back to its own type (`t as T & object` of a `t: T` at
+        // an interface or class `T`): the value itself, which always has that type.
+        if let hir::ExprKind::ToDyn { expr, impl_index } = &a.kind {
+            if self.cx.is_any_impl(*impl_index)
+                && self.sub(expr.ty) == ty
+                && !self.cx.is_dynamic(ty)
+            {
+                let v = self.consume(expr);
+                return self.own_value(v, ty);
+            }
+        }
         let v = self.consume(a);
         if self.dead() {
             let vt = self.cx.ty(ty);

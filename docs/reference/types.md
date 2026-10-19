@@ -1202,9 +1202,18 @@ Differences from TypeScript, each a compile error with a note on what to write i
   discriminants), TypeScript makes the type, or the field, `never`; Velt reports
   ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
-  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays (also `Signal<T>` at
-  an array `T`, reported at the call) and function types (overloads) are not parts either;
-  `T extends A & B` stays a bound on two interfaces.
+  `Pick<C, …>` or a field-only interface. Arrays (also `Signal<T>` at an array `T`, reported at
+  the call) and function types (overloads) are not parts either; `T extends A & B` stays a
+  bound on two interfaces.
+- An interface with methods is a part: `I & { errors: number }` (and `A & B`, or `T & { … }` at
+  an interface `T`) is an interface with every part's members. An object literal implements it,
+  a class that implements each interface part (and has the object parts' fields) converts to it
+  as the same object, and its values convert to each interface part as the same object (`===`
+  holds). `Pick<I, K>` and `Omit<I, K>` of such an interface are interfaces with those members,
+  which values of `I` convert to the same way. Methods of one name with different signatures in
+  two parts (overloads in TypeScript) are an error, and so is converting such a value to its
+  object part (`{ errors: number }`), which would copy it. `T & object` at an interface or class
+  `T` is `T`: `t as T & object` is the same value.
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
   is passed on and returned as it is, and the members of its object parts are read (also with
   `?.` and destructuring), written and called on the value itself (`x.id = "b"`, `s.$set(v)` for

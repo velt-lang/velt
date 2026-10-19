@@ -64,6 +64,15 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) => {
                 self.note_vtable_type(ty);
                 let mut entries = self.impl_entries(index, ty);
+                // The tables of the interfaces its values convert to (lower/upcast.rs).
+                if let Some(targets) = self.hir.upcast_impls.get(&index).cloned() {
+                    let iface = self.hir.impls[index as usize].iface;
+                    let n = self.upcast_base(iface);
+                    for (k, j) in targets.into_iter().enumerate() {
+                        let t = self.vtable(VtableKey::Impl(j, ty));
+                        entries.push((n + k as i128, Const::Static(t)));
+                    }
+                }
                 let mut id = self.class_id_word(ty, true);
                 if self.is_any_impl(index) {
                     self.note_dyn_type(ty);

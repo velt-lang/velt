@@ -334,6 +334,7 @@ impl Ctx<'_> {
                 return self.ty.error;
             }
         }
+        self.synth_ifaces.span = span;
         let mut acc = operands[0].0;
         for &(b, _) in &operands[1..] {
             match self.meet(acc, b, module, 0) {
@@ -393,6 +394,16 @@ impl Ctx<'_> {
         names: &mut Vec<Option<String>>,
     ) -> Option<TyId> {
         use crate::any::Dynamic;
+        // `X & X` is `X` (`T & object` at `T = object`).
+        let mut i = 0;
+        while i < operands.len() {
+            if operands[..i].iter().any(|&(o, _)| o == operands[i].0) {
+                operands.remove(i);
+                names.remove(i);
+            } else {
+                i += 1;
+            }
+        }
         if let Some(&(any, _)) = operands
             .iter()
             .find(|(o, _)| matches!(self.dynamic(*o), Some(Dynamic::Any)))
@@ -524,7 +535,9 @@ impl Ctx<'_> {
                 .into_iter()
                 .all(|m| self.intersectable(m, span, None));
         }
-        if self.is_object_type(t) {
+        // An interface with methods makes an interface with every part's members
+        // (`crate::synth_ifaces`).
+        if self.is_object_type(t) || self.is_method_iface(t) {
             return true;
         }
         let shown = written.map_or_else(|| self.display(t), str::to_string);
@@ -607,6 +620,9 @@ impl Ctx<'_> {
             if let Some(members) = self.union_members(u) {
                 return self.meet_union(&members, other, swap, module, depth);
             }
+        }
+        if let Some(r) = self.meet_iface(a, b, module, self.synth_ifaces.span) {
+            return r;
         }
         if self.is_object_type(a) && self.is_object_type(b) {
             return self.merge_objects(a, b, module, depth);

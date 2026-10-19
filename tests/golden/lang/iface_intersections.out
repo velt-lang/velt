@@ -1,0 +1,14 @@
+ready 0 1 1
+ready 2 2 true
+both 42 7 both true
+both true
+9
+3 true true
+5
+both 42 true
+errored boom 5
+5 true
+sig true sig
+sig true
+true both true both
+1 true 2 true
