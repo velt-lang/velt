@@ -7,7 +7,7 @@ function idx(i: number): number { log.push("i" + i); return i; }
 function dflt(n: number): number { log.push("d" + n); return n; }
 interface P { x?: number; y: string; z?: string | null }
 class Pt { x = 0; y = 0; }
-function main(): void {
+function main1(): void {
   const arr = [0, 0, 0];
   let q = 0;
   [arr[idx(0)], q = dflt(1)] = [7] as number[];
@@ -49,4 +49,25 @@ function main(): void {
   let k = "", v = 0;
   for ([k, v] of new Map([["a", 1], ["b", 2]])) console.log(k, v);
   for ({ x: v = 9 } of [{ y: "a" }, { x: 2, y: "b" }] as P[]) console.log(v);
+}
+// Defaults where the value is never `undefined` (a tuple's element, a required field) never
+// apply; a `null` element keeps its `null`.
+function main2(): void {
+  let a = 0, b = 0;
+  [a, b = 1] = [5, 6] as [number, number];
+  console.log(a, b);
+  const o = { x: 1, y: 2 };
+  let x = 0, y = 0;
+  ({ x, y = 9 } = o);
+  console.log(x, y);
+  let s: string | undefined = "q";
+  [s = "d"] = [undefined] as (string | undefined)[];
+  console.log(s);
+  let n: number | null = 0;
+  [n = 3] = [null] as (number | null)[];
+  console.log(n);
+}
+function main(): void {
+  main1();
+  main2();
 }

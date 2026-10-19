@@ -270,7 +270,17 @@ impl FnCx<'_, '_> {
             }
             let at = step.place.span;
             let mut read = expr_of(ast::ExprKind::Ident(ident(&step.name, at)), at);
-            if let Some(d) = &step.default {
+            // A default where the value is never `undefined` (a tuple's element, a field that is
+            // not optional) never applies, as in a declaration.
+            let default = step.default.as_ref().filter(|_| {
+                let l = self.lookup_local(&step.name, at);
+                l.is_some_and(|l| {
+                    let t = self.f.locals[l.0 as usize].ty;
+                    self.cx.dynamic(t).is_some()
+                        || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+                })
+            });
+            if let Some(d) = default {
                 let callee = ast::ExprKind::Ident(ident(crate::body::UNDEFINED_OR, at));
                 read = expr_of(
                     ast::ExprKind::Call {
