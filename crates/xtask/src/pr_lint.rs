@@ -13,6 +13,9 @@
 //!   (`--commit-logins` says who each commit is attributed to), or with an email from
 //!   `--author` / `PR_LINT_AUTHORS`, else `git config user.email`. Merge commits are skipped.
 //!
+//! With the commits it also prints a note, never a failure, when the change is over the soft size
+//! cap ([`crate::pr_size`]).
+//!
 //! Text inside code (fenced blocks and inline `code` spans) is exempt from the wording rules, so
 //! a description can quote what it talks about; machine paths and whole session URLs are
 //! checked everywhere, because pasted output is where they usually come from.
@@ -549,7 +552,8 @@ const USAGE: &str = "\
 cargo xtask pr-lint [options]
 
 Checks a pull request's title and description (PR_TITLE, PR_BODY, or the options below) and the
-messages and authors of its commits (`git log <base>..<head>`).
+messages and authors of its commits (`git log <base>..<head>`). With the commits, it also notes,
+without failing, a change of more than about 1,500 added plus deleted lines (split it into a stack).
 
 Options:
   --title <text>         The title (default: $PR_TITLE)
@@ -607,6 +611,7 @@ pub fn main(root: &Path, args: &[String]) -> Result<(), String> {
 
     let mut violations = vec![];
     let mut checked = vec![];
+    let mut size_note = None;
     if let Some(t) = title.as_deref().filter(|t| !t.is_empty()) {
         violations.extend(lint_text("title", t));
         checked.push("the title".to_string());
@@ -628,11 +633,18 @@ pub fn main(root: &Path, args: &[String]) -> Result<(), String> {
         attribute(&mut list, &logins);
         violations.extend(lint_commits(&list, &authors));
         checked.push(format!("{} commit(s) in {base}..{head}", list.len()));
+        size_note = crate::pr_size::check(root, &base, &head);
     }
     if checked.is_empty() {
         return Err(format!("pr-lint: nothing to check\n\n{USAGE}"));
     }
     println!("pr-lint checked {}", checked.join(", "));
+    if let Some(note) = size_note {
+        println!("note (does not fail the check): {note}");
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            print!("{}", crate::pr_size::annotation(&note));
+        }
+    }
     if violations.is_empty() {
         println!("\x1b[32mno problems\x1b[0m");
         return Ok(());
@@ -753,7 +765,7 @@ fn parse_log(text: &str) -> Vec<Commit> {
         .collect()
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(args)
         .current_dir(root)

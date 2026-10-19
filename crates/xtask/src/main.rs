@@ -21,6 +21,7 @@ mod hooks;
 mod os;
 mod plan;
 mod pr_lint;
+mod pr_size;
 mod precheck;
 
 use std::path::{Path, PathBuf};
