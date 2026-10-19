@@ -44,13 +44,12 @@ export class Error {
    * The first line of Node's report of this error when nothing catches it, for a value of class
    * `cls` (the compiler calls it): `toString()`'s text as `Error`'s writes it, with the class
    * in front when its `name` ends in `Error` and is not the class's own name
-   * (`E [TypeError]: m`; `MyTypeError: m` when the class's name contains it). `cls` is empty
-   * for a standard library class, which stands for the error Node throws: its `name` alone.
+   * (`E [TypeError]: m`; `MyTypeError: m` when the class's name contains it).
    */
   __uncaughtHeader(cls: string): string {
     const name = this.name;
     const text = errorText(name, this.message);
-    if (!name.endsWith("Error") || name == cls || cls == "") {
+    if (!name.endsWith("Error") || name == cls) {
       return text;
     }
     const rest = text.slice(name.length as i64);

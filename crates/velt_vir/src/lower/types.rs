@@ -617,25 +617,25 @@ impl<'h> Cx<'h> {
     }
 
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
-    /// Is `d` a standard library class standing for one of JS's error classes: declared outside
-    /// the prelude's `error` module, extending one of its classes other than `Error`
-    /// (`UrlError extends TypeError`)?
-    pub(super) fn std_class(&self, d: DefId) -> bool {
+    /// The JS error class standard library class `d` stands for (`TypeError` for `UrlError`):
+    /// the prelude `error` class other than `Error` it extends, when declared outside the
+    /// prelude's `error` module.
+    pub(super) fn std_error_class(&self, d: DefId) -> Option<String> {
         const ERRORS: &str = "std/prelude/error::";
         let hir::Def::Adt(a) = self.hir.def(d) else {
-            return false;
+            return None;
         };
         if !a.name.starts_with("std/") || a.name.starts_with(ERRORS) {
-            return false;
+            return None;
         }
-        let base = a.base.and_then(|b| match self.types.kind(b) {
-            TyKind::Adt(p, _) => match self.hir.def(*p) {
-                hir::Def::Adt(pa) => Some(pa.name.as_str()),
-                _ => None,
-            },
-            _ => None,
-        });
-        base.is_some_and(|n| n.starts_with(ERRORS) && n != "std/prelude/error::Error")
+        let TyKind::Adt(p, _) = self.types.kind(a.base?) else {
+            return None;
+        };
+        let hir::Def::Adt(pa) = self.hir.def(*p) else {
+            return None;
+        };
+        let base = pa.name.strip_prefix(ERRORS)?;
+        (base != "Error").then(|| base.to_string())
     }
 
     pub(super) fn type_name(&self, t: TyId) -> String {

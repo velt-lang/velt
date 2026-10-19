@@ -329,7 +329,8 @@ fn closures_and_function_values_carry_error_types() {
     assert!(func(&p, "main").throws.is_some());
     // A function type written without `throws` throws what is stored into it (#1154).
     let p = ok_src(
-        "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
+        "class A extends Error {} function run(f: () => void) { f(); }
+         function main() { run(() => { throw new A(\"x\"); }); }",
     );
     assert!(
         func(&p, "run").throws.is_some(),
@@ -340,6 +341,14 @@ fn closures_and_function_values_carry_error_types() {
         "function run(f: () => void) { f(); } function main() { run(() => { console.log(1); }); }",
     );
     assert!(func(&p, "run").throws.is_none(), "nothing stored throws");
+    // Only `Error` classes are inferred: a thrown string is still reported.
+    let r = err_src(
+        "function run(f: () => void) { f(); } function main() { run(() => { throw \"x\"; }); }",
+    );
+    assert!(
+        r.contains("but the function type it is used as does not allow throwing"),
+        "{r}"
+    );
     // A written `throws` clause still bounds what may be stored.
     let r = err_src(
         "class A extends Error {} function run(f: () => void throws A) { f(); }
