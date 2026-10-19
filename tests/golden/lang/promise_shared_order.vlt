@@ -2,7 +2,7 @@
 // Shared promises (#212): the awaiters of one pending promise resume in the order they started
 // waiting, among other microtasks, as in Node; a rejection reaches every awaiter.
 async function tick(tag: string, n: number): Promise<number> {
-  await null;
+  await Promise.resolve();
   console.log(`${tag} settles`);
   return n;
 }

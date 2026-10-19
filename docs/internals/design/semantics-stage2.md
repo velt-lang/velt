@@ -30,7 +30,7 @@ captures (§6).
 - **Shared values** (`Ctx::is_shared_value`): everything that is not Copy (strings, objects,
   arrays, maps, closures, interface values, promises). Structs and object literals are
   objects and never Copy (checkpoint D). A share of a promise is another holder of the same
-  future (`velt_rt_fut_share`, rt_abi_async.md �1.2, #212).
+  future (`velt_rt_fut_share`, rt_abi_async.md §1.2, #212).
 - **Soft moves for every shared value** (`ownership/shares.rs`, generalizing stage 1's strings):
   a move stays a move where the place is dead and becomes a share where it is used again
   (`moves` dataflow → `clone_reused`) or cannot be moved from (`validate`: borrowed params,

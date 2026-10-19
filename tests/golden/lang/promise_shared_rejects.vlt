@@ -4,7 +4,7 @@
 class Failed extends Error {}
 
 async function fail(n: number): Promise<number> {
-  await null;
+  await Promise.resolve();
   console.log(`fail ${n} runs`);
   throw new Failed(`no ${n}`);
 }

@@ -41,7 +41,8 @@ impl FnLower<'_, '_> {
     }
 
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
-        if !self.cx.is_class(ty) && self.cx.uncopyable_part(ty) == Some(ty) {
+        let promise = matches!(self.cx.kind(ty), TyKind::Promise(..));
+        if !self.cx.is_class(ty) && !promise && self.cx.uncopyable_part(ty) == Some(ty) {
             // A disposable struct or union (classes: `obj_clone_body`).
             self.panic_cannot_copy("a", ty);
         }
@@ -329,6 +330,7 @@ impl FnLower<'_, '_> {
 
     /// `Glue::ShareSlot`: another reference to the value at `src`, written to `dst`.
     pub(super) fn share_slot_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
+        self.cx.note_share(ty);
         let s = self.deref_param(src, ty);
         let d = self.deref_param(dst, ty);
         self.share_into(s, d, ty);

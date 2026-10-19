@@ -2,7 +2,7 @@
 // Shared promises (#212): a promise held in two variables, memoized in a Map, held by a class
 // instance passed to two callers, and two `then` callbacks on one promise.
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(() => r(), ms));
 }
 
 class User {

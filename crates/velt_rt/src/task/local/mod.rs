@@ -24,7 +24,7 @@ mod unhandled;
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
-pub(crate) use micro::{settled, ticket_pending};
+pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, mutex_locked, mutex_unlocked,
