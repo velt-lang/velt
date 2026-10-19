@@ -266,6 +266,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let v = self.expr(target, None, Want::Borrow);
+        let v = self.nullish_assigned_read(op, &a, v, span);
         let ty = v.ty;
         let block = hir::Block {
             stmts: vec![hir::Stmt {
