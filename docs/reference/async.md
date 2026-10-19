@@ -99,7 +99,9 @@ Promises behave like JavaScript's, at Rust's cost:
   ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
-  waits for pending work. A promise created outside async code (for example in a synchronous
+  waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
+  on a task like an `async main`, so they run as in Node: up to their first `await` when
+  created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
 - After `main` returns, the process also waits for *handles*, as in Node: a listening
   [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,

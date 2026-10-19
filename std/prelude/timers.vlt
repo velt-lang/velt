@@ -5,20 +5,19 @@
 //
 // A timer takes a callback returning the promise to run, like JS: `setTimeout(() => save(doc),
 // 100)` or `setTimeout(async () => { ... }, 10)` (a promise can't be passed: promises start
-// when created). The callback owns what it captures, so it outlives the frame that scheduled
-// it. The task runs as its own spawned task on the multi-threaded runtime, never before the
-// callbacks the scheduling task queued meanwhile (as in Node); an error it throws is uncaught (the process exits like on an unhandled rejection), so catch inside it.
+// when created). The callback runs on the task that created the timer, as a promise of that
+// task (never at the same time as its other code), so it shares what it captures with the code
+// around it, as in Node; it runs once the code that created it and the callbacks that code
+// queued are done. An error it throws is uncaught (the process exits like on an unhandled
+// rejection), so catch inside it.
 // A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle);
 // `unref()` lets the process exit without it. Spawned tasks and promises are not handles: what
 // keeps them going is what they wait for.
-// Timers are ordinary compiled Velt tasks built on `sleep`: no code pointer is cached anywhere,
-// so `velt dev` hot reload needs no special handling.
+// Timers are ordinary compiled Velt promises: no code pointer is cached anywhere, so `velt dev`
+// hot reload needs no special handling.
 
 declare function velt_rt_keep_alive_acquire();
 declare function velt_rt_keep_alive_release();
-declare function velt_rt_task_gate(): u64;
-declare async function velt_rt_task_gate_wait(gate: u64): Promise<void>;
-declare function velt_rt_task_gate_free(gate: u64);
 declare function velt_rt_timer_new(ms: i64): u64;
 declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;
 declare function velt_rt_timer_again(timer: u64, ms: i64);
@@ -189,11 +188,11 @@ export function clearImmediate(t: Timer) {
   t.clear();
 }
 
-// A timeout due `ms` from now: its place in the order of timers is taken now (velt_rt_timer_new),
-// before its task starts.
+// A timeout due `ms` from now: its place in the order of timers is taken now (velt_rt_timer_new).
+// It runs as a promise of the current task, which goes on running it after `main` returns.
 function schedule(task: () => Promise<void>, ms: i64): Timer {
   const state = newState();
-  spawn(fireOnce(velt_rt_timer_new(ms), task, state.clone(), velt_rt_task_gate()));
+  const run = fireOnce(velt_rt_timer_new(ms), task, state.clone());
   return new Timer(state, false);
 }
 
@@ -210,7 +209,7 @@ export function clearTimeout(t: Timer) {
 export function setInterval(task: () => Promise<void>, ms: i64): Timer {
   const state = newState();
   const every = ms < 1 ? 1 : ms;
-  spawn(fireEvery(velt_rt_timer_new(every), every, task, state.clone(), velt_rt_task_gate()));
+  const run = fireEvery(velt_rt_timer_new(every), every, task, state.clone());
   return new Timer(state, true);
 }
 
@@ -219,19 +218,15 @@ export function clearInterval(t: Timer) {
   t.clear();
 }
 
-// `timer`: its place in the order of timers (released here); `gate`: the creating task's (also
-// released here). Once due, the callback waits for its turn: until the timers due before it ran
-// their callbacks and the microtasks those queued, and until the creating task's current poll is
-// over, so it never runs before the callbacks (microtasks) that task queued, as in Node.
+// `timer`: its place in the order of timers (released here). Once due, the callback waits for
+// its turn: until the timers due before it ran their callbacks and the microtasks those queued.
 async function fireOnce(
   timer: u64,
   task: () => Promise<void>,
   state: shared<Mutex<TimerState>>,
-  gate: u64,
 ): Promise<void> {
-  await velt_rt_timer_turn(timer, gate);
+  await velt_rt_timer_turn(timer, 0);
   velt_rt_timer_free(timer);
-  velt_rt_task_gate_free(gate);
   if (!state.with((s) => s.begin())) {
     return;
   }
@@ -244,13 +239,11 @@ async function fireEvery(
   ms: i64,
   task: () => Promise<void>,
   state: shared<Mutex<TimerState>>,
-  gate: u64,
 ): Promise<void> {
   while (true) {
-    await velt_rt_timer_turn(timer, gate);
+    await velt_rt_timer_turn(timer, 0);
     if (!state.with((s) => s.begin())) {
       velt_rt_timer_free(timer);
-      velt_rt_task_gate_free(gate);
       return;
     }
     // Not awaited: the next run is due `ms` after this one started, whether or not it has

@@ -72,8 +72,6 @@ struct TaskCx {
     word: Cell<u32>,
     /// The microtask being run is a waiter's step already (micro.rs).
     credit: Cell<bool>,
-    /// The time read first during this poll ([`poll_now`]).
-    now: std::cell::OnceCell<tokio::time::Instant>,
 }
 
 thread_local! {
@@ -108,17 +106,6 @@ fn current_turn() -> u32 {
     let tcx = CURRENT.with(Cell::get);
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { tcx.as_ref() }.map_or(0, |t| t.turn)
-}
-
-/// The time as read first during the poll being run (`Instant::now()` outside a task): timers
-/// count their delays from it (order.rs).
-fn poll_now() -> tokio::time::Instant {
-    let tcx = CURRENT.with(Cell::get);
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
-    match unsafe { tcx.as_ref() } {
-        Some(t) => *t.now.get_or_init(tokio::time::Instant::now),
-        None => tokio::time::Instant::now(),
-    }
 }
 
 /// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
@@ -222,7 +209,6 @@ impl SetPtr {
             yielded: Cell::new(false),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
-            now: std::cell::OnceCell::new(),
         };
         let _enter = Enter::new(&tcx);
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
@@ -345,15 +331,31 @@ impl Locals {
 }
 
 /// Local promises that outlived their task's root: driven to completion by a task of their own,
-/// which keeps the process alive meanwhile.
+/// which keeps the process alive meanwhile, unless only timers are left (a ref'd timer keeps it
+/// alive by itself, an `unref()`'d one must not).
 struct Orphan {
     set: SetPtr,
+    /// Holds a keep-alive reference.
+    held: bool,
 }
 
 impl Orphan {
     fn spawn(set: SetPtr) {
-        super::runtime::keep_alive_acquire();
-        super::runtime::spawn(Orphan { set });
+        let mut o = Orphan { set, held: false };
+        o.hold();
+        super::runtime::spawn(o);
+    }
+
+    /// Holds a keep-alive reference while promises other than timers are unfinished.
+    fn hold(&mut self) {
+        // SAFETY: null or a live set owned by `self`.
+        let want = unsafe { self.set.0.as_ref() }.is_some_and(LocalSet::has_work);
+        if want && !self.held {
+            super::runtime::keep_alive_acquire();
+        } else if !want && self.held {
+            super::runtime::keep_alive_release();
+        }
+        self.held = want;
     }
 }
 
@@ -368,6 +370,7 @@ impl Future for Orphan {
         if this.set.is_idle() {
             Poll::Ready(())
         } else {
+            this.hold();
             Poll::Pending
         }
     }
@@ -376,7 +379,9 @@ impl Future for Orphan {
 impl Drop for Orphan {
     fn drop(&mut self) {
         drop(std::mem::replace(&mut self.set, SetPtr::NONE));
-        super::runtime::keep_alive_release();
+        if self.held {
+            super::runtime::keep_alive_release();
+        }
     }
 }
 
@@ -438,7 +443,9 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     // the queue (micro.rs).
     let t = &*tcx;
     micro::sync_enter(t);
+    let outer = STARTING.with(|s| s.replace(f));
     let finished = node::poll_first(f, t.word.as_ptr());
+    STARTING.with(|s| s.set(outer));
     micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
@@ -447,6 +454,20 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
         // A wake during the first poll was queued; the next drain runs it as a member.
         node::count_set(f);
         set::add_member(set, f);
+    }
+}
+
+thread_local! {
+    /// The promise whose first run `velt_rt_fut_start` is doing (null: none).
+    static STARTING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+/// The promise being started runs a timer's callback (`velt_rt_timer_turn` in its first run).
+fn mark_starting_timer() {
+    let f = STARTING.with(Cell::get);
+    if !f.is_null() {
+        // SAFETY: a started node during its first run.
+        unsafe { node::mark_timer(f) };
     }
 }
 

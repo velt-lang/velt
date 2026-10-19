@@ -123,6 +123,9 @@ struct Executor {
     /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
     /// (velt_rt task/local/micro.rs).
     micro: VecDeque<Rc<MicroSlot>>,
+    /// Entries of `ready` that [`wake_next`] queued: an awaiter resumed by a promise that
+    /// finished, a step of the microtask checkpoint that is not over while one is queued.
+    resumed: std::collections::HashSet<u64>,
 }
 
 /// An entry of the microtask queue: whom to run when the queue reaches it.
@@ -206,7 +209,17 @@ pub fn wake_next(w: Waker) {
     with_exec(|e| {
         let turn = e.turn;
         e.enqueue(id, turn, true);
+        let entry = e.entries;
+        e.resumed.insert(entry);
     });
+}
+
+/// Whether the next ready task is an awaiter [`wake_next`] resumed (the checkpoint waits for it).
+fn resuming() -> bool {
+    with_exec(|e| {
+        let live = e.ready.iter().find(|en| e.live(en));
+        live.is_some_and(|en| e.resumed.contains(&en.1))
+    })
 }
 
 /// Put `w` first in the microtask queue when it is not empty; gives it back otherwise.
@@ -321,6 +334,7 @@ fn next_micro() -> Option<usize> {
 fn next_ready() -> Option<usize> {
     with_exec(|e| loop {
         let entry = e.ready.pop_front()?;
+        e.resumed.remove(&entry.1);
         if e.live(&entry) {
             e.queued.remove(&entry.0);
             return Some(entry.0);
@@ -605,7 +619,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     schedule(ROOT);
     let mut root_done = false;
     loop {
-        if root_done && with_exec(|e| e.micro.is_empty()) {
+        if root_done && with_exec(|e| e.micro.is_empty()) && !resuming() {
             super::local::flush_unhandled();
         }
         if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
@@ -615,8 +629,11 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         }
         fire_due_now();
         let Some(id) = next_micro().or_else(|| {
-            // The microtask queue is drained: unhandled rejections are reported now.
-            super::local::flush_unhandled();
+            // The microtask queue is drained (and no awaiter resumes): unhandled rejections are
+            // reported now.
+            if !resuming() {
+                super::local::flush_unhandled();
+            }
             next_ready()
         }) else {
             if !wait_for_timers() {

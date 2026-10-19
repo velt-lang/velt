@@ -7,8 +7,11 @@ too. A timer takes a
 callback, like JS: one returning the promise to run (`() => save(doc)` or `async () => { … }`),
 or a plain one (`() => console.log("x")`, a function name or a local function value,
 `setTimeout(tick, 10)`, whose parameters, if any, are optional or have defaults and are left
-out), which the compiler runs as an `async` one. The callback owns what it captures; the task
-runs as its own spawned task, so an error it throws is uncaught (catch inside the task).
+out), which the compiler runs as an `async` one. The callback runs on the task that created the
+timer, never at the same time as that task's other code, so it shares what it captures with the
+code around it, as in Node: what it changes is seen afterwards, and what the creating code
+changes after `setTimeout` (`xs.push(2)`, `s = "changed"`) is seen by the callback. An error it
+throws is uncaught (catch inside the callback).
 
 - `setTimeout(task: () => Promise<void>, ms): Timer` (`ms` at least 1, like Node:
   `setTimeout(f, 0)` is `setTimeout(f, 1)`), `clearTimeout(t)`, `delay(ms)` (the same as
@@ -25,12 +28,19 @@ runs as its own spawned task, so an error it throws is uncaught (catch inside th
   both work on either kind, as in Node. Dropping a `Timer` does not cancel it. `unref()`,
   `ref()` and `hasRef()` work like Node's `Timeout` (`unref()` and `ref()` return the timer).
 
-Timer callbacks run in Node's order, whichever task created the timers: by due time, and timers
-due together in the order they were created (`setTimeout(a, 5); setTimeout(b, 5)` runs `a`, then
-`b`). Each callback runs up to its first `await` and the callbacks (microtasks) it queued run
-before the next timer's callback starts, as in Node, so a callback can still `clearTimeout` a timer
-due in the same tick. A timer whose task starts late (a loaded machine) holds back the timers due
-after it instead of being overtaken. Callbacks that `await` go on concurrently, like in Node.
+Timer callbacks run in Node's order, whichever task created the timers. A timer is due its
+delay after the clock read when it is created, in whole milliseconds, as in Node: timers created
+in the same millisecond count from the same moment (`setTimeout(a, 5); setTimeout(b, 4)` runs
+`b` first), and a shorter delay created after busy code can still run after a longer one created
+before it. Timers due together run in the order they were created (`setTimeout(a, 5);
+setTimeout(b, 5)` runs `a`, then `b`). No callback runs before the code that created the timer
+(a synchronous `main` too) and the callbacks it queued are done. Each callback runs up to its
+first `await` and the callbacks (microtasks) it queued run before the next timer's callback
+starts, as in Node, so a callback can still `clearTimeout` a timer due in the same tick. A timer
+whose task is idle but slow to run it (a loaded machine) holds back the timers due after it
+instead of being overtaken; one whose task is busy (a spawned task running code that does not
+pause) does not hold back the timers of other tasks. Callbacks that `await` go on concurrently,
+like in Node.
 
 A pending timer keeps the process alive after `main` returns, as in Node: the program ends once
 every timer has fired and its callback's promise has settled, or was cleared. An interval keeps

@@ -121,6 +121,8 @@ pub(crate) struct LocalSet {
     pub(super) rejections: Vec<*mut VeltFut>,
     /// The task's gate (none until it first creates a timer; gate.rs).
     pub(super) gate: Option<Arc<super::gate::Gate>>,
+    /// How many members run timers (`node::mark_timer`).
+    timers: usize,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -141,12 +143,18 @@ impl LocalSet {
             unhandled: Vec::new(),
             rejections: Vec::new(),
             gate: None,
+            timers: 0,
         })
     }
 
     /// No unfinished started promises.
     pub(super) fn is_idle(&self) -> bool {
         self.members.is_empty()
+    }
+
+    /// Unfinished started promises other than timers' (they keep an orphan set alive).
+    pub(super) fn has_work(&self) -> bool {
+        self.members.len() > self.timers
     }
 }
 
@@ -161,6 +169,9 @@ pub(super) unsafe fn add_member(set: *mut LocalSet, f: *mut VeltFut) {
     let members = &mut (*set).members;
     node::head(f).member.store(members.len() as u32, Relaxed);
     members.push(SendPtr(f));
+    if node::is_timer(f) {
+        (*set).timers += 1;
+    }
 }
 
 /// Remove member `f` from `set` (releasing its reference).
@@ -173,6 +184,9 @@ unsafe fn remove_member(set: *mut LocalSet, f: *mut VeltFut) {
     members.swap_remove(i as usize);
     if let Some(moved) = members.get(i as usize) {
         node::head(moved.0).member.store(i, Relaxed);
+    }
+    if node::is_timer(f) {
+        (*set).timers -= 1;
     }
     node::release(f);
 }

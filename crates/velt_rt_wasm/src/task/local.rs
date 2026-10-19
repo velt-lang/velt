@@ -31,6 +31,11 @@ pub struct Started {
     rejectable: bool,
     /// A combinator handles its outcome (`velt_rt_futs_handled`).
     handled: bool,
+    /// In `WATCHED`: the checkpoint frees the promise if its owner dropped it meanwhile.
+    watched: bool,
+    /// It runs a timer's callback (`mark_starting_timer`): `block_on` does not wait for it (a
+    /// ref'd timer holds a keep-alive reference instead).
+    timer: bool,
 }
 
 unsafe fn shared<'a>(f: *mut VeltFut) -> &'a RefCell<Started> {
@@ -61,7 +66,9 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejectable: 
     st.borrow_mut().rejectable = rejectable;
     let w = executor::waker(id);
     // The creator goes on after this first run: its `await`s take their steps.
+    let outer = STARTING.with(|s| s.replace(Rc::as_ptr(&st)));
     let _ = executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
+    STARTING.with(|s| s.set(outer));
 }
 
 /// The owner hands promise `f` to another task: its result is transferred with `transfer` as
@@ -156,6 +163,8 @@ unsafe fn adopt(
         task: 0,
         rejectable: false,
         handled: false,
+        watched: false,
+        timer: false,
     }));
     (*trailer(f)).started = Rc::into_raw(st.clone());
     *f = VeltFut::new(started_poll, started_drop);
@@ -182,7 +191,9 @@ unsafe fn drive(f: *mut VeltFut, st: &Rc<RefCell<Started>>, cx: &mut Context<'_>
     }
     (*t).live = 0;
     boxed::run_transfer(f);
-    executor::count_local(false);
+    if !st.borrow().timer {
+        executor::count_local(false);
+    }
     let (detached, waiter, result_drop, watch) = {
         let mut s = st.borrow_mut();
         s.done = true;
@@ -200,6 +211,8 @@ unsafe fn drive(f: *mut VeltFut, st: &Rc<RefCell<Started>>, cx: &mut Context<'_>
         executor::wake_next(w);
     } else if watch && *state(f) != 0 {
         // Rejected while nobody waits for it: reported at the checkpoint unless claimed first.
+        // The watch keeps `f` allocated until then (`started_drop`).
+        st.borrow_mut().watched = true;
         WATCHED.with(|q| q.borrow_mut().push_back((f, Rc::clone(st))));
     }
     Poll::Ready(())
@@ -261,11 +274,20 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     let (done, delivered, result_drop) = {
         let mut s = shared(f).borrow_mut();
         s.detached = true;
+        if s.watched {
+            return; // the checkpoint disposes of it (`flush_unhandled`)
+        }
         (s.done, s.delivered, s.result_drop)
     };
     if !done {
         return; // the driver finishes it and frees it
     }
+    dispose(f, delivered, result_drop);
+}
+
+/// Disposes of the finished promise `f` its owner dropped: drops a result the owner did not
+/// claim (a rejection is reported) and frees it.
+unsafe fn dispose(f: *mut VeltFut, delivered: bool, result_drop: Option<ResultDropFn>) {
     if let (false, Some(d)) = (delivered, result_drop) {
         if drop_unclaimed(f, d) {
             return; // freed once reported (`flush_unhandled`)
@@ -277,7 +299,22 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
 /// A promise that rejected while nobody waited for it, and its shared state.
 type Watched = (*mut VeltFut, Rc<RefCell<Started>>);
 
+/// The promise being started runs a timer's callback (`velt_rt_timer_turn` in its first run).
+pub(super) fn mark_starting_timer() {
+    let st = STARTING.with(Cell::get);
+    // SAFETY: the shared state of the promise whose first run `start` is doing.
+    if let Some(st) = unsafe { st.as_ref() } {
+        let mut s = st.borrow_mut();
+        if !s.timer && !s.done {
+            s.timer = true;
+            executor::count_local(false);
+        }
+    }
+}
+
 thread_local! {
+    /// The shared state of the promise whose first run `start` is doing (null: none).
+    static STARTING: Cell<*const RefCell<Started>> = const { Cell::new(std::ptr::null()) };
     /// The started promise whose result is being dropped right now (null: none).
     static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
     /// Rejected promises to report once the microtask queue is drained, with their drops.
@@ -317,31 +354,32 @@ pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
 /// The microtask queue is drained: report the rejections that waited for it (the first one
 /// ends the process).
 pub(super) fn flush_unhandled() {
+    while let Some((f, st)) = WATCHED.with(|q| q.borrow_mut().pop_front()) {
+        let (detached, unclaimed, delivered, d) = {
+            let mut s = st.borrow_mut();
+            s.watched = false;
+            let unclaimed = !s.delivered && !s.handled && s.waiter.is_none();
+            (s.detached, unclaimed, s.delivered, s.result_drop)
+        };
+        // SAFETY: the watch kept `f` allocated (`started_drop`).
+        unsafe {
+            if detached {
+                // Dropped by its owner since: disposed of as the drop would have.
+                dispose(f, delivered, d);
+            } else if let (true, Some(d)) = (unclaimed, d) {
+                // A promise handed to another task (its transfer is set) is that task's to
+                // claim; otherwise the report ends the process.
+                if (*trailer(f)).transfer.is_none() {
+                    d(state(f));
+                }
+            }
+        }
+    }
     while let Some((f, d)) = DEFERRED.with(|q| q.borrow_mut().pop_front()) {
         // SAFETY: a finished promise kept with its unclaimed result (`drop_unclaimed`).
         unsafe {
             d(state(f));
             boxed::free(f);
-        }
-    }
-    while let Some((f, st)) = WATCHED.with(|q| q.borrow_mut().pop_front()) {
-        let (unclaimed, d) = {
-            let mut s = st.borrow_mut();
-            // A detached promise was disposed of by its owner's drop (and may be freed).
-            let waiting = s.waiter.take();
-            let unclaimed = !s.detached && !s.delivered && !s.handled && waiting.is_none();
-            s.waiter = waiting;
-            (unclaimed, s.result_drop)
-        };
-        if let (true, Some(d)) = (unclaimed, d) {
-            // SAFETY: the owner still holds `f` (not detached). A promise handed to another task
-            // (its transfer is set) is that task's to claim; otherwise the report ends the
-            // process.
-            unsafe {
-                if (*trailer(f)).transfer.is_none() {
-                    d(state(f));
-                }
-            }
         }
     }
 }

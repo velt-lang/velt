@@ -66,6 +66,8 @@ const SET_REF: u32 = 64;
 const ADOPTED: u32 = 128;
 /// A combinator handles its outcome ([`mark_handled`]).
 const HANDLED: u32 = 256;
+/// A timer's promise ([`mark_timer`]): it does not keep its task's orphan alive.
+const TIMER: u32 = 512;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -304,6 +306,18 @@ pub(super) unsafe fn finish_first(f: *mut VeltFut) {
 /// checkpoint (unhandled.rs).
 pub(super) unsafe fn mark_rejectable(f: *mut VeltFut) {
     head(f).flags.fetch_or(REJECTABLE, Ordering::Relaxed);
+}
+
+/// Started node `f` runs a timer's callback: the timer keeps the process alive while it is
+/// ref'd (std/prelude/timers.vlt), the promise itself does not (an orphan set of timers only
+/// does not hold a keep-alive reference).
+pub(super) unsafe fn mark_timer(f: *mut VeltFut) {
+    head(f).flags.fetch_or(TIMER, Ordering::Relaxed);
+}
+
+/// Was `f` marked with [`mark_timer`]?
+pub(super) unsafe fn is_timer(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Relaxed) & TIMER != 0
 }
 
 /// Node `f` finished with flags `prev` (before `DONE`) and nobody waits for it: if it rejected

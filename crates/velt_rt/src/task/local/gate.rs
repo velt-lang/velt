@@ -24,6 +24,8 @@ pub(super) struct Gate {
     /// Counts the polls that ended.
     polls: AtomicU64,
     waiters: Mutex<Vec<Waker>>,
+    /// A timer of another task waits behind one of this task's (order.rs).
+    blocking: AtomicBool,
 }
 
 impl Gate {
@@ -33,12 +35,22 @@ impl Gate {
             busy: AtomicBool::new(true),
             polls: AtomicU64::new(0),
             waiters: Mutex::new(Vec::new()),
+            blocking: AtomicBool::new(false),
         })
     }
 
     /// The task starts a poll.
     pub(super) fn enter(&self) {
         self.busy.store(true, Ordering::SeqCst);
+        // Timers of other tasks need not wait for this one's while it is busy (order.rs).
+        if self.blocking.load(Ordering::SeqCst) && self.blocking.swap(false, Ordering::SeqCst) {
+            super::order::wake_first();
+        }
+    }
+
+    /// A timer of another task waits behind one of this task's: [`Gate::enter`] wakes it.
+    pub(super) fn note_blocking(&self) {
+        self.blocking.store(true, Ordering::SeqCst);
     }
 
     /// The task's poll ended: wake whoever waits for it.
@@ -53,6 +65,11 @@ impl Gate {
 }
 
 impl Gate {
+    /// Whether the task is in a poll.
+    pub(super) fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::SeqCst)
+    }
+
     /// How many polls of the task have ended.
     pub(super) fn polls(&self) -> u64 {
         self.polls.load(Ordering::SeqCst)

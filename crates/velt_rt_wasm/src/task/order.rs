@@ -15,8 +15,12 @@ struct Handle {
     cell: Rc<TimerCell>,
 }
 
+/// Due as in Node: the clock in whole milliseconds plus `ms`, so timers created in the same
+/// millisecond count from the same moment. One millisecond more keeps it at least `ms` away and
+/// timers in the same order.
 fn timer(ms: i64) -> Rc<TimerCell> {
-    executor::new_timer(crate::platform::monotonic_ms() + ms.max(0) as f64)
+    let base = crate::platform::monotonic_ms().floor();
+    executor::new_timer(base + 1.0 + ms.max(0) as f64)
 }
 
 /// `velt_rt_timer_new`: a timer due `ms` milliseconds from now.
@@ -50,6 +54,7 @@ pub unsafe extern "C" fn velt_rt_timer_free(h: u64) {
 /// `h` is a live handle from [`velt_rt_timer_new`].
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_timer_turn(h: u64, _gate: u64) -> *mut VeltFut {
+    super::local::mark_starting_timer();
     let cell = (*(h as *mut Handle)).cell.clone();
     new_leaf(move |cx: &mut Context<'_>| executor::poll_timer(&cell, cx))
 }

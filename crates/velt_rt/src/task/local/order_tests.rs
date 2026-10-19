@@ -46,7 +46,9 @@ fn turns_follow_deadline_then_creation_order() {
         unsafe { velt_rt_timer_free(hs[4]) };
         assert_eq!(turns(&hs, &[0, 2, 3, 1]).await, [1, 3, 2, 0]);
 
-        // An interval's next run goes behind the timers queued before it.
+        // An interval's next run goes behind the timers queued before it: `b` is created before
+        // `a` is queued again with the same delay, so `b` (an earlier or equal due time, created
+        // first) takes its turn first.
         let a = velt_rt_timer_new(0);
         let b = velt_rt_timer_new(2);
         // SAFETY: a live handle.
@@ -60,6 +62,26 @@ fn turns_follow_deadline_then_creation_order() {
             for h in eq.into_iter().chain(hs.into_iter().take(4)).chain(hs2) {
                 velt_rt_timer_free(h);
             }
+        }
+        assert!(ORDER.lock().queue.is_empty());
+
+        // A timer whose task is busy (in a poll) does not hold back a later one of another
+        // task; it takes its turn once that task is idle again.
+        let task = super::super::gate::Gate::new_busy();
+        let (key, at) = ORDER.lock().insert(0, Some(task.clone()));
+        let first = Box::into_raw(Box::new(Handle {
+            key: Some(key),
+            at,
+            task: Some(task.clone()),
+        })) as u64;
+        let second = velt_rt_timer_new(0);
+        assert_eq!(turns(&[first, second], &[1]).await, [1]);
+        task.leave();
+        assert_eq!(turns(&[first, second], &[0]).await, [0]);
+        // SAFETY: live handles, not used again.
+        unsafe {
+            velt_rt_timer_free(first);
+            velt_rt_timer_free(second);
         }
         assert!(ORDER.lock().queue.is_empty());
     });
