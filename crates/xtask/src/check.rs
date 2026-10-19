@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::doctests;
+use crate::golden_archive::{self, Manifest, MANIFEST};
 use crate::graph::Graph;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
@@ -65,6 +66,11 @@ pub struct Options {
     /// `VELT_GOLDEN_MODES`: `debug`, `release`, or both (`None`).
     pub golden_modes: Option<String>,
     pub smoke: bool,
+    /// `--pack <file>`: build what the goldens run and pack it into this tar (relative to the
+    /// repository root) instead of running them (see [`golden_archive`]).
+    pub pack: Option<String>,
+    /// `--archive <file>`: run the goldens from this tar (made by `--pack`) without building.
+    pub archive: Option<String>,
     /// Print the commands instead of running them.
     pub dry_run: bool,
 }
@@ -93,15 +99,21 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             &mut cargo(&["fmt", "--all", "--check"]),
         )?;
     }
-    let build = (part.has(Part::Test) && plan.needs_build())
-        || (part.has(Part::Golden) && plan.goldens != Goldens::None);
+    let goldens = part.has(Part::Golden) && plan.goldens != Goldens::None;
+    let build = opts.archive.is_none() && ((part.has(Part::Test) && plan.needs_build()) || goldens);
     if build {
         // Every later step reuses this build: the same packages and targets resolve the same
-        // features, so nothing compiles twice (`VELT_RT_PREBUILT` below).
-        gate.step(
-            "build",
-            cargo(&["build"]).args(&build_ws).arg("--all-targets"),
-        )?;
+        // features, so nothing compiles twice (`VELT_RT_PREBUILT` below). Any test target makes
+        // cargo resolve the dev-dependencies' features too, so the goldens alone (the libraries,
+        // `velt`, the runtimes and the golden test) resolve like `--all-targets`.
+        let mut b = cargo(&["build"]);
+        b.args(&build_ws);
+        if part.has(Part::Test) {
+            b.arg("--all-targets");
+        } else {
+            b.args(["--lib", "--bins", "--test", "golden"]);
+        }
+        gate.step("build", &mut b)?;
     }
     if part.has(Part::Lint) && plan.rust {
         let mut clippy = cargo(&["clippy"]);
@@ -121,14 +133,15 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         tests.arg("--manifest-path").arg(difftest_manifest(root));
         gate.step("tests/difftest unit tests", &mut tests)?;
     }
-    if part.has(Part::Golden) && plan.goldens != Goldens::None {
-        let mut goldens = cargo(&["test"]);
-        // `--workspace` resolves like the build above (`-p veltc` would compile velt_opt and
-        // veltc again); `--exact golden` leaves velt_syntax's parser goldens to the tests.
-        goldens
-            .args(&ws)
-            .args(["--test", "golden", "--", "--nocapture", "--exact", "golden"]);
-        goldens.env("VELT_RT_PREBUILT", "1");
+    if goldens && opts.pack.is_some() {
+        gate.pack(&ws, opts.pack.as_deref().unwrap_or_default())?;
+    } else if goldens {
+        let test = match &opts.archive {
+            Some(file) => Some(gate.unpack(file)?),
+            None => None,
+        };
+        let golden = || golden_test(root, &ws, test.as_deref());
+        let mut goldens = golden();
         if let Some(filter) = plan.golden_env() {
             goldens.env("VELT_GOLDEN", filter);
         }
@@ -137,7 +150,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         }
         let modes = opts.golden_modes.as_deref().unwrap_or("debug + release");
         gate.step(&format!("goldens ({modes})"), &mut goldens)?;
-        gate.bundled_linker_goldens(&ws, plan.golden_env(), opts.golden_modes.as_deref())?;
+        gate.bundled_linker_goldens(golden(), plan.golden_env(), opts.golden_modes.as_deref())?;
+    } else if opts.pack.is_some() {
+        return Err("--pack: the plan selects no goldens, so there is nothing to pack".into());
     }
     if part.has(Part::Test) && plan.vscode {
         gate.vscode()?;
@@ -158,6 +173,24 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     Ok(())
 }
 
+/// veltc's golden test: through cargo, or the binary `test` (relative to `root`) from an archive.
+/// `VELT_GOLDEN_SHARD` passes through from the environment.
+fn golden_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
+    let mut c = match test {
+        Some(test) => Command::new(root.join(test)),
+        None => {
+            // `--workspace` resolves like the build above (`-p veltc` would compile velt_opt and
+            // veltc again); `--exact golden` leaves velt_syntax's parser goldens to the tests.
+            let mut c = cargo(&["test"]);
+            c.args(ws).args(["--test", "golden", "--"]);
+            c
+        }
+    };
+    c.args(["--nocapture", "--exact", "golden"]);
+    c.env("VELT_RT_PREBUILT", "1");
+    c
+}
+
 /// The goldens [`Gate::bundled_linker_goldens`] runs when all of them are selected.
 const BUNDLED_LINKER_GOLDENS: &str = "m1/,m2/,m3/,m4/,async_dispatch/";
 
@@ -167,7 +200,7 @@ impl Gate<'_> {
     /// toolchain's `rust-lld`), so every OS the gate runs on checks it.
     fn bundled_linker_goldens(
         &mut self,
-        ws: &[String],
+        mut goldens: Command,
         selected: Option<String>,
         modes: Option<&str>,
     ) -> Result<(), String> {
@@ -182,16 +215,6 @@ impl Gate<'_> {
         let result = self
             .step("link kit for the bundled linker", &mut build)
             .and_then(|()| {
-                let mut goldens = cargo(&["test"]);
-                goldens.args(ws).args([
-                    "--test",
-                    "golden",
-                    "--",
-                    "--nocapture",
-                    "--exact",
-                    "golden",
-                ]);
-                goldens.env("VELT_RT_PREBUILT", "1");
                 goldens.env("VELT_LINKER", "bundled");
                 goldens.env(
                     "VELT_GOLDEN",
@@ -207,6 +230,73 @@ impl Gate<'_> {
             let _ = std::fs::remove_dir_all(&kit);
         }
         result
+    }
+
+    /// Packs what the goldens run into `file` (see [`golden_archive`]).
+    fn pack(&mut self, ws: &[String], file: &str) -> Result<(), String> {
+        let mut find = cargo(&["test"]);
+        find.args(ws)
+            .args(["--test", "golden", "--no-run", "--message-format=json"]);
+        println!(
+            "\x1b[36m==> the golden test binary\x1b[0m\n    {}",
+            show(&find)
+        );
+        let test = if self.dry_run {
+            "target/debug/deps/golden-<hash>".to_string()
+        } else {
+            let out = find
+                .current_dir(self.root)
+                .output()
+                .map_err(|e| format!("cannot run cargo: {e}"))?;
+            if !out.status.success() {
+                return Err(format!(
+                    "`{}` failed:\n{}",
+                    show(&find),
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
+            let exe = golden_archive::test_binary(&String::from_utf8_lossy(&out.stdout))
+                .ok_or("cargo built no golden test binary for veltc")?;
+            golden_archive::relative(self.root, &exe)?
+        };
+        let manifest = Manifest {
+            root: self.root.to_string_lossy().into_owned(),
+            test: test.clone(),
+        };
+        if !self.dry_run {
+            std::fs::write(self.root.join(MANIFEST), manifest.render())
+                .map_err(|e| format!("{MANIFEST}: {e}"))?;
+        }
+        // Relative paths only: GNU tar (Git's, on Windows) reads `C:` as a remote host.
+        let mut tar = Command::new("tar");
+        tar.args(["-cf", file, MANIFEST, &test]);
+        tar.args(golden_archive::files(|f| {
+            self.dry_run || self.root.join(f).is_file()
+        }));
+        self.step(&format!("pack the goldens' build into {file}"), &mut tar)
+    }
+
+    /// Unpacks `file` (made by [`Gate::pack`]) into the checkout; returns the golden test
+    /// binary's path.
+    fn unpack(&mut self, file: &str) -> Result<String, String> {
+        let mut tar = Command::new("tar");
+        tar.args(["-xf", file]);
+        self.step(&format!("unpack {file}"), &mut tar)?;
+        if self.dry_run {
+            return Ok("target/debug/deps/golden-<hash>".into());
+        }
+        let text = std::fs::read_to_string(self.root.join(MANIFEST))
+            .map_err(|e| format!("{file} has no {MANIFEST}: {e}"))?;
+        let manifest = Manifest::parse(&text)?;
+        let here = self.root.to_string_lossy();
+        if manifest.root != here {
+            return Err(format!(
+                "{file} was built in {}, not in this checkout ({here}): its golden test has \
+                 that checkout's paths compiled in",
+                manifest.root
+            ));
+        }
+        Ok(manifest.test)
     }
 
     fn tests(&mut self, plan: &Plan, graph: &Graph, ws: &[String]) -> Result<(), String> {
