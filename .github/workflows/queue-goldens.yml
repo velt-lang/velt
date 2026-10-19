@@ -54,6 +54,8 @@ jobs:
           overwrite: true
       - if: failure()
         uses: ./.github/actions/fail-fast
+        with:
+          job: golden build (${{ inputs.os }})
 
   shard:
     needs: build
@@ -84,3 +86,5 @@ jobs:
         run: cargo xtask check --full --part golden --archive golden.tar
       - if: failure()
         uses: ./.github/actions/fail-fast
+        with:
+          job: golden shard ${{ matrix.shard }} (${{ inputs.os }})

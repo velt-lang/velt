@@ -3,11 +3,20 @@ description: >-
   Cancel the rest of the workflow run (run it `if: failure()`). The merge queue drops a pull
   request when the required check `ci` fails, and `ci` waits for every job: without this, one
   failed job would leave the others running for nothing, holding runners the next queue entries
-  wait for and delaying the result. The job needs `actions: write`.
+  wait for and delaying the result. The job needs `actions: write`. Cancelling the run cancels
+  this job too, so it ends as cancelled, not failed: the annotation says which job failed (its
+  failed step is marked in the log).
+inputs:
+  job:
+    description: The job's name, for the annotation.
+    required: true
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
+        JOB: ${{ inputs.job }}
+      run: |
+        echo "::error title=${JOB} failed::${JOB} failed (see its failed step); cancelling the rest of the run."
+        gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true

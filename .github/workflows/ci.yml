@@ -187,6 +187,8 @@ jobs:
         run: cargo xtask check --full --part lint,test
       - if: failure()
         uses: ./.github/actions/fail-fast
+        with:
+          job: check (${{ matrix.os }})
 
   # The goldens: per OS a build, then shards (queue-goldens.yml).
   queue-golden:
