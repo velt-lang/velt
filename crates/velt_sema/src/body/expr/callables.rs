@@ -28,9 +28,11 @@ pub(crate) struct PendingWrites {
     /// The span of the declaration's initializer (the cast).
     pub cast: Span,
     /// The written property and value of each statement after the declaration, in order.
-    pub writes: Vec<(ast::Ident, ast::Expr)>,
-    /// How many of `writes` the cast took (the statements to skip).
-    pub used: usize,
+    /// The written property and value of each write after the declaration, in order, with the
+    /// statement's position among the statements after it.
+    pub writes: Vec<(usize, ast::Ident, ast::Expr)>,
+    /// The positions of the writes the cast took (the statements to skip).
+    pub used: Vec<usize>,
 }
 
 impl FnCx<'_, '_> {
@@ -183,7 +185,8 @@ impl FnCx<'_, '_> {
         let fields = self.cx.public_fields(target);
         let mut taken: Vec<ast::ObjectProp> = vec![];
         let mut names: Vec<String> = vec![];
-        for (prop, value) in &pending.writes {
+        let mut used = vec![];
+        for (at, prop, value) in &pending.writes {
             let member = fields
                 .iter()
                 .any(|f| f.name == prop.name && f.name != CALL_FIELD);
@@ -191,9 +194,10 @@ impl FnCx<'_, '_> {
                 break;
             }
             names.push(prop.name.clone());
+            used.push(*at);
             taken.push(ast::ObjectProp::KeyValue(prop.clone(), value.clone()));
         }
-        pending.used = taken.len();
+        pending.used = used;
         pending.cast = span;
         self.f.callable_writes = Some(pending);
         taken
@@ -221,10 +225,20 @@ impl FnCx<'_, '_> {
 pub(super) const FN_PROPERTY_NOTE: &str = "a function has no properties of its own here: give it a type with a call signature and the members (`interface F { (): void; x: number }`), cast it and write them right after (`const f = (() => {}) as F; f.x = 1;`)";
 
 /// The property writes `name.p = v;` among `stmts` (the statements after the declaration of
-/// `name`), up to the first other statement or a value that mentions `name`.
-pub(crate) fn property_writes(name: &str, stmts: &[ast::Stmt]) -> Vec<(ast::Ident, ast::Expr)> {
+/// `name`), with their positions: up to the first statement that is neither such a write nor
+/// the declaration of a function (`const g = () => …`, which runs nothing), or a value that
+/// mentions `name` or a function declared in between.
+pub(crate) fn property_writes(
+    name: &str,
+    stmts: &[ast::Stmt],
+) -> Vec<(usize, ast::Ident, ast::Expr)> {
     let mut out = vec![];
-    for s in stmts {
+    let mut declared: Vec<&str> = vec![name];
+    for (i, s) in stmts.iter().enumerate() {
+        if let Some(f) = function_decl(s) {
+            declared.push(f);
+            continue;
+        }
         let ast::StmtKind::Expr(e) = &s.kind else {
             break;
         };
@@ -245,13 +259,29 @@ pub(crate) fn property_writes(name: &str, stmts: &[ast::Stmt]) -> Vec<(ast::Iden
             break;
         };
         if !matches!(&object.kind, ast::ExprKind::Ident(i) if i.name == name)
-            || mentions(value, name)
+            || declared.iter().any(|n| mentions(value, n))
         {
             break;
         }
-        out.push((prop.clone(), (**value).clone()));
+        out.push((i, prop.clone(), (**value).clone()));
     }
     out
+}
+
+/// The name `s` declares when it is `const g = <arrow or function expression>;`.
+fn function_decl(s: &ast::Stmt) -> Option<&str> {
+    let ast::StmtKind::Var(v) = &s.kind else {
+        return None;
+    };
+    let ast::PatternKind::Ident(name) = &v.pattern.kind else {
+        return None;
+    };
+    let init = strip_parens(v.init.as_ref()?);
+    matches!(
+        init.kind,
+        ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_)
+    )
+    .then_some(name.name.as_str())
 }
 
 /// Does `e` mention the name `name` anywhere?

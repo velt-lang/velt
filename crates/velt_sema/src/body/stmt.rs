@@ -56,10 +56,10 @@ impl FnCx<'_, '_> {
     }
 
     fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
-        let mut skip = 0;
+        // The property writes a cast took as members (#921).
+        let mut taken: Vec<usize> = vec![];
         for (i, s) in stmts.iter().enumerate() {
-            if skip > 0 {
-                skip -= 1;
+            if taken.contains(&i) {
                 continue;
             }
             if let ast::StmtKind::Var(v) = &s.kind {
@@ -73,7 +73,7 @@ impl FnCx<'_, '_> {
                     let outer = self.f.callable_writes.replace(pending);
                     self.stmt(s, out);
                     let done = std::mem::replace(&mut self.f.callable_writes, outer);
-                    skip = done.map_or(0, |p| p.used);
+                    taken.extend(done.into_iter().flat_map(|p| p.used).map(|k| i + 1 + k));
                     continue;
                 }
             }
@@ -669,6 +669,6 @@ fn callable_writes(v: &ast::VarDecl, rest: &[ast::Stmt]) -> Option<super::expr::
     (!writes.is_empty()).then(|| super::expr::PendingWrites {
         cast: e.span,
         writes,
-        used: 0,
+        used: vec![],
     })
 }

@@ -13,3 +13,6 @@ HI up 1 function
 101 102
 102
 {"n":7} ["id","queued"]
+flags 1, deps 0
+effect ran
+1

@@ -947,8 +947,9 @@ two ways:
   it (`F & { … }`).
 - A function cast to the type, followed by the writes of its members:
   `const r = (() => …) as Runner; r.stop = …;`. The writes right after the declaration give the
-  members their values; a required member with no write there is an error (Node would read
-  `undefined` before the write).
+  members their values (declarations of other functions may come between them, since they run
+  nothing); a required member with no write there is an error (Node would read `undefined`
+  before the write).
 
 ```ts
 interface Runner {

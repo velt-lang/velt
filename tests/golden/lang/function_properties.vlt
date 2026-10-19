@@ -115,3 +115,18 @@ console.log(holder.run(), holder.run());
 holder.run.stop();
 console.log(holder.run());
 console.log(JSON.stringify({ n: job.id }), JSON.stringify(Object.keys(job)));
+
+// The writes may follow declarations of functions, which run nothing before them.
+function makeEffect(fn: () => void): Subscriber {
+  const effectFn = function () {
+    fn();
+  } as Subscriber;
+  const describe = (): string => `flags ${effectFn.flags}, deps ${effectFn.deps.length}`;
+  effectFn.deps = [];
+  effectFn.flags = 1;
+  console.log(describe());
+  return effectFn;
+}
+const eff = makeEffect(() => console.log("effect ran"));
+eff();
+console.log(eff.flags);
