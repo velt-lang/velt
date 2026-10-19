@@ -300,7 +300,8 @@ impl Ctx<'_> {
     }
 
     /// Can a value of `used` have been typed by site type `g`: equal, with `g`'s type
-    /// parameters (and deferred types) matching anything, and error types ignored.
+    /// parameters (and deferred types) matching anything, and error types ignored. A part of
+    /// `used` that is a reported type error matches nothing: it would match every site.
     fn site_matches(&self, g: TyId, used: TyId, depth: u32) -> bool {
         if g == used {
             return true;
@@ -312,7 +313,8 @@ impl Ctx<'_> {
         let all =
             |a: &[TyId], b: &[TyId]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| m(*x, *y));
         match (self.ty.kind(g), self.ty.kind(used)) {
-            (TyKind::Param(_) | TyKind::Op(..) | TyKind::Error, _) | (_, TyKind::Error) => true,
+            (_, TyKind::Error) => false,
+            (TyKind::Param(_) | TyKind::Op(..) | TyKind::Error, _) => true,
             (
                 TyKind::FnPtr {
                     params: p, ret: r, ..
