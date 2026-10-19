@@ -205,6 +205,14 @@ impl Ctx<'_> {
             Some(inner) if is_computed_key(k) => inner,
             _ => return Ok(name.to_string()),
         };
+        // A key resolves where it is written: a member an asserted literal adds to a type of
+        // another module (`defined_props.rs`) keeps the literal's span.
+        let module = match self.modules.get(module) {
+            Some(m) if m.file != k.span.file && k.span != Span::DUMMY => (self.modules.iter())
+                .position(|m| m.file == k.span.file)
+                .unwrap_or(module),
+            _ => module,
+        };
         let d = match self.lookup_item(module, inner) {
             Some(Item::Def(d)) if matches!(self.info[d.0 as usize], DefInfo::Global(_)) => d,
             _ => return Err(inner.to_string()),

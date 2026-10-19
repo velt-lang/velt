@@ -1,0 +1,59 @@
+// check: no leaks
+// A symbol-keyed member in a literal asserted to a type that doesn't declare it
+// (`{ ..., [VNODE]: true } as VNode`, #923): TypeScript allows it and the object keeps the
+// member, so it is an optional field of the type. `console.log` shows it, spreads copy it,
+// `JSON.stringify` and `Object.keys` leave it out, and it is read and written through `any`
+// (a brand stamped on objects built elsewhere), as in Node. Expected output from node.
+const VNODE: unique symbol = Symbol("sigx:vnode");
+const COUNT = Symbol.for("sigx.count");
+
+type VNode = {
+  type: string;
+  props: Record<string, number>;
+  text?: string;
+};
+
+interface Cell {
+  value: number;
+}
+
+function markVNode<T extends object>(vnode: T): T {
+  (vnode as any)[VNODE] = true;
+  return vnode;
+}
+
+function isVNode(v: object): boolean {
+  return (v as any)[VNODE] === true;
+}
+
+function text(t: string): VNode {
+  return { type: "#text", props: {}, text: t, [VNODE]: true } as VNode;
+}
+
+function counted(value: number): Cell {
+  return { value, [COUNT]: value * 2 } as Cell;
+}
+
+function kind(x: VNode | Cell | null): string {
+  if ((x as any)?.[VNODE] === true) return "vnode";
+  if (x && COUNT in x) return "counted cell";
+  return "other";
+}
+
+function main() {
+  const a = text("hi");
+  const b: VNode = { type: "div", props: { id: 1 } };
+  console.log(a);
+  console.log(b);
+  console.log(isVNode(a), isVNode(b), VNODE in a, VNODE in b);
+  console.log(JSON.stringify(a), Object.keys(a));
+  const c = { ...a, type: "span" };
+  console.log(c, isVNode(c), VNODE in c);
+  markVNode(b);
+  console.log(b, isVNode(b), VNODE in b);
+  const plain = { type: "p", props: {} };
+  console.log(isVNode(plain));
+  const n = counted(4);
+  console.log(n, COUNT in n, JSON.stringify(n));
+  console.log(kind(a), kind(n), kind({ value: 1 }), kind(null));
+}
