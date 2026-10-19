@@ -155,22 +155,15 @@ fn mapped_types_over_literal_unions() {
 }
 
 #[test]
-fn inline_forms_over_type_parameters_are_errors() {
-    let e = err_src(
+fn inline_forms_over_type_parameters_are_deferred() {
+    // Evaluated per instantiation (`TyOp::Inline`), as TypeScript accepts them.
+    ok_src(
         "function g<T>(x: T extends string ? 1 : 2) {}
 function main() {}",
     );
-    assert!(
-        e.contains("a conditional type over a type parameter is not supported yet"),
-        "{e}"
-    );
-    let e = err_src(
+    ok_src(
         "class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }
 function main() {}",
-    );
-    assert!(
-        e.contains("a mapped type over a type parameter is not supported yet"),
-        "{e}"
     );
     // Declaring such an alias without using it is fine.
     ok_src(
