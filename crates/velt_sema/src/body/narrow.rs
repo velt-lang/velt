@@ -95,13 +95,8 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => match self.dynamic_is_array_facts(callee, args) {
-                Some(facts) => facts,
-                None => match self.is_array_test(callee, args) {
-                    Some(arg) => self.is_array_facts(arg),
-                    None => self.predicate_facts(callee, args, cond.span),
-                },
-            },
+            } => self.call_facts(cond, callee, args),
+            ast::ExprKind::Call { optional: true, .. } => (self.chain_facts(cond), vec![]),
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -287,7 +282,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
-    fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
+    pub(super) fn truthy_facts(&mut self, e: &ast::Expr) -> Vec<Fact> {
         if let ast::ExprKind::Member {
             object,
             prop,
@@ -313,7 +308,7 @@ impl FnCx<'_, '_> {
         if super::expr::member::member_view(e).is_some() {
             return self.field_token(e).map(Fact::NonNull).into_iter().collect();
         }
-        vec![]
+        self.chain_facts(e)
     }
 
     /// Facts of `lhs == rhs` (true / false).
@@ -564,7 +559,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts for `Array.isArray(e)`: its array members.
-    fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+    pub(super) fn is_array_facts(&mut self, e: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
         let Some((l, nullable, u)) = self.local_with_members(e) else {
             return (vec![], vec![]);
         };

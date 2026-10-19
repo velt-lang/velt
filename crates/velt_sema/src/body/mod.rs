@@ -54,6 +54,7 @@ mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod chain_facts;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
