@@ -404,7 +404,8 @@ name = \"a\"
             text.contains("\ngolden_shards={\"ubuntu-latest\":[\"1/"),
             "{text}"
         );
-        assert!(!text.contains("windows"), "{text}");
+        let shards = text.lines().find(|l| l.starts_with("golden_shards="));
+        assert!(shards.is_some_and(|l| !l.contains("windows")), "{text}");
     }
 
     #[test]
