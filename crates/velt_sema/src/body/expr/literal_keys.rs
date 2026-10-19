@@ -171,11 +171,10 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        if let Some(h) = op
-            .is_none()
-            .then(|| self.generic_key_write(object, index, value, span))
-        {
-            return h;
+        if op.is_none() {
+            if let Some(h) = self.generic_key_write(object, index, value, span) {
+                return Some(h);
+            }
         }
         self.with_union_key(object, index, span, |s, keys, key| {
             let Some(fty) = s.one_field_ty(object, index, keys) else {
