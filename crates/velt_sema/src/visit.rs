@@ -240,3 +240,60 @@ pub(crate) fn exprs_mut(b: &mut Block, f: &mut dyn FnMut(&mut Expr)) {
 pub(crate) fn exprs_in(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
     expr(e, &mut Exprs(f));
 }
+
+/// The `if` statements of `b` whose condition is `g(x) && MayHoldPrimitive(x)` (a type
+/// predicate on a value of a type parameter's type, hir_encodings.md "Type predicates on a type
+/// parameter"): for every expression in the `then` block of one, a bit per type parameter
+/// (`param_of` of the probe's type) whose instantiation with an object type drops it.
+/// Expressions are keyed by address: the caller visits `b` again without changing it.
+pub(crate) fn primitive_guards(
+    b: &mut Block,
+    param_of: &dyn Fn(TyId) -> Option<u32>,
+) -> std::collections::HashMap<*const Expr, u64> {
+    struct Guards<'a> {
+        param_of: &'a dyn Fn(TyId) -> Option<u32>,
+        out: std::collections::HashMap<*const Expr, u64>,
+    }
+    impl VisitMut for Guards<'_> {
+        fn stmt(&mut self, s: &mut Stmt) {
+            let S::If { cond, then, .. } = &mut s.kind else {
+                return;
+            };
+            let Some(p) = guard_param(cond).and_then(|t| (self.param_of)(t)) else {
+                return;
+            };
+            let Some(bit) = 1u64.checked_shl(p) else {
+                return;
+            };
+            let out = &mut self.out;
+            exprs_mut(then, &mut |e: &mut Expr| {
+                *out.entry(e as *const Expr).or_default() |= bit;
+            });
+        }
+    }
+    let mut g = Guards {
+        param_of,
+        out: Default::default(),
+    };
+    block(b, &mut g);
+    g.out
+}
+
+/// The probe type of a condition `g(x) && MayHoldPrimitive(x)`.
+pub(crate) fn guard_param(cond: &Expr) -> Option<TyId> {
+    let E::Logical {
+        op: crate::hir::LogicOp::And,
+        rhs,
+        ..
+    } = &cond.kind
+    else {
+        return None;
+    };
+    match &rhs.kind {
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::MayHoldPrimitive),
+            args,
+        } => args.first().map(|a| a.ty),
+        _ => None,
+    }
+}

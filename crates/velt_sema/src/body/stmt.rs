@@ -240,6 +240,7 @@ impl FnCx<'_, '_> {
     ) {
         let (when_true, when_false) = self.narrowing(cond);
         let c = self.cond(cond);
+        let c = self.primitive_guard(cond, c);
         let exhausted_before = self.exhausted_union_local();
         let before = self.narrow_state();
         let super_before = (self.f.super_called, self.f.before_super);

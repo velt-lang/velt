@@ -138,6 +138,14 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
   code without it (std/prelude/map.vlt: a `Map` whose `V` excludes null keeps its VIR).
+- Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
+  predicate `v is P` whose `P` has only primitive members and `x` has the type of a type
+  parameter `T`, has the condition `Logical { And, g(x), Call { Intrinsic(MayHoldPrimitive),
+  [x] } }`. `MayHoldPrimitive` is a constant per instantiation: `false` when `T` is a struct,
+  class, object type, array, tuple, map or function type. Where it is `false`, the `if` evaluates
+  `g(x)`, stops with a `TypeError` if that returned `true` (the predicate was wrong), and runs
+  only `B`; `A` is not lowered for that instantiation (a generic function that calls itself as
+  `signal({ value: x })` in `A` has finitely many instantiations).
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).

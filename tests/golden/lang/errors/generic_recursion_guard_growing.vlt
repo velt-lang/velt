@@ -1,0 +1,45 @@
+// Growing generic recursion that a type predicate does not bound (issue #1251): only a call in
+// the `then` branch of `if (g(x))`, `g` a predicate whose type has only primitive members, `x`
+// of the growing parameter's type, and an object type as the grown argument is finite.
+type Primitive = string | number | boolean | null | undefined;
+function isPrimitive(value: unknown): value is Primitive {
+  return value === null || (typeof value !== "object" && typeof value !== "function");
+}
+function isSmall(value: unknown): value is number | { n: number } {
+  return typeof value === "number";
+}
+interface Box<T> {
+  value: T;
+}
+
+// The issue's repro: bounded by a counter at run time only.
+function depth<T>(target: T, n: number): number {
+  if (n > 0) return depth({ value: target } as Box<T>, n - 1);
+  return n;
+}
+
+// The predicate's type has an object member.
+function small<T>(x: T): number {
+  if (isSmall(x)) return small({ value: x });
+  return 0;
+}
+
+// The guard is on another parameter than the one that grows.
+function other<T, U>(x: T, y: U): number {
+  if (isPrimitive(x)) return other(x, { value: y });
+  return 0;
+}
+
+// The grown argument may be a primitive.
+function maybe<T>(x: T): number {
+  if (isPrimitive(x)) return maybe<T | null>(null);
+  return 0;
+}
+
+// The call is in the branch where the predicate is false.
+function negated<T>(x: T): number {
+  if (!isPrimitive(x)) return negated({ value: x });
+  return 0;
+}
+
+console.log(depth(3, 2), small(1), other(1, 2), maybe(1), negated(1));

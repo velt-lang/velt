@@ -20,7 +20,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Def, DefId, LitValue, TyId, TyKind};
-use crate::inst_sites::{self, resolve_param_calls, ParamCall, Uses};
+use crate::inst_sites::{self, carry_guard, resolve_param_calls, ParamCall, Uses};
 use crate::types::{children, collect_params};
 
 const KEY_NOTE: &str =
@@ -92,11 +92,13 @@ impl Ctx<'_> {
     }
 }
 
-/// A key type a function needs to be valid, and the function whose types mention it.
-type Need = (TyId, DefId);
+/// A key type a function needs to be valid, the function whose types mention it and its guard
+/// bits (`inst_sites::carry_guard`).
+type Need = (TyId, DefId, u64);
 
-/// A key type a function needs, the span to report it at and the function whose types mention it.
-type Req = (TyId, Span, DefId);
+/// A key type a function needs, the span to report it at, the function whose types mention it
+/// and its guard bits.
+type Req = (TyId, Span, DefId, u64);
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let mut uses = inst_sites::collect(cx, false);
@@ -128,8 +130,8 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         let (mut reqs, pending) = requirements(cx, *f, u, &needs, &pneeds, &mut memo);
         for (p, span) in pending {
             let generic = resolve_param_calls(cx, &mut rounds, i, vec![p], &mut |cx, m, args| {
-                for (k, origin) in needs.get(&m).into_iter().flatten() {
-                    reqs.push((cx.subst(*k, args), span, *origin));
+                for (k, origin, _) in needs.get(&m).into_iter().flatten() {
+                    reqs.push((cx.subst(*k, args), span, *origin, 0));
                 }
                 let ps = pneeds.get(&m).into_iter().flatten();
                 ps.map(|p| p.subst(cx, args)).collect()
@@ -142,11 +144,11 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
                 }
             }
         }
-        for (k, span, origin) in reqs {
+        for (k, span, origin, guard) in reqs {
             if cx.is_generic_key(k) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(k, origin)) {
-                    n.push((k, origin));
+                if !n.contains(&(k, origin, guard)) {
+                    n.push((k, origin, guard));
                     grew = true;
                 }
             } else if seen.insert((*f, k, origin)) {
@@ -176,9 +178,11 @@ fn requirements(
 ) -> (Vec<Req>, Vec<(ParamCall, Span)>) {
     let mut reqs = vec![];
     let mut pending = u.param_calls.clone();
-    for (d, targs, span) in &u.calls {
-        for (k, origin) in needs.get(d).into_iter().flatten() {
-            reqs.push((cx.subst(*k, targs), *span, *origin));
+    for ((d, targs, span), site) in u.calls.iter().zip(&u.guards) {
+        for (k, origin, need) in needs.get(d).into_iter().flatten() {
+            if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                reqs.push((cx.subst(*k, targs), *span, *origin, g));
+            }
         }
         for p in pneeds.get(d).into_iter().flatten() {
             pending.push((p.subst(cx, targs), *span));
@@ -186,8 +190,8 @@ fn requirements(
     }
     for c in &u.closures {
         let span = cx.def_spans[c.0 as usize];
-        for (k, origin) in needs.get(c).into_iter().flatten() {
-            reqs.push((*k, span, *origin));
+        for (k, origin, need) in needs.get(c).into_iter().flatten() {
+            reqs.push((*k, span, *origin, *need));
         }
         for p in pneeds.get(c).into_iter().flatten() {
             pending.push((p.clone(), span));
@@ -195,13 +199,16 @@ fn requirements(
     }
     for (t, span) in &u.types {
         for k in keys_in(cx, *t, memo, &mut vec![]) {
-            reqs.push((k, *span, f));
+            reqs.push((k, *span, f, 0));
         }
     }
     for (m, args, span) in &u.dyn_calls {
-        for (k, origin) in needs.get(m).into_iter().flatten() {
+        for (k, origin, need) in needs.get(m).into_iter().flatten() {
+            let Some(g) = carry_guard(cx, *need, args, 0) else {
+                continue;
+            };
             if let Some(k) = instantiate(cx, *k, args) {
-                reqs.push((k, *span, *origin));
+                reqs.push((k, *span, *origin, g));
             }
         }
         for p in pneeds.get(m).into_iter().flatten() {

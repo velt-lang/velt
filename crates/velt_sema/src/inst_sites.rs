@@ -29,6 +29,8 @@ pub(crate) struct Uses {
     /// Every type mentioned (expressions, locals, type arguments), with its first span.
     pub types: Vec<(TyId, Span)>,
     pub calls: Vec<(DefId, Vec<TyId>, Span)>,
+    /// The guard bits of each of `calls` ([`carry_guard`]).
+    pub guards: Vec<u64>,
     pub closures: Vec<DefId>,
     /// The methods the class types among `types` dispatch dynamically to, with those types'
     /// arguments and the span of the type (filled by the pass: `dispatch::Dispatch`).
@@ -56,13 +58,14 @@ impl Uses {
 /// in definition order, followed by those of the field initializers of each struct and class (a
 /// unit of their own, keyed by the type, which `new` and literals of the type instantiate).
 pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
-    type News = Vec<(DefId, Vec<TyId>, Span)>;
+    type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
     let mut out: Vec<(DefId, Uses, News)> = vec![];
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: HashSet<TyId> = HashSet::new();
+        let guards = guards_of(&cx.ty, &mut f.body.block);
         if signature {
             let span = f.body.block.span;
             for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
@@ -77,23 +80,25 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
             }
         }
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            add_site(&mut u, &mut news, &mut seen, e);
+            let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
+            add_site(&mut u, &mut news, &mut seen, e, guard);
         });
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: HashMap<DefId, (Uses, News, HashSet<TyId>)> = HashMap::new();
     for_each_init(cx, &mut |d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
-        add_site(u, news, seen, e);
+        add_site(u, news, seen, e, 0);
     });
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
     out.extend(inits.into_iter().map(|(d, (u, news, _))| (d, u, news)));
     out.into_iter()
         .map(|(d, mut u, news)| {
-            for (c, targs, span) in news {
+            for (c, targs, span, guard) in news {
                 for (callee, args) in constructed(cx, c, targs) {
                     u.calls.push((callee, args, span));
+                    u.guards.push(guard);
                 }
             }
             (d, u)
@@ -102,12 +107,13 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
 }
 
 /// Records what expression `e` mentions and instantiates in `u` (`news`: the types it
-/// constructs, resolved by [`constructed`] afterwards).
+/// constructs, resolved by [`constructed`] afterwards; `guard`: its guard bits).
 fn add_site(
     u: &mut Uses,
-    news: &mut Vec<(DefId, Vec<TyId>, Span)>,
+    news: &mut Vec<(DefId, Vec<TyId>, Span, u64)>,
     seen: &mut HashSet<TyId>,
     e: &Expr,
+    guard: u64,
 ) {
     if seen.insert(e.ty) {
         u.types.push((e.ty, e.span));
@@ -123,9 +129,10 @@ fn add_site(
         Some(Site::Call(d, targs)) => {
             mention(u, &targs);
             u.calls.push((d, targs, e.span));
+            u.guards.push(guard);
         }
         Some(Site::Closure(c)) => u.closures.push(c),
-        Some(Site::New(d, targs)) => news.push((d, targs, e.span)),
+        Some(Site::New(d, targs)) => news.push((d, targs, e.span, guard)),
         Some(Site::Param(p)) => {
             mention(u, &p.margs);
             u.param_calls.push((p, e.span));
@@ -328,4 +335,38 @@ pub(crate) fn resolve_param_calls(
         stack.extend(method(cx, m, &args));
     }
     generic
+}
+
+/// Guard bits (a bit per type parameter whose primitive guard encloses a call or a
+/// requirement: `visit::primitive_guards`, issue #1251) of a requirement of `g` with bits
+/// `need`, carried to a call `g<targs>` with bits `site` in the caller: `None` when a guarded
+/// parameter of `g` is given an object type, so the branch the requirement comes from is not
+/// instantiated there; else `site` and the caller's parameter each guarded one is given as is
+/// (any other argument may hold a primitive in every instance: that guard is dropped).
+pub(crate) fn carry_guard(cx: &Ctx, need: u64, targs: &[TyId], site: u64) -> Option<u64> {
+    let mut out = site;
+    for (q, t) in targs.iter().enumerate().take(64) {
+        if need & (1 << q) == 0 {
+            continue;
+        }
+        if cx.object_only(*t) {
+            return None;
+        }
+        if let crate::hir::TyKind::Param(p) = cx.ty.kind(*t) {
+            out |= 1u64.checked_shl(*p).unwrap_or(0);
+        }
+    }
+    Some(out)
+}
+
+/// The guard bits of each expression of `b` (`visit::primitive_guards`), keyed by address.
+pub(crate) fn guards_of(
+    ty: &crate::types::Types,
+    b: &mut crate::hir::Block,
+) -> HashMap<*const Expr, u64> {
+    let param_of = |t: TyId| match ty.kind(t) {
+        crate::hir::TyKind::Param(p) => Some(*p),
+        _ => None,
+    };
+    visit::primitive_guards(b, &param_of)
 }

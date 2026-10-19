@@ -1,0 +1,13 @@
+// A predicate whose type has only primitive members that returns true for an object (expected
+// output from `node` up to there; Node then takes the branch): an instance of the generic
+// function for an object type has no such branch (issue #1251), so the call stops with a
+// TypeError instead of running the other one.
+function isNumber(v: unknown): v is number {
+  return true;
+}
+function show<T>(x: T): string {
+  if (isNumber(x)) return "number";
+  return "other";
+}
+console.log(show(1));
+console.log(show({ a: 1 }));
