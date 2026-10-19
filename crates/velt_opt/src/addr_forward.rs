@@ -8,7 +8,7 @@
 //! usually dead (dce removes it), the location may stop being address-taken, and the
 //! value-tracking passes can see scalar locals that were only reachable through memory.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{AggLayout, Function, Local, Place, Proj, Rvalue, Stmt, Ty};
 
@@ -41,9 +41,9 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
 }
 
 /// Pointer local → (the location it always points to, that location's type).
-fn targets(aggs: &[AggLayout], func: &Function) -> HashMap<Local, (Place, Ty)> {
+fn targets(aggs: &[AggLayout], func: &Function) -> FxHashMap<Local, (Place, Ty)> {
     let usage = Usage::of(func);
-    let mut out = HashMap::new();
+    let mut out = FxHashMap::default();
     for s in func.blocks.iter().flat_map(|b| &b.stmts) {
         let Stmt::Assign(dst, Rvalue::AddrOf(target)) = s else {
             continue;

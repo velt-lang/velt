@@ -2058,6 +2058,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "object",
+ "rustc-hash",
  "target-lexicon",
  "velt_vir",
  "windows-sys 0.61.2",
@@ -2068,6 +2069,7 @@ name = "velt_codegen_llvm"
 version = "0.2.2"
 dependencies = [
  "object",
+ "rustc-hash",
  "velt_codegen_cl",
  "velt_opt",
  "velt_vir",
@@ -2169,6 +2171,7 @@ dependencies = [
 name = "velt_opt"
 version = "0.2.2"
 dependencies = [
+ "rustc-hash",
  "velt_codegen_cl",
  "velt_opt",
  "velt_vir",

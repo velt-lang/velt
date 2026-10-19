@@ -12,7 +12,7 @@
 //!   non-zero one, and the operands of other narrowed definitions (whose own facts account for
 //!   the `-0`). That last rule makes this a greatest fixpoint.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{BinOp, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
 
@@ -48,7 +48,7 @@ pub(super) struct Plan {
     /// Per local: the join of the values it is assigned.
     pub range: Vec<Fact>,
     /// Facts about the operands of each narrowed definition, by (block, statement).
-    pub operands: HashMap<(usize, usize), Vec<Fact>>,
+    pub operands: FxHashMap<(usize, usize), Vec<Fact>>,
     /// Per candidate that stays: why.
     pub reasons: Vec<Option<Reason>>,
 }
@@ -83,7 +83,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
     let mut p = Plan {
         to: vec![None; n],
         range: vec![Fact::empty(); n],
-        operands: HashMap::new(),
+        operands: FxHashMap::default(),
         reasons: vec![None; n],
     };
     let mut may_neg_zero = vec![false; n];

@@ -14,6 +14,7 @@ target-lexicon = "0.13.5"
 velt_vir.workspace = true
 # Reading back an object's layout (the address of `__text` for Mach-O debug info).
 object = { version = "0.39", default-features = false, features = ["read_core", "macho"] }
+rustc-hash = "2.1.3"
 
 [target.'cfg(windows)'.dependencies]
 # Registering unwind info for JIT code (RtlAddFunctionTable).

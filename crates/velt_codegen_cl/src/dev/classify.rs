@@ -15,7 +15,7 @@
 //! embedding a changed child's state, an async function's entry creating its new state, a handler
 //! descriptor), transitively.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::facts::Facts;
 use super::roles;
@@ -136,7 +136,7 @@ fn removed_entry_point(old: &Facts, new: &Facts) -> Option<String> {
 /// closure count changed while one of the closures both versions have changed.
 fn shifted_closures(old: &Facts, new: &Facts) -> Option<String> {
     let count = |facts: &Facts| {
-        let mut parents: HashMap<String, Vec<String>> = HashMap::new();
+        let mut parents: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for key in facts.funcs.keys() {
             if let Some((parent, _)) = roles::closure_slot(key) {
                 parents.entry(parent).or_default().push(key.clone());
@@ -166,7 +166,7 @@ fn shifted_closures(old: &Facts, new: &Facts) -> Option<String> {
 /// Changed and new functions plus, transitively, the functions referring to a pinned function
 /// that is recompiled.
 fn to_compile(old: &Facts, new: &Facts) -> Vec<String> {
-    let mut dirty: HashSet<&String> = new.funcs.keys().filter(|k| changed(old, new, k)).collect();
+    let mut dirty: FxHashSet<&String> = new.funcs.keys().filter(|k| changed(old, new, k)).collect();
     loop {
         let more: Vec<&String> = new
             .funcs
