@@ -15,6 +15,15 @@ use crate::hooks;
 pub(crate) fn build_defs(cx: &mut Ctx) {
     let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
     let assigned = crate::assigned_fields::assigned_objects(cx);
+    // An object literal's slot method returning a promise that never rejects, in a group whose
+    // promises may: async, so its promise has the group's layout.
+    for (d, ret) in std::mem::take(&mut cx.promise_forwarders) {
+        if cx.fn_info(d).throws.is_some() {
+            let span = cx.fn_info(d).span;
+            let never = cx.ty.never;
+            crate::collect::forwarders::await_forwarded(cx, d, ret, never, span);
+        }
+    }
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() {

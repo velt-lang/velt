@@ -449,6 +449,12 @@ impl FnCx<'_, '_> {
                         })
                         .collect();
                     let ret = norm(self.cx, m.ret);
+                    let rejects = match s {
+                        Slot::Call(j) => {
+                            self.async_slot_rejection(iface, slot, field_tys[j as usize].1)
+                        }
+                        _ => None,
+                    };
                     let target = match s {
                         Slot::Call(j) => Target::Field {
                             index: j,
@@ -460,7 +466,18 @@ impl FnCx<'_, '_> {
                         ),
                     };
                     let name = format!("{iname} literal.{}", m.name);
-                    synth_method(self.cx, &host, self_ty, name, params, ret, false, target)
+                    let def =
+                        synth_method(self.cx, &host, self_ty, name, params, ret, false, target);
+                    // An async method: the slot method awaits the value's promise when it may
+                    // reject, or when another member's may (known after inference).
+                    match rejects {
+                        Some((r, e)) if e != self.cx.ty.never => {
+                            crate::collect::forwarders::await_forwarded(self.cx, def, r, e, span);
+                        }
+                        Some((r, _)) => self.cx.promise_forwarders.push((def, r)),
+                        None => {}
+                    }
+                    def
                 }
                 (Slot::Call(j), None) => {
                     // A field read through a getter.
@@ -581,7 +598,43 @@ impl FnCx<'_, '_> {
     /// The function type a literal's function value for method `m` is checked against.
     fn method_fn_type(&mut self, m: &MethodSig) -> TyId {
         let params = m.params.iter().map(|p| p.ty).collect();
-        self.fn_type(params, m.ret, m.throws)
+        // Without a `throws` clause, an async method's promise rejects with what the
+        // implementations throw: unknown here as well, so the value's comes from its body.
+        let ret = match (m.throws, self.cx.ty.kind(m.ret).clone()) {
+            (None, TyKind::Promise(v, e)) if e == self.cx.ty.never => {
+                let unknown = self.cx.ty.error;
+                self.cx.ty.promise_rejecting(v, unknown)
+            }
+            _ => m.ret,
+        };
+        self.fn_type(params, ret, m.throws)
+    }
+
+    /// The result type of a function value of type `t` (`None` if it is no function).
+    fn fn_ret(&self, t: TyId) -> Option<TyId> {
+        match self.cx.ty.kind(t) {
+            TyKind::FnPtr { ret, .. } => Some(*ret),
+            _ => None,
+        }
+    }
+
+    /// The result type of the function value of type `fn_ty` filling slot `slot` of `iface`,
+    /// and what its promise rejects with, when the slot's method returns a promise (it is
+    /// implemented by async methods, `throws/groups.rs` `Group::promise`, whose promises reject
+    /// with what the group's members throw) and the value returns one.
+    fn async_slot_rejection(
+        &mut self,
+        iface: DefId,
+        slot: usize,
+        fn_ty: TyId,
+    ) -> Option<(TyId, TyId)> {
+        let declared = self.cx.iface(iface)?.methods.get(slot)?.ret;
+        self.cx.ty.promise_payload(declared)?;
+        let ret = self.fn_ret(fn_ty)?;
+        match self.cx.ty.kind(ret) {
+            TyKind::Promise(_, e) => Some((ret, *e)),
+            _ => None,
+        }
     }
 
     /// What a function value of type `t` throws (`None` if it is no function).
@@ -599,7 +652,17 @@ impl FnCx<'_, '_> {
             .or_else(|| self.fn_throws(h.ty))
             .unwrap_or(self.cx.ty.never);
         let params = m.params.iter().map(|p| p.ty).collect();
-        let t = self.fn_type(params, m.ret, Some(throws));
+        // An async method without a clause: its promise rejects with what the value's does.
+        let ret = match (m.throws, self.cx.ty.kind(m.ret).clone(), self.fn_ret(h.ty)) {
+            (None, TyKind::Promise(v, e), Some(r)) if e == self.cx.ty.never => {
+                match self.cx.ty.kind(r).clone() {
+                    TyKind::Promise(w, f) if w == v => self.cx.ty.promise_rejecting(v, f),
+                    _ => m.ret,
+                }
+            }
+            _ => m.ret,
+        };
+        let t = self.fn_type(params, ret, Some(throws));
         self.coerce(h, t)
     }
 }

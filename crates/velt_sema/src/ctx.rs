@@ -150,6 +150,10 @@ pub(crate) struct Ctx<'m> {
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
     /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
+    /// Slot methods of object literals returning the promise of a function value that never
+    /// rejects, and that type: made async when their dispatch group's promises may reject
+    /// (`collect::forwarders::await_forwarded`).
+    pub promise_forwarders: Vec<(crate::hir::DefId, TyId)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
@@ -338,6 +342,7 @@ impl<'m> Ctx<'m> {
             fn_sites: Default::default(),
             collected_defs: 0,
             iface_generators: vec![],
+            promise_forwarders: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
             enclosing_class: HashMap::new(),

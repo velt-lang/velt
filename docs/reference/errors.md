@@ -110,8 +110,7 @@ what a function stored there may throw.
   recursion, and a `let` without a type initialized with a closure (`let f = () => {}`) is
   such a type too. Function types of the standard library are not inferred this way:
   `queueMicrotask` takes a callback that may throw (what it throws is uncaught, as in Node),
-  and a timer callback, a proxy trap or a promise executor that throws is reported. An async method of an
-  object literal implementing an interface method written without `throws` may not reject yet.
+  and a timer callback, a proxy trap or a promise executor that throws is reported.
 
   ```ts
   interface Reviver<T> {
@@ -134,7 +133,8 @@ what a function stored there may throw.
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
   union of what the implementations throw. For an interface method returning a promise it is
-  what the promise rejects with ([Async](async.md#errors)).
+  what the promise rejects with ([Async](async.md#errors)), also for the async methods of an
+  object literal implementing the interface (`const l: Loader = { async load(s) { … } }`).
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods
