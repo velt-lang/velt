@@ -142,6 +142,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         };
         let golden = || golden_test(root, &ws, test.as_deref());
         let mut goldens = golden();
+        if let Some(path) = path_with_rust_lld(root) {
+            goldens.env("PATH", path);
+        }
         if let Some(filter) = plan.golden_env() {
             goldens.env("VELT_GOLDEN", filter);
         }
@@ -470,6 +473,33 @@ pub fn target_dir(root: &Path) -> PathBuf {
 }
 
 /// `rustc -vV`'s host triple.
+/// Linux: `PATH` with the Rust toolchain's `ld.lld` in front (`<sysroot>/lib/rustlib/<host>/
+/// bin/gcc-ld`, rustc's own wrapper around `rust-lld`), so the goldens link static runtimes the
+/// way `velt` does wherever lld is installed (`cc -fuse-ld=lld`, `velt_link`'s `fast_ld`)
+/// instead of with GNU ld, which takes about five times as long (#1135). Debug builds still link
+/// the shared runtime with GNU ld, and the other tests link static runtimes with it. `None`
+/// elsewhere or when the toolchain has no wrapper.
+fn path_with_rust_lld(root: &Path) -> Option<std::ffi::OsString> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let dir = sysroot
+        .join("lib/rustlib")
+        .join(host_triple().ok()?)
+        .join("bin/gcc-ld");
+    if !dir.join("ld.lld").is_file() {
+        return None;
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(dir).chain(std::env::split_paths(&path))).ok()
+}
+
 fn host_triple() -> Result<String, String> {
     let out = Command::new("rustc")
         .arg("-vV")
@@ -494,7 +524,12 @@ pub(crate) fn show(cmd: &Command) -> String {
     };
     for (k, v) in cmd.get_envs() {
         if let Some(v) = v {
-            s = format!("{}={} {s}", k.to_string_lossy(), v.to_string_lossy());
+            // A `PATH` is the caller's with a directory in front: show that one.
+            let shown = match std::env::split_paths(v).next() {
+                Some(first) if k == "PATH" => format!("{}:$PATH", first.display()),
+                _ => v.to_string_lossy().into_owned(),
+            };
+            s = format!("{}={shown} {s}", k.to_string_lossy());
         }
     }
     for a in cmd.get_args() {

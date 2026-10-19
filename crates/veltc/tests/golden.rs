@@ -35,7 +35,7 @@
 //! `VELT_GOLDEN_TIMEOUT` seconds (default 120) is killed, with every process it started, and
 //! fails. Builds go to `target/golden-work` (or `VELT_GOLDEN_WORK`); each program's outputs are
 //! deleted after it runs. Programs are checked on `VELT_GOLDEN_JOBS` worker threads (default:
-//! half the cores, at most 8; `1` = sequential);
+//! one per core, at most 16; `1` = sequential);
 //! `VELT_GOLDEN_MODES=debug` (or `release`) checks one build mode only.
 //! The debug-mode run of each program uses the debug runtime's checking allocator
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
@@ -417,7 +417,9 @@ fn modes() -> Vec<Option<&'static str>> {
     }
 }
 
-/// Checks `files` on `VELT_GOLDEN_JOBS` worker threads (default: half the cores, at most 8),
+/// Checks `files` on `VELT_GOLDEN_JOBS` worker threads (default: one per core, at most 16: a
+/// program spends much of its time waiting for the linker and for process start-up, and on CI's
+/// 3- and 4-core runners half the cores took up to twice as long, #1135),
 /// each program in a work directory of its own (its current directory, so files programs write
 /// never collide; and no build ever overwrites an executable that has just run, which on Windows
 /// can stay locked for a moment, even when two programs share a name). Returns each file's
@@ -426,9 +428,7 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
     let jobs = std::env::var("VELT_GOLDEN_JOBS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 8))
-        })
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(16)))
         .max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let results = std::sync::Mutex::new(vec![Vec::new(); files.len()]);
