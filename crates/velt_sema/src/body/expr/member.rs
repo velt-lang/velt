@@ -649,6 +649,7 @@ impl FnCx<'_, '_> {
         let coerced = self
             .try_coerce(inner, target)
             .or_else(|h| self.param_as_object(h, target))
+            .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span));
         match coerced {
             Ok(h) => h,
