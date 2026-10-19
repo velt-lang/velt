@@ -117,6 +117,8 @@ struct Translator<'a, 'b, M: Module> {
     far_addresses: bool,
     /// `floor`/`ceil`/`trunc` are instructions (not C runtime calls) on this ISA (`rounding`).
     rounding_instructions: bool,
+    /// Whether any byte shuffle is an instruction (`simd::has_byte_shuffles`).
+    byte_shuffles: bool,
     /// Source locations of the instructions (debug info; empty when the VIR has none): a
     /// Cranelift `SourceLoc` is an index into this table.
     srclocs: Vec<SrcLoc>,
@@ -192,6 +194,7 @@ fn translate_once<M: Module>(
     let far_addresses = matches!(triple.architecture, Architecture::Aarch64(_))
         && triple.binary_format == BinaryFormat::Coff;
     let rounding_instructions = rounding::has_rounding_instructions(module.isa());
+    let byte_shuffles = simd::has_byte_shuffles(module.isa());
     let mut builder = FunctionBuilder::new(func, builder_ctx);
     let describe = crate::debug_info::describes_variables(triple);
     let (storage, shadows) =
@@ -213,6 +216,7 @@ fn translate_once<M: Module>(
         data_refs: HashMap::new(),
         far_addresses,
         rounding_instructions,
+        byte_shuffles,
         srclocs: Vec::new(),
         srcloc_ids: HashMap::new(),
         shadows,

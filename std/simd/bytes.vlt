@@ -594,6 +594,7 @@ declare function velt_simd_i16x8_lt(a: i16x8, b: i16x8): mask16x8;
 declare function velt_simd_i16x8_le(a: i16x8, b: i16x8): mask16x8;
 declare function velt_simd_i16x8_gt(a: i16x8, b: i16x8): mask16x8;
 declare function velt_simd_i16x8_ge(a: i16x8, b: i16x8): mask16x8;
+declare function velt_simd_i16x8_reverse_bytes(v: i16x8): i16x8;
 declare function velt_simd_i16x8_zip_low(a: i16x8, b: i16x8): i16x8;
 declare function velt_simd_i16x8_zip_high(a: i16x8, b: i16x8): i16x8;
 declare function velt_simd_i16x8_widen_low(v: i16x8): i32x4;
@@ -801,6 +802,14 @@ extend i16x8 {
     return velt_simd_i16x8_ge(this, other);
   }
 
+  /**
+   * The bytes of each lane in reverse order: big-endian 16-bit words read with `load`
+   * become their values, and back (`rev16`, `pshufb`).
+   */
+  reverseBytes(): i16x8 {
+    return velt_simd_i16x8_reverse_bytes(this);
+  }
+
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
   zipLow(other: i16x8): i16x8 {
     return velt_simd_i16x8_zip_low(this, other);
@@ -869,6 +878,7 @@ declare function velt_simd_u16x8_lt(a: u16x8, b: u16x8): mask16x8;
 declare function velt_simd_u16x8_le(a: u16x8, b: u16x8): mask16x8;
 declare function velt_simd_u16x8_gt(a: u16x8, b: u16x8): mask16x8;
 declare function velt_simd_u16x8_ge(a: u16x8, b: u16x8): mask16x8;
+declare function velt_simd_u16x8_reverse_bytes(v: u16x8): u16x8;
 declare function velt_simd_u16x8_zip_low(a: u16x8, b: u16x8): u16x8;
 declare function velt_simd_u16x8_zip_high(a: u16x8, b: u16x8): u16x8;
 declare function velt_simd_u16x8_widen_low(v: u16x8): u32x4;
@@ -1064,6 +1074,14 @@ extend u16x8 {
   /** The lanes where this vector is at least `other`. */
   ge(other: u16x8): mask16x8 {
     return velt_simd_u16x8_ge(this, other);
+  }
+
+  /**
+   * The bytes of each lane in reverse order: big-endian 16-bit words read with `load`
+   * become their values, and back (`rev16`, `pshufb`).
+   */
+  reverseBytes(): u16x8 {
+    return velt_simd_u16x8_reverse_bytes(this);
   }
 
   /** The lanes of the low halves of this vector and `other` in turn: a0, b0, a1, b1, … */
