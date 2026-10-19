@@ -112,6 +112,12 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
     let slopes: Vec<f64> = (1..sizes.len())
         .map(|i| (best[i] as f64 - best[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
         .collect();
+    assert!(
+        slopes[0] > 0.0,
+        "sema cost did not grow from N = {} to {}: the measurement is broken",
+        sizes[0],
+        sizes[1],
+    );
     for (i, s) in slopes.iter().enumerate().skip(1) {
         assert!(
             *s < slack * slopes[0],
@@ -176,18 +182,22 @@ fn instantiation_work_grows_linearly() {
 /// One test, so the timings don't compete with each other for the CPU.
 #[test]
 fn sema_time_grows_linearly() {
-    // The slope from 100 to 200 units against the one from 200 to 800: quadratic growth makes
-    // the second about 3.3× the first; 2.5× leaves room for cache effects and noise.
-    assert_linear(&[100, 200, 800], |_| 8, 2.5);
+    // The slope from 100 to 400 units against the one from 400 to 1600: purely quadratic growth
+    // makes the second about 4× the first, and less when the quadratic part is small next to
+    // linear work (an all-pairs loop over the prelude's functions as well as the program's). The
+    // first slope spans 300 units, so it is well above the noise of two measurements; 2× leaves
+    // room for cache effects.
+    assert_linear(&[100, 400, 1600], |_| 8, 2.0);
     // One chain through the whole program: modification inference must not take a round over
     // every body per call level.
-    assert_linear(&[100, 200, 800], |n| n, 2.5);
+    assert_linear(&[100, 400, 1600], |n| n, 2.0);
 }
 
 #[test]
 #[ignore = "slow: generates programs of up to 5000 units (run with --release)"]
 fn sema_time_grows_linearly_large() {
-    // Slopes 100 to 1000 against 1000 to 5000: quadratic growth makes the second about 5.5×.
+    // Slopes 100 to 1000 against 1000 to 5000: purely quadratic growth makes the second about
+    // 5.5×.
     assert_linear(&[100, 1000, 5000], |_| 8, 2.0);
     assert_linear(&[100, 1000, 5000], |n| n, 2.0);
     assert_linear_work(&[100, 1000, 5000], |n| generated_program(n, 8), 1.5);
