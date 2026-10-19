@@ -249,9 +249,9 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     let oses: &[&str] = if plan.other_os.is_some() {
-        &["ubuntu-latest", "windows-latest", "macos-latest"]
+        os::QUEUE_OSES
     } else {
-        &["ubuntu-latest"]
+        &os::QUEUE_OSES[..1]
     };
     let main_os = if plan.after_merge.is_some() {
         r#"["ubuntu-latest","windows-latest","macos-latest"]"#
@@ -406,6 +406,26 @@ name = \"a\"
         );
         let shards = text.lines().find(|l| l.starts_with("golden_shards="));
         assert!(shards.is_some_and(|l| !l.contains("windows")), "{text}");
+    }
+
+    #[test]
+    fn every_os_the_queue_checks_has_golden_shards() {
+        let mut linux_only = Plan::everything("test");
+        linux_only.other_os = None;
+        for plan in [Plan::everything("test"), linux_only] {
+            let text = github_output_text(&plan);
+            let line = |name: &str| {
+                let prefix = format!("{name}=");
+                text.lines()
+                    .find_map(|l| l.strip_prefix(prefix.as_str()))
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let (oses, shards) = (line("os"), line("golden_shards"));
+            for os in os::QUEUE_OSES.iter().filter(|os| oses.contains(*os)) {
+                assert!(shards.contains(&format!("\"{os}\":[\"1/")), "{text}");
+            }
+        }
     }
 
     #[test]

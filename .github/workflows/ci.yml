@@ -293,3 +293,10 @@ jobs:
             "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}" "${{ needs.queue-golden.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
+      # Fail closed in the queue: unless queue-plan found the entry gone (`os` is `[]`), the
+      # checks and the goldens must have run and passed, not been skipped.
+      - name: the queue checked and ran the goldens
+        if: needs.queue-plan.result == 'success' && needs.queue-plan.outputs.os != '[]'
+        run: |
+          echo "queue: ${{ needs.queue.result }}, queue-golden: ${{ needs.queue-golden.result }}"
+          [ "${{ needs.queue.result }}" = success ] && [ "${{ needs.queue-golden.result }}" = success ]

@@ -8,6 +8,11 @@
 # The golden test binary has the build's absolute paths compiled in, so a shard unpacks it into
 # a checkout at the same path: the workspace (or on Windows the Dev Drive copy) of every runner
 # of an OS is at the same path, and xtask stops with an error if it is not.
+#
+# It fails closed: the build job fails unless `shards` is exactly ["1/n", …, "n/n"] with n >= 1
+# (an OS without an entry in GOLDEN_SHARDS gets `null`, which would otherwise skip every shard),
+# and the `goldens` job fails unless the build and every shard succeeded, so the caller's result
+# is never a success with goldens skipped.
 name: queue-goldens
 
 on:
@@ -35,6 +40,17 @@ jobs:
       contents: read
       actions: write
     steps:
+      - name: the shards cover every golden
+        shell: bash
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          if ! jq -e 'type == "array" and length > 0 and
+              (length as $n | map(split("/") | map(tonumber)) == [range(1; $n + 1) | [., $n]])' \
+              <<< "$SHARDS" > /dev/null 2>&1; then
+            echo "::error::no golden shards for ${{ inputs.os }} (got: $SHARDS); see GOLDEN_SHARDS in crates/xtask/src/os.rs"
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
@@ -88,3 +104,16 @@ jobs:
         uses: ./.github/actions/fail-fast
         with:
           job: golden shard ${{ matrix.shard }} (${{ inputs.os }})
+
+  # The result the caller sees: success only when the build and every shard succeeded (a skipped
+  # shard matrix is a failure, not a pass).
+  goldens:
+    needs: [build, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: the build and every shard passed
+        run: |
+          echo "build: ${{ needs.build.result }}, shards: ${{ needs.shard.result }}"
+          [ "${{ needs.build.result }}" = success ] && [ "${{ needs.shard.result }}" = success ]
