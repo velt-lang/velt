@@ -201,7 +201,10 @@ impl FnCx<'_, '_> {
             d.span = span;
             hargs.push(d);
         }
+        // A deferred type in the result that the type arguments let reduce is reported here.
+        let outer = self.cx.type_level.use_site.replace(span);
         let ret = self.cx.subst(c.ret, &type_args);
+        self.cx.type_level.use_site = outer;
         Checked {
             args: hargs,
             ret,
@@ -385,18 +388,7 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         collect: bool,
     ) -> Vec<hir::Expr> {
-        // A parameter of a deferred type (`t: IsString<T>`) is known only once the other
-        // arguments have fixed its type parameters: its argument goes with the second round.
-        let late: Vec<bool> = (0..args.len())
-            .map(|i| c.params.get(i).is_some_and(|p| self.cx.mentions_op(p.ty)))
-            .collect();
-        let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => 2,
-        };
-        let mut order: Vec<usize> = (0..args.len()).collect();
-        order.sort_by_key(|&i| round(i));
+        let order = self.arg_order(c, args);
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
             let p = &c.params[i];

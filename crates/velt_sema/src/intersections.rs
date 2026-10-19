@@ -112,7 +112,7 @@ impl Ctx<'_> {
 
     /// Is `t` an intersection's part that defers it (#350): a type parameter or a deferred type,
     /// also with `null` (`T | null`).
-    fn deferred_part(&self, t: TyId) -> bool {
+    pub(crate) fn deferred_part(&self, t: TyId) -> bool {
         let t = self.ty.opt_payload(t).unwrap_or(t);
         matches!(self.ty.kind(t), TyKind::Param(_) | TyKind::Op(..))
     }
@@ -121,11 +121,18 @@ impl Ctx<'_> {
     /// known reduced: `Signal<{ value: V }>` (`T & { $set(v: T): void }`) in a generic function
     /// is the object type `{ value: V; $set(v: { value: V }): void }`, as if written out.
     pub(crate) fn reduce_known_intersection(&mut self, t: TyId) -> TyId {
+        match self.reducible_now(t) {
+            true => self.reduce_op(t),
+            false => t,
+        }
+    }
+
+    /// Is `t` a deferred intersection none of whose parts is a type parameter or deferred (its
+    /// fields may mention type parameters): it can be reduced to an object type now.
+    pub(crate) fn reducible_now(&self, t: TyId) -> bool {
         match self.ty.kind(t) {
-            TyKind::Op(TyOp::Intersect, parts) if !parts.iter().any(|&p| self.deferred_part(p)) => {
-                self.reduce_op(t)
-            }
-            _ => t,
+            TyKind::Op(TyOp::Intersect, parts) => !parts.iter().any(|&p| self.deferred_part(p)),
+            _ => false,
         }
     }
 
@@ -531,7 +538,7 @@ impl Ctx<'_> {
             ),
             TyKind::Array(_) | TyKind::Tuple(_) => (
                 format!("`&` combines object types; `{shown}` is an array"),
-                object.into(),
+                "an array with extra members is not supported: keep the array in a field (`{ items: T[] } & { … }`)".into(),
             ),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => (
                 "intersections of function types (overloads) are not supported".to_string(),
@@ -597,6 +604,17 @@ impl Ctx<'_> {
                 if self.lit_base(&v) == base {
                     return Ok(l);
                 }
+            }
+        }
+        if let Some(m) = self.meet_param(a, b, module) {
+            return Ok(m);
+        }
+        // Two function types are overloads in TypeScript; when one of them takes every argument
+        // the other does (`(v: A) => void` and `(v: A & B) => void`, nested `Signal<Signal<…>>`'s
+        // `$set`s), a call through either is a call of that one.
+        for (wide, narrow) in [(a, b), (b, a)] {
+            if self.takes_all_of(wide, narrow) {
+                return Ok(wide);
             }
         }
         let (sa, sb) = (self.display(a), self.display(b));
