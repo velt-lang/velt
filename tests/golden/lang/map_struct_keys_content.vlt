@@ -1,0 +1,127 @@
+// check: no leaks
+// `Map` and `Set` keys of a type declared with `struct` compare and hash by content, field by
+// field (#641): a struct is a Velt value type, so an equal struct finds the entry. Object types,
+// classes and arrays keep comparing by identity, as in Node (#1257). `==`, `includes` and
+// `indexOf` still compare structs by identity.
+struct Cell {
+  x: number;
+  y: number;
+}
+
+struct Seg {
+  from: Cell;
+  to: Cell;
+}
+
+struct Name {
+  first: string;
+  last: string;
+}
+
+struct F {
+  v: number;
+}
+
+struct Tagged {
+  id: i64;
+  tags: string[];
+}
+
+struct Pair<T> {
+  a: T;
+  b: T;
+}
+
+type Obj = { x: number; y: number };
+
+function main() {
+  // The regression: equal structs are one key.
+  const m = new Map<Cell, number>();
+  const a: Cell = { x: 1, y: 2 };
+  const b: Cell = { x: 1, y: 2 };
+  m.set(a, 1);
+  m.set(b, 2);
+  const s = new Set<Cell>();
+  s.add(a);
+  s.add({ x: 1, y: 2 });
+  console.log(m.size, m.get({ x: 1, y: 2 }), s.size, a == b);
+  console.log(s.has({ x: 1, y: 2 }), s.has({ x: 2, y: 1 }), m.has({ x: 2, y: 1 }));
+  console.log(m.delete({ x: 1, y: 2 }), m.size, s.delete(b), s.size);
+
+  // `==`, `includes` and `indexOf` compare structs by identity.
+  const cells: Cell[] = [a];
+  console.log(cells.includes(b), cells.indexOf(b), cells.includes(a), a == a);
+
+  // Nested structs.
+  const segs = new Map<Seg, string>();
+  segs.set({ from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }, "diagonal");
+  segs.set({ from: { x: 0, y: 0 }, to: { x: 1, y: 0 } }, "flat");
+  segs.set({ from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }, "diag");
+  console.log(segs.size, segs.get({ from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }));
+  console.log(segs.get({ from: { x: 1, y: 1 }, to: { x: 0, y: 0 } }) ?? "none");
+
+  // String fields compare by value, long (heap) strings too.
+  const names = new Set<Name>();
+  const long = "a family name longer than twenty-three bytes";
+  names.add({ first: "ann", last: long });
+  names.add({ first: "ann", last: "a family name longer than " + "twenty-three bytes" });
+  names.add({ first: "bob", last: long });
+  console.log(names.size, names.has({ first: "bob", last: long }), names.has({ first: "", last: long }));
+
+  // Number fields compare as JS `Map` keys do (SameValueZero): `NaN` finds itself, `0` is `-0`.
+  const fs = new Map<F, string>();
+  fs.set({ v: NaN }, "nan");
+  fs.set({ v: 0 }, "zero");
+  console.log(fs.get({ v: NaN }), fs.get({ v: -0 }), fs.size);
+
+  // A union key: a struct member by content, a string by value.
+  const u = new Map<Cell | string, number>();
+  u.set({ x: 3, y: 4 }, 1);
+  u.set("3,4", 2);
+  u.set({ x: 3, y: 4 }, 3);
+  const k1: Cell | string = { x: 3, y: 4 };
+  const k2: Cell | string = "3,4";
+  console.log(u.size, u.get(k1), u.get(k2));
+
+  // `Cell | null` and tuples holding structs.
+  const opt = new Map<Cell | null, string>();
+  opt.set(null, "none");
+  opt.set({ x: 5, y: 5 }, "five");
+  const five: Cell | null = { x: 5, y: 5 };
+  const nil: Cell | null = null;
+  console.log(opt.get(five), opt.get(nil), opt.size);
+  const pairs = new Set<[Cell, string]>();
+  pairs.add([{ x: 1, y: 1 }, "p"]);
+  pairs.add([{ x: 1, y: 1 }, "p"]);
+  pairs.add([{ x: 1, y: 1 }, "q"]);
+  console.log(pairs.size, pairs.has([{ x: 1, y: 1 }, "q"]));
+
+  // A generic struct.
+  const gp = new Set<Pair<string>>();
+  gp.add({ a: "x", b: "y" });
+  gp.add({ a: "x", b: "y" });
+  console.log(gp.size, gp.has({ a: "x", b: "y" }), gp.has({ a: "y", b: "x" }));
+
+  // An array field is an object: it compares by identity, as `==` compares arrays.
+  const tags = ["red"];
+  const tagged = new Set<Tagged>();
+  tagged.add({ id: 1, tags: tags });
+  tagged.add({ id: 1, tags: tags });
+  tagged.add({ id: 1, tags: ["red"] });
+  console.log(tagged.size, tagged.has({ id: 1, tags: tags }));
+
+  // Counting by struct key, iterated in insertion order.
+  const visits = new Map<Cell, number>();
+  const walk: Cell[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 0 }];
+  for (const c of walk) {
+    visits.set(c, (visits.get(c) ?? 0) + 1);
+  }
+  for (const [c, n] of visits) {
+    console.log(c.x, c.y, n);
+  }
+
+  // Object types and classes stay identity keys.
+  const objs = new Set<Obj>();
+  objs.add({ x: 1, y: 2 });
+  console.log(objs.has({ x: 1, y: 2 }), objs.size);
+}
