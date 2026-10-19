@@ -121,4 +121,27 @@ function run(): void {
   console.log(deep(2000), a.t[1], holder[0].t[1]);
 }
 
+// The right-hand side drops every other reference to the receiver: the write still lands in
+// the object the target named, which stays alive until the write is done.
+function dropped(): void {
+  const holder: T[] = [new C(), { t: [1, "x".repeat(4)], get(): string { return "lit"; } }];
+  const keep = holder[0];
+  const f = (): string => {
+    holder.pop();
+    holder.pop();
+    holder.push(new C());
+    return "y".repeat(5);
+  };
+  holder[0].t[1] = f();
+  console.log(keep.get(), holder.length, holder[0].get());
+  const one = holder[0];
+  const g = (): number => {
+    holder.length = 0;
+    return 7;
+  };
+  one.t[0] += g();
+  console.log(one.get(), holder.length);
+}
+
 run();
+dropped();
