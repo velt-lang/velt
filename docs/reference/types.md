@@ -591,6 +591,9 @@ other way round is supported: a generic holding a `U | undefined` at `U = T | nu
 `null` or `undefined` is present (`has`, `size`, `Object.keys`, iteration and `console.log`
 list it) and reads back as what it holds, a missing key reads `undefined`, and
 `JSON.stringify` leaves out an entry holding `undefined` and writes `null`, as Node does.
+`JSON.parse` into a type holding a `T | null | undefined` (`as Record<string, V | null |
+undefined>`) reads each value as its `T | null`, since JSON has no `undefined`; into a
+`T | undefined` without `null` it is not supported yet.
 Also not supported yet, although TypeScript accepts them:
 
 - a type argument that allows `undefined` for generic code that sorts an array of its type
@@ -1586,6 +1589,41 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   declared `a?: T | null` that holds `null`. `for...of` patterns take defaults (and an object
   rest) the same way: `for (const { name, port = 80 } of servers)`. Defaults in parameter
   patterns are not supported.
+- **Destructuring assignment** takes a value apart into places that already exist, as in JS:
+  `[a, b] = [b, a]` swaps, and the targets may be variables, fields and elements
+  (`[xs[i], xs[j]] = [xs[j], xs[i]]`, `[this.x, this.y] = [y, x]`, `({ w: box.width } = size)`),
+  nested (`[p.x, { y: p.inner.y }] = src`). The value is evaluated first, then each target in
+  order, left to right, each assigned before the next is evaluated (`[i, xs[i]] = [1, 5]`
+  writes `xs[1]`). Defaults (`[a = 1, b = a] = xs`, `({ host, port = 80 } = opts)` with the
+  shorthand `{ port = 80 }`, which is only allowed in such a target, TS1312) apply where the
+  value is `undefined`, as in declarations, and each is evaluated when its turn comes, so it
+  sees the targets assigned before it (`[a, b = a] = [5]` gives `5 5`). A last `...rest`
+  takes the other elements or properties (`[first, ...others] = xs`, `({ id, ...rest } = p)`),
+  a hole skips an element (`[a, , b] = xs`; a hole elsewhere, `[1, , 2]`, is not supported), and an object target needs parentheses as a
+  statement (`({ a, b } = o);`), as in JS. `for...of` and `for...in` assign to such targets
+  too, and to a variable or place declared elsewhere: `for (x of xs)`, `for ([k, v] of map)`,
+  `for ({ name, port = 80 } of servers)`. The assignment has no value yet: `x = [a, b] = c`
+  is an error (``a destructuring assignment cannot be used as a value yet``; assign `c` to
+  `x` first).
+
+  ```ts
+  class Point { x = 1; y = 2; }
+  function main() {
+    let a = 1, b = 2;
+    [a, b] = [b, a];
+    const xs = [10, 20, 30];
+    [xs[0], xs[2]] = [xs[2], xs[0]];
+    const p = new Point();
+    [p.x, p.y = p.x * 10] = [3];
+    let host = "", port = 0;
+    ({ host, port = 80 } = { host: "h" } as { host: string; port?: number });
+    let first = 0, rest: number[] = [];
+    [first, , ...rest] = xs;
+    console.log(a, b, xs, p.x, p.y, host, port, first, rest); // 2 1 [ 30, 20, 10 ] 3 30 h 80 30 [ 10 ]
+    let k = "", v = 0;
+    for ([k, v] of new Map([["one", 1]])) console.log(k, v); // one 1
+  }
+  ```
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`; a read where a `T | undefined` is
   expected, `return xs[0]` from a function returning `T | undefined` or
@@ -1868,14 +1906,10 @@ may hold (structs carry no class to tell them apart), and a string key on a buil
 library value (an array, a `Map`). A value converted to a narrower object type by copying its
 fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
 tests it for a key the copy left out, since Node would find it on the original. An optional
-field of a dynamic type (`b?: any`, `b?: unknown`) holds its own `undefined` and keeps no
-presence flag, while Node also finds a key that holds `undefined`. So a program that tests such
-a field with `in` and somewhere stores a value that may be `undefined` in a field of that name
-(`{ kind, b }` with an optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, also an `any`
-or `unknown` value, which may hold `undefined`, stored in a `b?: any` field) is an error
-(``` cannot tell an absent `b` from one holding `undefined` ```, which points at the first such
-store and says how many others there are): store the value only when there is one
-(`if (v !== undefined) o.b = v`), or test the value (`o.b !== undefined`). A primitive
+field keeps "absent" apart from a present `undefined`, also one of a dynamic type (`b?: any`,
+`b?: unknown`): `"b" in { b: undefined }` is `true` and `"b" in {}` is `false`, and
+`console.log`, `Object.keys`, spreads and `for...in` list such a key while it is present, as in
+Node (`JSON.stringify` leaves out a field holding `undefined` either way). A primitive
 right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
 possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
 symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under

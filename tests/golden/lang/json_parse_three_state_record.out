@@ -1,0 +1,7 @@
+{ a: { x: 1 }, b: null } [ 'a', 'b' ] true true
+{ z: 2, y: null }
+{ k: 'v', n: null } {"k":"v","n":null}
+{ a: 'x', b: null } true true
+{ a: true, b: null }
+{ p: { x: 2 }, q: null } {"o":{"p":{"x":2},"q":null}}
+Map(2) { 'a' => 'x', 'b' => null }

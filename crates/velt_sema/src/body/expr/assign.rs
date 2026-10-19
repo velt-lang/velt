@@ -257,10 +257,8 @@ impl FnCx<'_, '_> {
             return a;
         }
         if !is_plain_path(target) {
-            self.cx.err(
-                "an assignment to an element or a computed place cannot be used as a value",
-                span,
-            );
+            self.cx
+                .err(super::assign_pattern::value_use_message(target), span);
             return self.error_expr(span);
         }
         let v = self.expr(target, None, Want::Borrow);

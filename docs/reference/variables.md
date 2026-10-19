@@ -29,6 +29,7 @@
   after a call as `x` or `x!`, which TypeScript does not check) is held so that each read
   checks it was assigned: reading it before then stops the program with
   ``TypeError: `x` was read before it was assigned`` (JavaScript would read `undefined`).
+  `x++`, `x += v` and the other compound assignments read it the same way.
 
   ```ts
   let lo: number, hi: number = 10;

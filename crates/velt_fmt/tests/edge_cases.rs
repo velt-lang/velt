@@ -235,6 +235,25 @@ fn for_in_prints_as_written() {
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
 
+/// A `for...of` / `for...in` over a target declared elsewhere (a hidden loop variable assigned
+/// to the target first in the body) and holes in an array target print back as written.
+#[test]
+fn loop_targets_and_holes_print_as_written() {
+    let src = "function f(xs: number[], m: Map<string, number>) {
+  let x = 0;
+  let k = \"\";
+  for (x of xs) {
+    console.log(x);
+  }
+  for ([k, x] of m) {}
+  for (k in { a: 1 }) {}
+  [x, , k] = [1, 2, \"s\"];
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
 /// Overload signatures print before their implementation, with the comments between them.
 #[test]
 fn overloads_print_as_written() {

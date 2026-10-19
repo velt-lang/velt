@@ -4,14 +4,18 @@
 //! names, in order:
 //!
 //! ```text
-//! { const [<d0>, { y: <d1>, z: <d2> = 0 }] = value;
-//!   a = <d0>; o.y = <d1>; z = <d2>; }
+//! { const [<d0>, { y: <d1>, z: <d2> = undefined }] = value;
+//!   a = <d0>; o.y = <d1>; z = #undefined_or(<d2>, 0); }
 //! ```
 //!
-//! so the defaults, the rest and the checks are those of declarations (`pattern_defaults`,
-//! `object_rest`). A default is evaluated before any place is assigned (JavaScript assigns each
-//! place before evaluating the next default). The assignment has no value: used as one, it is
-//! reported like an assignment to an element.
+//! so the rest and the checks are those of declarations (`pattern_defaults`, `object_rest`).
+//! A place with a default is bound as `T | undefined` (a default of `undefined`), and the
+//! default is applied when its place is assigned, `place = #undefined_or(<dN>, default)`: as
+//! in JavaScript, a default sees the places assigned before it and runs after the targets
+//! before it are evaluated (`[a, b = a] = [5]` gives `b` 5). A nested pattern with a default
+//! (`[{ x } = d] = xs`) is taken apart from its hidden variable when its turn comes. The
+//! assignment has no value: used as one, it is an error (`value_use_message`). A hole
+//! (`[a, , b] = xs`) is an element the pattern skips.
 //!
 //! `{ a = 1 }` (TypeScript's shorthand property initializer) parses as `a: a = 1` with the
 //! assignment starting at the key; outside an assignment pattern it is an error (TS1312).
@@ -162,6 +166,22 @@ impl Split {
             ast::PatternKind::Ident(id) => Some(id),
             _ => None,
         }
+    }
+}
+
+/// The error for an assignment to `target` used as a value (`assign_value`): a destructuring
+/// assignment's value is not supported (`x = [a, b] = c`), nor one of an element or a computed
+/// place.
+pub(super) fn value_use_message(target: &ast::Expr) -> &'static str {
+    let mut t = target;
+    while let ast::ExprKind::Paren(x) = &t.kind {
+        t = x;
+    }
+    match t.kind {
+        ast::ExprKind::Array(_) | ast::ExprKind::Object(_) => {
+            "a destructuring assignment cannot be used as a value yet; assign the value to a variable first (`const v = c; [a, b] = v;`)"
+        }
+        _ => "an assignment to an element or a computed place cannot be used as a value",
     }
 }
 
