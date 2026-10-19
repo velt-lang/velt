@@ -54,9 +54,25 @@ impl FnCx<'_, '_> {
                     };
                     self.has_undefined(elem)
                 });
+                let dynamic_elems = self.temp_ty(&tmp).is_some_and(|t| {
+                    matches!(self.cx.ty.kind(t), hir::TyKind::Array(e) if self.cx.dynamic(*e).is_some())
+                });
                 for (k, sub) in elems.iter().enumerate() {
                     let elem = index(&tmp, k);
                     let value = match &sub.kind {
+                        // An `any` element holding `undefined` takes the default too.
+                        P::Default { pattern, value } if dynamic_elems => {
+                            let cond = longer_than(&tmp, k);
+                            let undefined = mk(E::Lit(ast::Lit::Undefined), elem.span);
+                            let read = cond_expr(cond, elem.clone(), undefined);
+                            let d = (**value).clone();
+                            let d = if matches!(d.kind, E::Lit(ast::Lit::Undefined)) {
+                                read
+                            } else {
+                                cond_expr(is_undefined(&read), as_any(d), read)
+                            };
+                            (pattern.as_ref(), d)
+                        }
                         // An element that may be `undefined` takes the default then too.
                         P::Default { pattern, value } if undefined_elems => {
                             let cond = longer_than(&tmp, k);
@@ -118,6 +134,10 @@ impl FnCx<'_, '_> {
                 Some((inner, Applies::WhenAbsent(d))) => {
                     (inner, cond_expr(has_key(key, tmp), field, d))
                 }
+                Some((inner, Applies::WhenUndefined(d))) => (
+                    inner,
+                    cond_expr(is_undefined(&field), as_any(d), field.clone()),
+                ),
                 Some((inner, Applies::Never)) => (inner, field),
                 None => (sub, field),
             };
@@ -190,6 +210,8 @@ impl FnCx<'_, '_> {
         };
         let default = || (**value).clone();
         let applies = match self.field_of(ty, &key.name) {
+            // An `any` field holding `undefined` (also an absent `a?: any`).
+            Some((_, t)) if self.cx.dynamic(t).is_some() => Applies::WhenUndefined(default()),
             Some((i, t)) => match (self.cx.ty.nothing_of(t), optional(self.cx, i)) {
                 (Some(n), _) if n.has_undefined() => Applies::WhenNothing(default()),
                 (Some(_), Some((true, _))) => Applies::WhenAbsent(default()),
@@ -324,6 +346,8 @@ enum Applies {
     WhenNothing(Expr),
     /// When the optional field (`a?: T | null`) is absent: `"a" in tmp ? field : default`.
     WhenAbsent(Expr),
+    /// When the `any` field holds `undefined`: `field === undefined ? default : field`.
+    WhenUndefined(Expr),
 }
 
 /// `p` with every default removed (`[a, b = 1]` → `[a, b]`).
@@ -431,6 +455,38 @@ fn nullish(lhs: Expr, rhs: Expr) -> Expr {
     call(
         mk(E::Ident(ident(UNDEFINED_OR, span)), span),
         vec![lhs, rhs],
+    )
+}
+
+/// `e as any`: a default for an `any` place is an `any` too, as in TypeScript.
+fn as_any(e: Expr) -> Expr {
+    let span = e.span;
+    let ty = ast::TypeExpr {
+        kind: ast::TypeExprKind::Named {
+            path: vec![ident("any", span)],
+            args: vec![],
+        },
+        span,
+    };
+    mk(
+        E::Cast {
+            expr: Box::new(e),
+            ty,
+        },
+        span,
+    )
+}
+
+/// `e === undefined`
+fn is_undefined(e: &Expr) -> Expr {
+    let span = e.span;
+    mk(
+        E::Binary {
+            op: ast::BinaryOp::StrictEq,
+            lhs: Box::new(e.clone()),
+            rhs: Box::new(mk(E::Lit(ast::Lit::Undefined), span)),
+        },
+        span,
     )
 }
 
