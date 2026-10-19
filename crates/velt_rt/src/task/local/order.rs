@@ -182,7 +182,6 @@ pub unsafe extern "C" fn velt_rt_timer_free(h: u64) {
 /// live handle from `velt_rt_task_gate`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_timer_turn(h: u64, gate: u64) -> *mut VeltFut {
-    super::mark_starting_timer();
     leaf::new_leaf(Turn::new(h as *mut Handle, gate::borrow(gate)))
 }
 
@@ -196,6 +195,8 @@ struct Turn {
     /// Waits for the deadline (none once due).
     sleep: Option<Pin<Box<TimerLeaf>>>,
     creator: gate::Wait,
+    /// Not polled yet.
+    fresh: bool,
 }
 
 impl Turn {
@@ -208,6 +209,7 @@ impl Turn {
                 .key
                 .map(|_| Box::pin(TimerLeaf::new((*handle).at))),
             creator: gate::Wait::new(creator),
+            fresh: true,
         }
     }
 }
@@ -216,6 +218,12 @@ impl Future for Turn {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if std::mem::take(&mut self.fresh) {
+            // In the first run of the started promise that runs the callback (the prelude's
+            // `fireOnce` / `fireEvery`): it does not keep an orphaned set alive.
+            // SAFETY: the waker of the poll being run.
+            unsafe { super::node::mark_timer_starting(cx.waker()) };
+        }
         if let Some(s) = self.sleep.as_mut() {
             if s.as_mut().poll(cx).is_pending() {
                 return Poll::Pending;

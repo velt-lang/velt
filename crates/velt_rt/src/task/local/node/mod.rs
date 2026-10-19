@@ -39,7 +39,7 @@ mod transfer;
 mod waker;
 
 pub(super) use self::transfer::set_transfer;
-pub(super) use self::waker::{local_awaiter, queue};
+pub(super) use self::waker::{local_awaiter, mark_timer_starting, queue};
 
 use self::owner::{started_drop, started_poll};
 use self::transfer::run_transfer;

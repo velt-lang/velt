@@ -443,13 +443,11 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     // the queue (micro.rs).
     let t = &*tcx;
     micro::sync_enter(t);
-    let outer = STARTING.with(|s| s.replace(f));
     // The credit of a waiter being resumed (micro.rs) is its own step: not one of the promise
     // it starts, whose `await`s take steps of their own.
     let credit = t.credit.replace(false);
     let finished = node::poll_first(f, t.word.as_ptr());
     t.credit.set(credit);
-    STARTING.with(|s| s.set(outer));
     micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
@@ -458,20 +456,6 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
         // A wake during the first poll was queued; the next drain runs it as a member.
         node::count_set(f);
         set::add_member(set, f);
-    }
-}
-
-thread_local! {
-    /// The promise whose first run `velt_rt_fut_start` is doing (null: none).
-    static STARTING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
-}
-
-/// The promise being started runs a timer's callback (`velt_rt_timer_turn` in its first run).
-fn mark_starting_timer() {
-    let f = STARTING.with(Cell::get);
-    if !f.is_null() {
-        // SAFETY: a started node during its first run.
-        unsafe { node::mark_timer(f) };
     }
 }
 
