@@ -4,7 +4,9 @@
 //! once) fires, list by list, every timer due by `now`; a list whose next timer is not due yet
 //! waits for it with a new id. One thread runs everything here: firing a timer wakes its task at
 //! the back of the ready queue, so the callbacks run in firing order, each after the microtasks
-//! before it.
+//! before it. Immediates (`setImmediate`, delay 0) are not in a list: the executor's next firing
+//! fires them first, so one created by a callback runs after the timers fired with it and before
+//! the timers created after it (Node runs them after the timers pass).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +47,8 @@ struct List {
 #[derive(Default)]
 struct Lists {
     by_ms: BTreeMap<u64, List>,
+    /// The immediates, in creation order.
+    immediates: BTreeMap<u64, Weak<Slot>>,
     /// The lists by (expiry, id), with their delay.
     order: BTreeSet<((u64, u64), u64)>,
     seq: u64,
@@ -63,6 +67,11 @@ fn start_now() -> u64 {
 
 impl Lists {
     fn insert(&mut self, ms: u64, start: u64, slot: &Rc<Slot>) -> (u64, u64) {
+        if ms == 0 {
+            self.seq += 1;
+            self.immediates.insert(self.seq, Rc::downgrade(slot));
+            return (0, self.seq);
+        }
         let ids = &mut self.ids;
         let order = &mut self.order;
         let list = self.by_ms.entry(ms).or_insert_with(|| {
@@ -86,6 +95,10 @@ impl Lists {
     }
 
     fn remove(&mut self, (ms, seq): (u64, u64)) {
+        if ms == 0 {
+            self.immediates.remove(&seq);
+            return;
+        }
         let Some(list) = self.by_ms.get_mut(&ms) else {
             return;
         };
@@ -96,9 +109,15 @@ impl Lists {
     }
 }
 
-/// The expiry of the first list (whole milliseconds), if any.
+/// The expiry of the first list (whole milliseconds; 0 for immediates), if any.
 pub(super) fn first_expiry() -> Option<f64> {
-    LISTS.with(|l| l.borrow().order.first().map(|((e, _), _)| *e as f64))
+    LISTS.with(|l| {
+        let l = l.borrow();
+        if !l.immediates.is_empty() {
+            return Some(0.0);
+        }
+        l.order.first().map(|((e, _), _)| *e as f64)
+    })
 }
 
 /// One step of a timers pass at `now`: fires the due timers of the first list (in insertion
@@ -109,6 +128,10 @@ pub(super) fn fire_list(now: f64) -> bool {
     let any = LISTS.with(|l| {
         let mut l = l.borrow_mut();
         let l = &mut *l;
+        if !l.immediates.is_empty() {
+            fired.extend(std::mem::take(&mut l.immediates).into_values());
+            return true;
+        }
         let Some(&((expiry, _), ms)) = l.order.first() else {
             return false;
         };

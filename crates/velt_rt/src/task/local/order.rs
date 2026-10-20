@@ -75,12 +75,17 @@ struct List {
     timers: BTreeMap<u64, Entry>,
 }
 
+/// The delay of `setImmediate`: its list holds the task's immediates, which are not in the
+/// order of timer lists (Node runs them after a timers pass, see [`Order::next`]).
+const IMMEDIATE: u64 = 0;
+
 /// One task's lists.
 struct Group {
     /// The gate of the task that runs them (none outside a task); keeps the address unique.
     gate: Option<Arc<Gate>>,
+    /// By delay, the immediates' list too.
     lists: BTreeMap<u64, List>,
-    /// The lists in order (key, delay).
+    /// The timer lists in order (key, delay).
     order: BTreeSet<(ListKey, u64)>,
 }
 
@@ -96,12 +101,23 @@ impl Group {
     fn first(&self) -> Option<ListKey> {
         self.order.first().map(|(k, _)| *k)
     }
+
+    /// Its first immediate.
+    fn first_immediate(&self) -> Option<u64> {
+        let list = self.lists.get(&IMMEDIATE)?;
+        list.timers.first_key_value().map(|(s, _)| *s)
+    }
 }
 
 struct Order {
     groups: BTreeMap<GateId, Group>,
     /// Every group by its first list.
     heads: BTreeSet<(ListKey, GateId)>,
+    /// Every group with immediates by its first one.
+    immediates: BTreeSet<(u64, GateId)>,
+    /// Immediates created up to this number run before the next timers pass (Node's check
+    /// phase is under way).
+    check: Option<u64>,
     /// The last timer creation number.
     seq: u64,
     /// The last list id.
@@ -133,6 +149,8 @@ impl Order {
         Order {
             groups: BTreeMap::new(),
             heads: BTreeSet::new(),
+            immediates: BTreeSet::new(),
+            check: None,
             seq: 0,
             list_ids: 0,
             pass: None,
@@ -143,7 +161,7 @@ impl Order {
 
     #[cfg(test)]
     fn is_empty(&self) -> bool {
-        self.groups.is_empty() && self.heads.is_empty()
+        self.groups.is_empty() && self.heads.is_empty() && self.immediates.is_empty()
     }
 
     fn entry_mut(&mut self, k: Key) -> Option<&mut Entry> {
@@ -163,8 +181,21 @@ impl Order {
                 self.heads.insert((a, gate));
             }
         }
-        if after.is_none() {
+        if self.groups.get(&gate).is_some_and(|g| g.lists.is_empty()) {
             self.groups.remove(&gate);
+        }
+    }
+
+    /// Keeps `immediates` in step with group `gate`, whose first immediate was `before`.
+    fn reseat_immediate(&mut self, gate: GateId, before: Option<u64>) {
+        let after = self.groups.get(&gate).and_then(Group::first_immediate);
+        if before != after {
+            if let Some(b) = before {
+                self.immediates.remove(&(b, gate));
+            }
+            if let Some(a) = after {
+                self.immediates.insert((a, gate));
+            }
         }
     }
 
@@ -186,6 +217,7 @@ impl Order {
             };
         }
         let before = self.groups.get(&gate).and_then(Group::first);
+        let before_immediate = self.groups.get(&gate).and_then(Group::first_immediate);
         let group = self.groups.entry(gate).or_insert_with(|| Group {
             gate: task,
             lists: BTreeMap::new(),
@@ -195,7 +227,9 @@ impl Order {
         let list = group.lists.entry(ms).or_insert_with(|| {
             *list_ids += 1;
             let key = (start.saturating_add(ms), *list_ids);
-            group.order.insert((key, ms));
+            if ms != IMMEDIATE {
+                group.order.insert((key, ms));
+            }
             List {
                 key,
                 timers: BTreeMap::new(),
@@ -204,6 +238,7 @@ impl Order {
         self.seq += 1;
         let seq = self.seq;
         list.timers.insert(seq, Entry { start, waker: None });
+        self.reseat_immediate(gate, before_immediate);
         self.reseat(gate, before);
         Key { gate, ms, seq }
     }
@@ -230,6 +265,7 @@ impl Order {
             return false;
         };
         let before = group.first();
+        let before_immediate = group.first_immediate();
         let Some(list) = group.lists.get_mut(&k.ms) else {
             return false;
         };
@@ -239,6 +275,9 @@ impl Order {
         if list.timers.is_empty() {
             group.order.remove(&(list.key, k.ms));
             group.lists.remove(&k.ms);
+        }
+        if k.ms == IMMEDIATE {
+            self.reseat_immediate(k.gate, before_immediate);
         }
         self.reseat(k.gate, before);
         true
@@ -260,21 +299,57 @@ impl Order {
         self.reseat(gate, before);
     }
 
-    /// The timer that comes next in the timers pass (one is started, reading `clock`, when
-    /// none is under way or nothing is due by its `now`), seen from the task with gate
+    /// The first immediate created up to `limit` (seen from `current`, see [`Order::next`]).
+    fn immediate(
+        &mut self,
+        current: Option<&Arc<Gate>>,
+        skip_busy: bool,
+        limit: u64,
+    ) -> Option<Key> {
+        for &(seq, gate) in &self.immediates {
+            if seq > limit {
+                break;
+            }
+            if skip_busy && self.groups[&gate].busy_elsewhere(current) {
+                self.skipped = true;
+                continue;
+            }
+            return Some(Key {
+                gate,
+                ms: IMMEDIATE,
+                seq,
+            });
+        }
+        None
+    }
+
+    /// The timer that comes next, as in Node's event loop, seen from the task with gate
     /// `current`; `skip_busy`: the lists of a task busy in another poll are passed over. None
-    /// when nothing is due.
+    /// when nothing is due. A timers pass (started, reading `clock`, when none is under way)
+    /// runs the timers due by its `now`; once none is left, the immediates created by then run
+    /// (Node's check phase), and then the next pass reads the clock again.
     fn next(
         &mut self,
         current: Option<&Arc<Gate>>,
         skip_busy: bool,
         clock: &mut dyn FnMut() -> u64,
     ) -> Option<Key> {
+        self.skipped = false;
+        if let Some(limit) = self.check {
+            if let Some(k) = self.immediate(current, skip_busy, limit) {
+                return Some(k);
+            }
+            // Left of the phase: none, or only immediates of tasks busy in other polls, which
+            // do not hold back the timers of the others.
+            if self.immediates.first().is_none_or(|i| i.0 > limit) {
+                self.check = None;
+                self.pass = None;
+            }
+        }
         let (mut now, mut fresh) = match self.pass {
             Some(p) => (p, false),
             None => (clock(), true),
         };
-        self.skipped = false;
         loop {
             let mut found = None;
             for &(lk, gate) in &self.heads {
@@ -305,8 +380,23 @@ impl Order {
                 }
                 // Partly due: the list waits for its next timer, behind the lists due now.
                 Some((k, due)) => self.rekey(k.gate, k.ms, due.max(now + 1)),
-                None if fresh => {
+                // The pass is over: the immediates created so far run next.
+                None if self.check.is_none() && !self.immediates.is_empty() => {
                     self.pass = None;
+                    self.check = Some(self.seq);
+                    if let Some(k) = self.immediate(current, skip_busy, self.seq) {
+                        return Some(k);
+                    }
+                    if fresh {
+                        return None;
+                    }
+                    now = clock();
+                    fresh = true;
+                }
+                // Kept: a callback running now (its turn was just taken) is part of this pass,
+                // so the timers it creates wait for the next one, after its immediates.
+                None if fresh => {
+                    self.pass = Some(now);
                     return None;
                 }
                 None => {

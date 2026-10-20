@@ -17,7 +17,8 @@ throws is uncaught (catch inside the callback).
   `setTimeout(f, 0)` is `setTimeout(f, 1)`), `clearTimeout(t)`, `delay(ms)` (the same as
   `sleep`).
 - `setImmediate(task): Timer` runs `task` once the running code and the callbacks it queued are
-  done, before the timers created after it; `clearImmediate(t)` cancels it.
+  done and the timers due by the current pass over the timers have run (Node's check phase),
+  before the timers created after it; `clearImmediate(t)` cancels it.
 - `setInterval(task: () => Promise<void>, ms): Timer` runs `task` every `ms` milliseconds (at
   least 1, like Node) until `clearInterval(t)`, on a fixed schedule like Node's: a run is due
   every `ms`, also while the previous run's promise is still pending. Runs that overlap

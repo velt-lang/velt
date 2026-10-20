@@ -160,3 +160,28 @@ fn turns_follow_the_order() {
         assert!(ORDER.lock().is_empty());
     });
 }
+
+/// Immediates run once the timers due by the pass have run, before the next pass: one created
+/// by a callback runs before a timer it created, however late the clock reads by then.
+#[test]
+fn immediates_run_between_passes() {
+    let mut o = Order::new();
+    let x = o.insert_at(10, 0, None);
+    let early = o.insert_at(IMMEDIATE, 3, None);
+    let mut now = 10;
+    let mut clock = || now;
+    assert_eq!(o.next(None, true, &mut clock), Some(x));
+    assert!(o.take(x));
+    // A callback of the pass at 10 creates a timeout, then an immediate.
+    let t = o.insert_at(1, 12, None);
+    let late = o.insert_at(IMMEDIATE, 13, None);
+    now = 20;
+    let mut clock = || now;
+    assert_eq!(o.next(None, true, &mut clock), Some(early));
+    assert!(o.take(early));
+    assert_eq!(o.next(None, true, &mut clock), Some(late));
+    assert!(o.take(late));
+    assert_eq!(o.next(None, true, &mut clock), Some(t));
+    assert!(o.take(t));
+    assert!(o.is_empty());
+}

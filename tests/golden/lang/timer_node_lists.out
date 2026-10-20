@@ -9,6 +9,8 @@ E 60
 D 60
 F 70
 G 60, created by E
+immediate, created by G
+timeout 1, created by G
 interval run 1
 interval run 2
 T 70, created by the interval

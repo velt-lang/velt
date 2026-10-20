@@ -30,6 +30,11 @@ function main() {
     console.log("E 60");
     setTimeout(() => {
       console.log("G 60, created by E");
+      // An immediate runs once the timers pass is over, before the timers created after the
+      // pass began, however long ago they came due.
+      setTimeout(() => console.log("timeout 1, created by G"), 1);
+      busy(5);
+      setImmediate(() => console.log("immediate, created by G"));
       interval();
     }, 60);
     busy(100);
