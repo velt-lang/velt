@@ -76,12 +76,10 @@ function proxyIndex(s: string): number {
  * a proxy (whose operation forwards to the target here). Another object as the receiver, whose
  * own property JavaScript would read or write, is not supported yet.
  */
-function proxyReceiverCheck(op: string, target: any, receiver: any): void {
-  if (receiver !== target && !(receiver instanceof Proxy)) {
-    panic(
-      `TypeError: Reflect.${op} with a receiver other than the target or a proxy is not supported yet (#823)`,
-    );
-  }
+function proxyReceiverUnsupported(op: string): never {
+  panic(
+    `TypeError: Reflect.${op} with a receiver other than the target or a proxy is not supported yet (#823)`,
+  );
 }
 
 /** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
@@ -249,8 +247,7 @@ export class Proxy {
    * for a method call.)
    */
   __plain(): boolean {
-    const h = this.#handler;
-    return h.get == null && h.set == null && h.has == null;
+    return this.#handler.get == null && this.#handler.set == null && this.#handler.has == null;
   }
 
   /**
@@ -272,6 +269,9 @@ export class Proxy {
     if (trap == null) {
       return Reflect.get(this.#target, key, receiver);
     }
+    if (typeof key === "string") {
+      return trap(this.#target, key, receiver);
+    }
     return trap(this.#target, proxyKey(key), receiver);
   }
 
@@ -281,6 +281,9 @@ export class Proxy {
     if (trap == null) {
       return Reflect.set(this.#target, key, value, receiver);
     }
+    if (typeof key === "string") {
+      return trap(this.#target, key, value, receiver);
+    }
     return trap(this.#target, proxyKey(key), value, receiver);
   }
 
@@ -289,6 +292,9 @@ export class Proxy {
     const trap = this.#handler.has;
     if (trap == null) {
       return Reflect.has(this.#target, key);
+    }
+    if (typeof key === "string") {
+      return trap(this.#target, key);
     }
     return trap(this.#target, proxyKey(key));
   }
@@ -491,8 +497,7 @@ export class Proxy {
 
   /** Whether the handler has a `getOwnPropertyDescriptor` or `defineProperty` trap. */
   __defines(): boolean {
-    const h = this.#handler;
-    return h.getOwnPropertyDescriptor != null || h.defineProperty != null;
+    return this.#handler.getOwnPropertyDescriptor != null || this.#handler.defineProperty != null;
   }
 
   /**
@@ -568,7 +573,9 @@ export class Reflect {
       if (target instanceof Proxy) {
         return target.__get(key, receiver);
       }
-      proxyReceiverCheck("get", target, receiver);
+      if (!(receiver instanceof Proxy) && receiver !== target) {
+        proxyReceiverUnsupported("get");
+      }
     }
     // An array element named by its string (`"1"`), as a trap passes it on.
     if (typeof key === "string" && Array.isArray(target)) {
@@ -597,11 +604,14 @@ export class Reflect {
       if (target instanceof Proxy) {
         return target.__set(key, value, receiver);
       }
-      proxyReceiverCheck("set", target, receiver);
-      // JavaScript's OrdinarySet: the property is defined on a proxy receiver, whose traps
-      // see that when it has them.
-      if (receiver instanceof Proxy && receiver !== target && receiver.__defines()) {
-        return receiver.__receive(key, value);
+      if (receiver instanceof Proxy) {
+        // JavaScript's OrdinarySet: the property is defined on a proxy receiver, whose traps
+        // see that when it has them.
+        if (receiver.__defines()) {
+          return receiver.__receive(key, value);
+        }
+      } else if (receiver !== target) {
+        proxyReceiverUnsupported("set");
       }
     }
     if (typeof key === "string" && Array.isArray(target)) {
