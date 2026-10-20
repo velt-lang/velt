@@ -489,16 +489,18 @@ export class Proxy {
     return out;
   }
 
+  /** Whether the handler has a `getOwnPropertyDescriptor` or `defineProperty` trap. */
+  __defines(): boolean {
+    const h = this.#handler;
+    return h.getOwnPropertyDescriptor != null || h.defineProperty != null;
+  }
+
   /**
    * `Reflect.set(target, key, value, p)` of a plain target with this proxy as the receiver
    * (JavaScript's OrdinarySet): the property is described (`getOwnPropertyDescriptor`) and then
    * defined (`defineProperty`) on this proxy; an existing one that is not writable is not.
    */
   __receive(key: any, value: any): boolean {
-    const h = this.#handler;
-    if (h.getOwnPropertyDescriptor == null && h.defineProperty == null) {
-      return Reflect.set(this.#target, key, value);
-    }
     const d = this.__getOwnPropertyDescriptor(key);
     if (d !== undefined) {
       if (d.writable !== true) {
@@ -560,53 +562,67 @@ export class Proxy {
 export class Reflect {
   /** `target[key]`, with `receiver` (default: `target`) as the receiver a proxy target sees. */
   static get(target: any, key: any, receiver?: any): any {
-    const recv: any = receiver != null ? receiver : target;
-    if (target instanceof Proxy) {
-      return target.__get(key, recv);
-    }
     if (receiver != null) {
+      if (target instanceof Proxy) {
+        return target.__get(key, receiver);
+      }
       proxyReceiverCheck("get", target, receiver);
     }
-    if (typeof key === "symbol") {
-      return target[plainKey(key)];
+    if (typeof key === "string") {
+      // An array element named by its string (`"1"`), as a trap passes it on.
+      if (Array.isArray(target)) {
+        const i = proxyIndex(key);
+        if (i >= 0) {
+          return target[i];
+        }
+        // `toJSON` (what `JSON.stringify` asks for): an array has none.
+        if (key === "toJSON") {
+          return undefined;
+        }
+      }
+      return target[key];
     }
-    // An array element named by its string (`"1"`), as a trap passes it on.
-    if (typeof key === "string" && Array.isArray(target)) {
-      const i = proxyIndex(key);
-      if (i >= 0) {
-        return target[i];
+    if (typeof key === "symbol") {
+      const self: any = target;
+      if (target instanceof Proxy) {
+        return target.__get(key, self);
       }
-      // `toJSON` (what `JSON.stringify` asks for): an array has none.
-      if (key === "toJSON") {
-        return undefined;
-      }
+      return target[plainKey(key)];
     }
     return target[key];
   }
 
   /** `target[key] = value`; whether it was written. */
   static set(target: any, key: any, value: any, receiver?: any): boolean {
-    const recv: any = receiver != null ? receiver : target;
-    if (target instanceof Proxy) {
-      return target.__set(key, value, recv);
-    }
-    if (receiver != null && receiver !== target) {
-      if (receiver instanceof Proxy) {
-        // JavaScript's OrdinarySet: the property is defined on the receiver.
-        return receiver.__receive(key, value);
+    if (receiver != null) {
+      if (target instanceof Proxy) {
+        return target.__set(key, value, receiver);
       }
       proxyReceiverCheck("set", target, receiver);
+      // JavaScript's OrdinarySet: the property is defined on a proxy receiver, whose traps
+      // see that when it has them.
+      if (receiver instanceof Proxy && receiver !== target && receiver.__defines()) {
+        return receiver.__receive(key, value);
+      }
     }
-    if (typeof key === "symbol") {
-      target[plainKey(key)] = value;
+    if (typeof key === "string") {
+      if (Array.isArray(target)) {
+        const i = proxyIndex(key);
+        if (i >= 0) {
+          target[i] = value;
+          return true;
+        }
+      }
+      target[key] = value;
       return true;
     }
-    if (typeof key === "string" && Array.isArray(target)) {
-      const i = proxyIndex(key);
-      if (i >= 0) {
-        target[i] = value;
-        return true;
+    if (typeof key === "symbol") {
+      const self: any = target;
+      if (target instanceof Proxy) {
+        return target.__set(key, value, self);
       }
+      target[plainKey(key)] = value;
+      return true;
     }
     target[key] = value;
     return true;
@@ -614,10 +630,13 @@ export class Reflect {
 
   /** `key in target`. */
   static has(target: any, key: any): boolean {
-    if (target instanceof Proxy) {
-      return target.__has(key);
+    if (typeof key === "symbol") {
+      if (target instanceof Proxy) {
+        return target.__has(key);
+      }
+      return plainKey(key) in target;
     }
-    return plainKey(key) in target;
+    return key in target;
   }
 
   /**
