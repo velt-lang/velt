@@ -10,7 +10,7 @@
 //! state slot, not a constant: [`Split::promoted`]). When that is not possible (a destructuring
 //! pattern, no initializer) the statements can't run in order: an error.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -28,7 +28,7 @@ pub(crate) struct Split {
     pub modules: Option<Vec<SourceModule>>,
     /// The spans of the `const` declarations moved back to module level: each is a module state
     /// slot (evaluated once, in order), not a constant evaluated where it is used.
-    pub promoted: std::collections::HashSet<Span>,
+    pub promoted: rustc_hash::FxHashSet<Span>,
     pub diags: Vec<Diagnostic>,
 }
 
@@ -81,7 +81,7 @@ fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>
     }
     let mut stmts = script.body.stmts.clone();
     stmts.sort_by_key(|s| s.span.lo);
-    let refs: Vec<HashSet<String>> = stmts.iter().map(|s| scan_stmt(s).refs).collect();
+    let refs: Vec<FxHashSet<String>> = stmts.iter().map(|s| scan_stmt(s).refs).collect();
     // Where a module-level variable splits the statements.
     let mut cuts: Vec<u32> = module
         .ast
@@ -90,8 +90,8 @@ fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>
         .filter(|it| matches!(it.kind, ast::ItemKind::Var(_)))
         .map(|it| it.span.lo)
         .collect();
-    let mut promoted: HashSet<usize> = HashSet::new();
-    let mut failed: HashSet<usize> = HashSet::new();
+    let mut promoted: FxHashSet<usize> = FxHashSet::default();
+    let mut failed: FxHashSet<usize> = FxHashSet::default();
     let reported = out.diags.len();
     loop {
         let chunk_of = |i: usize| cuts.iter().filter(|&&c| c < stmts[i].span.lo).count();

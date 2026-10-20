@@ -249,10 +249,10 @@ pub(crate) fn exprs_in(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
 pub(crate) fn primitive_guards(
     b: &mut Block,
     param_of: &dyn Fn(TyId) -> Option<u32>,
-) -> std::collections::HashMap<*const Expr, u64> {
+) -> rustc_hash::FxHashMap<*const Expr, u64> {
     struct Guards<'a> {
         param_of: &'a dyn Fn(TyId) -> Option<u32>,
-        out: std::collections::HashMap<*const Expr, u64>,
+        out: rustc_hash::FxHashMap<*const Expr, u64>,
     }
     impl VisitMut for Guards<'_> {
         fn stmt(&mut self, s: &mut Stmt) {

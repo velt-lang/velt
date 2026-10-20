@@ -16,7 +16,7 @@ mod net;
 mod rt;
 mod strbuf;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::vir::*;
 use arith::{binop, cast, from_f, from_i128, mask, to_f, to_i128};
@@ -61,7 +61,7 @@ struct Interp<'p> {
     heap: Vec<u8>,
     stack: Vec<u8>,
     statics: Vec<u64>,
-    allocs: HashMap<u64, u64>,
+    allocs: FxHashMap<u64, u64>,
     stdout: String,
     stderr: String,
     steps: u64,
@@ -123,7 +123,7 @@ impl<'p> Interp<'p> {
             heap: [0u64, 16, 0].iter().flat_map(|w| w.to_le_bytes()).collect(),
             stack: vec![],
             statics: vec![],
-            allocs: HashMap::new(),
+            allocs: FxHashMap::default(),
             stdout: String::new(),
             stderr: String::new(),
             steps: 0,

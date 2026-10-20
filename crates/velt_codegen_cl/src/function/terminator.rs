@@ -1,6 +1,6 @@
 //! Terminators: jumps, branches, switches, returns, calls (direct, extern, indirect), traps.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use cranelift_codegen::ir::{self, InstBuilder, TrapCode};
 use cranelift_frontend::Switch;
@@ -64,7 +64,7 @@ impl<M: Module> Translator<'_, '_, M> {
         // pattern at the value's width.
         let mask = (1u128 << int_bits(int_ty)) - 1;
         let mut switch = Switch::new();
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         for (k, target) in cases {
             let key = (*k as u128) & mask;
             if !seen.insert(key) {

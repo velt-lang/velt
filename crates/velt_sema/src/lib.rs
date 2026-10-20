@@ -321,19 +321,20 @@ fn check_on_current_thread(
         defs,
         entry,
         impls,
-        anon_shapes,
-        union_shapes,
+        // The HIR contract keeps std maps; the checker builds Fx maps.
+        anon_shapes: anon_shapes.into_iter().collect(),
+        union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
         null_proto_records: objects.null_proto_records,
         module_state,
-        type_ops,
+        type_ops: type_ops.into_iter().collect(),
         any_impl: any.and_then(|a| a.imp),
         unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
-        dyn_members,
+        dyn_members: dyn_members.map(|m| m.into_iter().collect()),
         generator_throw: gen_throw,
-        super_calls,
+        super_calls: super_calls.into_iter().collect(),
     };
     (Some(program), diags)
 }

@@ -22,7 +22,7 @@
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -258,7 +258,7 @@ fn sees(
             if c.fresh {
                 return false;
             }
-            let members = compared(cx, t, &mut HashSet::new());
+            let members = compared(cx, t, &mut FxHashSet::default());
             if members.iter().any(|&m| cx.dynamic(m).is_some()) && dynamic_holds(cx, c, ci, looks) {
                 return true;
             }
@@ -272,12 +272,12 @@ fn sees(
             related(cx, t, c.to) || (cx.dynamic(t).is_some() && dynamic_holds(cx, c, ci, looks))
         }
         _ => {
-            holds(cx, t, c.to, &mut HashSet::new())
+            holds(cx, t, c.to, &mut FxHashSet::default())
                 || (holds_by(
                     cx,
                     t,
                     &mut |cx, x| cx.dynamic(x).is_some(),
-                    &mut HashSet::new(),
+                    &mut FxHashSet::default(),
                 ) && dynamic_holds(cx, c, ci, looks))
         }
     }
@@ -296,7 +296,7 @@ fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
     looks.seen.iter().any(|&(t, _, how)| match how {
         Seen::Dynamic(i) => {
             looks.flow.carries(ci, &looks.sources[i as usize])
-                && holds(cx, t, c.to, &mut HashSet::new())
+                && holds(cx, t, c.to, &mut FxHashSet::default())
         }
         _ => false,
     })
@@ -309,7 +309,7 @@ fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
 
 /// The object types a `===` operand of type `t` may be: `t` itself, the payload of `T | null`
 /// and the members of a union, but not their fields.
-fn compared(cx: &mut Ctx, t: TyId, seen: &mut HashSet<TyId>) -> Vec<TyId> {
+fn compared(cx: &mut Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> Vec<TyId> {
     if !seen.insert(t) {
         return vec![];
     }
@@ -327,7 +327,7 @@ fn compared(cx: &mut Ctx, t: TyId, seen: &mut HashSet<TyId>) -> Vec<TyId> {
 }
 
 /// Can a value of type `t` hold a `target` (itself, an element, a field, …)?
-fn holds(cx: &mut Ctx, t: TyId, target: TyId, seen: &mut HashSet<TyId>) -> bool {
+fn holds(cx: &mut Ctx, t: TyId, target: TyId, seen: &mut FxHashSet<TyId>) -> bool {
     holds_by(cx, t, &mut |cx, x| related(cx, x, target), seen)
 }
 
@@ -336,7 +336,7 @@ fn holds_by(
     cx: &mut Ctx,
     t: TyId,
     is: &mut dyn FnMut(&mut Ctx, TyId) -> bool,
-    seen: &mut HashSet<TyId>,
+    seen: &mut FxHashSet<TyId>,
 ) -> bool {
     if !seen.insert(t) {
         return false;
@@ -448,7 +448,7 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
 
 /// The types of the object literals (`AdtLit`) in the program's bodies and constants.
 fn built_types(cx: &mut Ctx) -> Vec<TyId> {
-    struct Lits(HashSet<TyId>);
+    struct Lits(FxHashSet<TyId>);
     impl crate::visit::VisitMut for Lits {
         fn expr(&mut self, e: &mut crate::hir::Expr) {
             if let crate::hir::ExprKind::AdtLit { .. } = e.kind {
@@ -456,7 +456,7 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
             }
         }
     }
-    let mut v = Lits(HashSet::new());
+    let mut v = Lits(FxHashSet::default());
     for d in cx.defs.iter_mut().flatten() {
         if let crate::hir::Def::Fn(f) = d {
             crate::visit::block(&mut f.body.block, &mut v);

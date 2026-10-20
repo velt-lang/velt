@@ -3,7 +3,7 @@
 //! (ownership inference: a `this` or parameter passed `BorrowMut`). Captured once by the
 //! snapshot so editors can show inferred facts the source does not spell out.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 
@@ -43,9 +43,9 @@ pub(crate) struct Effects {
 pub(crate) fn capture(
     cx: &Ctx,
     names: &Names,
-    closures: &HashMap<Span, DefId>,
-) -> HashMap<Span, Effects> {
-    let mut out = HashMap::new();
+    closures: &FxHashMap<Span, DefId>,
+) -> FxHashMap<Span, Effects> {
+    let mut out = FxHashMap::default();
     for info in &cx.info {
         if let DefInfo::Fn(f) = info {
             if f.source.is_some() && f.name_span != Span::DUMMY {

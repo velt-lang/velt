@@ -11,3 +11,5 @@ target/
 !/.claude/commands/
 *.stackdump
 /dist/
+# `cargo xtask check --part golden --pack golden.tar` (the merge queue)
+/golden.tar

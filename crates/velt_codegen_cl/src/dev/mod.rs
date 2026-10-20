@@ -28,7 +28,7 @@ mod roles;
 mod trampoline;
 mod version;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Duration;
 
 use cranelift_jit::JITModule;
@@ -50,13 +50,13 @@ pub struct DevSession {
     runtime: Vec<(String, usize)>,
     versions: Vec<JITModule>,
     /// Swappable functions by key: slot and trampoline address.
-    slots: HashMap<String, (Slot, usize)>,
+    slots: FxHashMap<String, (Slot, usize)>,
     /// Pinned functions by key: their newest code.
-    pinned: HashMap<String, usize>,
+    pinned: FxHashMap<String, usize>,
     /// Pinned code of every version → its key (to find a running handler's newer code).
-    owners: HashMap<usize, String>,
+    owners: FxHashMap<usize, String>,
     /// Newest state size and alignment per handler `$init` key.
-    handler_states: HashMap<String, (u64, u64)>,
+    handler_states: FxHashMap<String, (u64, u64)>,
     running: Option<Facts>,
     swaps: u32,
     /// Register each version's line tables with debuggers (`debug_info::jit`).
@@ -90,10 +90,10 @@ impl DevSession {
                 .map(|(n, p)| (n.to_string(), *p as usize))
                 .collect(),
             versions: vec![],
-            slots: HashMap::new(),
-            pinned: HashMap::new(),
-            owners: HashMap::new(),
-            handler_states: HashMap::new(),
+            slots: FxHashMap::default(),
+            pinned: FxHashMap::default(),
+            owners: FxHashMap::default(),
+            handler_states: FxHashMap::default(),
             running: None,
             swaps: 0,
             debug_info: true,
@@ -126,7 +126,7 @@ impl DevSession {
             .iter()
             .position(|f| f.symbol == "velt_main")
             .ok_or("codegen: the program has no `velt_main`")?;
-        let all: HashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
+        let all: FxHashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
         let code = self.install(program, &all, true, timings)?;
         self.running = Some(Facts::of(program));
         let main = code[main_index].ok_or("ICE: `velt_main` was not compiled")?;
@@ -160,7 +160,7 @@ impl DevSession {
             Decision::Swap(keys) => {
                 // Nothing compiled (e.g. only comments changed): no new module either.
                 if !keys.is_empty() {
-                    let define: HashSet<&str> = keys.iter().map(String::as_str).collect();
+                    let define: FxHashSet<&str> = keys.iter().map(String::as_str).collect();
                     self.install(program, &define, false, timings)?;
                     self.swaps += 1;
                 }
@@ -196,7 +196,7 @@ impl DevSession {
     fn install(
         &mut self,
         program: &vir::Program,
-        define: &HashSet<&str>,
+        define: &FxHashSet<&str>,
         first: bool,
         timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Vec<Option<usize>>, String> {
@@ -257,7 +257,7 @@ impl DevSession {
     fn names(
         &self,
         program: &vir::Program,
-        define: &HashSet<&str>,
+        define: &FxHashSet<&str>,
     ) -> (Vec<DevFunction>, Vec<Slot>) {
         let mut slots = vec![];
         let names = program

@@ -2,7 +2,7 @@
 //! object local `w.obj` holding what the heap object held; the pointer stays as a non-null
 //! token for the drop guards (`constfold` and `dce` remove it once nothing tests it).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{
     AggId, AggLayout, Callee, Const, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue,
@@ -161,7 +161,7 @@ fn rewrite_term(
 /// assigned on entry: zeroing an object is then a copy, which `sroa` splits into constants.
 #[derive(Default)]
 struct Zeros {
-    locals: HashMap<AggId, Local>,
+    locals: FxHashMap<AggId, Local>,
     inits: Vec<Stmt>,
 }
 

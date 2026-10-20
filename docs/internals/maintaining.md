@@ -83,9 +83,10 @@ Verdict: APPROVE
 Verdict: CHANGES NEEDED
 ```
 
-That line is what the maintainer loop reads to know where a pull request stands, so write it
-plainly (no other text on the line) and only in reviews, and judge the head the review was
-posted on. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
+That line is what the maintainer loop reads to know where a pull request stands, so write it in
+this plain form, with nothing else on the line, and only in reviews; it judges the head the review
+was posted on. Older reviews wrote it in bold (`**Verdict: APPROVE**`); the status command below
+still reads those. A pull request without the author's self-check comment (CONTRIBUTING.md "Before
 opening a pull request") gets it as a required change.
 
 1. **Hygiene**: commits authored by the repository's configured author, no `Co-authored-by` or
@@ -127,8 +128,9 @@ not a reason for another round.
   and commits: `cargo xtask pr-lint`, `.github/workflows/hygiene.yml`) and `ci` (on the pull
   request, the checks its changes need: `cargo xtask check`, rules in
   `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
-  merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
-  macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
+  merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
+  (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
+  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` in the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording, so there is no footer to strip by hand
@@ -140,20 +142,21 @@ not a reason for another round.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
-  Windows, and the `tsc` oracle for `velt check --ts-compat`
-  (`crates/velt_tscompat/tests/oracle.rs` against the `typescript` pinned in
-  `tests/tscompat-oracle`), and the benchmark guard
+  Windows, the WebAssembly goldens on Windows and macOS, and the `tsc` oracle for
+  `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
+  pinned in `tests/tscompat-oracle`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
   regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
   -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f
-  only=stress` (or `gate`, `oracle`, `bench`).
+  only=stress` (or `gate`, `oracle`, `bench`, `wasm`).
 - A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
   the queue checked the change on Linux only, and opens or updates the issue "main fails on
-  <OS>" when that fails; fix it first. A change the queue checked on every OS skips them, unless
+  <OS>" when that fails; fix it first. A commit the queue tested on every OS skips them, unless
   it touches the toolchain or the dependencies (`main-plan`: `cargo xtask affected --base
   HEAD^1`, the queue's own plan, since the queue tested the commit on its parent; rules in
-  `crates/xtask/src/os.rs`). The same jobs refresh the build cache: on Linux at every push, on
+  `crates/xtask/src/os.rs`). A commit no passing merge queue run tested (a direct push or an
+  admin merge) runs every OS. The same jobs refresh the build cache: on Linux at every push, on
   Windows and macOS when they run. Pull request and merge queue runs restore it but never save
   their own.
 - A check the selection missed shows up in the merge queue; tighten the rule in

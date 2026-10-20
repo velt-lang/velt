@@ -32,7 +32,7 @@ mod stmt;
 mod storage_tests;
 mod terminator;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKey, StackSlotKind};
@@ -108,10 +108,10 @@ struct Translator<'a, 'b, M: Module> {
     /// `Storage::Value` locals read before their assignment, or assigned twice, in translation
     /// order: translated again as variables.
     demote: Vec<u32>,
-    func_refs: HashMap<FuncId, ir::FuncRef>,
+    func_refs: FxHashMap<FuncId, ir::FuncRef>,
     /// Function refs used only to take addresses (see `far_addresses`).
-    addr_refs: HashMap<FuncId, ir::FuncRef>,
-    data_refs: HashMap<DataId, ir::GlobalValue>,
+    addr_refs: FxHashMap<FuncId, ir::FuncRef>,
+    data_refs: FxHashMap<DataId, ir::GlobalValue>,
     /// Materialize symbol addresses with absolute relocations instead of PC-relative page
     /// addressing: cranelift-object cannot emit ADRP relocations for aarch64 COFF.
     far_addresses: bool,
@@ -122,7 +122,7 @@ struct Translator<'a, 'b, M: Module> {
     /// Source locations of the instructions (debug info; empty when the VIR has none): a
     /// Cranelift `SourceLoc` is an index into this table.
     srclocs: Vec<SrcLoc>,
-    srcloc_ids: HashMap<SrcLoc, u32>,
+    srcloc_ids: FxHashMap<SrcLoc, u32>,
     /// Shadow slots of described scalar locals (see the module docs), by local; and of those
     /// stored as `Variable`s, by variable index.
     shadows: Shadows,
@@ -131,8 +131,8 @@ struct Translator<'a, 'b, M: Module> {
 /// The shadow stack slots that debug info reads described scalar locals from.
 #[derive(Default)]
 struct Shadows {
-    by_local: HashMap<u32, ir::StackSlot>,
-    by_var: HashMap<usize, ir::StackSlot>,
+    by_local: FxHashMap<u32, ir::StackSlot>,
+    by_var: FxHashMap<usize, ir::StackSlot>,
 }
 
 /// Translate `function` into `func` (whose signature and name are already set). Returns the
@@ -211,14 +211,14 @@ fn translate_once<M: Module>(
         values: vec![None; storage.len()],
         storage,
         demote: Vec::new(),
-        func_refs: HashMap::new(),
-        addr_refs: HashMap::new(),
-        data_refs: HashMap::new(),
+        func_refs: FxHashMap::default(),
+        addr_refs: FxHashMap::default(),
+        data_refs: FxHashMap::default(),
         far_addresses,
         rounding_instructions,
         byte_shuffles,
         srclocs: Vec::new(),
-        srcloc_ids: HashMap::new(),
+        srcloc_ids: FxHashMap::default(),
         shadows,
     };
     translator.run()?;

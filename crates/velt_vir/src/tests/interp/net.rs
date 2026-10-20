@@ -5,7 +5,8 @@
 //! Handles are fake pointers (never dereferenced). `IoResult<T>` = `{ code: i32, message:
 //! string @8, value: T @32 }`.
 
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 use super::async_rt::Fut;
 use super::Interp;
@@ -28,9 +29,9 @@ struct Stream {
 pub(super) struct Net {
     next: u64,
     /// Listener handle → (port, accepted-but-unclaimed server-side streams).
-    listeners: HashMap<u64, (u32, VecDeque<u64>)>,
-    streams: HashMap<u64, Stream>,
-    files: HashMap<String, Vec<u8>>,
+    listeners: FxHashMap<u64, (u32, VecDeque<u64>)>,
+    streams: FxHashMap<u64, Stream>,
+    files: FxHashMap<String, Vec<u8>>,
 }
 
 impl Net {

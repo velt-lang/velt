@@ -1,7 +1,7 @@
 //! Emulated JSON pull reader (rt_abi_async.md §12.3, messages §12.4): strict RFC 8259 tokens,
 //! commas tracked with a container stack, first failure sticky. Handles are fake pointers.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::Interp;
 
@@ -25,7 +25,7 @@ pub(super) struct Reader {
 #[derive(Default)]
 pub(super) struct Readers {
     next: u64,
-    open: HashMap<u64, Reader>,
+    open: FxHashMap<u64, Reader>,
 }
 
 impl Reader {

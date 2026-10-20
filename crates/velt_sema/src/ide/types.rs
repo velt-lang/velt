@@ -4,7 +4,7 @@
 //! the handle and substituted lazily, so viewing the fields of `Box<Map<K, V>>` sees the map, and
 //! recursive types are no problem.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use velt_common::Span;
@@ -120,7 +120,8 @@ impl Analysis {
             // The first record: desugarings check synthetic expressions with the span of the
             // expression they stand for after it (`const { a = 1 } = p` reads `p.a` at `p`'s
             // span).
-            let mut index = HashMap::with_capacity(self.types.len());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.types.len(), Default::default());
             for (i, (s, _, _)) in self.types.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }

@@ -3,7 +3,7 @@
 //! fixed points over the call graph that need them (`crate::weak_threads`). Promises used to be
 //! checked here (they had one owner); since #212 a copy of a promise shares it.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -31,20 +31,20 @@ pub(crate) struct Facts {
     /// The methods those reach, with the class's type arguments.
     pub(crate) dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
     /// Spans of `for...of` iterables (a call there is "iterating").
-    loops: HashSet<Span>,
+    loops: FxHashSet<Span>,
 }
 
 struct Collect<'a> {
     facts: &'a mut Facts,
-    ctors: &'a HashMap<DefId, DefId>,
+    ctors: &'a FxHashMap<DefId, DefId>,
     /// Constructors: `super(...)` passes `this` upcast to one.
-    ctor_fns: &'a HashSet<DefId>,
+    ctor_fns: &'a FxHashSet<DefId>,
     /// Spans of `this` upcast for a base constructor (`super(...)`), which is not a use of the
     /// subclass as its base: counting it would give every subclass constructor its overrides'
     /// copies.
-    super_receivers: HashSet<Span>,
+    super_receivers: FxHashSet<Span>,
     /// Guard bits per expression (`inst_sites::guards_of`).
-    guards: HashMap<*const Expr, u64>,
+    guards: FxHashMap<*const Expr, u64>,
 }
 
 impl Collect<'_> {
@@ -136,13 +136,13 @@ fn is_empty_array(e: &Expr) -> bool {
 
 /// The facts of every function body, in definition order (also `crate::weak_threads`).
 pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
-    let ctors: HashMap<DefId, DefId> = (0..cx.info.len())
+    let ctors: FxHashMap<DefId, DefId> = (0..cx.info.len())
         .filter_map(|i| match &cx.info[i] {
             DefInfo::Adt(a) => a.ctor.map(|c| (DefId(i as u32), c)),
             _ => None,
         })
         .collect();
-    let ctor_fns: HashSet<DefId> = ctors.values().copied().collect();
+    let ctor_fns: FxHashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
@@ -162,7 +162,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
                 facts: &mut facts,
                 ctors: &ctors,
                 ctor_fns: &ctor_fns,
-                super_receivers: HashSet::new(),
+                super_receivers: FxHashSet::default(),
                 guards,
             },
         );

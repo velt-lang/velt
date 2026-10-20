@@ -7,7 +7,7 @@
 //! Generic parameters are not followed: where a generic function passes on a value of type
 //! `T`, the value came from a caller, where the graph follows it with its concrete type.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -29,8 +29,8 @@ pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
 pub(super) fn crossing_fns(
     cx: &mut Ctx,
     roots: &[(TyId, Why)],
-    seen: &mut HashSet<TyId>,
-    out: &mut HashMap<TyId, Why>,
+    seen: &mut FxHashSet<TyId>,
+    out: &mut FxHashMap<TyId, Why>,
 ) {
     for &(root, why) in roots {
         let mut work = vec![root];

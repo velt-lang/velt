@@ -25,7 +25,7 @@
 //! but generic code is bound to the plain `Array<T>.sort`. Such an instantiation at a type
 //! that allows `undefined` is reported too.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -67,12 +67,12 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     if !any {
         return;
     }
-    let mut masks: HashMap<DefId, Vec<Mask>> = HashMap::new();
+    let mut masks: FxHashMap<DefId, Vec<Mask>> = FxHashMap::default();
     let mut edges: Vec<Edge> = vec![];
     // (definition, type arguments, span) of every instantiation the bodies make.
     let mut uses: Vec<(DefId, Vec<TyId>, Span)> = vec![];
     let mut ty_uses: Vec<(TyId, Span)> = vec![];
-    let mut seen_tys: HashSet<TyId> = HashSet::new();
+    let mut seen_tys: FxHashSet<TyId> = FxHashSet::default();
     for i in 0..cx.defs.len() {
         let d = DefId(i as u32);
         let (own, body) = match cx.defs.get_mut(i) {
@@ -128,7 +128,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             }
         }
         // The generic types the definition uses keep their options of its parameters.
-        let mut walked = HashSet::new();
+        let mut walked = FxHashSet::default();
         let mut stack = own_types(cx, d);
         while let Some(t) = stack.pop() {
             if !walked.insert(t) {
@@ -152,7 +152,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     propagate(&mut masks, &edges);
     for (t, span) in ty_uses {
         let mut stack = vec![t];
-        let mut walked = HashSet::new();
+        let mut walked = FxHashSet::default();
         while let Some(t) = stack.pop() {
             if !walked.insert(t) {
                 continue;
@@ -166,7 +166,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             stack.extend(children(&k));
         }
     }
-    let mut reported: HashSet<Span> = HashSet::new();
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
     for (d, targs, span) in uses {
         let Some(m) = masks.get(&d) else { continue };
         let bad = targs.iter().enumerate().find_map(|(i, t)| {
@@ -239,7 +239,7 @@ fn fn_facts(
     f: &mut crate::hir::FnDef,
     uses: &mut Vec<(DefId, Vec<TyId>, Span)>,
     ty_uses: &mut Vec<(TyId, Span)>,
-    seen_tys: &mut HashSet<TyId>,
+    seen_tys: &mut FxHashSet<TyId>,
 ) -> (Vec<TyId>, Vec<(DefId, Vec<TyId>, bool)>) {
     let mut own: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
     own.push(f.ret);
@@ -289,7 +289,7 @@ fn own_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
 /// For each type parameter: the nothings of the options of it among `tys` (and their parts).
 fn direct_mask(cx: &Ctx, tys: &[TyId]) -> Vec<Mask> {
     let mut out: Vec<Mask> = vec![];
-    let mut walked = HashSet::new();
+    let mut walked = FxHashSet::default();
     let mut stack = tys.to_vec();
     while let Some(t) = stack.pop() {
         if !walked.insert(t) {
@@ -311,8 +311,8 @@ fn direct_mask(cx: &Ctx, tys: &[TyId]) -> Vec<Mask> {
 }
 
 /// Pass the masks along `edges` until nothing changes.
-fn propagate(masks: &mut HashMap<DefId, Vec<Mask>>, edges: &[Edge]) {
-    let get = |masks: &HashMap<DefId, Vec<Mask>>, d: DefId, i: usize| {
+fn propagate(masks: &mut FxHashMap<DefId, Vec<Mask>>, edges: &[Edge]) {
+    let get = |masks: &FxHashMap<DefId, Vec<Mask>>, d: DefId, i: usize| {
         masks.get(&d).and_then(|m| m.get(i)).copied().unwrap_or(0)
     };
     loop {

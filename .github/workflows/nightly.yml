@@ -3,8 +3,9 @@
 # every character (pull requests and the queue cut a sample), and then the differential tests
 # against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
-# (tests/tscompat-oracle), and the benchmarks' instruction counts against the last accepted ones
-# (bench/nightly.sh). A manual run can pick one of them: `gh workflow run nightly -f only=stress`.
+# (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
+# (bench/nightly.sh), and the WebAssembly goldens on Windows and macOS. A manual run can pick one
+# of them: `gh workflow run nightly -f only=stress`.
 name: nightly
 
 on:
@@ -15,7 +16,7 @@ on:
       only:
         description: Run only one job (scheduled runs run all of them).
         type: choice
-        options: [all, gate, stress, oracle, bench]
+        options: [all, gate, stress, oracle, bench, wasm]
         default: all
       bench_baseline:
         description: >-
@@ -120,6 +121,27 @@ jobs:
             tail -n 40 "$RUNNER_TEMP/stress.log" 2>/dev/null || echo "no log (the run stopped before the stress script)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) on Windows and macOS: the queue
+  # skips them unless a change touches WebAssembly code, and the push to main runs these OSes only
+  # after a Linux-only queue run, so this is where every change meets them there. The plan of a
+  # change to the WebAssembly runtime selects exactly them (and that runtime's tests).
+  wasm-goldens:
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'wasm'
+    name: wasm-goldens (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: cargo xtask check --part test (WebAssembly)
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --part test --paths crates/velt_rt_wasm/src/lib.rs
 
   # The lint's claims against a pinned TypeScript (crates/velt_tscompat/tests/oracle.rs): the
   # rule fixtures compile with `tsc` where the lint passes them, and each rule's sample is

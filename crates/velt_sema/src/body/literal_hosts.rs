@@ -16,7 +16,7 @@
 //! calls the catching function) is not an implementation yet; while its methods' error types are
 //! computed, what they throw counts for their interface slots (`Ctx::provisional_slots`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_syntax::ast;
 use velt_syntax::visit::{walk_fn, Visit};
@@ -29,7 +29,7 @@ use crate::hir::DefId;
 pub(crate) struct LiteralHosts {
     /// The bodies not yet made sure of, in checking order, with the member names of their
     /// object literals that may hold functions.
-    pending: Vec<(DefId, HashSet<String>)>,
+    pending: Vec<(DefId, FxHashSet<String>)>,
     /// Module constants being checked: their initializers may lead to function bodies that
     /// read the constant, so no queued body is checked meanwhile (it would find the constant
     /// in progress, a false cycle); the queue is drained after them.
@@ -87,7 +87,7 @@ pub(crate) fn ensure_named(cx: &mut Ctx, name: &str) {
 /// that may hold a function (a method, an accessor, a function value, or a name or call that
 /// may give one, `{ read: boom }`, `{ read }`).
 #[derive(Default)]
-struct Finder(HashSet<String>);
+struct Finder(FxHashSet<String>);
 
 impl<'a> Visit<'a> for Finder {
     fn expr(&mut self, e: &'a ast::Expr) {

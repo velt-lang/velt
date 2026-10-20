@@ -8,7 +8,7 @@
 //!   by [`super::exports`];
 //! - the JSX runtime of a module containing JSX is bound as the namespace `JSX`.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -273,7 +273,7 @@ fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
 
 /// Each exported name may be exported once (by a declaration, a list or a re-export).
 fn check_duplicate_exports(cx: &mut Ctx, m: usize) {
-    let mut seen: HashSet<String> = cx.scopes[m].exports.clone();
+    let mut seen: FxHashSet<String> = cx.scopes[m].exports.clone();
     let mut dups = vec![];
     for (imp, exported) in imports_of(cx, m) {
         for n in imp.names.iter().filter(|_| exported) {

@@ -198,7 +198,7 @@ impl Ctx<'_> {
     /// type parameter are looked into by the whole-program check of the values crossing
     /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
     pub fn holds_weak(&mut self, t: TyId) -> bool {
-        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, None, &mut rustc_hash::FxHashSet::default())
     }
 
     /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
@@ -206,16 +206,16 @@ impl Ctx<'_> {
     pub(crate) fn holds_weak_with(
         &mut self,
         t: TyId,
-        hiding: &std::collections::HashSet<DefId>,
+        hiding: &rustc_hash::FxHashSet<DefId>,
     ) -> bool {
-        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, Some(hiding), &mut rustc_hash::FxHashSet::default())
     }
 
     fn holds_weak_in(
         &mut self,
         t: TyId,
-        hiding: Option<&std::collections::HashSet<DefId>>,
-        seen: &mut std::collections::HashSet<TyId>,
+        hiding: Option<&rustc_hash::FxHashSet<DefId>>,
+        seen: &mut rustc_hash::FxHashSet<TyId>,
     ) -> bool {
         if !seen.insert(t) {
             return false;
@@ -250,10 +250,10 @@ impl Ctx<'_> {
     /// Does a value of type `t` hold a function value (in a field, element or payload)?
     /// Interface and `shared` values are not looked into.
     pub fn holds_fn(&mut self, t: TyId) -> bool {
-        self.holds_fn_in(t, &mut std::collections::HashSet::new())
+        self.holds_fn_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_fn_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_fn_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -281,10 +281,10 @@ impl Ctx<'_> {
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.
     pub fn holds_generator(&mut self, t: TyId) -> bool {
-        self.holds_generator_in(t, &mut std::collections::HashSet::new())
+        self.holds_generator_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_generator_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_generator_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }

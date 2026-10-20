@@ -2,8 +2,8 @@
 //! local defined once, which locals hold the address of which, whose address escapes, every
 //! write of each local, and the code between two points (cached).
 
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use velt_vir::vir::{AggLayout, Function, Local, Operand, Place, Rvalue, Stmt, Terminator};
@@ -14,7 +14,7 @@ use crate::locals::Usage;
 use crate::visit::{derefs, stmt_operands, term_operands};
 
 /// `between(q, p)` per pair of points, computed once.
-type RegionCache = HashMap<(Point, Point), Option<Rc<Region>>>;
+type RegionCache = FxHashMap<(Point, Point), Option<Rc<Region>>>;
 
 /// Facts about one function, shared by every query.
 pub(super) struct Cx<'f> {

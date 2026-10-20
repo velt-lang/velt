@@ -54,32 +54,31 @@ pub(crate) struct State {
     /// deferred intersection that can't be reduced at these type arguments is reported.
     pub(crate) use_site: Option<Span>,
     /// How object types' properties whose names spell numbers were named (`key_kinds`).
-    pub(crate) key_kinds:
-        std::collections::HashMap<(crate::hir::DefId, String), key_kinds::KeyKind>,
+    pub(crate) key_kinds: rustc_hash::FxHashMap<(crate::hir::DefId, String), key_kinds::KeyKind>,
     /// How many alias expansions in progress have an argument that is a type parameter: a form
     /// that needs that argument defers the alias (`TyKind::Op`) instead of failing.
     pub(crate) deferring: u32,
     /// The alias being expanded needs an argument that is still a type parameter.
     pub(crate) stuck: bool,
     /// Where each deferred type was first written (reductions report there).
-    pub(crate) op_sites: std::collections::HashMap<TyId, Span>,
+    pub(crate) op_sites: rustc_hash::FxHashMap<TyId, Span>,
     /// The sites of the deferred intersections (`op_sites`) one reduction of which was
     /// reported: a reduction at an instantiation, with no use to report at, is not reported
     /// again.
-    pub(crate) failed_sites: std::collections::HashSet<Span>,
+    pub(crate) failed_sites: rustc_hash::FxHashSet<Span>,
     /// The module each deferred intersection was written in (its object type is made there).
-    pub(crate) op_modules: std::collections::HashMap<TyId, usize>,
+    pub(crate) op_modules: rustc_hash::FxHashMap<TyId, usize>,
     /// The parts of each object type an intersection made (`A & { id: string }`), so inference
     /// through `T & { id: string }` binds `T` to `A`, as TypeScript does (`Ctx::match_ty`).
-    pub(crate) intersection_parts: std::collections::HashMap<TyId, Vec<TyId>>,
+    pub(crate) intersection_parts: rustc_hash::FxHashMap<TyId, Vec<TyId>>,
     /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
-    pub(crate) reduced: std::collections::HashMap<TyId, TyId>,
+    pub(crate) reduced: rustc_hash::FxHashMap<TyId, TyId>,
 }
 
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
 /// every reduction sema made, after readonly erasure. [`instances::reach`] has reduced each one
 /// an instantiation of a generic definition reaches.
-pub(crate) fn lowered_ops(cx: &mut Ctx) -> std::collections::HashMap<TyId, TyId> {
+pub(crate) fn lowered_ops(cx: &mut Ctx) -> rustc_hash::FxHashMap<TyId, TyId> {
     std::mem::take(&mut cx.type_level.reduced)
 }
 

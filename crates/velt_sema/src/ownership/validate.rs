@@ -3,7 +3,7 @@
 //! and captured variables (each with a `.clone()` hint), and functions used as values whose
 //! parameters are owned (a function value's ABI borrows).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -35,7 +35,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
-        let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
+        let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
         let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
@@ -111,7 +111,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
 /// the resource twice, and the call runs on the task that owns the closure. (An http handler
 /// clones what its body consumes per request, and that copy panics on such a resource.)
 fn share_uncopyable(cx: &mut Ctx, b: &mut crate::hir::Block, deep_copies: &[(Span, TyId)]) {
-    let spans: HashSet<Span> = deep_copies
+    let spans: FxHashSet<Span> = deep_copies
         .iter()
         .filter(|(_, t)| cx.owns_uncopyable(*t))
         .map(|(s, _)| *s)
@@ -133,7 +133,7 @@ fn share_uncopyable(cx: &mut Ctx, b: &mut crate::hir::Block, deep_copies: &[(Spa
 }
 
 /// The shared captures (`super::shares::shared_captures`) of every closure created in `b`.
-fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId, Vec<LocalId>> {
+fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> FxHashMap<DefId, Vec<LocalId>> {
     let mut closures = vec![];
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         if let E::Closure(c) = e.kind {
@@ -152,7 +152,7 @@ struct Validator<'a, 'c, 'm> {
     f: &'a FnDef,
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
-    shared: &'a HashMap<DefId, Vec<LocalId>>,
+    shared: &'a FxHashMap<DefId, Vec<LocalId>>,
     /// Per local: is its type copyable?
     copy: &'a [bool],
     fixed: bool,
