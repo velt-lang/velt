@@ -257,6 +257,9 @@ errors.
   same under both (`crates/veltc/tests/ts_compat_node`). It runs only with `VELT_TSC_ORACLE`
   set, which the nightly job does (Node 24; a Node that can't strip types, older than 22.7, is
   then a failure); elsewhere, the pull request gate included, it is skipped with a message.
+  `main` may be `async`. The pull request gate checks that at least `MIN_RUNNABLE_SAMPLES`
+  samples have a `main`, so a change that removes samples lowers that floor itself instead of
+  failing the next nightly.
 
 Without Node or the installed packages the `tsc` part is skipped with a message, so the pull
 request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which makes a missing
