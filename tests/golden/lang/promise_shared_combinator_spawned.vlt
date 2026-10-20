@@ -16,6 +16,15 @@ async function make(n: number): Promise<Obj> {
   await sleep(5);
   return new Obj(n);
 }
+// The other input of `any` and `race`: it settles well after the shared promise.
+async function later(n: number): Promise<number> {
+  await sleep(100);
+  return n;
+}
+async function makeLater(n: number): Promise<Obj> {
+  await sleep(100);
+  return new Obj(n);
+}
 async function sum(a: Promise<number[]>): Promise<number> {
   const xs = await a;
   return xs[0] + xs[1];
@@ -60,13 +69,13 @@ async function main() {
 
   const a = count(8);
   const a2 = a;
-  const any = Promise.any([a2, count(9)]);
+  const any = Promise.any([a2, later(9)]);
   const t4 = spawn(first(any));
   console.log("any", await a, await t4);
 
   const r = make(10);
   const r2 = r;
-  const race = Promise.race([r2, make(11)]);
+  const race = Promise.race([r2, makeLater(11)]);
   const t5 = spawn(winner(race));
   console.log("race", (await r).n, await t5);
 }
