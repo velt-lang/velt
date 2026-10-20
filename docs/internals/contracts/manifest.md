@@ -116,7 +116,8 @@ first, then the runtime target, then `types` hints; `null` under a matching cond
 is not exported), else `types`, `typings`, `main`, `./index`;
 without `exports` a subpath names that path. Each target maps to source candidates
 (`vpm::npm::source_candidates`) and the first existing file wins; when none exists, the root
-subpath (`.`, never another) falls back to `src/index.ts`, then `src/index.tsx`. Errors: a subpath not
+subpath (`.`, never another) falls back to `src/index.ts`, then `src/index.tsx`, unless a
+target of `.` under any condition (`exports::root_targets_any_condition`) has a source. Errors: a subpath not
 exported, an `exports` mixing subpaths and conditions, a target without a source.
 
 ## Fields

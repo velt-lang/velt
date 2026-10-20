@@ -310,6 +310,8 @@ fn a_later_condition_is_no_fallback() {
         r#"{ "name": "iso", "exports": { ".": { "node": "./dist/server.js", "default": "./dist/client.js" } } }"#,
     );
     write(root, "node_modules/iso/src/client.ts", "");
+    // The client's entry: the root fallback must not compile it either (#929).
+    write(root, "node_modules/iso/src/index.ts", "");
     write(root, "main.ts", "");
     let mut npm = NpmResolver::default();
     let (msg, notes) = npm
@@ -326,6 +328,31 @@ fn a_later_condition_is_no_fallback() {
             .any(|n| n.contains("Node loads `dist/server.js` (condition `node`)")),
         "{notes:?}"
     );
+    assert!(!notes[0].contains("fallback"), "{notes:?}");
+    assert!(
+        notes.iter().any(|n| n.starts_with(
+            "no fallback to `src/index.ts`: another condition's target, `dist/client.js`, has a source"
+        )),
+        "{notes:?}"
+    );
+    // Conditions no build matches count too: `browser`, `require`.
+    for (cond, file) in [("browser", "browser"), ("require", "node")] {
+        let pkg = format!("node_modules/{cond}-pkg");
+        write(
+            root,
+            &format!("{pkg}/package.json"),
+            &format!(
+                r#"{{ "exports": {{ "{cond}": "./dist/{file}.js", "import": "./dist/server.mjs" }} }}"#
+            ),
+        );
+        write(root, &format!("{pkg}/src/{file}.ts"), "");
+        write(root, &format!("{pkg}/src/index.ts"), "");
+        let (msg, _) = npm
+            .resolve(&root.join("main.ts"), &format!("{cond}-pkg"))
+            .unwrap()
+            .unwrap_err();
+        assert!(msg.contains("to `dist/server.mjs`"), "{msg}");
+    }
     write(root, "node_modules/iso/src/server.ts", "");
     assert_eq!(
         npm.resolve(&root.join("main.ts"), "iso").unwrap().unwrap(),

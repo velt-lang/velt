@@ -28,7 +28,8 @@
 //!   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place. The targets are
 //!   tried in order (a `velt` hint, Node's target, then a `types` hint); the first with a
 //!   source wins. When none has one, the root export (`.`, not a subpath) falls back to
-//!   [`ROOT_FALLBACK`] (`src/index.ts`, `src/index.tsx`), and without that the error names the
+//!   [`ROOT_FALLBACK`] (`src/index.ts`, `src/index.tsx`), unless a target of another condition
+//!   (one Velt doesn't match included) has a source; without a source the error names the
 //!   target Node loads.
 
 pub mod exports;
@@ -274,7 +275,19 @@ impl NpmResolver {
                 }
             }
         }
-        let fallback: Vec<&str> = if subpath == "." {
+        // Another condition's target with a source (`default` after `node`, `browser`): the
+        // package has sources per environment, and `src/index.ts` may be another one's entry.
+        let other_env = match manifest.get("exports") {
+            Some(map) if subpath == "." => exports::root_targets_any_condition(map)
+                .into_iter()
+                .find(|t| {
+                    source_candidates(t, &out_dirs)
+                        .iter()
+                        .any(|c| dir.join(c).is_file())
+                }),
+            _ => None,
+        };
+        let fallback: Vec<&str> = if subpath == "." && other_env.is_none() {
             ROOT_FALLBACK
                 .iter()
                 .copied()
@@ -306,6 +319,12 @@ impl NpmResolver {
             ));
         }
         let mut notes = vec![note];
+        if let Some(other) = &other_env {
+            notes.push(format!(
+                "no fallback to `src/index.ts`: another condition's target, `{}`, has a source, so the package has a source per environment",
+                other.trim_start_matches("./")
+            ));
+        }
         let shown = match &runtime {
             Some((cond, target)) if !cond.is_empty() => {
                 notes.push(format!(

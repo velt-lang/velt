@@ -69,8 +69,12 @@ alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivi
    `src/index.tsx`). Packages built with Rollup need it, Vue's among them: `main` and Node's
    `default` name a CommonJS shim (`index.js`, `module.exports = require("./dist/…")`), and
    `types` a declaration file rolled up from all of `src/` and named after the package
-   (`dist/runtime-dom.d.ts`), none of which says where the source is. A subpath is mapped only
-   as step 3 says. A package without TypeScript sources is an error that names the file Node
+   (`dist/runtime-dom.d.ts`), none of which says where the source is. It applies only when no
+   target of the root under any condition has a source, those Velt never matches included
+   (`browser`, `require`, `default` after `node`): with `{ "node": "./dist/server.js",
+   "default": "./dist/client.js" }` and a `src/client.ts`, the package has a source per
+   environment, and `src/index.ts` may be the client's entry, so a missing `src/server.ts` stays
+   an error. A subpath is mapped only as step 3 says. A package without TypeScript sources is an error that names the file Node
    loads and says what was looked for.
 
 The package's modules then compile like the program's own, and their `env.d.ts` constants come
