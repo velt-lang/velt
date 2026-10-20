@@ -1,0 +1,33 @@
+// check: no leaks
+// Computed keys in object patterns naming module constants, module variables, symbols and
+// an outer function's local, on records, objects, interfaces and classes. Expected output:
+// Node's.
+const K2 = "a";
+let KL = "b";
+const SYM = Symbol("s");
+interface I { a: number; b: string; [SYM]: number }
+class C { a = 5; b = "cb"; }
+function run(): void {
+  const r: Record<string, number> = { a: 1, b: 2 };
+  const { [K2]: v = 0 } = r;
+  const { [KL]: w = 0 } = r;
+  console.log(v, w);
+  const o = { a: 3, b: "x" };
+  const { [K2]: oa } = o;
+  const i: I = { a: 4, b: "ib", [SYM]: 9 };
+  const { [K2]: ia, [SYM]: is } = i;
+  const { [K2]: ca } = new C();
+  console.log(oa, ia, is, ca);
+  const k = "b";
+  function inner(): number {
+    const { [k]: x = -1 } = r;
+    return x;
+  }
+  console.log(inner());
+  let p = 0;
+  ({ [K2]: p } = o);
+  console.log(p);
+}
+function main(): void {
+  run();
+}

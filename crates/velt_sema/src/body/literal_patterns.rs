@@ -17,9 +17,9 @@
 //! element or property through the `any` (`v[0]`, `v.p`), each an `any`, as TypeScript types
 //! them; a default applies where the read gives `undefined` (`v.q === undefined ? 1 : v.q`).
 //!
-//! An object pattern with a computed key naming a local variable (`const { [k]: v } = r`, the
-//! parser's `[k]` key) reads that property as `r[k]` the same way (a `[KEY]` naming a module
-//! constant is a field or symbol key, resolved where the pattern is checked).
+//! An object pattern with a computed key (`const { [k]: v } = r`, the parser's `[k]` key) reads
+//! each property the same way: `r[k]` for a key naming a variable, the member a `[KEY]` naming
+//! a module constant (a string or a symbol) stands for.
 
 use velt_syntax::ast::{self, Expr, ExprKind as E, PatternKind as P, VarDecl, VarKind};
 
@@ -111,8 +111,17 @@ impl FnCx<'_, '_> {
         else {
             return false;
         };
-        let Some(items) = literal_elems(init) else {
-            return false;
+        let tuple_reads;
+        let items = match literal_elems(init) {
+            Some(items) => items,
+            // `const c = [2, "y"] as const; [b, t] = c;`: `c[0] as number`, `c[1] as string`.
+            None => match self.as_const_reads(init) {
+                Some(reads) => {
+                    tuple_reads = reads;
+                    &tuple_reads[..]
+                }
+                None => return false,
+            },
         };
         if items.len() < elems.len() || same_kind_literals(items) {
             return false;
@@ -152,10 +161,8 @@ impl FnCx<'_, '_> {
         let reads: Vec<(&ast::Pattern, Expr)> = match &pattern.kind {
             P::Array { elems, rest } => {
                 if let Some(r) = rest {
-                    self.cx.err(
-                        "`...rest` of an `any` value is not supported yet; give the value an array type first",
-                        r.span,
-                    );
+                    let msg = "`...rest` of an `any` value is not supported yet; give the value an array type first";
+                    self.unsupported_rest(kind, r, msg, out);
                 }
                 elems
                     .iter()
@@ -182,28 +189,28 @@ impl FnCx<'_, '_> {
                 if let Some(r) = rest {
                     let msg = match dynamic {
                         true => "`...rest` of an `any` value is not supported yet; give the value an object type first",
-                        false => "`...rest` next to a computed key known only at run time is not supported yet",
+                        false => "`...rest` next to a computed key is not supported yet",
                     };
-                    self.cx.err(msg, r.span);
+                    self.unsupported_rest(kind, r, msg, out);
                 }
-                fields
-                    .iter()
-                    .map(|(key, p)| {
-                        let read = match self.computed_local_key(key) {
-                            Some(k) => E::Index {
-                                object: Box::new(tmp.clone()),
-                                index: Box::new(mk(E::Ident(k), key.span)),
-                                optional: false,
-                            },
-                            None => E::Member {
-                                object: Box::new(tmp.clone()),
-                                prop: key.clone(),
-                                optional: false,
-                            },
-                        };
-                        (p, mk(read, key.span))
-                    })
-                    .collect()
+                let mut reads = vec![];
+                for (key, p) in fields {
+                    let read = match self.key_read(key) {
+                        KeyRead::Index(k) => E::Index {
+                            object: Box::new(tmp.clone()),
+                            index: Box::new(mk(E::Ident(k), key.span)),
+                            optional: false,
+                        },
+                        KeyRead::Member(k) => E::Member {
+                            object: Box::new(tmp.clone()),
+                            prop: k,
+                            optional: false,
+                        },
+                        KeyRead::Reported => E::Ident(ident(crate::body::REPORTED, key.span)),
+                    };
+                    reads.push((p, mk(read, key.span)));
+                }
+                reads
             }
             _ => return,
         };
@@ -224,6 +231,17 @@ impl FnCx<'_, '_> {
                     if !matches!(value.kind, E::Lit(ast::Lit::Undefined)) =>
                 {
                     let span = read.span;
+                    // Read once (a getter runs once, as in JavaScript).
+                    let name = ident(&format!("#d{}", self.f.locals.len()), span);
+                    let d = VarDecl {
+                        kind: VarKind::Const,
+                        pattern: pat(P::Ident(name.clone()), span),
+                        ty: None,
+                        init: Some(read),
+                        span,
+                    };
+                    self.var_decl(&d, span, out);
+                    let read = mk(E::Ident(name), span);
                     let test = mk(
                         E::Binary {
                             op: ast::BinaryOp::StrictEq,
@@ -260,27 +278,88 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// How an object pattern reads the property its key names.
+enum KeyRead {
+    /// `tmp.name` (a plain key, or a computed key naming a module constant).
+    Member(ast::Ident),
+    /// `tmp[k]` (a computed key naming a variable).
+    Index(ast::Ident),
+    /// Already reported: the binding is an error.
+    Reported,
+}
+
 impl FnCx<'_, '_> {
-    /// The variable a computed key `[k]` of an object pattern names, when it is a local (not a
-    /// module constant, which names a field or a symbol).
-    fn computed_local_key(&mut self, key: &ast::Ident) -> Option<ast::Ident> {
-        let inner = key.name.strip_prefix('[')?.strip_suffix(']')?;
-        if inner.starts_with("Symbol.") || !self.declares_here(inner) && !self.outer_names(inner) {
+    /// The elements of the literal of literals of different types `as const` that the `const`
+    /// variable `c` holds (`Frame::as_const_tuples`).
+    fn as_const_reads(&mut self, init: &Expr) -> Option<Vec<Expr>> {
+        let mut e = init;
+        while let E::Paren(x) = &e.kind {
+            e = x;
+        }
+        let E::Ident(name) = &e.kind else {
+            return None;
+        };
+        if !self.declares_here(&name.name) {
             return None;
         }
-        Some(ident(inner, key.span))
+        let l = self.lookup_local(&name.name, name.span)?;
+        // A `const` holding literals: they are read again, as the literal itself.
+        self.f.as_const_tuples.get(&l).cloned()
     }
 
-    /// `kind { [k]: v, … } = init` with a computed key naming a local (module docs); `false`
-    /// (nothing done) for any other declaration.
+    /// How the object pattern key `key` reads its property: a computed key `[k]` naming a
+    /// variable (a local, an outer function's, a module variable that is not a key the
+    /// compiler knows) reads `tmp[k]`; one naming a module constant holding a string or a
+    /// symbol reads that member.
+    fn key_read(&mut self, key: &ast::Ident) -> KeyRead {
+        if key.name == velt_syntax::REPORTED_KEY {
+            return KeyRead::Reported;
+        }
+        if !crate::symbols::is_computed_key(key) {
+            return KeyRead::Member(key.clone());
+        }
+        let inner = key.name[1..key.name.len() - 1].to_string();
+        if self.local_hides(&inner) {
+            return KeyRead::Index(ident(&inner, key.span));
+        }
+        let global = matches!(self.cx.lookup_item(self.module, &inner),
+            Some(crate::ctx::Item::Def(d)) if matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)));
+        match self.cx.resolve_key(self.module, key) {
+            Ok(name) => KeyRead::Member(ident(&name, key.span)),
+            Err(_) if global => KeyRead::Index(ident(&inner, key.span)),
+            Err(_) => {
+                self.cx.bad_key(&key.name, &inner, key.span);
+                KeyRead::Reported
+            }
+        }
+    }
+
+    /// Is `key` a computed key (or one the parser reported)?
+    fn computed(key: &ast::Ident) -> bool {
+        key.name == velt_syntax::REPORTED_KEY || crate::symbols::is_computed_key(key)
+    }
+
+    /// `...rest` that is not supported here: reported, and declared as an error so its uses say
+    /// nothing more.
+    fn unsupported_rest(
+        &mut self,
+        kind: VarKind,
+        r: &ast::Ident,
+        msg: &str,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        self.cx.err(msg, r.span);
+        let reported = mk(E::Ident(ident(crate::body::REPORTED, r.span)), r.span);
+        self.decl_with_defaults(kind, &pat(P::Ident(r.clone()), r.span), reported, out);
+    }
+
+    /// `kind { [k]: v, … } = init` with a computed key (module docs); `false` (nothing done)
+    /// for any other declaration.
     pub(super) fn computed_key_decl(&mut self, v: &VarDecl, out: &mut Vec<hir::Stmt>) -> bool {
         let (P::Object { fields, .. }, Some(init)) = (&v.pattern.kind, &v.init) else {
             return false;
         };
-        if !fields
-            .iter()
-            .any(|(k, _)| self.computed_local_key(k).is_some())
-        {
+        if !fields.iter().any(|(k, _)| Self::computed(k)) {
             return false;
         }
         let span = init.span;

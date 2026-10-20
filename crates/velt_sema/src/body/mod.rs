@@ -90,6 +90,7 @@ use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use expr::REPORTED;
 pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
@@ -253,6 +254,9 @@ pub(crate) struct Frame {
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
     pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
+    /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
+    pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
@@ -360,6 +364,7 @@ impl Frame {
             using_shares: vec![],
             await_using: Default::default(),
             readonly_arrays: Default::default(),
+            as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,
             assign_targets: vec![],

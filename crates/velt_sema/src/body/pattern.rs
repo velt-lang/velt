@@ -123,6 +123,7 @@ impl FnCx<'_, '_> {
                 }
                 None => {
                     if !self.cx.ty.is_bottom(ty)
+                        && name.name != velt_syntax::REPORTED_KEY
                         && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
                     {
                         let tn = self.cx.display(ty);

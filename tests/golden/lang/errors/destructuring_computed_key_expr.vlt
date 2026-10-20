@@ -1,0 +1,15 @@
+// A computed key in an object pattern other than a name, a string or a number is one
+// parse error each, with no follow-on errors.
+const ks = { k: "a" };
+function main(): void {
+  const o: Record<string, number> = { a: 1 };
+  const { [ks.k]: v } = o;
+  const { [k("a")]: w } = o;
+  let p = 0;
+  ({ [k("a")]: p } = o);
+  const anyv: any = [1, 2, 3];
+  const [first, ...others] = anyv;
+  const K = "a";
+  const { [K]: x, ...rest } = o;
+  console.log(v, w, p, first, others, x, rest);
+}

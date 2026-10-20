@@ -251,6 +251,8 @@ impl FnCx<'_, '_> {
                 (Some(_), Some((false, false))) => Applies::WhenNothing(default()),
                 _ => Applies::Never,
             },
+            // A `Record` (or index signature) key reads `V | undefined`.
+            None if self.record_args(ty).is_some() => Applies::WhenNothing(default()),
             None => Applies::Never,
         };
         Some((pattern, applies))

@@ -92,11 +92,6 @@ impl FnCx<'_, '_> {
     }
 
     fn as_const_array_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
-        // `[2, "y"] as const` (literals of different types): a tuple, as TypeScript's
-        // `readonly [2, "y"]` (each element widened to its type).
-        if let Some(t) = self.as_const_tuple_ty(e) {
-            return Some(t);
-        }
         let elems = as_const_strings(e)?;
         let mut members = vec![];
         for s in elems {
@@ -112,38 +107,43 @@ impl FnCx<'_, '_> {
         Some(self.cx.ty.array(u))
     }
 
-    fn as_const_tuple_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
-        let elems = match &e.kind {
-            ast::ExprKind::Paren(inner) => return self.as_const_tuple_ty(inner),
-            ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
-            _ => return None,
-        };
-        let tys: Vec<TyId> = elems
-            .iter()
-            .map(|x| match &x.kind {
-                ast::ExprKind::Lit(ast::Lit::Str(_)) => Some(self.cx.ty.str_),
-                ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
-                | ast::ExprKind::Lit(ast::Lit::Float { suffix: None, .. }) => Some(self.cx.ty.f64),
-                ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some(self.cx.ty.bool_),
-                _ => None,
-            })
-            .collect::<Option<_>>()?;
-        if tys.iter().all(|t| *t == tys[0]) {
-            return None;
-        }
-        Some(self.cx.ty.intern(TyKind::Tuple(tys)))
-    }
-
     /// Records local `l` initialized with `init` as a read-only array when that is an array
     /// literal of strings `as const`.
     pub(super) fn note_as_const_array(&mut self, l: LocalId, init: Option<&ast::Expr>) {
         let Some(ast::ExprKind::Cast { expr, ty }) = init.map(|e| &e.kind) else {
             return;
         };
+        if super::expr::member::is_as_const(ty) {
+            if let Some(names) = as_const_tuple(expr) {
+                self.f.as_const_tuples.insert(l, names);
+            }
+        }
         if super::expr::member::is_as_const(ty) && as_const_strings(expr).is_some() {
             self.f.readonly_arrays.insert(l);
         }
     }
+}
+
+/// `[2, "y"]` (in parentheses or not): its elements when they are literals of more than one
+/// type (TypeScript's `readonly [2, "y"]` as `as const` gives it).
+fn as_const_tuple(e: &ast::Expr) -> Option<Vec<ast::Expr>> {
+    let elems = match &e.kind {
+        ast::ExprKind::Paren(inner) => return as_const_tuple(inner),
+        ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
+        _ => return None,
+    };
+    let names: Vec<&'static str> = elems
+        .iter()
+        .map(|x| match &x.kind {
+            ast::ExprKind::Lit(ast::Lit::Str(_)) => Some("string"),
+            ast::ExprKind::Lit(
+                ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. },
+            ) => Some("number"),
+            ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some("boolean"),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    (names.iter().any(|n| *n != names[0])).then(|| elems.clone())
 }
 
 /// The elements of `[...]` (in parentheses or not) when it has some and they are all string

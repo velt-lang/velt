@@ -60,6 +60,8 @@ struct Step {
 struct Split {
     steps: Vec<Step>,
     at: u32,
+    /// Computed keys other than a name or a literal, reported once each.
+    bad_keys: Vec<Span>,
 }
 
 impl Split {
@@ -150,7 +152,18 @@ impl Split {
                         // variable reads `value[k]` (`literal_patterns`).
                         ast::ObjectProp::Spread(r) if computed_key(r).is_some() => {
                             let (k, v) = computed_key(r)?;
-                            let key = ident(&format!("[{}]", k.name), k.span);
+                            let key = match &k.kind {
+                                ast::ExprKind::Ident(k) => ident(&format!("[{}]", k.name), k.span),
+                                ast::ExprKind::Template { quasis, exprs }
+                                    if exprs.is_empty() && quasis.len() == 1 =>
+                                {
+                                    ident(&quasis[0], k.span)
+                                }
+                                _ => {
+                                    self.bad_keys.push(k.span);
+                                    ident(velt_syntax::REPORTED_KEY, k.span)
+                                }
+                            };
                             fields.push((key, self.pattern(v)?));
                         }
                         ast::ObjectProp::Spread(r) if i + 1 == props.len() => {
@@ -194,15 +207,12 @@ pub(super) fn value_use_message(target: &ast::Expr) -> &'static str {
 
 /// The key (a variable) and value of a computed-key property `[k]: value`, as the parser gives
 /// it (`ast::COMPUTED_KEY_FN`).
-fn computed_key(e: &ast::Expr) -> Option<(&ast::Ident, &ast::Expr)> {
+fn computed_key(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
     let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
         return None;
     };
     match (&callee.kind, args.as_slice()) {
-        (ast::ExprKind::Ident(f), [k, v]) if f.name == ast::COMPUTED_KEY_FN => match &k.kind {
-            ast::ExprKind::Ident(k) => Some((k, v)),
-            _ => None,
-        },
+        (ast::ExprKind::Ident(f), [k, v]) if f.name == ast::COMPUTED_KEY_FN => Some((k, v)),
         _ => None,
     }
 }
@@ -260,6 +270,7 @@ impl FnCx<'_, '_> {
         let mut split = Split {
             steps: vec![],
             at: span.lo,
+            bad_keys: vec![],
         };
         let pattern = match split.pattern(inner) {
             Some(p) => p,
@@ -272,6 +283,12 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
         };
+        for k in &split.bad_keys {
+            self.cx.err(
+                "a computed key in a destructuring target must be a name (`[k]`), a string or a number; store the key in a variable first (`const k = f(); ({ [k]: v } = o);`)",
+                *k,
+            );
+        }
         let decl = ast::Stmt {
             kind: ast::StmtKind::Var(ast::VarDecl {
                 kind: ast::VarKind::Const,
@@ -364,4 +381,4 @@ impl FnCx<'_, '_> {
 
 /// The name of an expression already reported, checked as an error without a message (no
 /// source can write it).
-pub(super) const REPORTED: &str = "#reported";
+pub(crate) const REPORTED: &str = "#reported";

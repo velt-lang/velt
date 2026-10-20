@@ -26,6 +26,10 @@ pub const ARRAY_HOLE: &str = "";
 /// assigned to the target first thing in the body; no source can name it.
 pub const FOR_TARGET: &str = "#of";
 
+/// The key name of an object-pattern property whose computed key the parser reported (a key
+/// other than a name or a literal, `{ [f()]: v }`): its binding is checked as an error.
+pub const REPORTED_KEY: &str = "#reported-key";
+
 use velt_common::{Diagnostics, FileId};
 
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level

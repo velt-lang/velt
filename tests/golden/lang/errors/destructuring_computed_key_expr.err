@@ -1,0 +1,3 @@
+destructuring_computed_key_expr.vlt:6:11: error: a computed key in a destructuring pattern must be a name (`[k]`), a string or a number; store the key in a variable first (`const k = f(); const { [k]: v } = o;`)
+
+destructuring_computed_key_expr.vlt:7:11: error: a computed key in a destructuring pattern must be a name (`[k]`), a string or a number; store the key in a variable first (`const k = f(); const { [k]: v } = o;`)

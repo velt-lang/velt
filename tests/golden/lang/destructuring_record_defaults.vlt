@@ -1,0 +1,26 @@
+// check: no leaks
+// Defaults on `Record` and index-signature patterns, string / number / template computed
+// keys, and an `any` property read once before its default. Expected output: Node's.
+let reads = 0;
+class G {
+  get x(): string | undefined { reads++; return undefined; }
+}
+interface Idx { [key: string]: number }
+function run(): void {
+  const r: Record<string, number> = { a: 1 };
+  const { zz = 0, a = 7 } = r;
+  const ix: Idx = { q: 2 };
+  const { q = 5, nn = 6 } = ix;
+  console.log(zz, a, q, nn);
+  const { ["a"]: s1, [`a`]: s2, [0]: n0 = 4 } = { a: 10, 0: 11 } as Record<string, number>;
+  console.log(s1, s2, n0);
+  let t = 0;
+  ({ ["a"]: t } = { a: 12 });
+  console.log(t);
+  const g: any = new G();
+  const { x = "dx" } = g;
+  console.log(x, reads);
+}
+function main(): void {
+  run();
+}

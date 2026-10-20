@@ -10,6 +10,7 @@ mod assign;
 mod assign_checks;
 mod assign_paths;
 mod assign_pattern;
+pub(crate) use assign_pattern::REPORTED;
 mod attempt;
 mod await_union;
 mod builtins;

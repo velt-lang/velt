@@ -1563,12 +1563,19 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   bound to the object it was read from (in JS it is unbound, so the two differ only where JS
   would throw a `TypeError` for a method that uses `this`).
   As in TypeScript, an array pattern over an array literal types the literal as a tuple
-  (`const [n, s] = [1, "s"]` gives a `number` and a `string`, also for `[…] as const` and in a
-  destructuring assignment). Destructuring an `any` reads each element or property through it
-  (`const [a, b] = v` is `v[0]`, `v[1]`, each an `any`; a default applies where the read gives
+  (`const [n, s] = [1, "s"]` gives a `number` and a `string`, also in a destructuring
+  assignment, for `[…] as const` and for a `const c = [2, "y"] as const` taken apart; `c` itself
+  stays a read-only array of the union, with `length`, indexing, iteration and the read
+  methods). Destructuring an `any` reads each element or property through it (`const [a, b] =
+  v` is `v[0]`, `v[1]`, each an `any`, read once; a default applies where the read gives
   `undefined`; a `...rest` of an `any` is not supported yet). A computed key naming a variable
-  (`const { [k]: v = 0 } = r`, `({ [k]: p } = r)`) reads `r[k]`; next to it a `...rest` is not
-  supported yet.
+  (`const { [k]: v = 0 } = r`, `({ [k]: p } = r)`, a local, an outer function's or a module
+  variable) reads `r[k]`; one naming a module constant holding a string or a symbol
+  (`[KEY]`) reads that member, also of an object, interface or class; a string, number or
+  template key (`{ ["a"]: v }`, `{ [0]: v }`) names that property. Any other key expression
+  (`{ [f()]: v }`) is an error: store the key in a variable first. Next to a computed key a
+  `...rest` is not supported yet. Defaults on a `Record` or index-signature pattern apply where
+  the key is missing (`const { port = 80 } = env`).
 - **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
   next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
   other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object
