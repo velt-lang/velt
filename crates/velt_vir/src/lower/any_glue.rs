@@ -195,17 +195,28 @@ impl FnLower<'_, '_> {
         args: Vec<(Place, TyId)>,
         out: &Place,
     ) {
+        self.any_invoke_at(r, this, args, out, true);
+    }
+
+    /// [`Self::any_invoke`]; `no_location`: a standard-library method that tracks its caller
+    /// reports no location (glue has none) rather than its own line in the prelude.
+    pub(super) fn any_invoke_at(
+        &mut self,
+        r: &Ready,
+        this: Operand,
+        args: Vec<(Place, TyId)>,
+        out: &Place,
+        no_location: bool,
+    ) {
         let f = self.cx.fn_def(r.def);
         let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
         // Glue has no source location: a standard-library method it calls (a proxy's `__keys`)
         // reports none either, rather than its own line in the prelude.
         let fid = match self.panic_loc() {
-            None if self.cx.tracks_caller(r.def) => self.cx.func(super::Work::Tracked(
-                r.def,
-                r.targs.clone(),
-                super::srcloc::UNKNOWN_LOC,
-            )),
+            None if no_location && self.cx.tracks_caller(r.def) => self.cx.func(
+                super::Work::Tracked(r.def, r.targs.clone(), super::srcloc::UNKNOWN_LOC),
+            ),
             _ => self.cx.func_for(r.def, r.targs.clone()),
         };
         let mut argv = vec![this];

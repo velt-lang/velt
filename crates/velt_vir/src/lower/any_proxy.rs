@@ -103,7 +103,10 @@ impl FnLower<'_, '_> {
             return false;
         };
         let this = self.any_this(data, ty);
-        self.any_invoke(&r, this, args, out);
+        // A proxied read, write or `in` keeps the prelude method's own build (it is on every
+        // access's path); the others report no location for an error they raise.
+        let hot = matches!(name, "__get" | "__set" | "__has");
+        self.any_invoke_at(&r, this, args, out, !hot);
         true
     }
 
