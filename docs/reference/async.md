@@ -536,7 +536,9 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
 - `shared(new RwLock<T>(x))` for state read far more often than written: `rw.read((v) => …)`
   runs the callback while other tasks run theirs on other threads, and `rw.write((v) => …)`
   runs it alone, exactly as `with` does (writers waiting go first, so neither side starves).
-  Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
+  While nobody writes, readers on different threads touch no memory they share, so reads scale
+  with the cores; while writes come often, `read` takes the lock as `with` does, so an `RwLock`
+  written often costs about what a `Mutex` does. Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
   value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
   passes it to a function that changes it) is an error ("the function passed to `read` modifies
   the locked value"), so `read` takes a function literal or a named function, whose body the

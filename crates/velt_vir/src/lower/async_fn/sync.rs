@@ -38,6 +38,9 @@ pub(in crate::lower) enum BoxHold {
     Yes,
 }
 
+/// The runtime's words at the start of an `RwLock<T>` (velt_rt `shared::RWLOCK_WORDS`).
+const RWLOCK_WORDS: u32 = 19;
+
 impl FnLower<'_, '_> {
     pub(super) fn sync_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         use Intrinsic as I;
@@ -195,21 +198,41 @@ impl FnLower<'_, '_> {
         self.clone_value(Operand::Copy(place), inner)
     }
 
-    /// `new Mutex<T>(x)`: `{ lock: 0, value: x }`.
+    /// `new Mutex<T>(x)`: `{ lock: 0, value: x }` (an `RwLock`'s: its 19 runtime words, zero,
+    /// consecutive, the value, then zero padding).
     fn mutex_new(&mut self, x: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let Ty::Agg(a) = self.cx.ty(ty) else {
             ice("Mutex<T> must be a struct `{ lock, value }`")
         };
         let v = self.consume(x);
-        let lock_ty = self.cx.aggs[a.0 as usize].fields[0].0;
-        let zero = self.zero_value(lock_ty);
+        let at = self.lock_value_index(ty) as usize;
+        let words = at;
+        let n = self.cx.aggs[a.0 as usize].fields.len();
+        let mut fields = vec![];
+        let mut v = Some(v);
+        for i in 0..n {
+            match i == at {
+                true => fields.push(v.take().unwrap_or_else(|| ice("a lock's value twice"))),
+                false => {
+                    let t = self.cx.aggs[a.0 as usize].fields[i].0;
+                    fields.push(self.zero_value(t));
+                }
+            }
+        }
         let m = self.temp(Ty::Agg(a));
-        self.assign(Place::local(m), Rvalue::Aggregate(a, vec![zero, v]));
+        self.assign(Place::local(m), Rvalue::Aggregate(a, fields));
         let lock = self.addr(proj(&Place::local(m), Proj::Field(0)));
         let init = match self.cx.type_name(ty) == "RwLock" {
             true => {
-                let vty = self.cx.adt_field_tys(ty)[1];
+                let offsets: Vec<u32> = self.cx.aggs[a.0 as usize].fields[..words]
+                    .iter()
+                    .map(|f| f.1)
+                    .collect();
+                if offsets != (0..RWLOCK_WORDS).map(|i| i * 8).collect::<Vec<u32>>() {
+                    ice("RwLock<T> must start with its 19 consecutive lock words");
+                }
+                let vty = self.lock_value_ty(ty);
                 self.cx.note_lock_value(vty);
                 Rt::RwLockInit
             }
@@ -238,7 +261,7 @@ impl FnLower<'_, '_> {
             }
             _ => (mp, mty),
         };
-        let vty = self.cx.adt_field_tys(mutex)[1];
+        let vty = self.lock_value_ty(mutex);
         let rw = self.cx.type_name(mutex) == "RwLock";
         if rw {
             self.cx.note_lock_value(vty);
@@ -251,7 +274,8 @@ impl FnLower<'_, '_> {
         };
         let lock = self.field_place(&mplace, mutex, 0);
         let lock = self.addr(lock);
-        let value = self.field_place(&mplace, mutex, 1);
+        let at = self.lock_value_index(mutex);
+        let value = self.field_place(&mplace, mutex, at);
         let fty = self.sub(f.ty);
         // A callback literal gets the value by pointer even when it is a scalar, so its updates
         // (`v += 1`) land in the mutex; other function values get scalars by value.
@@ -282,7 +306,18 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
-        self.call_rt(lock_fn, vec![lock.clone()], None);
+        // A shared `read` says how it went in, which its unlock takes back.
+        let how = match shared_read {
+            true => {
+                let h = self.temp(Ty::U64);
+                self.call_rt(lock_fn, vec![lock.clone()], Some(Place::local(h)));
+                Some(Operand::Copy(Place::local(h)))
+            }
+            false => {
+                self.call_rt(lock_fn, vec![lock.clone()], None);
+                None
+            }
+        };
         let (arg, pt) = match self.cx.ty(vty) {
             Ty::Agg(_) => (self.addr(value.clone()), Ty::Ptr),
             _ if by_ref => (self.addr(value.clone()), Ty::Ptr),
@@ -303,8 +338,26 @@ impl FnLower<'_, '_> {
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
         self.many_check(value, vty);
-        self.call_rt(unlock_fn, vec![lock], None);
+        let mut unlock_args = vec![lock];
+        unlock_args.extend(how);
+        self.call_rt(unlock_fn, unlock_args, None);
         r
+    }
+
+    /// `T` of a `Mutex<T>` or `RwLock<T>`.
+    fn lock_value_ty(&mut self, lock: TyId) -> TyId {
+        let at = self.lock_value_index(lock) as usize;
+        let tys = self.cx.adt_field_tys(lock);
+        *tys.get(at).unwrap_or_else(|| ice("a lock without a value"))
+    }
+
+    /// The field of a `Mutex<T>` or `RwLock<T>` that holds the value: after a `Mutex`'s lock
+    /// word, after an `RwLock`'s runtime words (padding follows it, the prelude).
+    fn lock_value_index(&mut self, lock: TyId) -> u32 {
+        match self.cx.type_name(lock) == "RwLock" {
+            true => RWLOCK_WORDS,
+            false => 1,
+        }
     }
 
     /// The callback's result `r` (of type `ret`), about to leave the lock: transferred like a

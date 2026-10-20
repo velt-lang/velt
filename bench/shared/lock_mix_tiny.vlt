@@ -1,0 +1,59 @@
+// `lock_mix.vlt` with the smallest callbacks: read one field or add one to it, so the lock is
+// all there is to measure.
+//   lock_mix_tiny <mutex|rwlock> <tasks> <reads per 100 operations>   prints M operations/s
+class T {
+  n: i64 = 1;
+}
+
+const N: i64 = 20000000;
+
+async function wm(m: shared<Mutex<T>>, mix: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < N; i++) {
+    if (i % 100 < mix) {
+      t += m.with((v) => v.n);
+    } else {
+      m.with((v) => {
+        v.n += 1;
+      });
+    }
+  }
+  return t;
+}
+
+async function wr(rw: shared<RwLock<T>>, mix: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < N; i++) {
+    if (i % 100 < mix) {
+      t += rw.read((v) => v.n);
+    } else {
+      rw.write((v) => {
+        v.n += 1;
+      });
+    }
+  }
+  return t;
+}
+
+async function main() {
+  const kind = process.argv[2];
+  const tasks = Number(process.argv[3]) as i64;
+  // Reads per 100 operations.
+  const mix = Number(process.argv[4]) as i64;
+  const ps: Promise<i64>[] = [];
+  const t0 = performance.now();
+  if (kind == "mutex") {
+    const m = shared(new Mutex<T>(new T()));
+    for (let k: i64 = 0; k < tasks; k++) {
+      ps.push(spawn(wm(m, mix)));
+    }
+  } else {
+    const rw = shared(new RwLock<T>(new T()));
+    for (let k: i64 = 0; k < tasks; k++) {
+      ps.push(spawn(wr(rw, mix)));
+    }
+  }
+  await Promise.all(ps);
+  const ms = performance.now() - t0;
+  console.log(kind, tasks, mix, Math.round(((tasks * N) as number) / ms / 1000));
+}

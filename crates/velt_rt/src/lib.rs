@@ -31,6 +31,7 @@ pub mod freed;
 pub mod fs;
 pub mod handle;
 pub mod hash;
+pub mod hazard;
 pub mod html;
 pub mod http;
 pub mod inspect;

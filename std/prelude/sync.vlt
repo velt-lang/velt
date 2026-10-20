@@ -3,7 +3,8 @@
 // The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`
 // (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`, and
 // `new RwLock<T>(x)`, `rw.read(f)` and `rw.write(f)` the same way; these declarations only fix
-// the layout they use: the runtime's 8-byte lock word, then the value. Neither is ever Copy
+// the layout they use: the runtime's 8-byte lock word, then the value (an `RwLock`'s 19 words,
+// rt_abi_async.md §9.2). Neither is ever Copy
 // (copying one would duplicate the lock). Their methods are the only way to reach the value.
 
 /**
@@ -23,6 +24,42 @@ export struct Mutex<T> {
  * alone, like `Mutex.with`. Waiting writers go first, so neither side starves.
  */
 export struct RwLock<T> {
+  // The runtime's words (rt_abi_async.md §9.2): the writers' mutex, then (a cache line on) the
+  // state readers read, with the value; padding after it keeps that line the lock's own.
   private lock: u64;
+  private line1: u64;
+  private line2: u64;
+  private line3: u64;
+  private line4: u64;
+  private line5: u64;
+  private line6: u64;
+  private line7: u64;
+  private line8: u64;
+  private line9: u64;
+  private line10: u64;
+  private line11: u64;
+  private line12: u64;
+  private line13: u64;
+  private line14: u64;
+  private line15: u64;
+  private state: u64;
+  private until: u64;
+  private inhibit: u64;
   private value: T;
+  private tail1: u64;
+  private tail2: u64;
+  private tail3: u64;
+  private tail4: u64;
+  private tail5: u64;
+  private tail6: u64;
+  private tail7: u64;
+  private tail8: u64;
+  private tail9: u64;
+  private tail10: u64;
+  private tail11: u64;
+  private tail12: u64;
+  private tail13: u64;
+  private tail14: u64;
+  private tail15: u64;
+  private tail16: u64;
 }

@@ -106,13 +106,13 @@ compiler; 5 s per scenario, 64 connections, M-series Mac, 3 interleaved rounds):
 
 | scenario | `Mutex` req/s | `RwLock` req/s |
 |---|---:|---:|
-| product by id | 207.7k–208.7k | 207.5k–213.5k |
-| list 100, sorted by price | 3,484–3,489 | 15,609–16,447 |
-| search + filter, 20 | 9,852–9,886 | 51,648–53,411 |
-| orders page of 50 | 9,217–9,527 | 39,540–44,856 |
-| stats over 20k orders | 291–293 | 1,233–1,312 |
-| create order | 170.9k–188.3k | 174.4k–186.9k |
-| bulk 200: decode + reject | 5,903–5,945 | 5,952–5,976 |
+| product by id | 206.6k–208.3k | 208.9k–214.0k |
+| list 100, sorted by price | 3,468–3,479 | 15,573–15,943 |
+| search + filter, 20 | 9,752–9,832 | 53,607–53,758 |
+| orders page of 50 | 9,161–9,291 | 43,284–45,365 |
+| stats over 20k orders | 287–292 | 1,291–1,300 |
+| create order | 184.2k–188.0k | 181.8k–184.8k |
+| bulk 200: decode + reject | 5,898–5,926 | 5,877–5,977 |
 
 On one core (instructions retired in-process, the same routes) the two are within −5% and +1%.
 `listProducts` still computes each product's lowest price once before sorting, rather than on

@@ -589,10 +589,11 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_atomic_store_i64` | `(i64* p, i64 v)` | |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
-| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock word (same layout as `Mutex<T>`); writers preferred, eventually fair [additive, #708] |
-| `velt_rt_rwlock_read` / `velt_rt_rwlock_read_unlock` | `(u64* lock)` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock [additive, #708] |
+| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
+| `velt_rt_rwlock_read` | `(u64* lock) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back [additive, #708] |
+| `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
 | `velt_rt_rwlock_write` / `velt_rt_rwlock_write_unlock` | `(u64* lock)` | `rw.write(f)`: the lock exclusively; like `velt_rt_mutex_lock`, it leaves read mode for its duration [additive, #708] |
-| `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode; answers from a process-wide reader count while no reader runs (§9.1) [additive, #708] |
+| `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
@@ -622,6 +623,18 @@ Code whose mode is fixed counts without asking: functions only called directly f
 mode (and `with` / `write` callbacks) count as before; functions only called directly from a
 `read` callback literal use read mode's rules. Everything else (callbacks given as values,
 closures that may outlive the call, polls, glue in tables) asks `velt_rt_lk_mode` once per call.
+
+### 9.2 How `RwLock` readers go in
+
+The lock is *biased* (Dice and Kogan, "BRAVO: Biased Locking for Reader-Writer Locks", 2019)
+until it is written: a reader names the lock in a slot of its own thread (a cache line no other
+thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
+write nothing they share. A writer takes the lock's mutex and *revokes* the bias: it sets the
+lock's state and waits for the slots naming the lock to clear. From then on readers take the
+mutex as a `Mutex` is taken, so a lock written often costs about what a `Mutex` does, until a
+reader holding the mutex finds the revocation old enough and biases the lock again. How long a
+revocation lasts adapts to how long the bias before it lasted (at most 10 ms). The lock words
+are the mutex, then (on the next 128-byte line, which only revocations write) the state.
 
 ## 10. Output with many tasks
 
