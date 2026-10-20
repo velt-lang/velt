@@ -267,5 +267,9 @@ export function __anyDelete(o: any, k: any): boolean {
   if (o instanceof Proxy) {
     return o.__delete(k);
   }
-  return Reflect.deleteProperty(o, k);
+  if (!Reflect.deleteProperty(o, k)) {
+    // Strict code: only an array's `length` refuses.
+    panic(`TypeError: Cannot delete property '${String(k)}' of [object Array]`);
+  }
+  return true;
 }

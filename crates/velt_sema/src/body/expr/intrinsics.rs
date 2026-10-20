@@ -58,6 +58,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
+        "any_delete" => I::AnyDelete,
         "chan_receive" => I::ChanReceive,
         "chan_try_send" => I::ChanTrySend,
         "chan_try_receive" => I::ChanTryReceive,
@@ -264,6 +265,7 @@ impl FnCx<'_, '_> {
             I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
+            I::AnyDelete => (vec![(any_ty, B), (str_, B)], ty.bool_, false),
             I::SymbolStatic => {
                 let sym = ty.intern(TyKind::Symbol);
                 (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)

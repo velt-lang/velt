@@ -827,6 +827,13 @@ entry is an `ICE:`.
   proxy's `has` trap): in `effects::runs_user_code` and `replaced_holders::implicit::glue_args`.
   The `any` tables get slot 11 `AnyHas (data, key) -> u8` (velt_vir `lower/any_has.rs`; 0 no,
   1 yes, 2 not supported yet) only when the program has such a test.
+- `Intrinsic::AnyDelete(x, key)` (std only, `__intrinsic_any_delete`) is `delete x[key]` with a
+  `string` key on an `any` `x` that is not a proxy (borrowed), of type `bool`: a record's entry
+  is removed (its `__delete`), an optional field made absent, a key the value does not have as
+  its own is `true`, an array's `length` `false`. It changes memory (`effects`,
+  `replaced_holders::implicit::glue_args`). The `any` tables get slot 15 `AnyDelete (data,
+  key) -> u8` (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a
+  `TypeError`) only when the program has such a call.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
   It sets `Program::dyn_members` (a record's keys are its `__keyNames()`). The `any` tables get
@@ -847,7 +854,9 @@ entry is an `ICE:`.
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
   to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
   `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
-  call of the prelude's `__anyDelete(o, k)` (a proxy's `deleteProperty` trap), and the
+  call of the prelude's `__anyDelete(o, k)` (a proxy's `deleteProperty` trap; another value's
+  `Intrinsic::AnyDelete`, std only, through slot 15 `AnyDelete (data, key: *string) -> u8` of
+  its table, velt_vir `lower/any_delete.rs`), and the
   prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries` helpers for `any`
   (std/prelude/zzz_adapt.vlt) run a proxy's traps in Node's order. With a symbol constant as
   the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of

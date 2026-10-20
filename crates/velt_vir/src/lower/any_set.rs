@@ -66,7 +66,7 @@ impl FnLower<'_, '_> {
 
     /// Store the owned value `val` of type `t` at `p`, dropping the value it replaces (after
     /// the store, so whatever the drop runs sees the new value).
-    fn any_replace(&mut self, p: Place, val: Operand, t: TyId) {
+    pub(super) fn any_replace(&mut self, p: Place, val: Operand, t: TyId) {
         let vt = self.cx.ty(t);
         let old = Place::local(self.copy_to_temp(Operand::Copy(p.clone()), vt));
         self.store(p, val);

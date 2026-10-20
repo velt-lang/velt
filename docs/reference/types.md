@@ -2231,8 +2231,10 @@ written `any`; until then each is a compile error.
 methods and accessors and what every object has from `Object.prototype` (`toString`), a
 `Record<string, V>` its keys and, unless `Object.create(null)` made it, what every object has,
 an array its `length`. A `null` or `undefined` value stops with
-Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`; an optional field
-(which may be absent) and an array index stop with a `TypeError` naming #823 for now.
+Node's `TypeError: Cannot use 'in' operator to search for 'k' in undefined`. An optional field
+of a nullable type (`a?: T | null`), which keeps "absent" apart, is there while present;
+another optional field (which cannot tell "absent" from a present `undefined`) and an array
+index stop with a `TypeError` naming #823 for now.
 
 A symbol constant is a key on an `any` too: `x[KEY]`, `x[KEY] = v` and `KEY in x` (with
 `const KEY = Symbol("k")`, or a well-known symbol such as `Symbol.iterator`) name the member
@@ -2377,7 +2379,12 @@ answers is completed: an accessor (`get` / `set`) or a data property, an attribu
 attributes)`, and `Reflect.set(t, k, v, p)` with a proxy `p` as the receiver runs `p`'s
 `getOwnPropertyDescriptor` and `defineProperty` traps, as Node does. `Reflect.defineProperty`
 of a plain value writes the value of an existing property; a new property, whose attributes
-left out are `false`, is a `TypeError` naming #823.
+left out are `false`, is a `TypeError` naming #823. `delete x.k` through `any` and
+`Reflect.deleteProperty(x, k)` of a value that is not a proxy remove a `Record`'s entry and make
+an optional field absent; a key the value doesn't have as its own (a class's methods are on its
+prototype) gives `true`, and an array's `length` gives `false` (`delete a.length` throws Node's
+`TypeError: Cannot delete property 'length' of [object Array]`). A field the value's type fixes
+can't be removed: that is a `TypeError` naming #823.
 
 A trap sees a symbol key as the symbol (`p[KEY]`, `KEY in p`, `delete p[KEY]`,
 `Object.hasOwn(p, KEY)` with a symbol constant `KEY`), and `Reflect.get(t, KEY)` /
@@ -2457,8 +2464,9 @@ answering one through `Reflect` works); a spread of a typed proxy (a `TypeError`
 descriptor's `value: undefined` (an optional `any` field cannot hold a present `undefined`,
 #930); array methods (`push`, `splice`, ...) and `length` writes through a proxy of an array;
 an interface value as a `WeakMap` key;
-an `ownKeys` trap answering an array-like object that is not an array; deleting a key through
-`any` from a value that is not a proxy, and `Reflect.defineProperty` of a plain value with
+an `ownKeys` trap answering an array-like object that is not an array; deleting a fixed field,
+an array element or a symbol-keyed member through `any` from a value that is not a proxy, and
+`Reflect.defineProperty` of a plain value with
 accessors or attributes other than `true`; proxies typed
 as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
 as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name

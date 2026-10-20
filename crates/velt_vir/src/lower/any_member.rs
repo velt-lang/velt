@@ -11,6 +11,7 @@
 //! | 8 | `AnyApply`: `(data, argv: *any, argc: u64, out: *any) -> u8` |
 //! | 9, 10 | `AnySet`, `AnySetIndex` (any_set.rs; only in a program that writes through `any`) |
 //! | 11 | `AnyHas` (any_has.rs; only in a program that tests `key in x` on an `any`) |
+//! | 15 | `AnyDelete` (any_delete.rs; only in a program that deletes through `any`) |
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
@@ -66,6 +67,9 @@ impl Cx<'_> {
         }
         if self.boxing.any_has {
             slots.push((super::any_has::SLOT_HAS, Glue::AnyHas));
+        }
+        if self.boxing.any_delete {
+            slots.push((super::any_delete::SLOT_DELETE, Glue::AnyDelete));
         }
         slots
             .into_iter()

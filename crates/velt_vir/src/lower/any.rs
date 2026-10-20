@@ -15,6 +15,7 @@
 //! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
 //! | 14 | `AnyJson` (json/any.rs), when the program writes a dynamic value as JSON |
+//! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
 //!
 //! Tables are built per concrete type and memoized, so two values of one type have the same
 //! table: a checked conversion compares one pointer.

@@ -733,9 +733,15 @@ export class Reflect {
 }
 
 /**
- * `delete o[k]` of a plain (not proxy) value `o`: a record's key is removed; other values'
+ * `delete o[k]` of a plain (not proxy) value `o`: a record's key is removed and an optional
+ * field made absent; a key `o` does not have is `true` and an array's `length` `false`. Other
  * properties are fixed by their types, which Velt cannot remove yet.
  */
 function proxyDeletePlain(o: any, k: string | symbol): boolean {
-  panic("TypeError: deleting a property of this value through `any` is not supported yet (#823)");
+  if (typeof k !== "string") {
+    panic(
+      "TypeError: deleting a symbol-keyed property of this value through `any` is not supported yet (#823)",
+    );
+  }
+  return __intrinsic_any_delete(o, k as string);
 }
