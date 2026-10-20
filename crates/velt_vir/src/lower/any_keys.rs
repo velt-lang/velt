@@ -13,7 +13,9 @@
 //! - arrays, tuples and strings: their indexes as strings;
 //! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
 //!   `Set`, an `Error`): none;
-//! - a proxy (its `ownKeys` trap) and `JsonValue`: not yet.
+//! - a proxy: `Proxy.__keys()` (std/prelude/zz_proxy.vlt), which runs its `ownKeys` and
+//!   `getOwnPropertyDescriptor` traps;
+//! - `JsonValue`: not yet.
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
@@ -79,7 +81,19 @@ impl FnLower<'_, '_> {
             local: out,
             proj: vec![Proj::Deref(self.cx.ty(sa))],
         };
-        if self.is_proxy(ty) || self.cx.is_json_value(ty) {
+        if self.is_proxy(ty) {
+            // Its `ownKeys` and `getOwnPropertyDescriptor` traps (`Proxy.__keys`).
+            let any = self.cx.any_ty();
+            let avt = self.cx.ty(any);
+            let res = Place::local(self.temp(avt));
+            if !self.proxy_invoke("__keys", data, ty, vec![], &res) {
+                return self.ret_status(ST_UNSUPPORTED);
+            }
+            let v = self.any_unbox(&res, any, sa);
+            self.store(outp, v);
+            return self.ret_status(ST_OK);
+        }
+        if self.cx.is_json_value(ty) {
             return self.ret_status(ST_UNSUPPORTED);
         }
         if self.prelude_record(ty).is_some() {

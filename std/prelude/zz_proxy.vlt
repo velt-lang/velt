@@ -15,6 +15,20 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**
+ * A property's attributes (TypeScript's `PropertyDescriptor`), as a `getOwnPropertyDescriptor`
+ * trap answers them and `Reflect.getOwnPropertyDescriptor` gives them. A data property has
+ * `value` and `writable` (accessor properties, with `get` and `set`, come later); an attribute
+ * left out is `false` (`value`: `undefined`). The fields are in the order Node prints a
+ * descriptor's.
+ */
+export type PropertyDescriptor = {
+  value?: any;
+  writable?: boolean;
+  enumerable?: boolean;
+  configurable?: boolean;
+};
+
+/**
  * The traps of a proxy (TypeScript's `ProxyHandler<T>`). Each is optional: an absent trap
  * forwards the operation to the target.
  */
@@ -25,6 +39,17 @@ export type ProxyHandler<T> = {
   set?: (target: any, p: string | symbol, newValue: any, receiver: any) => boolean;
   /** `key in p`. */
   has?: (target: any, p: string | symbol) => boolean;
+  /** `delete p[key]`: `false` makes the `delete` throw a `TypeError` (strict code). */
+  deleteProperty?: (target: any, p: string | symbol) => boolean;
+  /**
+   * The own keys of `p` (`Object.keys`, spreads, `Reflect.ownKeys`): an array of strings and
+   * symbols, each at most once.
+   */
+  ownKeys?: (target: any) => any;
+  /** The own property `key` of `p`, or `undefined` when it has none. */
+  getOwnPropertyDescriptor?: (target: any, p: string | symbol) => PropertyDescriptor | undefined;
+  /** `Reflect.defineProperty(p, key, attributes)`: whether the property was defined. */
+  defineProperty?: (target: any, p: string | symbol, attributes: PropertyDescriptor) => boolean;
 };
 
 /** The array index the string `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
@@ -57,6 +82,52 @@ function proxyReceiverCheck(op: string, target: any, receiver: any): void {
   }
 }
 
+/** JavaScript's `ToPropertyKey` of a key a trap or a `Reflect` function receives. */
+function proxyKey(key: any): string | symbol {
+  if (typeof key === "string") {
+    return key;
+  }
+  if (typeof key === "symbol") {
+    return key;
+  }
+  if (typeof key === "number") {
+    return `${key as number}`;
+  }
+  panic("TypeError: this property key is not supported through a proxy yet (#823)");
+}
+
+/** A key as Node's messages show it. */
+function proxyKeyText(key: string | symbol): string {
+  if (typeof key === "string") {
+    return key;
+  }
+  return String(key);
+}
+
+/** `Reflect.<op>(target, ...)` needs an object (or function) target, as in Node. */
+function reflectTarget(op: string, target: any): void {
+  if (target === null || (typeof target !== "object" && typeof target !== "function")) {
+    panic(`TypeError: Reflect.${op} called on non-object`);
+  }
+}
+
+/** A value as Node's "is not a valid property name" message shows it. */
+function proxyNameText(k: any): string {
+  if (k === undefined) {
+    return "undefined";
+  }
+  if (k === null) {
+    return "null";
+  }
+  if (typeof k === "number") {
+    return `${k as number}`;
+  }
+  if (typeof k === "boolean") {
+    return (k as boolean) ? "true" : "false";
+  }
+  return "[object Object]";
+}
+
 /**
  * A proxy for another object: the operations on it run the handler's traps. Create one with
  * `new Proxy(target, handler)`; the result is an `any`.
@@ -77,7 +148,15 @@ export class Proxy {
    */
   __plain(): boolean {
     const h = this.#handler;
-    return h.get == null && h.set == null && h.has == null;
+    return (
+      h.get == null &&
+      h.set == null &&
+      h.has == null &&
+      h.deleteProperty == null &&
+      h.ownKeys == null &&
+      h.getOwnPropertyDescriptor == null &&
+      h.defineProperty == null
+    );
   }
 
   /**
@@ -99,10 +178,7 @@ export class Proxy {
     if (trap == null) {
       return Reflect.get(this.#target, key, receiver);
     }
-    if (typeof key === "string") {
-      return trap(this.#target, key, receiver);
-    }
-    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+    return trap(this.#target, proxyKey(key), receiver);
   }
 
   /** `receiver[key] = value` where the write reached this proxy: the `set` trap. */
@@ -111,10 +187,7 @@ export class Proxy {
     if (trap == null) {
       return Reflect.set(this.#target, key, value, receiver);
     }
-    if (typeof key === "string") {
-      return trap(this.#target, key, value, receiver);
-    }
-    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+    return trap(this.#target, proxyKey(key), value, receiver);
   }
 
   /** `key in` this proxy: the `has` trap. */
@@ -123,10 +196,136 @@ export class Proxy {
     if (trap == null) {
       return Reflect.has(this.#target, key);
     }
-    if (typeof key === "string") {
-      return trap(this.#target, key);
+    return trap(this.#target, proxyKey(key));
+  }
+
+  /** `Reflect.deleteProperty(p, key)`: the `deleteProperty` trap; whether the key is gone. */
+  __deleteProperty(key: any): boolean {
+    const trap = this.#handler.deleteProperty;
+    if (trap == null) {
+      return Reflect.deleteProperty(this.#target, key);
     }
-    panic("TypeError: this property key is not supported through a proxy yet (#823)");
+    return trap(this.#target, proxyKey(key));
+  }
+
+  /** `delete p[key]` (strict code): `__deleteProperty`, and Node's `TypeError` on `false`. */
+  __delete(key: any): boolean {
+    if (!this.__deleteProperty(key)) {
+      const k = proxyKeyText(proxyKey(key));
+      panic(`TypeError: 'deleteProperty' on proxy: trap returned falsish for property '${k}'`);
+    }
+    return true;
+  }
+
+  /**
+   * The own keys of this proxy (`[[OwnPropertyKeys]]`): the `ownKeys` trap's answer, checked as
+   * Node checks it (an array of strings and symbols, each at most once).
+   */
+  __ownKeys(): (string | symbol)[] {
+    const trap = this.#handler.ownKeys;
+    if (trap == null) {
+      return Reflect.ownKeys(this.#target);
+    }
+    const res = trap(this.#target);
+    if (res === null || typeof res !== "object") {
+      panic("TypeError: CreateListFromArrayLike called on non-object");
+    }
+    if (!Array.isArray(res)) {
+      panic(
+        "TypeError: an `ownKeys` trap answering an array-like object is not supported yet (#823)",
+      );
+    }
+    const out: (string | symbol)[] = [];
+    const strings = new Map<string, boolean>();
+    const symbols: symbol[] = [];
+    for (const k of res) {
+      if (typeof k === "string") {
+        const s = k as string;
+        if (strings.has(s)) {
+          panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
+        }
+        strings.set(s, true);
+        out.push(s);
+      } else if (typeof k === "symbol") {
+        const y = k as symbol;
+        if (symbols.includes(y)) {
+          panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
+        }
+        symbols.push(y);
+        out.push(y);
+      } else {
+        panic(`TypeError: ${proxyNameText(k)} is not a valid property name`);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The own property `key` of this proxy (`[[GetOwnProperty]]`): the `getOwnPropertyDescriptor`
+   * trap's answer, completed (an attribute left out is `false`). A target's properties are all
+   * configurable, so a trap may not report one that is not (Node's `TypeError`).
+   */
+  __getOwnPropertyDescriptor(key: any): PropertyDescriptor | undefined {
+    const trap = this.#handler.getOwnPropertyDescriptor;
+    if (trap == null) {
+      return Reflect.getOwnPropertyDescriptor(this.#target, key);
+    }
+    const k = proxyKey(key);
+    const d = trap(this.#target, k);
+    if (d === undefined) {
+      return undefined;
+    }
+    if (d.configurable !== true) {
+      panic(
+        `TypeError: 'getOwnPropertyDescriptor' on proxy: trap reported non-configurability for property '${proxyKeyText(k)}' which is either non-existent or configurable in the proxy target`,
+      );
+    }
+    return {
+      configurable: true,
+      enumerable: d.enumerable === true,
+      value: d.value,
+      writable: d.writable === true,
+    };
+  }
+
+  /** `Reflect.defineProperty(p, key, attributes)`: the `defineProperty` trap. */
+  __defineProperty(key: any, attributes: PropertyDescriptor): boolean {
+    const trap = this.#handler.defineProperty;
+    if (trap == null) {
+      return Reflect.defineProperty(this.#target, key, attributes);
+    }
+    const k = proxyKey(key);
+    if (!trap(this.#target, k, attributes)) {
+      return false;
+    }
+    if (attributes.configurable === false) {
+      panic(
+        `TypeError: 'defineProperty' on proxy: trap returned truish for defining non-configurable property '${proxyKeyText(k)}' which is either non-existent or configurable in the proxy target`,
+      );
+    }
+    return true;
+  }
+
+  /**
+   * `Object.keys(p)`: the string keys `__ownKeys` lists whose property
+   * (`__getOwnPropertyDescriptor`) exists and is enumerable, in that order.
+   */
+  __keys(): string[] {
+    const out: string[] = [];
+    for (const k of this.__ownKeys()) {
+      if (typeof k === "string") {
+        const d = this.__getOwnPropertyDescriptor(k);
+        if (d !== undefined && d.enumerable === true) {
+          out.push(k);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** `Object.hasOwn(p, key)`: whether `__getOwnPropertyDescriptor` finds the property. */
+  __hasOwn(key: any): boolean {
+    return this.__getOwnPropertyDescriptor(key) !== undefined;
   }
 }
 
@@ -173,4 +372,85 @@ export class Reflect {
   static has(target: any, key: any): boolean {
     return key in target;
   }
+
+  /**
+   * The own keys of `target`: a proxy's `ownKeys` trap, or the keys `Object.keys` lists (and an
+   * array's `length`).
+   */
+  static ownKeys(target: any): (string | symbol)[] {
+    reflectTarget("ownKeys", target);
+    if (target instanceof Proxy) {
+      return target.__ownKeys();
+    }
+    const out: (string | symbol)[] = [];
+    for (const k of Object.keys(target)) {
+      out.push(k);
+    }
+    if (Array.isArray(target)) {
+      out.push("length");
+    }
+    return out;
+  }
+
+  /** `delete target[key]`; whether the key is gone (`false` instead of a `TypeError`). */
+  static deleteProperty(target: any, key: any): boolean {
+    reflectTarget("deleteProperty", target);
+    if (target instanceof Proxy) {
+      return target.__deleteProperty(key);
+    }
+    return proxyDeletePlain(target, proxyKey(key));
+  }
+
+  /**
+   * The own property `key` of `target`, or `undefined`: a proxy's `getOwnPropertyDescriptor`
+   * trap, or a data property of a plain value (writable, enumerable and configurable; an
+   * array's `length` is not enumerable).
+   */
+  static getOwnPropertyDescriptor(target: any, key: any): PropertyDescriptor | undefined {
+    reflectTarget("getOwnPropertyDescriptor", target);
+    if (target instanceof Proxy) {
+      return target.__getOwnPropertyDescriptor(key);
+    }
+    const k = proxyKey(key);
+    if (typeof k !== "string") {
+      return undefined;
+    }
+    const s = k as string;
+    if (Array.isArray(target) && s === "length") {
+      return { value: target.length, writable: true, enumerable: false, configurable: true };
+    }
+    if (!Object.hasOwn(target, s)) {
+      return undefined;
+    }
+    return { value: Reflect.get(target, s), writable: true, enumerable: true, configurable: true };
+  }
+
+  /**
+   * Defines the property `key` of `target` with `attributes`: a proxy's `defineProperty` trap,
+   * or on a plain value a write of `attributes.value` (other attributes are not supported yet).
+   */
+  static defineProperty(target: any, key: any, attributes: PropertyDescriptor): boolean {
+    reflectTarget("defineProperty", target);
+    if (target instanceof Proxy) {
+      return target.__defineProperty(key, attributes);
+    }
+    if (
+      attributes.writable === false ||
+      attributes.enumerable === false ||
+      attributes.configurable === false
+    ) {
+      panic(
+        "TypeError: Reflect.defineProperty with attributes other than true is not supported yet (#823)",
+      );
+    }
+    return Reflect.set(target, key, attributes.value);
+  }
+}
+
+/**
+ * `delete o[k]` of a plain (not proxy) value `o`: a record's key is removed; other values'
+ * properties are fixed by their types, which Velt cannot remove yet.
+ */
+function proxyDeletePlain(o: any, k: string | symbol): boolean {
+  panic("TypeError: deleting a property of this value through `any` is not supported yet (#823)");
 }

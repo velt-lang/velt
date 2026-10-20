@@ -84,6 +84,38 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `delete obj.k` / `delete obj[k]` where `obj` is an `any` or `object`: the prelude's
+    /// `__anyDelete(obj, key)` (a proxy runs its `deleteProperty` trap). `None` when `obj` is not
+    /// dynamic.
+    pub(super) fn dynamic_delete(
+        &mut self,
+        object: &ast::Expr,
+        key: &super::record::RecordKey<'_>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let t = self.trial_type(object)?;
+        let dynamic = self.cx.dynamic(t)?;
+        if dynamic == crate::any::Dynamic::Unknown {
+            self.unknown_use_error(object.span);
+            return Some(self.error_expr(span));
+        }
+        let k = match key {
+            super::record::RecordKey::Name(p) => {
+                super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(p.name.clone())), p.span)
+            }
+            super::record::RecordKey::Index(e) | super::record::RecordKey::Computed(e) => {
+                match self.symbol_key_of(e) {
+                    Some(name) => {
+                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), e.span)
+                    }
+                    None => (*e).clone(),
+                }
+            }
+        };
+        self.note_dyn_members();
+        Some(self.prelude_fn_call("__anyDelete", vec![object.clone(), k], span))
+    }
+
     /// `key in obj` where `obj` is an `any`: `Intrinsic::AnyHas` (a proxy runs its `has`
     /// trap). `None` when `obj` is not dynamic. The key is evaluated first, as in JavaScript.
     pub(crate) fn dynamic_in(

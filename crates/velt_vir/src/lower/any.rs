@@ -703,6 +703,9 @@ impl FnLower<'_, '_> {
                 false => format!("{e}[]"),
             };
         }
+        if let Some(shown) = self.object_type_name(ty) {
+            return shown;
+        }
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
             TyKind::Adt(_, args) if !args.is_empty() => {

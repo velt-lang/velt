@@ -2189,8 +2189,8 @@ of the value held, in JavaScript's order (integer-like keys first, ascending, th
 order): the fields of a class instance (a subclass's too) or object (an optional field only while
 present), a `Record`'s keys, an array's or a string's indexes as strings, and none for a number,
 a boolean, a function, a `Map` or a `Set`. `null` and `undefined` stop with Node's `TypeError:
-Cannot convert undefined or null to object`; a proxy stops with a `TypeError` naming #924 for
-now. `Object.keys` of an `unknown` is an error until it is narrowed, as in TypeScript. A spread
+Cannot convert undefined or null to object`; a proxy runs its traps ("Proxy and Reflect"
+below). `Object.keys` of an `unknown` is an error until it is narrowed, as in TypeScript. A spread
 of an `any` or `object` into an object literal (`{ ...a, b: 1 }`) builds a `Record<string, any>`
 with those keys and their values (`null` and `undefined` spread nothing):
 
@@ -2349,6 +2349,26 @@ and `Reflect.has(t, k)` do what `t[k]`, `t[k] = v` and `k in t` do; given a rece
 and `Reflect.set` pass it on to a target that is itself a proxy. `console.log(p)` prints the
 target, without running traps, as Node does.
 
+The handler's `ownKeys` trap lists the proxy's own keys and `getOwnPropertyDescriptor` describes
+one of them, so a proxy may have keys only its handler knows (an empty target). As in Node,
+`Object.keys(p)`, `Object.values(p)` and `Object.entries(p)` run `ownKeys`, then
+`getOwnPropertyDescriptor` for each string key (and `get` for an enumerable one, for values and
+entries); a spread `{ ...p }` does the same, key by key. `Object.hasOwn(p, k)` and
+`Object.prototype.hasOwnProperty.call(p, k)` run `getOwnPropertyDescriptor`. `delete p.k` and
+`delete p[k]` run the `deleteProperty` trap, and a trap that returns `false` throws Node's
+`TypeError: 'deleteProperty' on proxy: trap returned falsish for property 'k'`. A trap the
+handler leaves out forwards to the target: its keys are what `Object.keys` lists, each a data
+property (writable, enumerable and configurable). `Reflect.ownKeys(t)`,
+`Reflect.deleteProperty(t, k)`, `Reflect.getOwnPropertyDescriptor(t, k)` and
+`Reflect.defineProperty(t, k, attributes)` are those operations as functions (a
+`PropertyDescriptor` is `{ value?, writable?, get?, set?, enumerable?, configurable? }`), and a
+target that is not an object stops with Node's `TypeError: Reflect.ownKeys called on
+non-object`. The checks Node makes on what these traps answer apply: an `ownKeys` answer must be
+an array of strings and symbols without duplicates, and since a Velt object's properties are
+all configurable, a `getOwnPropertyDescriptor` answer must say `configurable: true` (Node's
+`TypeError` otherwise). The handler's `defineProperty` trap runs for `Reflect.defineProperty(p,
+k, attributes)`.
+
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
 TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). `new Proxy(target, handler)`
 is an `any`, which converts to the class or object type the context expects (`as State`, an
@@ -2412,8 +2432,11 @@ function main(): void {
 }
 ```
 
-**Planned** (#823): the `deleteProperty`, `ownKeys`, `getOwnPropertyDescriptor` and
-`defineProperty` traps and their `Reflect` functions; symbol keys through a proxy; proxies typed
+**Planned** (#823): symbol keys through a proxy (a symbol constant reaches a trap as the name of
+the member it keys); `Object.keys` and spreads of a typed proxy (they list the type's fields);
+an `ownKeys` trap answering an array-like object that is not an array; deleting a key through
+`any` from a value that is not a proxy, and `Reflect.defineProperty` of a plain value with
+accessors or attributes other than `true`; proxies typed
 as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
 as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
 of a class; an async method called through a proxy with a `get` trap; a method call through an

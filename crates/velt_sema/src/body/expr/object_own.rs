@@ -78,8 +78,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` of an `any` or
-    /// `object` `o` with a `string` key: the prelude's `__anyHasOwn(o, k)`, which asks the value
-    /// held (`None`: `o` is not one of them).
+    /// `object` `o` with a `string`, `symbol` or `string | symbol` key: the prelude's
+    /// `__anyHasOwn(o, k)`, which asks the value held (`None`: `o` is not one of them).
     pub(super) fn any_has_own(&mut self, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
         let [o, k] = args else {
             return None;
@@ -90,12 +90,23 @@ impl FnCx<'_, '_> {
             return None;
         }
         let kt = self.trial_type(k)?;
-        if self.cx.widened(kt) != self.cx.ty.str_ {
+        // A `string | symbol` key (a proxy trap's) or an `any` one is checked when it arrives.
+        let wk = self.cx.widened(kt);
+        let keyed = wk == self.cx.ty.str_
+            || self.string_or_symbol(kt)
+            || matches!(self.cx.ty.kind(wk), TyKind::Symbol)
+            || self.cx.dynamic(kt) == Some(crate::any::Dynamic::Any);
+        if !keyed {
             return None;
         }
+        // A symbol constant names the member it keys, as in `KEY in o`.
+        let k = match self.symbol_key_of(k) {
+            Some(name) => synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span),
+            None => k.clone(),
+        };
         // The keys are listed through the value's descriptor (a record's by its methods).
         self.note_dyn_members();
-        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
+        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k], span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).

@@ -220,4 +220,31 @@ impl FnLower<'_, '_> {
     fn any_drop_args_all(&mut self, argv: vir::Local, argc: vir::Local) {
         self.any_drop_args(argv, 0, argc);
     }
+
+    /// An object type as TypeScript writes it, for a `TypeError` (`object { x: number }`); its
+    /// own name spells its fields' internal types. `None` for other types.
+    pub(super) fn object_type_name(&self, ty: TyId) -> Option<String> {
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return None;
+        };
+        if a.kind != hir::AdtKind::Anon || !args.is_empty() {
+            return None;
+        }
+        let fields: Vec<String> = a
+            .fields
+            .iter()
+            .map(|f| {
+                let (q, t) = match (f.optional, self.cx.kind(f.ty)) {
+                    (true, TyKind::Option(inner, _)) => ("?", inner),
+                    (true, _) => ("?", f.ty),
+                    _ => ("", f.ty),
+                };
+                format!("{}{q}: {}", f.name, self.any_target_name(t))
+            })
+            .collect();
+        Some(format!("object {{ {} }}", fields.join("; ")))
+    }
 }

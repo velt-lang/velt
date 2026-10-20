@@ -90,6 +90,18 @@ export function __spreadAny(r: Record<string, any>, o: any): void {
   if (o === null || o === undefined) {
     return;
   }
+  if (o instanceof Proxy) {
+    // Node's order: the keys first, then each key's property and value in turn.
+    for (const k of o.__ownKeys()) {
+      if (typeof k === "string") {
+        const d = o.__getOwnPropertyDescriptor(k);
+        if (d !== undefined && d.enumerable === true) {
+          r.__set(k, o.__get(k, o));
+        }
+      }
+    }
+    return;
+  }
   for (const k of Object.keys(o)) {
     r.__set(k, __anyMember(o, k));
   }
@@ -97,9 +109,17 @@ export function __spreadAny(r: Record<string, any>, o: any): void {
 
 /**
  * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
- * array's or string's `length`.
+ * array's or string's `length`; a proxy's `getOwnPropertyDescriptor` trap.
  */
-export function __anyHasOwn(o: any, k: string): boolean {
+export function __anyHasOwn(o: any, key: string | symbol): boolean {
+  if (o instanceof Proxy) {
+    return o.__hasOwn(key);
+  }
+  if (typeof key !== "string") {
+    // Symbol-keyed members are not among the keys `Object.keys` lists.
+    return false;
+  }
+  const k = key as string;
   if ((Array.isArray(o) || typeof o === "string") && k === "length") {
     return true;
   }
@@ -123,14 +143,40 @@ function __anyMember(o: any, k: string): any {
 /** `Object.values(o)` of an `any` (or `object`) `o`. */
 export function __anyValues(o: any): any[] {
   const out: any[] = [];
+  if (o instanceof Proxy) {
+    for (const [_, v] of __proxyEntries(o)) {
+      out.push(v);
+    }
+    return out;
+  }
   for (const k of Object.keys(o)) {
     out.push(__anyMember(o, k));
   }
   return out;
 }
 
+/**
+ * The enumerable own entries of the proxy `p`, in Node's order: its keys, then for each string
+ * key its property and, when that is enumerable, its value.
+ */
+function __proxyEntries(p: Proxy): [string, any][] {
+  const out: [string, any][] = [];
+  for (const k of p.__ownKeys()) {
+    if (typeof k === "string") {
+      const d = p.__getOwnPropertyDescriptor(k);
+      if (d !== undefined && d.enumerable === true) {
+        out.push([k, p.__get(k, p)]);
+      }
+    }
+  }
+  return out;
+}
+
 /** `Object.entries(o)` of an `any` (or `object`) `o`. */
 export function __anyEntries(o: any): [string, any][] {
+  if (o instanceof Proxy) {
+    return __proxyEntries(o);
+  }
   const out: [string, any][] = [];
   for (const k of Object.keys(o)) {
     out.push([k, __anyMember(o, k)]);
@@ -208,4 +254,18 @@ export function __anyTagUnsupported(name: string): string {
   panic(
     `TypeError: \`Object.prototype.toString.call\` of a ${name} through \`any\` is not supported yet (#924)`,
   );
+}
+
+/**
+ * `delete o.k` / `delete o[k]` of an `any` (or `object`) `o` (strict code): a proxy's
+ * `deleteProperty` trap, which throws Node's `TypeError` when it answers `false`.
+ */
+export function __anyDelete(o: any, k: any): boolean {
+  if (o === null || o === undefined) {
+    panic("TypeError: Cannot convert undefined or null to object");
+  }
+  if (o instanceof Proxy) {
+    return o.__delete(k);
+  }
+  return Reflect.deleteProperty(o, k);
 }

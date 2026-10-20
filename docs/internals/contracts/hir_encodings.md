@@ -845,7 +845,11 @@ entry is an `ICE:`.
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
   `Proxy` class's `any` table call its `__get(key, receiver)`, `__set(key, value, receiver)`
   and `__has(key)` (velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward
-  to the target. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
+  to the target; its keys slot (`AnyKeys`) calls `__keys()` (the `ownKeys` and
+  `getOwnPropertyDescriptor` traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
+  call of the prelude's `__anyDelete(o, k)` (a proxy's `deleteProperty` trap), and the
+  prelude's spread, `Object.hasOwn`, `Object.values` and `Object.entries` helpers for `any`
+  (std/prelude/zzz_adapt.vlt) run a proxy's traps in Node's order. The prelude's own dynamic operations don't set `Program::dyn_members`; a `new
   Proxy` or a `Reflect.*` call in the program's own code does, and a `Reflect.set` call counts
   as a write of every field for `object_copies` (a `new Proxy` does not: every write reaching
   a target through a proxy starts at a noted write). Lowering recognizes the two classes by
