@@ -1,0 +1,40 @@
+// `u8[].set(src, offset)` for every length 0 to 70 at offsets 0, 1, 7 and 30, against a byte
+// loop: 16 to 64 bytes are copied as 16-byte chunks without a runtime call, the rest by the
+// runtime; bytes outside the target range are untouched, and a source that does not fit is a
+// RangeError either way.
+function main() {
+  let checked = 0;
+  for (let n: usize = 0; n <= 70; n++) {
+    for (const offset of [0, 1, 7, 30]) {
+      const at = offset as usize;
+      const src: u8[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        src.push(((i * 37 + n) & 255) as u8);
+      }
+      const dst: u8[] = [];
+      for (let i: usize = 0; i < 110; i++) {
+        dst.push(((i * 11 + 200) & 255) as u8);
+      }
+      const want = dst.slice();
+      for (let i: usize = 0; i < n; i++) {
+        want[at + i] = src[i];
+      }
+      dst.set(src, at);
+      for (let i: usize = 0; i < 110; i++) {
+        if (dst[i] != want[i]) {
+          console.log("mismatch", n, offset, i, dst[i], want[i]);
+        }
+      }
+      checked++;
+    }
+  }
+  console.log("checked", checked);
+  // Exactly filling the target, from the fast path's sizes.
+  const full: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const twenty: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+  full.set(twenty, 0);
+  console.log(full.join(","));
+  // One byte past the end: a RangeError, also for a fast-path size.
+  const small: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  small.set(twenty, 1);
+}

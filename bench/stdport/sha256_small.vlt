@@ -11,9 +11,7 @@ function main() {
   let digest: u8[] = [];
   for (let round = 0; round < 500000; round++) {
     digest = sha256(message);
-    for (let i: usize = 0; i < 32; i++) {
-      message[i] = digest[i];
-    }
+    message.set(digest, 0);
   }
   console.log(hexEncode(digest));
 }
