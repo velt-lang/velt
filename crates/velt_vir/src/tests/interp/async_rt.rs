@@ -4,7 +4,7 @@
 //! to the earliest sleep deadline. Heap futures live in interpreter memory (header 16 bytes,
 //! result/state at +16) so leak checks cover them; their behavior is kept in `futs`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{Interp, FUNC_BASE};
 
@@ -76,7 +76,7 @@ struct Task {
 
 #[derive(Default)]
 pub(super) struct Exec {
-    pub futs: HashMap<u64, Fut>,
+    pub futs: FxHashMap<u64, Fut>,
     tasks: Vec<Task>,
     /// Inside `block_on`: promises are started only while tasks run (local.rs).
     pub running: bool,

@@ -10,7 +10,7 @@
 //! which reports what can't be evaluated at that instantiation; struct, class and object types are
 //! walked through their fields, so a field of a deferred type is reduced too.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -41,11 +41,11 @@ pub(crate) fn reach(cx: &mut Ctx) {
     let mut rounds = Rounds::new(uses.len(), reads);
     // The generic deferred types each function's instances need, with their guard bits
     // (`inst_sites::carry_guard`).
-    let mut needs: HashMap<DefId, Vec<(TyId, u64)>> = HashMap::new();
+    let mut needs: FxHashMap<DefId, Vec<(TyId, u64)>> = FxHashMap::default();
     // The param calls whose receiver is generic in each function.
-    let mut pneeds: HashMap<DefId, Vec<ParamCall>> = HashMap::new();
+    let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
     // Concrete deferred types reduced so far.
-    let mut reduced: HashSet<TyId> = HashSet::new();
+    let mut reduced: FxHashSet<TyId> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         let mut found: Vec<(TyId, u64)> = vec![];
@@ -92,7 +92,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 grew = true;
             }
         }
-        let mut walked = HashSet::new();
+        let mut walked = FxHashSet::default();
         let mut own = vec![];
         for (t, _) in &u.types {
             ops_in(cx, *t, &mut walked, &mut own);
@@ -144,7 +144,7 @@ fn at(cx: &mut Ctx, k: TyId, args: &[TyId]) -> TyId {
 
 /// Adds to `out` every deferred type `t` holds, through the fields of structs, classes and
 /// object types (with their arguments) too. `walked`: types already walked (recursive types end).
-fn ops_in(cx: &mut Ctx, t: TyId, walked: &mut HashSet<TyId>, out: &mut Vec<TyId>) {
+fn ops_in(cx: &mut Ctx, t: TyId, walked: &mut FxHashSet<TyId>, out: &mut Vec<TyId>) {
     let kind = cx.ty.kind(t).clone();
     if let TyKind::Op(..) = kind {
         out.push(t);

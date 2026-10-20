@@ -12,7 +12,7 @@
 //!   ([`Ctx::link_part_ifaces`]), so a read shares the field's value and a write changes the
 //!   object itself.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -26,11 +26,11 @@ use crate::iface_writes::SetterSrc;
 pub(crate) struct PartIfaces {
     /// Per part, as written over its own type parameters: the interface and those parameters
     /// (the interface's arguments, in its parameter order).
-    by_part: HashMap<TyId, (DefId, Vec<u32>)>,
+    by_part: FxHashMap<TyId, (DefId, Vec<u32>)>,
     /// The interfaces, in creation order: (interface, part over the interface's parameters).
     list: Vec<(DefId, TyId)>,
     /// (interface, object type def) pairs implemented.
-    linked: HashSet<(DefId, DefId)>,
+    linked: FxHashSet<(DefId, DefId)>,
 }
 
 /// A member of an intersection's object part, read through its interface's slots.

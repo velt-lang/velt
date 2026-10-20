@@ -2,7 +2,7 @@
 //! must keep one object, while sharing an object type that is never changed in place may copy
 //! it field by field (semantics stage 2, hir_encodings.md "Sharing").
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -10,8 +10,8 @@ use crate::hir::{AdtKind, Def, DefId, Expr, ExprKind as E, TyKind};
 use crate::visit;
 
 /// The definitions of every type whose field is the target of an assignment in some body.
-pub(crate) fn assigned_objects(cx: &mut Ctx) -> HashSet<DefId> {
-    let mut out = HashSet::new();
+pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
+    let mut out = FxHashSet::default();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;
@@ -31,7 +31,7 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> HashSet<DefId> {
     // `{ a: string }` are different defs holding the same values (`crate::anon`, and `velt_vir`
     // lays them out as one). Defs with the same field names must therefore agree, or the two
     // forms would be shared differently.
-    let mut by_names: HashMap<Vec<String>, Vec<DefId>> = HashMap::new();
+    let mut by_names: FxHashMap<Vec<String>, Vec<DefId>> = FxHashMap::default();
     for (i, info) in cx.info.iter().enumerate() {
         if let DefInfo::Adt(a) = info {
             if a.kind == AdtKind::Anon {

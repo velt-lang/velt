@@ -16,7 +16,7 @@
 //! tells objects from primitives; they convert to `any` / `unknown` as they are.
 
 use crate::ctx::Ctx;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::defs::{is_private_key, is_setter_key, key_member_name};
 use crate::hir::{DefId, DynMember, DynMemberKind, ImplDef, Nothing, TyId, TyKind};
@@ -227,11 +227,11 @@ impl Ctx<'_> {
 /// `Program::dyn_members`: every struct / class / object type's methods and accessors by name
 /// (own ones first, then each base class's that are not overridden), then its `readonly`
 /// fields, when a member of an `any` is read, called or written; `None` otherwise.
-pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<HashMap<DefId, Vec<DynMember>>> {
+pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember>>> {
     if !cx.any.is_some_and(|a| a.members) {
         return None;
     }
-    let mut out = HashMap::new();
+    let mut out = FxHashMap::default();
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         let Some(a) = cx.adt(d) else { continue };

@@ -8,7 +8,7 @@
 //! every closure environment, the concrete types put into interface values, and the concrete
 //! classes of each hierarchy (`Facts`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -41,7 +41,7 @@ impl Cx<'_> {
     /// Fill `next.transferred` with the counted types (as `next` counts them) reachable from the
     /// transferred types of this pass.
     pub(super) fn close_transfers(&mut self, next: &mut Boxing) {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut work: Vec<TyId> = self.facts.transfers.iter().copied().collect();
         let (mut captures_done, mut impls_done) = (false, false);
         while let Some(t) = work.pop() {

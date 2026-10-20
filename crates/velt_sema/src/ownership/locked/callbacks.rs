@@ -4,7 +4,7 @@
 //! function parameter that reaches `with`, the closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
 //! not visible, so its type and the functions it may be are checked (`super::opaque`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use super::values::Resolver;
 use crate::ctx::Ctx;
@@ -21,7 +21,7 @@ pub(super) struct Found {
     /// Opaque callbacks: the function passing them, and the argument expressions.
     pub(super) opaque: Vec<(DefId, Expr)>,
     /// `(function, parameter index)` of parameters passed to `with` as the callback.
-    params: HashSet<(DefId, usize)>,
+    params: FxHashSet<(DefId, usize)>,
 }
 
 /// Every callback of the program's `with` calls.

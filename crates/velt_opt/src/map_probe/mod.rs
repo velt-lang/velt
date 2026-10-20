@@ -25,7 +25,7 @@ pub(crate) mod region;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{
     AggLayout, Callee, ExternId, FuncId, Function, Operand, Place, Program, Rvalue, Stmt,
@@ -53,11 +53,11 @@ const STR_CLONE: &str = "velt_rt_str_clone";
 /// The functions this pass knows, by id in one program.
 pub(crate) struct Probes {
     /// `Map.lookup` instances (pure, may be reused) and their parameter types.
-    lookups: HashMap<FuncId, Vec<Ty>>,
+    lookups: FxHashMap<FuncId, Vec<Ty>>,
     /// `velt_rt_str_hash`: pure, may be reused.
     hash: Option<ExternId>,
     /// Externs that write no memory.
-    read_only: HashSet<ExternId>,
+    read_only: FxHashSet<ExternId>,
     clone: Option<ExternId>,
     /// `velt_rt_alloc`: returns fresh memory, writes nothing a probe can read.
     alloc: Option<ExternId>,

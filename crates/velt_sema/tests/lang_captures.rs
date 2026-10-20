@@ -97,3 +97,35 @@ fn a_closure_that_went_out_of_scope_does_not_pin_its_captures() {
     );
     assert!(!boxed(&p, "main", "w"));
 }
+
+#[test]
+fn per_iteration_errors_come_in_declaration_order() {
+    // Each `for (let …)` head variable a closure created inside a stored closure assigns is an
+    // error; they are reported in the order the variables are declared, not in the order of a
+    // hash set.
+    let loop_ = |v: &str| {
+        format!(
+            "for (let {v} = 0, n = 0; n < 3; n++) {{
+               fs.push(() => {{ const g = () => {{ {v} += 10; }}; g(); return {v}; }}); }}"
+        )
+    };
+    let src = format!(
+        "function main() {{ const fs: (() => number)[] = []; {} {} {} {}
+           console.log(fs.length); }}",
+        loop_("a"),
+        loop_("b"),
+        loop_("c"),
+        loop_("d")
+    );
+    let r = err_src(&src);
+    let at = |v: &str| {
+        r.find(&format!(
+            "`{v}` is assigned by a closure created inside another closure"
+        ))
+        .unwrap_or_else(|| panic!("no error for `{v}`:\n{r}"))
+    };
+    assert!(
+        at("a") < at("b") && at("b") < at("c") && at("c") < at("d"),
+        "{r}"
+    );
+}

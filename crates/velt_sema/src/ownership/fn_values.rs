@@ -9,7 +9,7 @@
 //!   fixed ABI), keeping a copy of a borrowed function value is an error
 //!   ([`borrowed_fn_copy`]); moving it is already one (`super::validate`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -56,7 +56,7 @@ pub(super) fn escape_closure(cx: &mut Ctx, def: DefId) -> bool {
 
 /// The borrowed function-typed parameters and captures of `f` (body of `d`): closures that may
 /// live in a caller's frame, which `f` must not keep (see [`borrowed_fn_copy`]).
-pub(super) fn borrowed_fn_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<LocalId> {
+pub(super) fn borrowed_fn_locals(cx: &Ctx, d: DefId, f: &FnDef) -> FxHashSet<LocalId> {
     let info = cx.fn_info(d);
     (0..f.body.locals.len())
         .map(|i| LocalId(i as u32))

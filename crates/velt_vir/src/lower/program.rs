@@ -1,7 +1,8 @@
 //! Program-level lowering state: interning of externs and static data, and the worklist of
 //! functions to build ([`Work`] → [`FuncId`], each built exactly once, in request order).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 use velt_sema::hir::{self, DefId};
 
@@ -33,32 +34,32 @@ impl<'h> Cx<'h> {
                 fields: vec![(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)],
             }],
             externs: vec![],
-            extern_map: HashMap::new(),
+            extern_map: FxHashMap::default(),
             statics: vec![],
             module_desc: None,
             reassigned_slots: None,
             prelude_error: None,
-            static_map: HashMap::new(),
-            tables: HashMap::new(),
+            static_map: FxHashMap::default(),
+            tables: FxHashMap::default(),
             funcs: vec![],
-            work_map: HashMap::new(),
+            work_map: FxHashMap::default(),
             queue: VecDeque::new(),
-            building: HashSet::new(),
-            asyncs: HashMap::new(),
-            by_ref_params: HashSet::new(),
-            shared_envs: HashMap::new(),
+            building: FxHashSet::default(),
+            asyncs: FxHashMap::default(),
+            by_ref_params: FxHashSet::default(),
+            shared_envs: FxHashMap::default(),
             lay: Layouts::default(),
             locs: None,
             debug: None,
-            tracked: HashMap::new(),
-            str_objects: HashMap::new(),
+            tracked: FxHashMap::default(),
+            str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
             own_clones: None,
-            honoured_clones: HashMap::new(),
-            dyn_modes_memo: HashMap::new(),
+            honoured_clones: FxHashMap::default(),
+            dyn_modes_memo: FxHashMap::default(),
             json_key_memo: None,
             anon: Default::default(),
             cur_def: None,
@@ -68,7 +69,7 @@ impl<'h> Cx<'h> {
 
     /// Errors for `nothing_clashes`, one per function.
     pub(super) fn nothing_clash_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut out = vec![];
         for d in &self.nothing_clashes {
             if !seen.insert(*d) {

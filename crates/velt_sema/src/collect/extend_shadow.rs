@@ -4,7 +4,7 @@
 //! wrong result rather than an error. Until `extend` methods can be overridden, the redefinition
 //! is an error (docs/reference/classes.md, "extend"; #1133 makes them virtual).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -14,7 +14,7 @@ use crate::hir::{AdtKind, DefId};
 
 pub(super) fn check(cx: &mut Ctx) {
     // The instance members of `extend` blocks, by the class they extend: name, definition.
-    let mut extended: HashMap<DefId, Vec<(String, DefId)>> = HashMap::new();
+    let mut extended: FxHashMap<DefId, Vec<(String, DefId)>> = FxHashMap::default();
     for e in &cx.extensions {
         let Some((d, _)) = cx.class_of(e.target) else {
             continue;

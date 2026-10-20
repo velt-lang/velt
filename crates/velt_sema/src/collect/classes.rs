@@ -3,7 +3,8 @@
 //! overrides (whole-program), laid out base slots first. Constructors are inherited when a class
 //! declares none; fields without a default need a constructor that initializes them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -20,7 +21,7 @@ pub(super) fn check_classes(cx: &mut Ctx) {
         .filter(|d| cx.adt(*d).is_some_and(|a| a.decl.is_some()))
         .collect();
     let mut order = vec![];
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     for &d in &adts {
         base_first(cx, d, &mut seen, &mut order);
     }
@@ -37,7 +38,7 @@ fn base_of_def(cx: &Ctx, d: DefId) -> Option<DefId> {
     cx.class_of(base).map(|(b, _)| b)
 }
 
-fn base_first(cx: &Ctx, d: DefId, seen: &mut HashSet<DefId>, order: &mut Vec<DefId>) {
+fn base_first(cx: &Ctx, d: DefId, seen: &mut FxHashSet<DefId>, order: &mut Vec<DefId>) {
     if !seen.insert(d) {
         return;
     }
@@ -142,7 +143,7 @@ fn has_default(cx: &Ctx, c: DefId, name: &str) -> bool {
 /// A class's vtable while it is being laid out.
 struct Vtable {
     entries: Vec<DefId>,
-    slots: HashMap<String, u32>,
+    slots: FxHashMap<String, u32>,
 }
 
 impl Vtable {
@@ -167,7 +168,7 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
         }
         None => Vtable {
             entries: vec![],
-            slots: HashMap::new(),
+            slots: FxHashMap::default(),
         },
     };
     own_methods(cx, d, overridden, &mut vt);

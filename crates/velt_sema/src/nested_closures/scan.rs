@@ -1,7 +1,7 @@
 //! What code refers to and binds, for [`super`]: names used as values (`typeof x` in types
 //! included) and names bound by variables and parameters, at any depth.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 
@@ -9,9 +9,9 @@ use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
 #[derive(Default)]
 pub(crate) struct Scan {
     /// Names used as values.
-    pub refs: HashSet<String>,
+    pub refs: FxHashSet<String>,
     /// Names bound by variables and parameters (not nested function names).
-    pub binds: HashSet<String>,
+    pub binds: FxHashSet<String>,
     /// `this` appears.
     pub this: bool,
     /// A function declaration appears inside a body.

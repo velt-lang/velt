@@ -23,7 +23,7 @@
 //! `shared(...)` fix-it. So what a local holds is reached by type, not only when the local is
 //! (what it holds may be shared: a field read out of it, an array handed to a constructor).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -52,7 +52,7 @@ pub(super) fn check_handler_callbacks(
     cx: &mut Ctx,
     g: &Graph,
     flags: &[u8],
-    handlers: &HashMap<DefId, Option<Why>>,
+    handlers: &FxHashMap<DefId, Option<Why>>,
 ) {
     let mut work: Vec<(usize, Why)> = g
         .seeds
@@ -86,8 +86,8 @@ pub(super) fn check_handler_callbacks(
         bodies.homes = homes(cx, g);
     }
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
-    let mut seen = HashSet::new();
-    let mut fns: HashMap<TyId, Why> = HashMap::new();
+    let mut seen = FxHashSet::default();
+    let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
         while let Some((n, w)) = work.pop() {
@@ -139,7 +139,7 @@ pub(super) fn check_handler_callbacks(
             _ => None,
         })
         .collect();
-    let requests: HashSet<DefId> = reached
+    let requests: FxHashSet<DefId> = reached
         .iter()
         .filter(|(c, ..)| matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if f.is_async))
         .map(|(c, ..)| *c)
@@ -183,7 +183,7 @@ pub(super) fn check_handler_callbacks(
 /// Is capture `cap` of closure `c` a variable declared inside one of `requests` (a request's
 /// closure or a closure made inside one), so that each request has its own? Followed through
 /// the captures of the closures `c` is made in, up to the function declaring the variable.
-fn request_local(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId, requests: &HashSet<DefId>) -> bool {
+fn request_local(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId, requests: &FxHashSet<DefId>) -> bool {
     let (mut d, mut l) = (c, cap);
     for _ in 0..64 {
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
@@ -202,7 +202,7 @@ fn request_local(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId, requests: &HashSet
 }
 
 /// Is closure `c` made inside one of `requests`?
-fn made_by(g: &Graph, c: DefId, requests: &HashSet<DefId>) -> bool {
+fn made_by(g: &Graph, c: DefId, requests: &FxHashSet<DefId>) -> bool {
     let mut d = c;
     for _ in 0..64 {
         match g.parent.get(&d) {
@@ -242,7 +242,7 @@ fn each_expr(b: &Block, f: &mut dyn FnMut(&Expr)) {
 /// `nested_only`: only in the closures it makes.
 fn assigned_captures(cx: &Ctx, f: &FnDef, nested_only: bool) -> Vec<(LocalId, Span)> {
     // `f`'s captures, by the local each one is in the function being searched.
-    let caps: HashMap<LocalId, LocalId> = f.captures.iter().map(|c| (c.inner, c.inner)).collect();
+    let caps: FxHashMap<LocalId, LocalId> = f.captures.iter().map(|c| (c.inner, c.inner)).collect();
     let mut out: Vec<(LocalId, Span)> = vec![];
     assignments(cx, f, &caps, &mut out, 0, nested_only);
     out
@@ -253,7 +253,7 @@ fn assigned_captures(cx: &Ctx, f: &FnDef, nested_only: bool) -> Vec<(LocalId, Sp
 fn assignments(
     cx: &Ctx,
     f: &FnDef,
-    caps: &HashMap<LocalId, LocalId>,
+    caps: &FxHashMap<LocalId, LocalId>,
     out: &mut Vec<(LocalId, Span)>,
     depth: u32,
     skip: bool,
@@ -281,7 +281,7 @@ fn assignments(
         let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] else {
             continue;
         };
-        let kcaps: HashMap<LocalId, LocalId> = kf
+        let kcaps: FxHashMap<LocalId, LocalId> = kf
             .captures
             .iter()
             .filter_map(|c| caps.get(&c.outer).map(|&cap| (c.inner, cap)))

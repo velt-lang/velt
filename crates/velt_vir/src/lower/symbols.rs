@@ -37,7 +37,7 @@ fn record_key(id: u128, described: bool) -> u64 {
 /// The records of the compiler's symbols and the registry table.
 #[derive(Default)]
 pub(super) struct SymbolRecords {
-    by_id: std::collections::HashMap<u128, StaticId>,
+    by_id: rustc_hash::FxHashMap<u128, StaticId>,
     /// The registry's records, in the order they were made.
     registered: Vec<StaticId>,
     /// The table `SymbolRegistry` gives, filled when lowering is done (`fill_registry`).

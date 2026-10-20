@@ -12,7 +12,7 @@
 //! ([`crate::dispatch::Rounds`]), and reports the concrete ones that are not keys. Lowering never
 //! sees a record with another key.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -102,7 +102,7 @@ type Req = (TyId, Span, DefId, u64);
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let mut uses = inst_sites::collect(cx, false);
-    let mut memo: HashMap<TyId, Vec<TyId>> = HashMap::new();
+    let mut memo: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
     let mut dispatch = Dispatch::default();
     for (_, u) in &mut uses {
         for (t, span) in &u.types {
@@ -117,12 +117,12 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work;
-    let mut needs: HashMap<DefId, Vec<Need>> = HashMap::new();
+    let mut needs: FxHashMap<DefId, Vec<Need>> = FxHashMap::default();
     // The param calls whose receiver is generic in each function.
-    let mut pneeds: HashMap<DefId, Vec<ParamCall>> = HashMap::new();
+    let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
     // Concrete keys per (function, key): the span and origin to report a bad one with.
     let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
-    let mut seen: HashSet<(DefId, TyId, DefId)> = HashSet::new();
+    let mut seen: FxHashSet<(DefId, TyId, DefId)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
@@ -172,9 +172,9 @@ fn requirements(
     cx: &mut Ctx,
     f: DefId,
     u: &Uses,
-    needs: &HashMap<DefId, Vec<Need>>,
-    pneeds: &HashMap<DefId, Vec<ParamCall>>,
-    memo: &mut HashMap<TyId, Vec<TyId>>,
+    needs: &FxHashMap<DefId, Vec<Need>>,
+    pneeds: &FxHashMap<DefId, Vec<ParamCall>>,
+    memo: &mut FxHashMap<TyId, Vec<TyId>>,
 ) -> (Vec<Req>, Vec<(ParamCall, Span)>) {
     let mut reqs = vec![];
     let mut pending = u.param_calls.clone();
@@ -221,13 +221,13 @@ fn requirements(
 /// Report each bad key once per function, preferably where a generic function brought it in.
 fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
     // The first entry per (function, key) that a generic function brought in.
-    let mut brought: HashMap<(DefId, TyId), (Span, DefId)> = HashMap::new();
+    let mut brought: FxHashMap<(DefId, TyId), (Span, DefId)> = FxHashMap::default();
     for (fk, span, origin) in concrete {
         if *origin != fk.0 {
             brought.entry(*fk).or_insert((*span, *origin));
         }
     }
-    let mut done: HashSet<(DefId, TyId)> = HashSet::new();
+    let mut done: FxHashSet<(DefId, TyId)> = FxHashSet::default();
     let mut picked = vec![];
     for (fk, span, origin) in concrete {
         if done.insert(*fk) {
@@ -259,7 +259,7 @@ fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
 fn keys_in(
     cx: &mut Ctx,
     t: TyId,
-    memo: &mut HashMap<TyId, Vec<TyId>>,
+    memo: &mut FxHashMap<TyId, Vec<TyId>>,
     stack: &mut Vec<TyId>,
 ) -> Vec<TyId> {
     if let Some(ks) = memo.get(&t) {
