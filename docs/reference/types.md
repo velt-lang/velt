@@ -616,7 +616,11 @@ nothings alike:
   and `x &&= d`). The target may not call a function yet (`m[key()] ??= v`): store the key in a
   variable first.
 - `x!` is `x` known to be neither `null` nor `undefined` (TS's non-null assertion). TypeScript
-  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`.
+  trusts it; Velt checks it: a nothing panics with `non-null assertion failed`. A write into a
+  tuple behind `!` (`h.t![0] = v`, `xs[i++]![1] = "q"`) changes the tuple in place; if the right
+  side sets that field to `null` first, the program panics with ``a field checked for null (by a
+  narrowing test or `!`) was set to null before this use``, where Node writes into the tuple the
+  field held before.
 - `a?: T` reads as `T | undefined`, and `a?: T | null` as `T | null | undefined`. An optional
   parameter `b?: T` is `b: T | undefined = undefined` ([Functions](functions.md)): callers may
   leave it out or pass `undefined` (or a value that may be `undefined`), but not `null`
