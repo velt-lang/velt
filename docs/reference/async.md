@@ -451,6 +451,15 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
   stored one), and a variable bound to a part (`const ps = s.ports`, a `for…of` element that
   the loop changes), so changing that copy leaves the shared value as it was.
+  `console.log(s)`, `[...s]` and `Object.keys(s)` read the value inside as well;
+  `JSON.stringify` does with the type written out (`JSON.stringify<u8[]>(s)`). A value of
+  `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
+  (copying it would run that method on objects other threads read): `.clone()` the `shared`
+  and pass it on as a `shared<T>`. While a read runs code (a call it is passed to, a loop
+  over it), giving the variable that holds the handle another one is refused where it would
+  be for an array (the loop's body, a closure passed to the same call); where it is allowed
+  (a closure kept in a variable, a module `let` another function reassigns), the read keeps
+  the box it started with alive, as JavaScript keeps the old array.
   Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
   read-only …``), and so is passing it to a function that may change it or to a function
   value: share a `Mutex` instead.

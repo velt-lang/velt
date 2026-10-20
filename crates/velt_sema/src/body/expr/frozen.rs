@@ -38,6 +38,16 @@ impl FnCx<'_, '_> {
         self.mk(call, inner, span)
     }
 
+    /// `h`, or the value inside when it is a `shared<T>` that can be read like its `T`: for
+    /// what takes any value and reads it (printing, spreading, `Object.keys`), as JavaScript
+    /// sees the `T` itself.
+    pub(crate) fn read_shared(&mut self, h: hir::Expr) -> hir::Expr {
+        match self.cx.ty.kind(h.ty) {
+            TyKind::Shared(_) => self.frozen_view(h, None),
+            _ => h,
+        }
+    }
+
     /// Is `h` a value read out of a `shared<T>` (`frozen_view`)?
     pub(crate) fn is_frozen_view(h: &hir::Expr) -> bool {
         matches!(

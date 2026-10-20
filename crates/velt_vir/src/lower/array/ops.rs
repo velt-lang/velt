@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
                 self.finish_borrows(outer);
                 v
             }
-            false => self.projection_base(&args[0]),
+            false => self.projection_base(&args[0], false),
         };
         let arr = self.place_of(av, aty);
         let arr = self.content(&arr, aty);

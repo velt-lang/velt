@@ -103,6 +103,18 @@ fn what_the_compiler_cannot_see_into_keeps_the_shared_value() {
          function main() { const s = shared([new A()]); console.log(count(s)); }",
     );
     assert!(r.contains("mismatched types"), "{r}");
+    assert!(r.contains("cannot be read like a `A[]`"), "{r}");
+}
+
+#[test]
+fn a_class_with_its_own_clone_keeps_the_shared_value() {
+    // Copying what a read gets would run `clone()` on objects other threads read.
+    let r = err_src(
+        "class C { hits: number = 0; clone(): C { this.hits++; return new C(); } }
+         function count(xs: C[]): number { return xs.length; }
+         function main() { const s = shared([new C()]); console.log(count(s)); }",
+    );
+    assert!(r.contains("mismatched types"), "{r}");
 }
 
 #[test]

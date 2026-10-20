@@ -1,0 +1,19 @@
+// check: no leaks
+// What takes any value and reads it sees the `T` inside a `shared<T>`, as JavaScript sees the
+// value itself: printing, spreading into an array, `Object.keys`, and `JSON.stringify` with the
+// type written out.
+class Cfg {
+  name: string = "a";
+  ports: number[] = [1, 2];
+}
+
+function main() {
+  const s = shared([1, 2, 3]);
+  const c = shared(new Cfg());
+  console.log(s);
+  console.log(JSON.stringify<number[]>(s));
+  console.log([...s, 4].length);
+  console.log(Object.keys(c).join(","));
+  console.log(JSON.stringify<Cfg>(c));
+  console.log(c);
+}

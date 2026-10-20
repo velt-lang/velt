@@ -250,8 +250,10 @@ impl Ctx<'_> {
     /// Can a `shared<T>` of `t` be read like a `T` (#36, `Intrinsic::SharedRead`)? Not when
     /// `t` holds what a reader could change or must not copy (a `Mutex`, a weak map or ref, a
     /// promise), or what the compiler cannot see into (a function or interface value, a type
-    /// parameter, a class with subclasses, whose objects may have more fields). A `shared`
-    /// inside is fine: it counts atomically.
+    /// parameter, a class with subclasses, whose objects may have more fields), nor when it
+    /// holds a type with a `clone()` of its own: copying what a read gets would run it on the
+    /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
+    /// counts atomically.
     pub fn frozen_readable(&mut self, t: TyId) -> bool {
         self.frozen_readable_in(t, &mut std::collections::HashSet::new())
     }
@@ -268,7 +270,9 @@ impl Ctx<'_> {
             TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || self.is_weak_class(d) => {
                 return false
             }
-            TyKind::Adt(d, _) if self.has_subclass(d) => return false,
+            TyKind::Adt(d, _) if self.has_subclass(d) || self.own_clone(d).is_some() => {
+                return false
+            }
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),

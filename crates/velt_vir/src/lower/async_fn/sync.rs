@@ -78,19 +78,46 @@ impl FnLower<'_, '_> {
         (self.addr(cell), vt)
     }
 
-    /// The value inside the `shared<T>` that `s` evaluates to, in its box.
-    fn shared_value(&mut self, s: &hir::Expr) -> (Place, TyId) {
+    /// The value inside the `shared<T>` that `s` evaluates to, in its box. `runs_code`: user code
+    /// may run while the value is read there (it is a call's argument or receiver, a loop's,
+    /// or an index that calls something follows). The variable or object holding the handle
+    /// may then be given another one meanwhile, which frees this box: it is retained for the
+    /// statement (one atomic count change; not for a handle in a variable nothing else assigns).
+    fn shared_value(&mut self, s: &hir::Expr, runs_code: bool) -> (Place, TyId) {
         let sty = self.sub(s.ty);
         let TyKind::Shared(inner) = self.cx.kind(sty) else {
             ice("SharedRead of a non-shared value")
         };
-        let v = self.expr(s);
+        let v = match runs_code && self.handle_replaceable(s) {
+            true => {
+                let v = self.expr(s);
+                let held = self.share_value(v, sty);
+                self.own_value(held, sty)
+            }
+            false => self.expr(s),
+        };
         let p = self.operand_place(v, Ty::Ptr);
         let bx = self.cx.shared_box(inner);
         (
             proj(&proj(&p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1)),
             inner,
         )
+    }
+
+    /// Can code other than the reader's own statement give the place `s` reads another
+    /// `shared` handle? A variable a closure assigns, a module `let` some function reassigns,
+    /// and anything reached through an object or array (whose other owners may replace it).
+    fn handle_replaceable(&mut self, s: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &s.kind {
+            K::Local(..) | K::Global(_) => self.in_shared_cell(s),
+            K::Field { .. }
+            | K::Index { .. }
+            | K::UnwrapSome(..)
+            | K::UnwrapVariant { .. }
+            | K::Downcast(_) => true,
+            _ => false,
+        }
     }
 
     /// `Intrinsic::SharedRead`: the `T` of a `shared<T>` read where it is borrowed (#36). Other
@@ -102,7 +129,7 @@ impl FnLower<'_, '_> {
     /// a local the header stays in registers across the calls of a loop, where LLVM would
     /// reload it from the box after each one.
     fn shared_read(&mut self, s: &hir::Expr) -> Operand {
-        let (place, inner) = self.shared_value(s);
+        let (place, inner) = self.shared_value(s, true);
         self.shared_read_at(place, inner)
     }
 
@@ -125,13 +152,15 @@ impl FnLower<'_, '_> {
     /// parts, since only the code lowering emits for the projection reads it (no count
     /// changes); the projected part is copied where it holds counted parts itself
     /// (`frozen_part_read`). Anything else is evaluated as usual.
-    pub(in crate::lower) fn projection_base(&mut self, e: &hir::Expr) -> Operand {
+    /// `runs_code`: what follows before the projection is read may run user code (an index
+    /// that calls something), see [`shared_value`](Self::shared_value).
+    pub(in crate::lower) fn projection_base(&mut self, e: &hir::Expr, runs_code: bool) -> Operand {
         match &e.kind {
             hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
                 args,
             } => {
-                let (place, inner) = self.shared_value(&args[0]);
+                let (place, inner) = self.shared_value(&args[0], runs_code);
                 match self.cx.holds_counted(inner) {
                     true => Operand::Copy(place),
                     false => self.shared_read_at(place, inner),
@@ -139,14 +168,14 @@ impl FnLower<'_, '_> {
             }
             // A part of one, itself projected (`s.items[0].name`): in place too.
             hir::ExprKind::Index { base, index, .. } if crate::lower::place::frozen_base(base) => {
-                self.index_at(base, index, true)
+                self.index_at(base, index, true, runs_code)
             }
             hir::ExprKind::Field { base, index, .. }
                 if crate::lower::place::frozen_base(base)
                     && !self.is_unit_field(base.ty, *index) =>
             {
                 let bty = self.sub(base.ty);
-                let v = self.projection_base(base);
+                let v = self.projection_base(base, runs_code);
                 let bp = self.place_of(v, bty);
                 Operand::Copy(self.field_place(&bp, bty, *index))
             }
@@ -169,7 +198,7 @@ impl FnLower<'_, '_> {
     /// `Intrinsic::SharedRead` consumed (moved into a variable, an owned parameter, a field):
     /// a copy of the value inside, which the consumer owns.
     pub(in crate::lower) fn shared_read_owned(&mut self, s: &hir::Expr) -> Operand {
-        let (place, inner) = self.shared_value(s);
+        let (place, inner) = self.shared_value(s, false);
         self.clone_value(Operand::Copy(place), inner)
     }
 

@@ -79,7 +79,7 @@ impl FnLower<'_, '_> {
                 return self.take_part(fp, fty);
             }
         }
-        let v = self.projection_base(base);
+        let v = self.projection_base(base, false);
         let bp = self.place_of(v, bty);
         let p = self.field_place(&bp, bty, index);
         if frozen_base(base) {
@@ -143,24 +143,27 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
-        self.index_at(base, index, false)
+        self.index_at(base, index, false, false)
     }
 
     /// `base[index]`; `in_place`: the element of a value inside a `shared` box is read in
     /// place even when it holds counted parts, because it is itself only the base of a
-    /// projection (`FnLower::projection_base`).
+    /// projection (`FnLower::projection_base`). `runs_code`: user code may run after this
+    /// projection, before what it reaches is read.
     pub(super) fn index_at(
         &mut self,
         base: &hir::Expr,
         index: &hir::Expr,
         in_place: bool,
+        runs_code: bool,
     ) -> Operand {
         let bty = self.sub(base.ty);
         // A table's header is the inline value, also where arrays of its type are boxes.
         let arr = match self.table_read(base) {
             Some(table) => table,
             None => {
-                let v = self.projection_base(base);
+                let runs_code = runs_code || (frozen_base(base) && self.may_write(index));
+                let v = self.projection_base(base, runs_code);
                 let arr = self.place_of(v, bty);
                 self.content(&arr, bty)
             }

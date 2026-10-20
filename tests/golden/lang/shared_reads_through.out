@@ -1,0 +1,6 @@
+[ 1, 2, 3 ]
+[1,2,3]
+4
+name,ports
+{"name":"a","ports":[1,2]}
+Cfg { name: 'a', ports: [ 1, 2 ] }

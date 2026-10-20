@@ -414,7 +414,7 @@ fs_stream handle code) was out of scope this round and still reads through its p
 ### 8.7 ~~`shared<T>` can't be read~~ (language, done: #36)
 A `shared<T>` that doesn't hold a `Mutex` is now read like a `T` (index, `length`, `T`'s methods,
 passed where a `T` is read). The multi-threaded k-nucleotide shares one sequence instead of a
-`seq.clone()` per task: 1010 MB → 255–272 MB peak RSS, 2% fewer instructions (k-nucleotide
+`seq.clone()` per task: 1010 MB → 252–272 MB peak RSS, 2% fewer instructions (k-nucleotide
 NOTES.md §3). regex-redux needed no change: a string's `clone()` is another reference (strings
 count atomically), not a copy, so its tasks never copied the sequence; its RSS is the
 substitution chain's strings.

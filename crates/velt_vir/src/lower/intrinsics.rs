@@ -56,11 +56,12 @@ impl FnLower<'_, '_> {
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
-                let v = self.projection_base(a);
+                let v = self.projection_base(a, false);
                 self.str_len(v)
             }
             (I::StrCharCodeAt, [s, i]) => {
-                let v = self.projection_base(s);
+                let runs_code = self.may_write(i);
+                let v = self.projection_base(s, runs_code);
                 let i = self.expr(i);
                 self.str_char_code_at(v, i)
             }

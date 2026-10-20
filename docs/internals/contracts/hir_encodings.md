@@ -586,9 +586,14 @@ does not fold would make the table an array built at every read.
 one argument, a `Borrow` place or any expression of that type). Sema emits it only where the
 value is read: the object of `Index`, of a `Field` and of the `ArrayLen` / `StrLen`
 intrinsics, the source of a `ForOf`, the receiver of a method of `T` that `shared<T>` itself
-doesn't have, and an expression converted to `T` (`coerce`: an argument, a variable, a field). Never for a `T` that holds a `Mutex`, a weak map
-or ref, a promise, a function or interface value (`Ctx::frozen_readable`), nor for a
-`shared<int>` (its atomics). Sema rejects every write through it (`require_mutable`,
+doesn't have, an expression converted to `T` (`coerce`: an argument, a variable, a field), and
+the argument of `console.log`, of an array spread and of `Object.keys` (`FnCx::read_shared`).
+Never for a `T` that holds a `Mutex`, a weak map or ref, a promise, a function or interface
+value, a type parameter, or a class with subclasses or with a `clone()` of its own
+(`Ctx::frozen_readable`), nor for a `shared<int>` (its atomics). The exclusivity checker treats
+it as a borrow of the place of `s` (`Collector::place_of`), so code that may give that place
+another handle while the read is live (a `ForOf` body, a closure argument of the same call) is
+refused as it is for an array. Sema rejects every write through it (`require_mutable`,
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
 argument of a call through a function value or next to one that may modify its arguments
 (`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
@@ -600,7 +605,11 @@ As the base of a projection (`Index`, `Field`, `ArrayLen`, `StrLen`, `StrCharCod
 another projection of it) it is read in the box whatever `T` holds, since only lowering's own
 code reads it there (`FnLower::projection_base`); the projected part is then a copy where it
 holds counted parts and is used as a value. Stabilization (`stable_borrow`) never shares or
-retains through it.
+retains through it. The box itself is retained for the statement (one atomic count change,
+`FnLower::shared_value`) where code may run while the read is live (a call's argument or
+receiver, a loop's source, an index that calls something) and the place of `s` is one such
+code can give another handle (a variable in a shared cell, a module `let` some function
+reassigns, a field or element): otherwise that code could free the box being read.
 A consumed `Field`, `Index`, `UnwrapSome` or `UnwrapVariant` of it is read with a borrow and
 deep-copied too: a move would leave the all-zero value in the box.
 
