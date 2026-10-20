@@ -33,7 +33,7 @@
 //! Callbacks that `await` still run concurrently: the turn covers a callback's synchronous part
 //! and its microtasks, like a Node timer callback.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -72,7 +72,66 @@ struct Entry {
 /// The timers of one delay, by creation number (= insertion order).
 struct List {
     key: ListKey,
-    timers: BTreeMap<u64, Entry>,
+    timers: Entries,
+}
+
+/// A list's timers in insertion order (their creation numbers increase along it). A timer taken
+/// out of the middle (`clearTimeout`) leaves a hole until it reaches the front, or until holes
+/// outnumber the timers: the common case, the first timer taking its turn, costs no search.
+#[derive(Default)]
+struct Entries {
+    q: VecDeque<(u64, Option<Entry>)>,
+    live: usize,
+}
+
+impl Entries {
+    fn push(&mut self, seq: u64, e: Entry) {
+        self.q.push_back((seq, Some(e)));
+        self.live += 1;
+    }
+
+    fn find(&self, seq: u64) -> Option<usize> {
+        if self.q.front().is_some_and(|f| f.0 == seq) {
+            return Some(0);
+        }
+        self.q.binary_search_by_key(&seq, |x| x.0).ok()
+    }
+
+    fn get_mut(&mut self, seq: u64) -> Option<&mut Entry> {
+        let i = self.find(seq)?;
+        self.q[i].1.as_mut()
+    }
+
+    /// Takes timer `seq` out; false if it is not here.
+    fn remove(&mut self, seq: u64) -> bool {
+        let Some(i) = self.find(seq) else {
+            return false;
+        };
+        if self.q[i].1.take().is_none() {
+            return false;
+        }
+        self.live -= 1;
+        while self.q.front().is_some_and(|x| x.1.is_none()) {
+            self.q.pop_front();
+        }
+        if self.q.len() > 32 && self.live * 2 < self.q.len() {
+            self.q.retain(|x| x.1.is_some());
+        }
+        true
+    }
+
+    fn first(&self) -> Option<(u64, &Entry)> {
+        let (seq, e) = self.q.front()?;
+        Some((
+            *seq,
+            e.as_ref()
+                .expect("ICE: a hole at the front of a timer list"),
+        ))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.live == 0
+    }
 }
 
 /// The delay of `setImmediate`: its list holds the task's immediates, which are not in the
@@ -105,7 +164,7 @@ impl Group {
     /// Its first immediate.
     fn first_immediate(&self) -> Option<u64> {
         let list = self.lists.get(&IMMEDIATE)?;
-        list.timers.first_key_value().map(|(s, _)| *s)
+        list.timers.first().map(|(s, _)| s)
     }
 }
 
@@ -166,7 +225,7 @@ impl Order {
 
     fn entry_mut(&mut self, k: Key) -> Option<&mut Entry> {
         let list = self.groups.get_mut(&k.gate)?.lists.get_mut(&k.ms)?;
-        list.timers.get_mut(&k.seq)
+        list.timers.get_mut(k.seq)
     }
 
     /// Keeps `heads` in step with group `gate`, whose first list was `before`; drops the group
@@ -209,7 +268,7 @@ impl Order {
             .and_then(|g| g.lists.get_mut(&ms))
         {
             self.seq += 1;
-            list.timers.insert(self.seq, Entry { start, waker: None });
+            list.timers.push(self.seq, Entry { start, waker: None });
             return Key {
                 gate,
                 ms,
@@ -232,12 +291,12 @@ impl Order {
             }
             List {
                 key,
-                timers: BTreeMap::new(),
+                timers: Entries::default(),
             }
         });
         self.seq += 1;
         let seq = self.seq;
-        list.timers.insert(seq, Entry { start, waker: None });
+        list.timers.push(seq, Entry { start, waker: None });
         self.reseat_immediate(gate, before_immediate);
         self.reseat(gate, before);
         Key { gate, ms, seq }
@@ -269,7 +328,7 @@ impl Order {
         let Some(list) = group.lists.get_mut(&k.ms) else {
             return false;
         };
-        if list.timers.remove(&k.seq).is_none() {
+        if !list.timers.remove(k.seq) {
             return false;
         }
         if list.timers.is_empty() {
@@ -365,9 +424,9 @@ impl Order {
                     .order
                     .first()
                     .expect("ICE: a timer group without lists");
-                let (&seq, e) = group.lists[&ms]
+                let (seq, e) = group.lists[&ms]
                     .timers
-                    .first_key_value()
+                    .first()
                     .expect("ICE: an empty timer list");
                 let due = e.start.saturating_add(ms);
                 found = Some((Key { gate, ms, seq }, due));
