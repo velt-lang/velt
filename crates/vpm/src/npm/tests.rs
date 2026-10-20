@@ -332,3 +332,123 @@ fn a_later_condition_is_no_fallback() {
         root.join("node_modules/iso/src/server.ts")
     );
 }
+
+/// A workspace laid out like vuejs/core: bundles and rolled-up declarations named after the
+/// package (`dist/runtime-dom.d.ts`), `main` a CommonJS shim (`index.js`), sources in `src/`.
+fn vue_like(root: &Path) {
+    write(root, "pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n");
+    write(
+        root,
+        "package.json",
+        r#"{ "name": "root", "private": true }"#,
+    );
+    write(
+        root,
+        "packages/runtime-dom/package.json",
+        r#"{
+            "name": "@vue/runtime-dom",
+            "main": "index.js",
+            "types": "dist/runtime-dom.d.ts",
+            "exports": {
+                ".": {
+                    "types": "./dist/runtime-dom.d.ts",
+                    "node": {
+                        "production": "./dist/runtime-dom.cjs.prod.js",
+                        "development": "./dist/runtime-dom.cjs.js",
+                        "default": "./index.js"
+                    },
+                    "module": "./dist/runtime-dom.esm-bundler.js",
+                    "import": "./dist/runtime-dom.esm-bundler.js",
+                    "require": "./index.js"
+                },
+                "./*": "./*"
+            }
+        }"#,
+    );
+    write(
+        root,
+        "packages/runtime-dom/index.js",
+        "'use strict'\nmodule.exports = require('./dist/runtime-dom.cjs.js')\n",
+    );
+    write(root, "packages/runtime-dom/src/index.ts", "");
+    write(root, "packages/runtime-dom/src/nodeOps.ts", "");
+    // No `exports`: `types` and `main` both name bundles called after the package.
+    write(
+        root,
+        "packages/compiler-ssr/package.json",
+        r#"{ "name": "@vue/compiler-ssr", "main": "dist/compiler-ssr.cjs.js", "types": "dist/compiler-ssr.d.ts" }"#,
+    );
+    write(root, "packages/compiler-ssr/src/index.ts", "");
+    write(root, "packages/server-renderer/src/index.ts", "");
+}
+
+#[test]
+fn vue_layouts_fall_back_to_src_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    vue_like(root);
+    let importer = root.join("packages/server-renderer/src/index.ts");
+    let mut npm = NpmResolver::default();
+    assert_eq!(
+        npm.resolve(&importer, "@vue/runtime-dom").unwrap().unwrap(),
+        root.join("packages/runtime-dom/src/index.ts")
+    );
+    assert_eq!(
+        npm.resolve(&importer, "@vue/compiler-ssr")
+            .unwrap()
+            .unwrap(),
+        root.join("packages/compiler-ssr/src/index.ts")
+    );
+    // A subpath stays exact: `./*` maps it, and its source is found or reported.
+    assert_eq!(
+        npm.resolve(&importer, "@vue/runtime-dom/src/nodeOps")
+            .unwrap()
+            .unwrap(),
+        root.join("packages/runtime-dom/src/nodeOps.ts")
+    );
+    let (msg, notes) = npm
+        .resolve(&importer, "@vue/runtime-dom/dist/runtime-dom.cjs.js")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        msg,
+        "package `@vue/runtime-dom` maps `@vue/runtime-dom/dist/runtime-dom.cjs.js` to `dist/runtime-dom.cjs.js`, which has no TypeScript source in the package"
+    );
+    assert!(!notes[0].contains("fallback"), "{notes:?}");
+}
+
+#[test]
+fn the_root_fallback_comes_last() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // A target with a source of its own wins over `src/index.ts`.
+    write(
+        root,
+        "node_modules/own/package.json",
+        r#"{ "name": "own", "exports": { ".": { "import": "./dist/main.js" }, "./x": "./dist/x.js" } }"#,
+    );
+    write(root, "node_modules/own/src/main.ts", "");
+    write(root, "node_modules/own/src/index.ts", "");
+    // No `src/index.ts`: the error says the fallback was looked for.
+    write(
+        root,
+        "node_modules/bare/package.json",
+        r#"{ "name": "bare", "main": "index.js", "types": "dist/bare.d.ts" }"#,
+    );
+    write(root, "node_modules/bare/index.js", "");
+    let importer = root.join("main.ts");
+    let mut npm = NpmResolver::default();
+    assert_eq!(
+        npm.resolve(&importer, "own").unwrap().unwrap(),
+        root.join("node_modules/own/src/main.ts")
+    );
+    let (msg, notes) = npm.resolve(&importer, "own/x").unwrap().unwrap_err();
+    assert!(msg.contains("to `dist/x.js`"), "{msg}");
+    assert!(!notes[0].contains("fallback"), "{notes:?}");
+    let (msg, notes) = npm.resolve(&importer, "bare").unwrap().unwrap_err();
+    assert!(msg.contains("to `dist/bare.d.ts`"), "{msg}");
+    assert!(
+        notes[0].ends_with(", then the root export's fallback `src/index.ts` and `src/index.tsx`"),
+        "{notes:?}"
+    );
+}

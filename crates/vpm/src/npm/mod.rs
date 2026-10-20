@@ -27,7 +27,9 @@
 //!   `tsconfig.json` puts its `outDir` (or `declarationDir`), then with a leading `dist/`,
 //!   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place. The targets are
 //!   tried in order (a `velt` hint, Node's target, then a `types` hint); the first with a
-//!   source wins, and without one the error names the target Node loads.
+//!   source wins. When none has one, the root export (`.`, not a subpath) falls back to
+//!   [`ROOT_FALLBACK`] (`src/index.ts`, `src/index.tsx`), and without that the error names the
+//!   target Node loads.
 
 pub mod exports;
 pub mod json;
@@ -58,6 +60,12 @@ pub const SERVER_CONDITIONS: &[&str] = &["velt", "types", "node", "import", "mod
 
 /// Output directories whose files map back to `src/` when no `tsconfig.json` says otherwise.
 const OUT_DIRS: &[&str] = &["dist", "lib", "build", "out", "types"];
+
+/// Where the root export (`.`) has its source when none of its targets has one: Rollup-built
+/// packages name their bundles and rolled-up declarations after the package
+/// (`dist/runtime-dom.d.ts`) and point `main` at a CommonJS shim (`index.js`), while the source
+/// is `src/index.ts`. A subpath export never falls back.
+const ROOT_FALLBACK: &[&str] = &["src/index.ts", "src/index.tsx"];
 
 /// Extensions of build output and declaration files, longest first.
 const OUTPUT_EXTENSIONS: &[&str] = &[
@@ -266,7 +274,19 @@ impl NpmResolver {
                 }
             }
         }
-        let note = format!(
+        let fallback: Vec<&str> = if subpath == "." {
+            ROOT_FALLBACK
+                .iter()
+                .copied()
+                .filter(|f| !tried.iter().any(|t| t == f))
+                .collect()
+        } else {
+            vec![]
+        };
+        if let Some(file) = fallback.iter().map(|f| dir.join(f)).find(|f| f.is_file()) {
+            return Ok(file);
+        }
+        let mut note = format!(
             "looked for {}",
             tried
                 .iter()
@@ -275,6 +295,16 @@ impl NpmResolver {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        if !fallback.is_empty() {
+            note.push_str(&format!(
+                ", then the root export's fallback {}",
+                fallback
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ));
+        }
         let mut notes = vec![note];
         let shown = match &runtime {
             Some((cond, target)) if !cond.is_empty() => {
