@@ -188,7 +188,6 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let (usize_, bool_, unit) = (self.cx.ty.usize, self.cx.ty.bool_, self.cx.ty.unit);
-        self.reject_promise_spread(types.0, span);
         let i = self.new_local("<i>", usize_, true, span, LocalKind::Temp);
         let zero = self.mk(H::Lit(hir::Lit::Int(0)), usize_, span);
         let one = self.mk(H::Lit(hir::Lit::Int(1)), usize_, span);

@@ -77,7 +77,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
-| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
 | `velt_rt_xfer_begin` / `velt_rt_xfer_end` | `()` | bracket one transfer of a value to another task (the `TransferRoot` glue, a `thread_copy`); nest. The outermost `end` releases the deferred references (`xfer_defer`) and forgets the copies (additive) |
 | `velt_rt_xfer_find` | `(const void* obj) -> void*` | the copy of the counted object `obj` made in this transfer, null if none yet, or `1` outside a transfer. The clone glue of a counted object asks it before copying one whose count is above 1, the transfer glue before copying a still-shared one, so an object reached twice is copied once and a cycle is copied as a cycle (additive) |
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
@@ -102,6 +102,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
 | `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
+| `velt_rt_fut_share` | `(VeltFut* f, u64 result_size, void (*share)(const void* src, void* dst), void (*result_drop)(void* slot)) -> VeltFut*` | another holder of promise `f` (§1.2): a new handle on `f`, which is now shared; null stays null. `share` writes another reference to a result into a slot (null: the bytes are copied), `result_drop` drops one (null: nothing to drop) (additive) |
 | `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending (additive) |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
@@ -140,6 +141,68 @@ each polled until done, done-flags in the state): no allocation.
 - Layout: a boxed future is `[head (96 bytes)][VeltFut hdr][state]`; the head holds the state's
   poll/drop, `result_drop`, the reference count, flags, the set and the awaiter's waker. Code
   pointers live only there and in the `VeltFut` header (hot-reload rule, §13.5).
+
+### 1.2 Shared promises
+
+A promise is a shared value (docs/reference/async.md "Promises"): where sema shares a promise
+place (`Intrinsic::Share`, or a clone of a value holding a promise), lowering calls
+`velt_rt_fut_share(f, ...)` and gives the new holder the future it returns. A program that never
+shares a promise never calls it, and its futures are unchanged.
+- The first share moves the original future's header entries to a side record (the hub, found by
+  the future's address) and replaces them with the runtime's own. The original pointer stays its
+  first holder's. Every share returns a new handle: a small heap future with a result slot at
+  +16, with the hub in front of its header. Each holder is awaited and dropped as one future.
+- Awaiting is unchanged for generated code: poll until `READY`, move the result out of +16, drop.
+  Before a holder returns `READY`, it writes a fresh share of the settled result into its slot,
+  using the `share` glue. That gives the same object for an object result, and a copy of a
+  string or a value.
+- A started original future is driven by its task's set: the hub awaits it with a waker of its
+  own, and when it finishes every waiting holder is queued in the task's microtask queue (as
+  `velt_rt_latch_open` queues its waiters) in the order they started waiting, as Node queues a
+  promise's reactions. `velt_rt_race` over a holder that settled takes it before a child that
+  only finishes when the race polls it. Any other original is driven by the first holder that
+  waits, with its own `cx`; when it settles there, that holder goes on as the awaiter of an
+  unshared promise would, and the others are queued the same way.
+- Dropping a holder never cancels the promise. The last holder drops the settled result with
+  `result_drop`. If the promise has not settled, the last holder restores the original header
+  and drops the future, which then behaves like any dropped promise: a started promise runs to
+  completion, and its own result drop reports an unhandled rejection. A waiting holder that is
+  dropped wakes the others, so the first of them drives the promise.
+- The runtime functions that recognize boxed promises by their header (`velt_rt_fut_start`,
+  `velt_rt_futs_handled`) treat a holder as some other future. `velt_rt_fut_peek` reads the
+  settled result.
+- `velt_rt_fut_transfer` of a holder (the holder goes to another task: `spawn`, a channel, a
+  closure capturing it) hands it over: a new holder awaits the promise on this task inside a
+  started promise of its own (the proxy), whose result `transfer` moves or copies for the other
+  task as for any promise handed over (#160); a null `transfer` (a result with nothing counted)
+  copies it as it is. The holder handed over forwards its polls and its drop to the proxy, so
+  the other task gets a copy made on the promise's task. On the other task the holder is a
+  promise of that task: `velt_rt_fut_share` of it shares its proxy there, and handing it on
+  again hands over its role in that promise the same way.
+- Every holder has the same `poll` and `drop` entries, which say only that a future is shared.
+  An original future is found in the runtime's table of hubs by its address, and a handle never
+  is.
+- A shared promise stays on the logical task where it was shared (`velt_rt_task_id`: the
+  orphan task driving a task's promises after its root returned has the same one; on
+  WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
+  dropped on another task without having been handed over (above) stops the program with a
+  fatal error (exit code 101), unless the thread holds the module lock (§ module state; on
+  WebAssembly: the program has module state). That is all the check tests. It is sound because
+  the task the promise is shared on holds the lock whenever it runs too: a holder reaches
+  module state only through code holding the lock, so the task it is shared on put it there
+  or first used it from there, and is a *touched* task from then on, whose every poll takes
+  the lock; the outside home (below) is a touched task in every program with module state. So
+  the tasks using a holder read from module state (a `Map` of promises in flight), its
+  result, and the objects reached from that run one at a time.
+- A holder handed over outside a task (a synchronous `main`) gets its proxy in the *outside
+  home*, a set with a task id of its own that code outside a task enters for each hand-over,
+  so every holder handed over from there is one of the same task. When `main` returns, the
+  home's set moves to an orphan task, which drives it (and keeps the process alive) until its
+  promises finish. In a program with module state the home's polls take the module lock, here
+  and in the orphan, as any touched task's do.
+- A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
+  hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
+  the other finds it settled.
 
 ## 2. Tasks
 

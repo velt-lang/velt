@@ -57,6 +57,8 @@ pub(super) enum Rt {
     FutPoll,
     FutDrop,
     FutPeek,
+    /// Another holder of a promise (shared promises, #212).
+    FutShare,
     FutBox,
     FutStart,
     /// An unhandled rejection waits for the task's microtasks (`build_unclaimed`).
@@ -229,6 +231,7 @@ impl Rt {
             Rt::FutPoll => f("velt_rt_fut_poll", vec![Ptr, Ptr], U32),
             Rt::FutDrop => f("velt_rt_fut_drop", vec![Ptr], Unit),
             Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
+            Rt::FutShare => f("velt_rt_fut_share", vec![Ptr, U64, Ptr, Ptr], Ptr),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
             Rt::UnhandledDefer => f("velt_rt_unhandled_defer", vec![], U8),

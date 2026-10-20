@@ -1,0 +1,73 @@
+// check: no leaks
+// Shared promises (#212): a promise held in two variables, memoized in a Map, held by a class
+// instance passed to two callers, and two `then` callbacks on one promise.
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(() => r(), ms));
+}
+
+class User {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+async function fetchUser(id: number): Promise<User> {
+  await sleep(5);
+  console.log(`fetch ${id}`);
+  return new User(`user${id}`);
+}
+
+async function twice(): Promise<void> {
+  const p = fetchUser(1);
+  const q = p;
+  const a = await p;
+  const b = await q;
+  console.log(a.name, b.name, a === b);
+}
+
+const cache = new Map<number, Promise<User>>();
+function cached(id: number): Promise<User> {
+  let p = cache.get(id);
+  if (!p) {
+    p = fetchUser(id);
+    cache.set(id, p);
+  }
+  return p;
+}
+
+async function caller(tag: string, id: number): Promise<void> {
+  const u = await cached(id);
+  console.log(tag, u.name);
+}
+
+class Loader {
+  ready: Promise<number>;
+  constructor() {
+    this.ready = this.load();
+  }
+  async load(): Promise<number> {
+    await sleep(1);
+    console.log("loaded");
+    return 42;
+  }
+}
+
+async function useLoader(l: Loader, tag: string): Promise<void> {
+  const n = await l.ready;
+  console.log(tag, n);
+}
+
+async function main() {
+  await twice();
+  await Promise.all([caller("a", 2), caller("b", 2)]);
+  await caller("c", 3);
+  const l = new Loader();
+  const m = l;
+  await useLoader(l, "x");
+  await useLoader(m, "y");
+  const s = Promise.resolve("str");
+  s.then((v) => console.log("then1", v));
+  s.then((v) => console.log("then2", v));
+  console.log("after then", await s);
+}
