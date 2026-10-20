@@ -551,8 +551,11 @@ impl FnCx<'_, '_> {
                 // A target field that cannot hold `undefined` (`name: string` from a
                 // `Partial<U>`'s `name?: string`) keeps the earlier value when the source holds
                 // `undefined`, present or not (TypeScript types the result so, too).
-                let keeps_undefined = expected
-                    .is_none_or(|t| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()));
+                // Without a target, the field is the earlier value's type, as TypeScript types
+                // `{ ...u, ...p }` with `u.n: F` and `p.n?: F`.
+                let target = expected.unwrap_or(prev.ty);
+                let keeps_undefined = self.cx.dynamic(target).is_some()
+                    || self.cx.ty.nothing_of(target).is_some_and(|n| n.has_undefined());
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.
                     Some(p) if src.presence && keeps_undefined => {
@@ -574,7 +577,7 @@ impl FnCx<'_, '_> {
                     Some(p) if src.presence => {
                         let b = self.cx.ty.bool_;
                         let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
-                        let shown = expected.map_or_else(String::new, |t| self.cx.display(t));
+                        let shown = self.cx.display(target);
                         let msg = self.str_lit(
                             &format!("TypeError: a spread copies `undefined` into a field of type `{shown}`"),
                             span,

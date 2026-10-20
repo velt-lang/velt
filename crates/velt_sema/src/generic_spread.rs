@@ -62,11 +62,12 @@ impl Ctx<'_> {
             };
             for f in fields {
                 match out.iter_mut().find(|g| g.name == f.name) {
-                    // An optional field overrides the earlier value only while present (a
-                    // present `undefined` too), so the field keeps the earlier one's
-                    // optionality, and a required one may hold `undefined` now, as for a
-                    // concrete spread (`spread_object`). TypeScript's `number | string` for one
-                    // of another type is a union Velt doesn't build here.
+                    // An optional field overrides the earlier value only while present, so the
+                    // field keeps the earlier one's optionality and type (`F` under a later
+                    // `F | undefined`), as TypeScript types it and as for a concrete spread
+                    // (`spread_object`); a present `undefined` over a required field is a
+                    // `TypeError` (lowering). TypeScript's `number | string` for one of another
+                    // type is a union Velt doesn't build here.
                     Some(g) if f.optional => {
                         if self.canon(g.ty) != self.canon(f.ty) {
                             let (gt, ft) = (self.display(g.ty), self.display(f.ty));
@@ -77,11 +78,6 @@ impl Ctx<'_> {
                             return self.ty.error;
                         }
                         g.readonly = false;
-                        if !g.optional
-                            && self.ty.nothing_of(g.ty).is_none_or(|n| !n.has_undefined())
-                        {
-                            g.ty = self.ty.option_of(g.ty, Nothing::Undefined);
-                        }
                     }
                     Some(g) => {
                         g.ty = f.ty;

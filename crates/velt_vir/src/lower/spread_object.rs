@@ -95,18 +95,23 @@ impl FnLower<'_, '_> {
                 None => FnLower::ctrue(),
             };
             let last = n + 1 == from.len();
-            let next = (!last && slot.is_some()).then(|| self.new_block());
-            if let Some(next) = next {
+            let sft = self.cx.member_ty(*sty, *k);
+            let same = self.vty(sft) == vt;
+            let widen = !same
+                && matches!(self.cx.kind(fty), TyKind::Option(p, _) if self.vty(p) == self.vty(sft));
+            // `a?: F` (without a presence flag) over an earlier `a: F`: its `undefined` is
+            // absent, and the earlier value stays.
+            let unwrap = !same && !widen;
+            let next = (!last && (slot.is_some() || unwrap)).then(|| self.new_block());
+            if let Some(next) = next.filter(|_| slot.is_some()) {
                 let then = self.new_block();
                 self.branch(present.clone(), then, next);
                 self.switch_to(then);
             }
-            let sft = self.cx.member_ty(*sty, *k);
             let mut shared = false;
-            let value = if self.vty(sft) == vt {
+            let value = if same {
                 Operand::Copy(fp)
-            } else if matches!(self.cx.kind(fty), TyKind::Option(p, _) if self.vty(p) == self.vty(sft))
-            {
+            } else if widen {
                 // `a: F` under a later `a?: F`: the field holds `F | undefined`.
                 shared = true;
                 let v = self.share_value(Operand::Copy(fp), sft);
@@ -122,13 +127,19 @@ impl FnLower<'_, '_> {
             } else {
                 // `a?: F` over a required `a: F`: a present `undefined` can't be kept.
                 let ok = self.option_is_some(&fp, sft);
-                let (good, bad) = (self.new_block(), self.new_block());
-                self.branch(ok, good, bad);
-                self.switch_to(bad);
-                self.panic_msg(&format!(
-                    "TypeError: a spread copies `undefined` into the required field `{name}`"
-                ));
-                self.terminate(crate::vir::Terminator::Unreachable);
+                let good = self.new_block();
+                match next.filter(|_| slot.is_none()) {
+                    Some(next) => self.branch(ok, good, next),
+                    None => {
+                        let bad = self.new_block();
+                        self.branch(ok, good, bad);
+                        self.switch_to(bad);
+                        self.panic_msg(&format!(
+                            "TypeError: a spread copies `undefined` into the required field `{name}`"
+                        ));
+                        self.terminate(crate::vir::Terminator::Unreachable);
+                    }
+                }
                 self.switch_to(good);
                 Operand::Copy(self.some_payload(&fp, sft))
             };
@@ -138,7 +149,7 @@ impl FnLower<'_, '_> {
             };
             self.assign(Place::local(out), Rvalue::Use(v));
             if let Some(f) = flag {
-                let p = if self.vty(sft) == vt {
+                let p = if same {
                     present
                 } else {
                     FnLower::ctrue()

@@ -662,13 +662,14 @@ entry is an `ICE:`.
   fields (public, non-private fields of each part in order; a later part's field overrides an
   earlier one and keeps its position); a part that isn't an anonymous object type, struct or
   class is an error at that instantiation. An optional field over an earlier value of it keeps
-  the earlier field's optionality, and a required earlier field becomes `F | undefined` (an
-  error there when the two types differ). Lowering
+  the earlier field's optionality and type: a required earlier field stays `F`, as TypeScript
+  types it (an error there when the two types differ). Lowering
   (velt_vir `lower/spread_object.rs`) builds the reduced type, each field shared from the last
   part that has it and is present (a part's optional field with a presence flag gives it only
-  while the flag is set, else an earlier part does), its presence flag copied (set for a class
-  field), a required field's value wrapped when the field is `F | undefined`; a present
-  `undefined` over a field that can't hold one panics with a `TypeError`. A `SpreadObject`
+  while the flag is set, else an earlier part does; one without a flag holding `undefined` is
+  absent), its presence flag copied (set for a class field), a required field's value wrapped
+  when the field is `F | undefined`; a present `undefined` over a field that can't hold one
+  panics with a `TypeError`. A `SpreadObject`
   used directly as another type of the body (`return { ...x, ...patch }` as a `T`) has that
   type instead of an `Upcast` around it, with the requirement `TyOp::Convert` (reduced to the
   target when the spread's fields are the target's, each of its type or that type with

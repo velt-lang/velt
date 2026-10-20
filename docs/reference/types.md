@@ -635,7 +635,9 @@ nothings alike:
   Where the target field is required and cannot hold `undefined` (a `Partial<U>` spread back into
   a `U`), a source that lacks the field keeps the earlier value, and one that holds `undefined`
   stops the program with a `TypeError` (``a spread copies `undefined` into a field of type
-  `string` ``): Node would copy the `undefined`, which the field's type can't hold.
+  `string` ``): Node would copy the `undefined`, which the field's type can't hold. Without a
+  target type the field has the earlier part's type, as TypeScript types it (`{ ...u, ...p }`
+  with `u.n: number` and `p.n?: number` has `n: number`), so the same holds there.
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.
@@ -1136,11 +1138,11 @@ with nested objects and arrays shared rather than copied. The literal is a `T`, 
 type (`$set: (v) => …` gets its parameter type from `Signal<T>`). An instantiation whose `T` is
 not an object type (`{ ...t }` at `T = number`) is an error there. An optional field of a later
 part overrides an earlier value of it only while present, as in Node: an absent `name` keeps the
-earlier one, a present `undefined` replaces it, so a required field under an optional one is
-`F | undefined` (both parts must give the field one type). As for a concrete spread, a spread
-used directly as a `T` (`return { ...x, ...patch }` from a function returning `T`) is built as
-`T`, and a present `undefined` over a field of `T` that can't hold `undefined` is a `TypeError`
-there: Node keeps `undefined` in a field typed `number`, which Velt can't represent. A source
+earlier one. A field required in an earlier part keeps its type under a later optional one
+(`n: number`, as TypeScript types it; both parts must give the field one type), so, as for a
+concrete spread, a present `undefined` over it is a `TypeError`: Node keeps `undefined` in a
+field typed `number`, which Velt can't represent. A spread used directly as a `T`
+(`return { ...x, ...patch }` from a function returning `T`) is built as `T` the same way. A source
 whose type argument is an interface with methods is an error at that instantiation: a spread
 copies an object's own properties, which are its methods for an object literal but not for a
 class instance, and an interface value may be either.
