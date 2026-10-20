@@ -113,6 +113,17 @@ impl Emitter<'_> {
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
+        if self.own_extension_check(callee) {
+            // `velt_simd_has_<ext>()` in a function gated on `ext` (#1330): it runs only where
+            // the CPU has it, so the check is true and the emulation behind it is dead code.
+            if let Some(dest) = dest {
+                let loc = self.place(dest)?;
+                self.write(loc, Val::Scalar("1".into()))?;
+            }
+            let next = self.block(next)?;
+            self.line(format!("br label {next}"));
+            return Ok(());
+        }
         let target = match self.math_intrinsic(callee, &params, ret) {
             Some(name) => name,
             None => match self.string_fast_path(callee, &params, ret, args) {
@@ -120,7 +131,10 @@ impl Emitter<'_> {
                 None => self.call_target(callee)?,
             },
         };
-        let text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
+        let mut text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
+        if self.enters_gated(callee) {
+            text.push_str(" noinline");
+        }
         if ret == Ty::Unit {
             self.line(text);
         } else {
@@ -139,6 +153,34 @@ impl Emitter<'_> {
         let next = self.block(next)?;
         self.line(format!("br label {next}"));
         Ok(())
+    }
+
+    /// Whether `callee` is a function gated on another CPU target than this one's (#1330). Such a
+    /// call stays a call, as in `velt_opt`: where the gated function's features are the
+    /// caller's too (`+sha2` on arm64), LLVM would otherwise inline it into ordinary code.
+    fn enters_gated(&self, callee: &Callee) -> bool {
+        let Callee::Func(id) = callee else {
+            return false;
+        };
+        self.program
+            .funcs
+            .get(id.0 as usize)
+            .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
+    }
+
+    /// Whether `callee` is `velt_simd_has_<ext>` and this function is gated on `ext`.
+    fn own_extension_check(&self, callee: &Callee) -> bool {
+        let Callee::Extern(id) = callee else {
+            return false;
+        };
+        let Some(e) = self.program.externs.get(id.0 as usize) else {
+            return false;
+        };
+        matches!(
+            velt_vir::simd::SimdCall::of_symbol(&e.symbol),
+            Some(velt_vir::simd::SimdCall::Has(ext))
+                if self.function.target == Some(ext) && crate::simd::has_ext(self.simd, ext)
+        )
     }
 
     fn callee_signature(&self, callee: &Callee) -> CodegenResult<(Vec<Ty>, Ty)> {

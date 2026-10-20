@@ -12,6 +12,13 @@ fail-fast = false
 failure-output = "immediate-final"
 # A hung test fails after 20 minutes instead of running into the job's timeout.
 slow-timeout = { period = "60s", terminate-after = 20 }
+# No `retries`, here or in any profile: a test that passes on a second try still has a race (the
+# nightly `flake` job runs the timing-sensitive tests many times to find them).
+
+[profile.ci.junit]
+# target/nextest/ci/junit.xml: `cargo xtask check` lists the failed tests from it in the job's
+# summary, so a failure is attributable without reading the log.
+path = "junit.xml"
 
 [test-groups]
 # Tests that build and run many programs on a worker pool of their own, or wait on timeouts

@@ -108,6 +108,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if rest == "target" {
+            return self.target_stmt(args, span);
+        }
         let Some(i) = intrinsic_named(rest) else {
             self.cx
                 .err(format!("unknown intrinsic `{}`", id.name), id.span);

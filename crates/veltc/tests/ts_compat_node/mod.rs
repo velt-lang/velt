@@ -95,6 +95,52 @@ fn node_ready() -> Result<(), String> {
     }
 }
 
+/// The behaviour samples that run (they export a `main`, sync or async), sorted, as (file name,
+/// source).
+fn runnable_samples() -> Vec<(String, String)> {
+    let samples =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/behaviour");
+    let mut files: Vec<_> = std::fs::read_dir(&samples)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ts"))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .filter_map(|path| {
+            let src = std::fs::read_to_string(&path).unwrap();
+            let runs = src.contains("export function main()")
+                || src.contains("export async function main()");
+            runs.then(|| {
+                (
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    src,
+                )
+            })
+        })
+        .collect()
+}
+
+/// The fewest runnable behaviour samples. The Node test below checks them only nightly, so the
+/// floor is also checked in every pull request (`enough_behaviour_samples_run`): a change that
+/// drops samples (a lint rule removed, a `main` renamed) lowers it in the same pull request
+/// instead of turning the nightly red.
+const MIN_RUNNABLE_SAMPLES: usize = 4;
+
+#[test]
+fn enough_behaviour_samples_run() {
+    let names: Vec<_> = runnable_samples()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        names.len() >= MIN_RUNNABLE_SAMPLES,
+        "behaviour samples with a `main`: {names:?}, fewer than {MIN_RUNNABLE_SAMPLES} \
+         (lower MIN_RUNNABLE_SAMPLES if a sample was removed on purpose)"
+    );
+}
+
 #[test]
 fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
     if std::env::var_os("VELT_TSC_ORACLE").is_none() {
@@ -106,22 +152,8 @@ fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
     }
     // `velt run` links the samples against the native runtime.
     super::runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
-    let samples =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/behaviour");
-    let mut files: Vec<_> = std::fs::read_dir(&samples)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "ts"))
-        .collect();
-    files.sort();
-    let mut ran = 0;
-    for path in files {
-        let src = std::fs::read_to_string(&path).unwrap();
-        if !src.contains("export function main()") {
-            continue;
-        }
-        ran += 1;
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let samples = runnable_samples();
+    for (name, src) in samples {
         let tmp = test_dir::TestDir::new();
         let dir = tmp.path();
         std::fs::write(dir.join(&name), &src).unwrap();
@@ -140,7 +172,6 @@ fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
         );
         eprintln!("{name}: Velt {in_velt:?}, Node {in_node:?}; fixed: {fixed_velt:?} in both");
     }
-    assert!(ran >= 5, "behaviour samples with a `main`: {ran}");
 }
 
 /// `examples/apps/ssr-blog` shares its components with a TypeScript client: they render the same

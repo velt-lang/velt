@@ -16,6 +16,7 @@
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
 pub fn init() {
+    crate::cpu::init();
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();

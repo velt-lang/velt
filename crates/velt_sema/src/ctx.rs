@@ -128,6 +128,8 @@ pub(crate) struct Ctx<'m> {
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -326,6 +328,7 @@ impl<'m> Ctx<'m> {
             closure_counts: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
+            cpu_targets: FxHashMap::default(),
             groups: None,
             literal_hosts: Default::default(),
             provisional_slots: vec![],
