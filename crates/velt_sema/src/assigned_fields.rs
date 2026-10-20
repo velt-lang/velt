@@ -47,8 +47,15 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
 }
 
 /// The object type whose field `place` writes: directly (`x.f = …`) or a part of it held inline,
-/// such as a tuple's element (`x.t[0] = …`, `x.t[1][0] = …`), which changes the field's value.
+/// such as a tuple's element (`x.t[0] = …`, `x.t[1][0] = …`, also behind `!` or `as`:
+/// `x.t![0] = …`), which changes the field's value.
 fn written_object(cx: &Ctx, place: &Expr) -> Option<DefId> {
+    let place = match &place.kind {
+        E::UnwrapSome(x, _) | E::UnwrapVariant { expr: x, .. } | E::Downcast(x) => {
+            return written_object(cx, x)
+        }
+        _ => place,
+    };
     let E::Field { base, .. } = &place.kind else {
         return None;
     };

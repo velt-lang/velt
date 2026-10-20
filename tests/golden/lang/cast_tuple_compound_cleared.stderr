@@ -1,1 +1,1 @@
-panic: the right-hand side of this assignment set the tuple it writes into to null
+panic: the tuple this assignment writes into was set to null while its right-hand side ran

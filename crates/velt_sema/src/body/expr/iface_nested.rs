@@ -21,7 +21,8 @@
 //! A receiver that cannot be checked an extra time to learn its type (`xs[i++].t[0]`,
 //! `(c ? a : b).t[0]`, `xs.find(…)!.t[0]`, `fs[0]().t[0]`) is bound to a temporary first,
 //! with every index in the target that has an effect, in evaluation order, when its field
-//! names a field that an interface's read may copy. `x["t"]` is `x.t`.
+//! names a field that an interface's read may copy. `x["t"]` is `x.t`, and a part behind `!` or
+//! `as` is a part of the field (`x.opt![0] = 3`, `(x.u as [number, string])[0] += 4`).
 //!
 //! The setter makes every implementor writable (`iface_writes`), so an implementor that is a
 //! value type becomes a counted object and every holder of the interface value sees the write.
@@ -77,6 +78,15 @@ fn inner(e: &ast::Expr) -> Option<&ast::Expr> {
     }
 }
 
+/// [`inner`], also seeing through `p!` and `p as T`: they name the place `p` names, so a part
+/// behind them is part of `p` (`x.opt![0] = 3`, `(x.u as [number, string])[0] += 4`).
+fn held_inner(e: &ast::Expr) -> Option<&ast::Expr> {
+    match &bare(e).kind {
+        ast::ExprKind::NonNull(x) | ast::ExprKind::Cast { expr: x, .. } => Some(x),
+        _ => inner(e),
+    }
+}
+
 /// Can `e` be checked an extra time to learn its type? Variables, `this`, members, elements at
 /// plain indices and calls of named functions with plain arguments: nothing in it creates a
 /// closure or another definition.
@@ -117,6 +127,11 @@ fn replace(target: &ast::Expr, depth: usize, with: &ast::Expr) -> ast::Expr {
             index: index.clone(),
             optional: *optional,
         },
+        ast::ExprKind::NonNull(x) => ast::ExprKind::NonNull(Box::new(replace(x, depth - 1, with))),
+        ast::ExprKind::Cast { expr, ty } => ast::ExprKind::Cast {
+            expr: Box::new(replace(expr, depth - 1, with)),
+            ty: ty.clone(),
+        },
         _ => unreachable!("ICE: replaced part is below a member or element target"),
     };
     ast::Expr {
@@ -133,7 +148,9 @@ fn pure_below(target: &ast::Expr, depth: usize) -> bool {
         return true;
     }
     match &bare(target).kind {
-        ast::ExprKind::Member { object, .. } => pure_below(object, depth - 1),
+        ast::ExprKind::Member { object, .. }
+        | ast::ExprKind::NonNull(object)
+        | ast::ExprKind::Cast { expr: object, .. } => pure_below(object, depth - 1),
         ast::ExprKind::Index { object, index, .. } => {
             is_pure_value(index) && pure_below(object, depth - 1)
         }
@@ -545,7 +562,7 @@ impl FnCx<'_, '_> {
                     return Some((depth, object, prop));
                 }
             }
-            cur = inner(cur)?;
+            cur = held_inner(cur)?;
             depth += 1;
         }
     }

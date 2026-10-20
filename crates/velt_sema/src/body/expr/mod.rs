@@ -8,7 +8,7 @@ mod args;
 mod array_ctor;
 mod assign;
 mod assign_checks;
-mod assign_paths;
+pub(crate) mod assign_paths;
 mod attempt;
 mod await_union;
 mod builtins;

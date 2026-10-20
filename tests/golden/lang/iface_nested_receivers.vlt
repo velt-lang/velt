@@ -139,6 +139,24 @@ function heldTuples(): void {
   ys[k++]![1] = "q";
   (ys[--k] as [number, string])[0] = 9;
   console.log(ys[0]![0], ys[1]![0], ys[1]![1], k);
+  // Nested effectful indexes: each is bound once, to a temporary of its own.
+  const g: ([number, number] | null)[][] = [[[1, 2]], [[3, 4]]];
+  let gk = 1;
+  g[gk--][gk++]![0] += 10;
+  g[gk--][gk++]![1] = 20;
+  const gv = (g[gk--][gk++]![1] = 30);
+  console.log(JSON.stringify(g), gk, gv);
+  const m: ([number, number] | null)[][] = [[[0, 0], [0, 0]], [[0, 0], [0, 0]]];
+  let r = 1, c2 = 0;
+  m[r--][c2++]![1] = 7; m[r++][c2--]![0]++;
+  console.log(JSON.stringify(m));
+  // A variable index the right-hand side changes: the write and its check use the slot the
+  // index named before.
+  let wk = 0;
+  const ws: ([number, string] | null)[] = [[1, "a"], null];
+  ws[wk]![0] = (() => { wk = 1; return 5; })();
+  (ws[wk - 1] as [number, string])[1] += (() => { wk = 2; return "b"; })();
+  console.log(ws, wk);
   // A variable a closure assigns.
   let held: [number, string] | null = [1, "o"];
   const replace = (): void => { held = [2, "n"]; };

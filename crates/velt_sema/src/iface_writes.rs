@@ -69,9 +69,19 @@ pub(crate) enum SetterSrc {
 
 impl Ctx<'_> {
     /// Does reading a field of type `ty` through an interface give a copy that a write in place
-    /// would not reach (a tuple, an object type, an option of one; a type parameter may be one)?
+    /// would not reach (a tuple, an object type, an option or a union with one; a type parameter
+    /// may be one)?
     pub(crate) fn copied_part(&self, ty: TyId, params: bool) -> bool {
         let ty = self.ty.opt_payload(ty).unwrap_or(ty);
+        if let Some((d, _)) = self.union_def(ty) {
+            return self.enum_info(d).is_some_and(|e| {
+                e.variants.iter().any(|v| {
+                    v.payload
+                        .first()
+                        .is_some_and(|&m| self.copied_part(m, params))
+                })
+            });
+        }
         match self.ty.kind(ty) {
             TyKind::Tuple(_) => true,
             TyKind::Param(_) => params,
