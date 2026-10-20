@@ -61,6 +61,7 @@ mod intersection_members;
 mod intersections;
 mod js_api;
 mod json;
+mod key_groups;
 mod known;
 mod literals;
 mod module_chunks;

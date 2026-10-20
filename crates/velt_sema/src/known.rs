@@ -5,6 +5,8 @@
 //! interface behind `for...of` over iterables, and the `Generator<T, E>` / `AsyncGenerator<T, E>`
 //! classes generators create.
 
+use rustc_hash::FxHashSet;
+
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, IntTy, TyId, TyKind};
@@ -17,6 +19,10 @@ const SYNC_RESULTS: [&str; 4] = ["Iterator", "Iterable", "IterableIterator", "It
 
 /// The interfaces an async generator may be declared to return.
 const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterableIterator"];
+
+/// The most types one walk over a type graph visits: a generic type that grows as it recurses
+/// (`class A<T> { next: A<T[]> }`) has no end.
+const MAX_WALK: usize = 4096;
 
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
@@ -404,11 +410,16 @@ impl Ctx<'_> {
     /// resource handle (or the pointer to a future, which runs and is freed once) instead of
     /// duplicating the resource, so it is not available for these types.
     pub fn owns_resource(&mut self, t: TyId) -> bool {
-        self.owns_resource_depth(t, 0)
+        let mut seen = FxHashSet::default();
+        self.owns_resource_in(t, &mut seen)
     }
 
-    fn owns_resource_depth(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
+    /// Is a resource reachable from `t` through types not in `seen` (those visited by this
+    /// query)? A type is walked once per query: reachability does not depend on the order, and
+    /// a type graph whose types share parts costs its size, not its number of paths.
+    /// Generic types that grow as they recurse (`next: A<T[]>`) stop after [`MAX_WALK`] types.
+    fn owns_resource_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        if seen.len() >= MAX_WALK || !seen.insert(t) {
             return false;
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
@@ -432,9 +443,7 @@ impl Ctx<'_> {
             }
             k => crate::types::children(&k),
         };
-        parts
-            .into_iter()
-            .any(|p| self.owns_resource_depth(p, depth + 1))
+        parts.into_iter().any(|p| self.owns_resource_in(p, seen))
     }
 
     /// Does a value of type `t` own a resource that no deep copy can duplicate: a value with a

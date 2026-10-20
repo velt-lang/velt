@@ -64,6 +64,40 @@ fn generic_chains(n: usize) -> String {
     out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n}\n"
 }
 
+/// A type graph whose types share parts: `N{k}` holds two `N{k-1}`, so `N{n-1}` has 2^n paths
+/// to the `Record` in `N0`, while it has only `n` types. The record-key check walks the types a
+/// function mentions, and reading `v` of the union `U` asks whether `N{n-1}` owns a resource.
+fn shared_type_graph(n: usize) -> String {
+    let mut out = String::from("interface N0 {\n  r: Record<string, number>;\n}\n");
+    for k in 1..n {
+        out += &format!("interface N{k} {{\n  a: N{p};\n  b: N{p};\n}}\n", p = k - 1);
+    }
+    let top = format!("N{}", n - 1);
+    out += &format!("type U = {{ kind: \"a\"; v: {top} }} | {{ kind: \"b\"; v: {top} }};\n");
+    out += &format!("function pick(u: U): {top} {{\n  return u.v;\n}}\n");
+    out + &format!(
+        "function main() {{\n  const v: {top} | null = null;\n  console.log(v === null);\n}}\n"
+    )
+}
+
+/// Arrows nested `depth` deep, each passed where a union of function types is expected and
+/// using the parameter of the arrow around it, so each try of an enclosing arrow gives the
+/// nested one another type to see (#859).
+fn nested_trials(depth: usize) -> String {
+    let mut call = "1".to_string();
+    for k in (1..=depth).rev() {
+        call = format!(
+            "run((x{k}) => {{\n  const u = x{p};\n  const r = {call};\n  const s: string = x{k};\n  return r;\n}})",
+            p = k - 1
+        );
+    }
+    "type H = ((x: number) => number) | ((x: string) => number);\n\
+     function run(h: H): number {\n  return 1;\n}\n\
+     function main() {\n  const x0 = \"s\";\n"
+        .to_string()
+        + &format!("  console.log({call});\n}}\n")
+}
+
 /// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock, which
 /// would count another test's work too.
 fn serial() -> MutexGuard<'static, ()> {
@@ -89,6 +123,11 @@ fn sema_cost(loaded: &Loaded) -> u64 {
 /// still shows in CPU time (cache and frequency effects of other processes) hits every size alike
 /// instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
+    assert_slopes(sizes, |n| generated_program(n, chain(n)), slack);
+}
+
+/// [`assert_linear`] for the programs `program` generates.
+fn assert_slopes(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
     // A shared CI runner can slow one size's measurements enough to tilt a slope past the
     // slack. A pass that really grows faster than linearly fails every attempt, so the test
     // measures again, up to `ATTEMPTS` times, before it fails.
@@ -99,13 +138,10 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
     );
     // Before loading: parsing the programs is work on the process's clock too.
     let _serial = serial();
-    let programs: Vec<Loaded> = sizes
-        .iter()
-        .map(|&n| load_src(&generated_program(n, chain(n))))
-        .collect();
+    let programs: Vec<Loaded> = sizes.iter().map(|&n| load_src(&program(n))).collect();
     let mut failure = String::new();
     for attempt in 1..=ATTEMPTS {
-        match linear_slopes(sizes, &chain, &programs, slack) {
+        match linear_slopes(sizes, &programs, slack) {
             Ok(()) => return,
             Err(e) => {
                 eprintln!("attempt {attempt} of {ATTEMPTS}: {e}");
@@ -118,12 +154,7 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
 
 /// One measurement for [`assert_linear`]: each size's best sema cost of `ROUNDS`, then the
 /// slopes between consecutive sizes, each later one under `slack`× the first.
-fn linear_slopes(
-    sizes: &[usize],
-    chain: &impl Fn(usize) -> usize,
-    programs: &[Loaded],
-    slack: f64,
-) -> Result<(), String> {
+fn linear_slopes(sizes: &[usize], programs: &[Loaded], slack: f64) -> Result<(), String> {
     const ROUNDS: usize = 7;
     let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
@@ -132,7 +163,7 @@ fn linear_slopes(
         }
     }
     for (&n, &c) in sizes.iter().zip(&best) {
-        eprintln!("N = {n:>5} (chains of {:>5}): cost {c:>12}", chain(n));
+        eprintln!("N = {n:>5}: cost {c:>12}");
     }
     let slopes: Vec<f64> = (1..sizes.len())
         .map(|i| (best[i] as f64 - best[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
@@ -218,6 +249,23 @@ fn sema_time_grows_linearly() {
     // One chain through the whole program: modification inference must not take a round over
     // every body per call level.
     assert_linear(&[100, 400, 1600], |n| n, 2.0);
+}
+
+/// Walks over a type graph whose types share parts (`known::owns_resource`, the record keys)
+/// visit each type once, not each path (#859): `N` types with 2^N paths.
+#[test]
+fn shared_type_graphs_are_walked_by_type() {
+    assert_linear_work(&[100, 800], shared_type_graph, 1.5);
+    assert_slopes(&[100, 400, 1600], shared_type_graph, 2.0);
+}
+
+/// Choosing the member of a union of function types for nested arrows that each use the
+/// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
+/// Each try of an arrow checks the arrows nested in it, so the work is quadratic in the depth:
+/// its slope doubles with the depth, and a cubic one would quadruple.
+#[test]
+fn nested_arrow_trials_grow_polynomially() {
+    assert_slopes(&[15, 30, 60], nested_trials, 3.0);
 }
 
 #[test]

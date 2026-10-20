@@ -93,7 +93,7 @@ impl FnCx<'_, '_> {
         let Some(e) = v.init.as_ref() else {
             return false;
         };
-        if v.kind != ast::VarKind::Const || !closure_uses(e, &name.name) {
+        if v.kind != ast::VarKind::Const || !self.arrow_scans.late_const(e, &name.name) {
             return false;
         }
         let ty = match ann {
