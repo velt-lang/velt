@@ -133,7 +133,7 @@ pub(crate) fn check_deferred(cx: &mut Ctx) {
                 cx.subst(r, &args)
             }
         };
-        if have != want && !cx.ty.has_error(have) && !cx.ty.has_error(want) {
+        if !cx.same_ty(have, want) && !cx.ty.has_error(have) && !cx.ty.has_error(want) {
             cx.err(c.message, c.span);
         }
     }

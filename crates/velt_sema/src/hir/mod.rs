@@ -121,10 +121,7 @@ pub enum TyOp {
     /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
     /// reduces to the object type `crate::intersections` builds from them.
     Intersect,
-    /// The error type of the function type written without `throws` at site #n (sema's
-    /// `throws::fn_types`), while bodies are checked: what the values stored into it throw,
-    /// solved after every body is checked. Never reaches lowering (sema replaces it by the
-    /// solved type).
+    /// Sema's error-set variable of site #n (hir_encodings.md); never reaches lowering.
     ErrSite(u32),
 }
 

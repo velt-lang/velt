@@ -100,6 +100,9 @@ pub(crate) fn erase(cx: &mut Ctx) {
                 for f in &mut i.fields {
                     f.ty = e(f.ty);
                 }
+                for m in &mut i.methods {
+                    m.throws = m.throws.map(&mut e).filter(|t| *t != never);
+                }
             }
         }
     }

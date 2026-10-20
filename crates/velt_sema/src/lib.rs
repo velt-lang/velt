@@ -291,6 +291,10 @@ fn check_on_current_thread(
     // (`throws::fn_types`): check again while those sets grow.
     let mut seeds = throws::FnTypeSeeds::default();
     let (mut cx, mut entry) = new_cx(true, &seeds, false);
+    if let Some(s) = cx.fn_sites.doubted(error_count(&cx) > 0) {
+        seeds = s;
+        (cx, entry) = new_cx(true, &seeds, false);
+    }
     for round in 1..=FN_SITE_ROUNDS {
         let Some(grown) = cx.fn_sites.grown() else {
             break;
@@ -381,7 +385,7 @@ fn retry_sharing(cx: &ctx::Ctx) -> bool {
     cx.held_borrows_used && cx.borrow_pass_errors
 }
 
-fn error_count(cx: &ctx::Ctx) -> usize {
+pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
     cx.diags.iter().filter(|d| d.is_error()).count()
 }
 

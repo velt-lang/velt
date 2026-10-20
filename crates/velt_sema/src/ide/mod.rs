@@ -125,6 +125,10 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
     // As in `crate::check_with`: the error types of function types written without `throws`.
     let mut seeds = crate::throws::FnTypeSeeds::default();
     let mut cx = new_cx(true, &seeds, false);
+    if let Some(s) = cx.fn_sites.doubted(crate::error_count(&cx) > 0) {
+        seeds = s;
+        cx = new_cx(true, &seeds, false);
+    }
     for round in 1..=crate::FN_SITE_ROUNDS {
         let Some(grown) = cx.fn_sites.grown() else {
             break;

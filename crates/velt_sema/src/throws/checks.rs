@@ -12,13 +12,34 @@ use crate::defs::{FnKind, ThrowSrc};
 use crate::hir::{DefId, TyId};
 
 pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
+    // The error-set variables (`vars`): closures created for a site's type throw into its
+    // variable; then the sets are solved, and the checks below see solved error types.
+    let vars = cx.fn_sites.use_vars && !cx.fn_sites.vars.is_empty();
+    let mut into_vars = rustc_hash::FxHashSet::default();
+    let mut solved_ok = true;
+    if vars {
+        for &d in fns {
+            if let Some(decl) = cx.fn_info(d).declared_throws {
+                let own = own_final(cx, d);
+                if cx.throw_into_vars(decl.ty, own) {
+                    into_vars.insert(d);
+                }
+            }
+        }
+        solved_ok = cx.solve_err_vars();
+        // The passes after inference see the solved error types.
+        for &d in fns {
+            let t = cx.fn_info(d).throws;
+            cx.fn_info_mut(d).throws = solved(cx, t);
+        }
+    }
     for &d in fns {
         if let Some(decl) = cx.fn_info(d).declared_throws {
-            let own = own_final(cx, d);
-            // A closure created for a site's type throws into its variable (`vars`).
-            if cx.fn_sites.use_vars && cx.throw_into_vars(decl.ty, own) {
+            if into_vars.contains(&d) {
                 continue;
             }
+            let own = own_final(cx, d);
+            let own = solved(cx, own);
             match cx.error_outside(decl.ty, own) {
                 Some(m) if decl.from_body => closure_too_early(cx, d, m),
                 Some(m) => clause_violation(cx, d, m, decl.ty, decl.span),
@@ -31,6 +52,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             Some(b) => {
                 for &m in &g.members {
                     let own = member_final(cx, m);
+                    let own = solved(cx, own);
                     let allowed = super::groups::member_bound(cx, b, m);
                     if let Some(bad) = cx.error_outside(allowed, own) {
                         bound_violation(cx, m, bad, b);
@@ -48,9 +70,18 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
     }
-    if cx.fn_sites.use_vars && !cx.fn_sites.vars.is_empty() && !cx.solve_err_vars() {
+    if vars && !(solved_ok && cx.assumptions_hold()) {
         cx.var_seeds();
     }
+}
+
+/// `t` with its error-set variables solved (`vars`), when the check has them.
+fn solved(cx: &mut Ctx, t: Option<TyId>) -> Option<TyId> {
+    if !cx.fn_sites.use_vars || cx.fn_sites.solved.is_empty() {
+        return t;
+    }
+    let t = t.map(|t| cx.solved_type(t));
+    cx.canon_error(t)
 }
 
 /// Generator method `d` implements interface method `what` with an inferred error type: the
@@ -258,10 +289,16 @@ fn generic_group(cx: &mut Ctx, members: &[DefId]) {
 /// A type sema built while checking bodies must agree with the final inference.
 fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     let mut fin = super::infer::srcs_final(cx, &c.srcs);
-    let obs = cx.canon_error(c.observed);
-    // A `catch` variable's type assumed the variables in it empty (`vars`).
-    if !c.exact && cx.fn_sites.use_vars {
-        fin = cx.assume_vars_empty(fin);
+    let mut obs = cx.canon_error(c.observed);
+    // A `catch` variable's type assumed the variables in it empty (`vars`): that is checked
+    // when the sets are solved; an exact type is compared solved.
+    if cx.fn_sites.use_vars {
+        if c.exact {
+            fin = solved(cx, fin);
+            obs = solved(cx, obs);
+        } else {
+            fin = cx.assume_vars_empty(fin);
+        }
     }
     let ok = if c.exact {
         fin == obs

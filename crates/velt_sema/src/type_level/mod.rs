@@ -125,7 +125,7 @@ impl Ctx<'_> {
     /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
         if let TyOp::ErrSite(_) = o {
-            return "Error".to_string();
+            return self.fn_sites.shown_var();
         }
         let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
         let TyOp::Alias(a) = o else {
@@ -171,14 +171,12 @@ impl Ctx<'_> {
         if let Some(&r) = self.type_level.reduced.get(&t) {
             return r;
         }
-        let TyKind::Op(o, args) = self.ty.kind(t).clone() else {
-            return t;
+        let (o, args) = match self.ty.kind(t).clone() {
+            TyKind::Op(o, args) if !matches!(o, TyOp::ErrSite(_)) => (o, args),
+            _ => return t,
         };
         if args.iter().any(|x| self.ty.has_error(*x)) {
             return self.ty.error;
-        }
-        if let TyOp::ErrSite(_) = o {
-            return t;
         }
         let TyOp::Alias(a) = o else {
             // At the argument whose expected type needs it, else where it was written.

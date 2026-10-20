@@ -86,6 +86,9 @@ pub(crate) struct FnSites {
     pub solved: HashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(super) var_sets: super::vars::VarSets,
+    /// A type with a variable failed a comparison or a bound: when the check reports errors,
+    /// they may come from the variables ([`FnSites::doubted`]).
+    pub doubt: std::cell::Cell<bool>,
 }
 
 impl FnSites {
@@ -113,6 +116,30 @@ impl FnSites {
     pub(super) fn fallback(&mut self) {
         self.found.no_vars = true;
         self.grew = true;
+    }
+
+    /// The check with error-set variables reported errors, and a type with a variable failed
+    /// a comparison: the sets to check the program with again without variables (as written,
+    /// the sets found by checking again), whose errors are the program's.
+    pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
+        (self.use_vars && self.doubt.get() && errors).then(|| {
+            let mut s = self.found.clone();
+            s.no_vars = true;
+            s
+        })
+    }
+
+    /// A diagnostic shows type `t`: when it holds a variable, the errors are in doubt.
+    pub fn note_shown(&self, t: TyId) {
+        if self.use_vars && self.var_sets.known_to_mention(t) {
+            self.doubt.set(true);
+        }
+    }
+
+    /// A diagnostic shows a variable itself (as `Error`): the errors are in doubt.
+    pub fn shown_var(&self) -> String {
+        self.doubt.set(true);
+        "Error".to_string()
     }
 
     /// Is this the last check, whatever it finds?

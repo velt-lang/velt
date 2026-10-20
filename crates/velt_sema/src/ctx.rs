@@ -634,6 +634,7 @@ impl<'m> Ctx<'m> {
 
     /// Display `t` with `Param(i)` named `names[i]`.
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
+        self.fn_sites.note_shown(t);
         let list = |s: &Self, ts: &[TyId]| {
             ts.iter()
                 .map(|t| s.display_in(*t, names))

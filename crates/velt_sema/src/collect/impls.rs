@@ -261,17 +261,20 @@ fn check_method_sig(
         let e = declared.and_then(|t| t.ty);
         let ret = cx.fn_info(def).ret;
         let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
-        cx.subst(ret, owner_args) == want_ret
+        {
+            let r = cx.subst(ret, owner_args);
+            cx.same_ty(r, want_ret)
+        }
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
-    if ps != want_ps || !ret_ok {
+    let ps_ok = cx.same_tys(&ps, &want_ps);
+    if !ps_ok || !ret_ok {
         let mut d = Diagnostic::error(message, span);
-        if is_generator && ps == want_ps {
+        if is_generator && ps_ok {
             let want = cx.display(want_ret);
             d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
-        } else if name == "return" && ps == want_ps && matches!(iname, "Iterator" | "AsyncIterator")
-        {
+        } else if name == "return" && ps_ok && matches!(iname, "Iterator" | "AsyncIterator") {
             // `return(): void`: an iterator's early exit returns a finished result, as in TS.
             let t = iface_args.first().map_or("T".into(), |t| cx.display(*t));
             let want = match iname {

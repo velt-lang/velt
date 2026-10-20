@@ -10,12 +10,20 @@
 //! - a call through a site's value throws the variable, so the error types of the functions
 //!   calling through it contain it, and a closure stored into another site carries it on.
 //!
-//! After inference the sets are solved (a fixpoint over the variables), and every type is
-//! replaced by its solved form before lowering (`crate::readonly::erase`). The constructs that
-//! need a solved set while bodies are checked (a `catch` variable's type) assume the variables
-//! they meet are empty; when one is not, or a function value's error type differs from the
-//! site's set it was stored as, the program is checked again with the solved sets written in,
-//! as before (`FnSites::fallback`).
+//! - types compared where values pass both ways (a method's signature and the one it
+//!   implements or overrides, operands of `===`) are one type but for their variables, which
+//!   then are one set ([`Ctx::same_ty`]).
+//!
+//! After inference the sets are solved (a fixpoint over the variables), the functions' error
+//! types are replaced by their solved forms, and every type is replaced by its solved form
+//! before lowering (`crate::readonly::erase`). The constructs that need a solved set while bodies are checked (a
+//! `catch` variable's type, a `finally` block of a generator, a value converted as its type
+//! written without variables) assume the variables they meet are empty; when one is not, or a
+//! function value's error type differs from the site's set it was stored as, the program is
+//! checked again with the solved sets written in, as before (`FnSites::fallback`). When the
+//! check reports errors and a type with a variable failed a comparison or was shown in a
+//! diagnostic, the program is checked again without variables too (`FnSites::doubted`): its
+//! errors are then exactly those of a check without them.
 
 use rustc_hash::FxHashMap;
 
@@ -44,6 +52,11 @@ pub(crate) struct VarSets {
 }
 
 impl VarSets {
+    /// Is `t` known to mention a variable (without computing it)?
+    pub(super) fn known_to_mention(&self, t: TyId) -> bool {
+        self.mentions.get(&t) == Some(&true)
+    }
+
     fn ensure(&mut self, v: u32) {
         while self.parent.len() <= v as usize {
             let n = self.parent.len() as u32;
@@ -149,6 +162,28 @@ impl Ctx<'_> {
         true
     }
 
+    /// Are `a` and `b` one type, or one but for their error-set variables (which become one
+    /// set, [`unify_err_vars`](Self::unify_err_vars))? For types a value passes between both
+    /// ways (a method's signature and the one it implements or overrides, operands compared).
+    pub(crate) fn same_ty(&mut self, a: TyId, b: TyId) -> bool {
+        if a == b || !self.fn_sites.use_vars {
+            return a == b;
+        }
+        let same = self.unify_err_vars(a, b);
+        if !same && (self.mentions_err_var(a) || self.mentions_err_var(b)) {
+            self.fn_sites.doubt.set(true);
+        }
+        same
+    }
+
+    /// [`same_ty`](Self::same_ty) for each pair (all of them unified).
+    pub(crate) fn same_tys(&mut self, a: &[TyId], b: &[TyId]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .fold(true, |ok, (x, y)| self.same_ty(*x, *y) && ok)
+    }
+
     fn unify_parts(&mut self, a: TyId, b: TyId, depth: u32) {
         if a == b || depth > 32 {
             return;
@@ -226,6 +261,30 @@ impl Ctx<'_> {
         true
     }
 
+    /// Assume every variable in `t`, at any depth, empty (a value converted as its type
+    /// written without them).
+    pub(crate) fn assume_empty_in(&mut self, t: TyId) {
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.vars_deep(t, &mut seen);
+    }
+
+    fn vars_deep(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) {
+        if !seen.insert(t) || !self.mentions_err_var(t) {
+            return;
+        }
+        if let Some(v) = self.err_var(t) {
+            self.fn_sites.var_sets.assumed_empty.push(v);
+            return;
+        }
+        let mut parts = crate::types::children(self.ty.kind(t));
+        if self.union_def(t).is_some() {
+            parts.extend(self.union_members(t).unwrap_or_default());
+        }
+        for p in parts {
+            self.vars_deep(p, seen);
+        }
+    }
+
     /// `t` without its variables, which a check assumes empty (a `catch` variable's type).
     pub(crate) fn assume_vars_empty(&mut self, t: Option<TyId>) -> Option<TyId> {
         let t = t?;
@@ -242,8 +301,9 @@ impl Ctx<'_> {
         self.error_union(&keep)
     }
 
-    /// Solve the variables (a fixpoint over `i ⊇ j`), fill `FnSites::solved`, and check what
-    /// the check assumed. False when the program must be checked again with the solved sets.
+    /// Solve the variables (a fixpoint over `i ⊇ j`), fill `FnSites::solved`, and check the
+    /// function values stored as sites' types. False when the program must be checked again
+    /// with the solved sets.
     pub(crate) fn solve_err_vars(&mut self) -> bool {
         let n = self.fn_sites.vars.len();
         self.fn_sites.var_sets.ensure(n.saturating_sub(1) as u32);
@@ -272,14 +332,10 @@ impl Ctx<'_> {
             }
         }
         let mut ok = !self.fn_sites.var_sets.unsupported;
-        for v in 0..n {
-            let r = reps[v] as usize;
-            let s = self.error_union(&sets[r]).unwrap_or(self.ty.never);
+        for (v, &r) in reps.iter().enumerate() {
+            let s = self.error_union(&sets[r as usize]).unwrap_or(self.ty.never);
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
             self.fn_sites.solved.insert(var, s);
-        }
-        for v in std::mem::take(&mut self.fn_sites.var_sets.assumed_empty) {
-            ok &= sets[reps[v as usize] as usize].is_empty();
         }
         for (v, t) in std::mem::take(&mut self.fn_sites.var_sets.exact) {
             let want = self.solved_type(t);
@@ -287,6 +343,16 @@ impl Ctx<'_> {
             ok &= self.canon_error(Some(want)) == have;
         }
         ok
+    }
+
+    /// Are the variables a check assumed empty (a `catch` variable's type) empty?
+    pub(crate) fn assumptions_hold(&mut self) -> bool {
+        let never = self.ty.never;
+        let assumed = std::mem::take(&mut self.fn_sites.var_sets.assumed_empty);
+        assumed.into_iter().all(|v| {
+            let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v), vec![]));
+            self.fn_sites.solved.get(&var).is_none_or(|s| *s == never)
+        })
     }
 
     /// `t` with its variables replaced by their solved types.

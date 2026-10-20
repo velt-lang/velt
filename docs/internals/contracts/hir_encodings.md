@@ -652,6 +652,13 @@ it replaces the `Op` by `Program::type_ops[op]` (looked up as substituted, else 
 arguments), the reduced type sema computed for every instantiation the program reaches. A missing
 entry is an `ICE:`.
 
+`TyOp::ErrSite(n)` (no arguments) exists only while sema checks bodies: the error type of the
+function type written without `throws` at site #n (issue #1154), an error-set variable that sema
+solves once after every body is checked. Sema replaces each one, and every type holding one, by
+its solved type before the program is built (with the readonly twins), so lowering never sees
+one; an error type that was only variables solved empty is no error type (`FnDef::throws` is
+`None`).
+
 ## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
 - An instance of a generic object type is the object type it spells out: sema substitutes
   through `Ctx::subst`, which re-interns anonymous object types and unions from their

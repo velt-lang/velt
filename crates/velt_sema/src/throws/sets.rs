@@ -65,9 +65,14 @@ impl Ctx<'_> {
     pub(crate) fn error_outside(&mut self, bound: Option<TyId>, t: Option<TyId>) -> Option<TyId> {
         let allowed = bound.map(|b| self.error_members(b)).unwrap_or_default();
         let found = t.map(|t| self.error_members(t)).unwrap_or_default();
-        found
+        let out = found
             .into_iter()
-            .find(|m| !self.ty.is_bottom(*m) && !allowed.iter().any(|b| self.error_fits(*m, *b)))
+            .find(|m| !self.ty.is_bottom(*m) && !allowed.iter().any(|b| self.error_fits(*m, *b)));
+        // An error-set variable outside a bound (`throws::vars`).
+        if out.is_some_and(|m| self.err_var(m).is_some()) {
+            self.fn_sites.doubt.set(true);
+        }
+        out
     }
 
     /// Can an error of type `m` be stored as a `b` (equal, or `b` is a base class of `m`)?

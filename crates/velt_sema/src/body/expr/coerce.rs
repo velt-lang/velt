@@ -49,6 +49,37 @@ impl FnCx<'_, '_> {
     }
 
     fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        let h = match self.try_coerce_typed(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
+        // Types that convert as written, but for the error-set variables in them
+        // (`throws::vars`): converted as written, assuming the variables empty; when one is
+        // not, the program is checked again with the solved sets.
+        if !self.cx.fn_sites.use_vars
+            || !(self.cx.mentions_err_var(h.ty) || self.cx.mentions_err_var(exp))
+        {
+            return Err(h);
+        }
+        let (from, to) = (self.cx.plain_type(h.ty), self.cx.plain_type(exp));
+        let ty = h.ty;
+        let mut p = h;
+        p.ty = from;
+        match self.try_coerce_typed(p, to) {
+            Ok(mut c) => {
+                self.cx.assume_empty_in(ty);
+                self.cx.assume_empty_in(exp);
+                c.ty = exp;
+                Ok(c)
+            }
+            Err(mut p) => {
+                p.ty = ty;
+                Err(p)
+            }
+        }
+    }
+
+    fn try_coerce_typed(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
@@ -351,6 +382,9 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        if self.cx.mentions_err_var(expected) || self.cx.mentions_err_var(found.ty) {
+            self.cx.fn_sites.doubt.set(true);
+        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
