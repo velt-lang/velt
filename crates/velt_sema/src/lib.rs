@@ -408,7 +408,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::validate_moves(cx);
     let moved = moves::check_all(cx);
     ownership::clone_reused(cx, &moved.reused);
-    body::expr::spawn_promises::check_shared_holders(cx);
     ownership::box_cells(cx, &moved.boxed, &moved.per_iteration);
     ownership::check_exclusive(cx);
     ownership::check_boundaries(cx);

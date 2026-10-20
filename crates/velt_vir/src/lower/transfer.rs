@@ -97,8 +97,11 @@ impl Cx<'_> {
         parts.into_iter().any(|p| self.reaches_fn_in(p, seen))
     }
 
-    /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`)? Function and
-    /// interface values may hold any type: assumed to.
+    /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`), or hold a promise?
+    /// Then the copy is transferred in turn (glue/transfer.rs `settle_copy`): what `clone()`
+    /// returned may share objects, and a promise's copy is another holder of it, which is handed
+    /// over to the other task (#212). Function and interface values may hold any type: assumed
+    /// to.
     pub(super) fn reaches_own_clone(&mut self, t: TyId) -> bool {
         self.reaches_own_clone_in(t, &mut FxHashSet::default())
     }
@@ -109,7 +112,8 @@ impl Cx<'_> {
         }
         let parts = match self.kind(t) {
             TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
-            TyKind::Shared(_) | TyKind::Promise(..) => return false,
+            TyKind::Promise(..) => return true,
+            TyKind::Shared(_) => return false,
             TyKind::Adt(..) if self.own_clone(t).is_some() => return true,
             TyKind::Array(e) => vec![e],
             TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
@@ -122,32 +126,42 @@ impl Cx<'_> {
     }
 
     /// Does a value of `t` own a resource that cannot be deep-copied: a value with a
-    /// `[Symbol.dispose]()` hook and no `clone()` of its own, or a promise (directly, or in a
-    /// field, element or payload)? Function and interface values are checked when they are
-    /// copied (their environment's or implementor's own glue).
+    /// `[Symbol.dispose]()` hook and no `clone()` of its own (directly, or in a field, element
+    /// or payload)? A promise can be copied: its copy is another holder of the same promise,
+    /// which a transfer hands over to the other task (#212). Function and interface values are
+    /// checked when they are copied (their environment's or implementor's own glue).
     pub(super) fn uncopyable(&mut self, t: TyId) -> bool {
         self.uncopyable_part(t).is_some()
     }
 
-    /// The part of `t` that makes it `uncopyable`: the resource type or the promise type.
+    /// The part of `t` that makes it `uncopyable`: the resource type.
     pub(super) fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
-        self.uncopyable_in(t, true, &mut FxHashSet::default())
+        self.uncopyable_in(t, true, false, &mut FxHashSet::default())
+    }
+
+    /// The part of `t` that a function value capturing a `t` cannot share between threads
+    /// calling it at once (glue/many.rs): an `uncopyable` resource, or a promise, which is
+    /// awaited on one task.
+    pub(super) fn unshareable_part(&mut self, t: TyId) -> Option<TyId> {
+        self.uncopyable_in(t, true, true, &mut FxHashSet::default())
     }
 
     /// `uncopyable_part`, or with `honour_clones` false: the part through which a
     /// field-by-field copy of `t` would duplicate a resource (whatever `clone()` methods its
-    /// classes have).
+    /// classes have). With `promises`, a promise counts as such a part.
     fn uncopyable_in(
         &mut self,
         t: TyId,
         honour_clones: bool,
+        promises: bool,
         seen: &mut FxHashSet<TyId>,
     ) -> Option<TyId> {
         if !seen.insert(t) {
             return None;
         }
         let parts = match self.kind(t) {
-            TyKind::Promise(..) => return Some(t),
+            TyKind::Promise(..) if promises => return Some(t),
+            TyKind::Promise(..) => return None,
             TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => {
                 return None
             }
@@ -159,7 +173,7 @@ impl Cx<'_> {
         };
         parts
             .into_iter()
-            .find_map(|p| self.uncopyable_in(p, honour_clones, seen))
+            .find_map(|p| self.uncopyable_in(p, honour_clones, promises, seen))
     }
 
     /// The class's own `clone()` method (declared on the class itself, no parameters, not
@@ -183,7 +197,7 @@ impl Cx<'_> {
         }
         let m = self.own_clones.as_ref().and_then(|m| m.get(&d).copied());
         let m = m.filter(|_| {
-            self.uncopyable_in(t, false, &mut FxHashSet::default())
+            self.uncopyable_in(t, false, true, &mut FxHashSet::default())
                 .is_some()
         });
         self.honoured_clones.insert(t, m);
@@ -304,7 +318,10 @@ impl FnLower<'_, '_> {
     /// Why a value of `ty` cannot be deep-copied (`Cx::uncopyable_part`): `it owns …` or `it
     /// holds …`.
     pub(super) fn uncopyable_why(&mut self, ty: TyId) -> String {
-        let part = self.cx.uncopyable_part(ty).unwrap_or(ty);
+        let part = match self.cx.uncopyable_part(ty) {
+            Some(p) => p,
+            None => self.cx.unshareable_part(ty).unwrap_or(ty),
+        };
         let promise = matches!(self.cx.kind(part), TyKind::Promise(..));
         let pname = self.cx.type_name(part);
         match (part == ty, promise) {

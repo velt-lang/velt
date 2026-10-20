@@ -1,6 +1,8 @@
-// A spawned call cannot take a value holding a promise inside it (#212): a closure capturing
-// one, a class instance, an interface value, an array of promises, a closure returning one.
-// Awaiting a promise from another task is not supported yet.
+// check: no leaks
+// A spawned call takes values holding holders of shared promises (#212): a closure capturing
+// one, a class instance, an interface value, an array of promises, a closure returning one,
+// each still used here. The task gets a copy whose promises are other holders, handed over to
+// it, and awaits a copy of each result made on this task. Node prints the same.
 class Obj {
   n: number;
   constructor(n: number) {

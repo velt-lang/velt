@@ -118,14 +118,14 @@ Promises behave like JavaScript's, at Rust's cost:
   what it did before; a shared one costs a small side record and one share of the result per
   `await`. A shared promise is driven on the task that shares it:
   - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
-    using it afterwards is an error.
-  - A spawned call cannot take a value holding a promise inside it that the caller may still
-    hold (an object or an array used again afterwards, or built from a promise used again, such
-    as `[p, p]`), nor a closure capturing a promise: ``a spawned call cannot take a value
-    holding a promise``. Await the promise first and pass its result.
+    using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
+    it on both tasks.
   - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
     `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
-    capturing it, which runs as a task of its own) is awaited there through a copy: the promise
+    capturing it, which runs as a task of its own, a `Promise.all` or `Promise.race` over it) is
+    awaited there through a copy. So is one inside a value that goes there while it is still
+    used here (an object, an array or a closure passed to a spawned call or sent over a
+    channel): the task gets a copy of the value, whose promises are other holders. The promise
     still runs on its own task, and the other task gets the result transferred like a `spawn`
     argument (moved, or copied while the first task still uses it), so `(await p) === (await q)`
     holds only on one task. On the other task the holder is a promise of that task: it may be

@@ -607,7 +607,7 @@ impl Moves<'_> {
                 None => d,
             };
             return d.with_note(format!(
-                "a promise passed to a spawned call moves to the new task: a promise is awaited on one task (awaiting it from several tasks is planned, #212); await `{name}` on one task and pass its result to the other"
+                "a promise passed to a spawned call moves to the new task; to await it here too, pass the task another holder of it: `const q = {name};` and `spawn(f(q))`"
             ));
         }
         match moved_at {
