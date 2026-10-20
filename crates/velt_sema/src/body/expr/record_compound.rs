@@ -77,10 +77,12 @@ impl FnCx<'_, '_> {
 }
 
 /// The source form of a simple expression (a variable, `this`, a member or index path, a
-/// literal), for fix-its; `None` for anything else.
+/// literal), for fix-its; `None` for anything else, including a temporary the compiler made
+/// (`<…>`) in place of a part of the written target.
 fn expr_text(e: &ast::Expr) -> Option<String> {
     use ast::ExprKind as A;
     Some(match &e.kind {
+        A::Ident(id) if id.name.starts_with('<') => return None,
         A::Ident(id) => id.name.clone(),
         A::This => "this".to_string(),
         A::Paren(x) => expr_text(x)?,
