@@ -48,9 +48,10 @@ impl<'a> Parser<'a> {
                 break;
             }
             let shorthand_ok = self.at_ident_like();
-            let key = match self.at(Tok::LBracket) && !self.at_symbol_key() {
-                true => self.parse_pattern_computed_key()?,
-                false => self.parse_prop_key()?,
+            let key = match self.peek() {
+                Tok::LBracket if !self.at_symbol_key() => self.parse_pattern_computed_key()?,
+                Tok::Int(_) => self.parse_pattern_number_key()?,
+                _ => self.parse_prop_key()?,
             };
             let pat = if self.eat(Tok::Colon) {
                 self.parse_binding_pattern()?
@@ -105,6 +106,28 @@ impl<'a> Parser<'a> {
                     name: crate::REPORTED_KEY.into(),
                     span,
                 })
+            }
+        }
+    }
+
+    /// A numeric property name in an object pattern, as in an object literal: `{ 0: v }` and
+    /// `{ 0x10: v }` read the keys "0" and "16".
+    fn parse_pattern_number_key(&mut self) -> PResult<Ident> {
+        match self.literal_at_cursor() {
+            Some(Lit::Int {
+                value,
+                suffix: None,
+            }) if value < 1 << 53 => {
+                let key = Ident {
+                    name: value.to_string(),
+                    span: self.cur_span(),
+                };
+                self.bump();
+                Ok(key)
+            }
+            _ => {
+                self.error_expected("property name");
+                Err(Fail)
             }
         }
     }

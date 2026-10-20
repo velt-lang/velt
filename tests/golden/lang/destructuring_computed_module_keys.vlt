@@ -1,7 +1,7 @@
 // check: no leaks
-// Computed keys in object patterns naming module constants, module variables, symbols and
-// an outer function's local, on records, objects, interfaces and classes. Expected output:
-// Node's.
+// Computed keys in object patterns naming module constants, module variables (read when the
+// pattern runs), symbols and an outer function's local, on records, objects, interfaces and
+// classes. Expected output: Node's.
 const K2 = "a";
 let KL = "b";
 const SYM = Symbol("s");
@@ -27,6 +27,11 @@ function run(): void {
   let p = 0;
   ({ [K2]: p } = o);
   console.log(p);
+  // A module `let` is read when the pattern runs, not where it is declared.
+  KL = "a";
+  const { [KL]: w2 = 0 } = r;
+  const lit = { [KL]: 6 };
+  console.log(w2, lit);
 }
 function main(): void {
   run();

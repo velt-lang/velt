@@ -1570,9 +1570,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   v` is `v[0]`, `v[1]`, each an `any`, read once; a default applies where the read gives
   `undefined`; a `...rest` of an `any` is not supported yet). A computed key naming a variable
   (`const { [k]: v = 0 } = r`, `({ [k]: p } = r)`, a local, an outer function's or a module
-  variable) reads `r[k]`; one naming a module constant holding a string or a symbol
-  (`[KEY]`) reads that member, also of an object, interface or class; a string, number or
-  template key (`{ ["a"]: v }`, `{ [0]: v }`) names that property. Any other key expression
+  variable, read when the pattern runs) reads `r[k]`; one naming a module constant holding a
+  string or a symbol (`[KEY]`) reads that member, also of an object, interface or class; a
+  string, number or template key (`{ ["a"]: v }`, `{ [0]: v }`), like a quoted or numeric
+  property name (`{ "a": v, 0: w }`), names that property. Any other key expression
   (`{ [f()]: v }`) is an error: store the key in a variable first. Next to a computed key a
   `...rest` is not supported yet. Defaults on a `Record` or index-signature pattern apply where
   the key is missing (`const { port = 80 } = env`).
@@ -1711,7 +1712,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
   may spread another record (`{ ...r, x: 1 }`) and have computed keys (`{ [k]: v, [a + b]: w }`,
   in order with the other keys); an object literal with a computed key that is not a module
-  constant, or one that spreads a variable `r` of type `Record<string, V>`, is a
+  constant (a module `let` is read when the literal is built), or one that spreads a variable `r` of type `Record<string, V>`, is a
   `Record<string, V>` also where no record is expected (spreading a record into an object of a
   fixed shape is an error: its keys are known only at run time). A string or integer
   literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
