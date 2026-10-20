@@ -1,0 +1,8 @@
+// A symbol made in a computed key: the compiler resolves member names while compiling, so the
+// symbol must be a module constant (`const KEY = Symbol("x")`, then `[KEY]`).
+
+function main() {
+  const a = { [Symbol("x")]: 1 };
+  const b = { [Symbol.for("q")]: 2 };
+  console.log(a, b);
+}

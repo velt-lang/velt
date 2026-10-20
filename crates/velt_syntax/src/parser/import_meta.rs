@@ -58,54 +58,59 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The module constant `import.meta` stands for (first mentioned at `span`):
-    /// `const import.meta: { readonly url: string; … } = { url: "", filename: "", dirname: "" };`.
+    /// The module constant `import.meta` stands for (first mentioned at `span`): `const
+    /// import.meta: { readonly dirname: string; …; readonly resolve: (specifier: string) =>
+    /// string; … } = { dirname: "", filename: "", main: false, resolve: …, url: "" };` (see
+    /// [`IMPORT_META`]).
     pub(super) fn import_meta_item(&mut self, span: Span) -> Item {
-        let props = IMPORT_META_FIELDS
-            .iter()
-            .map(|f| {
-                let value = self.mk_expr(ExprKind::Lit(Lit::Str(String::new())), span);
-                let key = Ident {
-                    name: (*f).into(),
-                    span,
-                };
-                ObjectProp::KeyValue(key, value)
-            })
-            .collect();
-        let init = self.mk_expr(ExprKind::Object(props), span);
-        // Its fields are read-only, also in a copy (`const m = import.meta; m.url = "x"` would
-        // otherwise write the copy, not `import.meta`).
-        let fields = IMPORT_META_FIELDS
-            .iter()
-            .map(|f| ObjectTypeField {
-                name: Ident {
-                    name: (*f).into(),
-                    span,
-                },
-                ty: TypeExpr {
-                    kind: TypeExprKind::Named {
-                        path: vec![Ident {
-                            name: "string".into(),
-                            span,
-                        }],
-                        args: vec![],
+        let ident = |name: &str| Ident {
+            name: name.into(),
+            span,
+        };
+        let named = |name: &str| TypeExpr {
+            kind: TypeExprKind::Named {
+                path: vec![ident(name)],
+                args: vec![],
+            },
+            span,
+        };
+        let mut props = vec![];
+        let mut fields = vec![];
+        for f in IMPORT_META_FIELDS {
+            let (ty, value) = match f {
+                "main" => (named("boolean"), ExprKind::Lit(Lit::Bool(false))),
+                "resolve" => (
+                    TypeExpr {
+                        kind: TypeExprKind::Function {
+                            params: vec![named("string")],
+                            ret: Box::new(named("string")),
+                            throws: Some(Box::new(named("Error"))),
+                            rest: false,
+                        },
+                        span,
                     },
-                    span,
-                },
+                    self.import_meta_resolve(span),
+                ),
+                _ => (named("string"), ExprKind::Lit(Lit::Str(String::new()))),
+            };
+            let value = self.mk_expr(value, span);
+            props.push(ObjectProp::KeyValue(ident(f), value));
+            // Its fields are read-only, also in a copy (`const m = import.meta; m.url = "x"`
+            // would otherwise write the copy, not `import.meta`).
+            fields.push(ObjectTypeField {
+                name: ident(f),
+                ty,
                 optional: false,
                 readonly: true,
                 span,
-            })
-            .collect();
+            });
+        }
+        let init = self.mk_expr(ExprKind::Object(props), span);
         let ty = TypeExpr {
             kind: TypeExprKind::Object(fields),
             span,
         };
-        let name = Ident {
-            name: IMPORT_META.into(),
-            span,
-        };
-        let pattern = self.mk_pat(PatternKind::Ident(name), span);
+        let pattern = self.mk_pat(PatternKind::Ident(ident(IMPORT_META)), span);
         Item {
             kind: ItemKind::Var(VarDecl {
                 kind: VarKind::Const,
@@ -116,6 +121,70 @@ impl<'a> Parser<'a> {
             }),
             exported: false,
             span,
+        }
+    }
+
+    /// `import { __import_meta_resolve } from "velt:import_meta"`, for `import.meta.resolve`.
+    pub(super) fn import_meta_import(span: Span) -> Item {
+        let import = Import {
+            names: vec![ImportName {
+                name: Ident {
+                    name: IMPORT_META_RESOLVE_FN.into(),
+                    span,
+                },
+                alias: None,
+                type_only: false,
+            }],
+            from: IMPORT_META_MODULE.into(),
+            from_span: span,
+            namespace: None,
+            all: false,
+        };
+        Item {
+            kind: ItemKind::Import(import),
+            exported: false,
+            span,
+        }
+    }
+
+    /// `(specifier: string): string => __import_meta_resolve(specifier, "")`, the value of
+    /// `import.meta.resolve` (the driver writes the module's URL into the `""`).
+    fn import_meta_resolve(&mut self, span: Span) -> ExprKind {
+        let ident = |name: &str| Ident {
+            name: name.into(),
+            span,
+        };
+        let named = |name: &str| TypeExpr {
+            kind: TypeExprKind::Named {
+                path: vec![ident(name)],
+                args: vec![],
+            },
+            span,
+        };
+        let callee = self.mk_expr(ExprKind::Ident(ident(IMPORT_META_RESOLVE_FN)), span);
+        let arg = self.mk_expr(ExprKind::Ident(ident("specifier")), span);
+        let url = self.mk_expr(ExprKind::Lit(Lit::Str(String::new())), span);
+        let call = ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args: vec![arg, url],
+            optional: false,
+        };
+        let body = self.mk_expr(call, span);
+        ExprKind::Arrow {
+            type_params: vec![],
+            params: vec![ArrowParam {
+                name: ident("specifier"),
+                pattern: None,
+                ty: Some(named("string")),
+                default: None,
+                optional: false,
+                rest: false,
+            }],
+            ret: Some(named("string")),
+            throws: Some(named("Error")),
+            body: ArrowBody::Expr(Box::new(body)),
+            is_async: false,
         }
     }
 }

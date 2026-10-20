@@ -54,6 +54,7 @@ fn golden_m1_files_parse() {
                 | "function_expression_errors.vlt"
                 | "function_expression_this_errors.vlt"
                 | "string_escape_octal.vlt"
+                | "computed_key_errors.vlt"
         ) {
             continue;
         }

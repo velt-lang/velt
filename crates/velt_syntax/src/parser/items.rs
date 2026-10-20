@@ -57,6 +57,7 @@ impl<'a> Parser<'a> {
             self.finish_script(&mut items, stmts);
         }
         if let Some(span) = self.import_meta {
+            items.push(Self::import_meta_import(span));
             items.push(self.import_meta_item(span));
         }
         Module {

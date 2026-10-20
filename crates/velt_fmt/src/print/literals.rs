@@ -47,7 +47,7 @@ impl<'a> Printer<'a> {
         match prop {
             ObjectProp::KeyValue(key, value) => {
                 let method = value.span.lo <= key.span.lo;
-                let doc = self.literal_key(key);
+                let doc = self.prop_key(key);
                 match &value.kind {
                     // `name(params) { body }`, which the parser gives as an arrow property whose
                     // span starts with the name (an arrow written after `name:` starts later).
@@ -167,8 +167,20 @@ impl<'a> Printer<'a> {
         slice(self.src, key.span).starts_with(['"', '\''])
     }
 
-    /// A property name as written: identifier, or string literal (in house quotes).
+    /// A property name as written: identifier, or string literal (in house quotes), with the
+    /// brackets of a string or number literal written in brackets (`["k"]: T`, `[7]: 1`), which
+    /// the parser gives as the plain name.
     pub(super) fn prop_key(&self, key: &Ident) -> Doc {
+        let before = self.src[..key.span.lo as usize].trim_end();
+        let after = self.src[key.span.hi as usize..].trim_start();
+        if before.ends_with('[') && after.starts_with(']') && !key.name.starts_with('[') {
+            return cat!["[", self.plain_prop_key(key), "]"];
+        }
+        self.plain_prop_key(key)
+    }
+
+    /// [`Self::prop_key`] without the brackets.
+    fn plain_prop_key(&self, key: &Ident) -> Doc {
         let raw = slice(self.src, key.span);
         let printed = if raw.starts_with(['"', '\'']) {
             string_literal(raw)
@@ -179,17 +191,6 @@ impl<'a> Printer<'a> {
             key.name.clone()
         };
         text(printed)
-    }
-
-    /// The key of an object literal's `key: value`: [`Self::prop_key`], with the brackets of a
-    /// string or integer key written in brackets (`["a"]: 1`, `[7]: 1`), which the parser gives
-    /// as the plain key.
-    fn literal_key(&self, key: &Ident) -> Doc {
-        let before = self.src[..key.span.lo as usize].trim_end();
-        if before.ends_with('[') && !key.name.starts_with('[') {
-            return cat!["[", self.prop_key(key), "]"];
-        }
-        self.prop_key(key)
     }
 }
 

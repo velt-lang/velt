@@ -7,6 +7,7 @@
 
 pub mod ast;
 mod ast_names;
+mod js_number;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;
@@ -16,6 +17,8 @@ pub mod visit;
 mod work;
 
 use rustc_hash::FxHashMap;
+
+pub use js_number::js_number;
 
 use velt_common::{Diagnostics, FileId};
 

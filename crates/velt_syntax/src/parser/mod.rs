@@ -530,8 +530,11 @@ impl<'a> Parser<'a> {
     /// field is named (object types, interface fields, destructuring); object literals take
     /// quoted keys themselves (`parse_object_prop`).
     fn parse_prop_key(&mut self) -> PResult<Ident> {
-        if self.at_symbol_key() {
-            return self.parse_symbol_key();
+        if self.at_inline_symbol_key() {
+            return Err(self.reject_inline_symbol_key());
+        }
+        if self.member_key_len(0) > 0 {
+            return self.parse_member_key();
         }
         if let Tok::Str(idx) = self.peek() {
             let key = Ident {

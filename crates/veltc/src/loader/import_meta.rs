@@ -1,14 +1,16 @@
-//! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with empty string fields
+//! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with placeholder fields
 //! to a module that mentions it, and the loader, which knows the module's file, fills them in as
 //! Node does: `url` is the file's `file:` URL, `filename` its absolute path and `dirname` its
-//! directory. They name the source file, fixed while compiling.
+//! directory, `main` is true in the program's root module, and `resolve` resolves against `url`.
+//! They name the source file, fixed while compiling.
 
 use std::path::Path;
 
 use velt_syntax::ast;
 
-/// Fills in the fields of `module`'s `import.meta` constant, if it has one, for the file `path`.
-pub(super) fn fill(module: &mut ast::Module, path: &Path) {
+/// Fills in the fields of `module`'s `import.meta` constant, if it has one, for the file `path`
+/// (the program's root module if `main`).
+pub(super) fn fill(module: &mut ast::Module, path: &Path, main: bool) {
     let Some(init) = module
         .items
         .iter_mut()
@@ -28,13 +30,45 @@ pub(super) fn fill(module: &mut ast::Module, path: &Path) {
     else {
         return;
     };
-    let values = meta_values(path);
+    let [url, filename, dirname] = meta_values(path);
     let ast::ExprKind::Object(props) = &mut init.kind else {
         return;
     };
-    for (p, v) in props.iter_mut().zip(values) {
-        if let ast::ObjectProp::KeyValue(_, e) = p {
-            e.kind = ast::ExprKind::Lit(ast::Lit::Str(v));
+    for p in props {
+        let ast::ObjectProp::KeyValue(key, e) = p else {
+            continue;
+        };
+        let text = match key.name.as_str() {
+            "url" => url.clone(),
+            "filename" => filename.clone(),
+            "dirname" => dirname.clone(),
+            "main" => {
+                e.kind = ast::ExprKind::Lit(ast::Lit::Bool(main));
+                continue;
+            }
+            "resolve" => {
+                fill_resolve_base(e, &url);
+                continue;
+            }
+            _ => continue,
+        };
+        e.kind = ast::ExprKind::Lit(ast::Lit::Str(text));
+    }
+}
+
+/// Writes `url` into the base argument of `import.meta.resolve`'s arrow (`specifier =>
+/// __import_meta_resolve(specifier, "")`).
+fn fill_resolve_base(e: &mut ast::Expr, url: &str) {
+    let ast::ExprKind::Arrow {
+        body: ast::ArrowBody::Expr(call),
+        ..
+    } = &mut e.kind
+    else {
+        return;
+    };
+    if let ast::ExprKind::Call { args, .. } = &mut call.kind {
+        if let Some(base) = args.get_mut(1) {
+            base.kind = ast::ExprKind::Lit(ast::Lit::Str(url.to_string()));
         }
     }
 }

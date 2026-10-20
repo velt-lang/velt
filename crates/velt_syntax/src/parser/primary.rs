@@ -210,6 +210,25 @@ impl<'a> Parser<'a> {
         if self.eat(Tok::DotDotDot) {
             return Ok(ObjectProp::Spread(self.parse_assign()?));
         }
+        if self.at_inline_symbol_key() {
+            let fail = self.reject_inline_symbol_key();
+            // Past the literal's `}`, so the statement around it recovers at its own end.
+            let mut depth = 0u32;
+            loop {
+                match self.peek() {
+                    Tok::Eof => break,
+                    Tok::LBrace | Tok::LParen | Tok::LBracket => depth += 1,
+                    Tok::RBrace if depth == 0 => {
+                        self.bump();
+                        break;
+                    }
+                    Tok::RBrace | Tok::RParen | Tok::RBracket => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                self.bump();
+            }
+            return Err(fail);
+        }
         if let Some(m) = self.try_object_method()? {
             return Ok(m);
         }
@@ -224,26 +243,21 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
-            // A numeric property name, as in TypeScript: `{ 7: v }` and `{ 0x10: v }` have the
-            // keys "7" and "16".
-            Tok::Int(_) => match self.literal_at_cursor() {
-                Some(Lit::Int {
-                    value,
-                    suffix: None,
-                }) if value < 1 << 53 => {
-                    let key = Ident {
-                        name: value.to_string(),
-                        span: self.cur_span(),
-                    };
-                    self.bump();
-                    self.expect(Tok::Colon)?;
-                    return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
-                }
-                _ => {
+            // A numeric property name, as in TypeScript: `{ 7: v }`, `{ 0x10: v }`, `{ 1.50: v }`
+            // and `{ 1e3: v }` have the keys "7", "16", "1.5" and "1000" (`String` of the number).
+            Tok::Int(_) | Tok::Float(_) => {
+                let Some(name) = self.literal_at_cursor().as_ref().and_then(number_key) else {
                     self.error_expected("property name");
                     return Err(Fail);
-                }
-            },
+                };
+                let key = Ident {
+                    name,
+                    span: self.cur_span(),
+                };
+                self.bump();
+                self.expect(Tok::Colon)?;
+                return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+            }
             Tok::LBracket if self.at_symbol_key() => {
                 let key = self.parse_symbol_key()?;
                 self.expect(Tok::Colon)?;
@@ -297,10 +311,7 @@ impl<'a> Parser<'a> {
         let value = self.parse_prop_value()?;
         let plain = match &key.kind {
             ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
-            ExprKind::Lit(Lit::Int {
-                value,
-                suffix: None,
-            }) if *value < 1 << 53 => Some(value.to_string()),
+            ExprKind::Lit(lit) => number_key(lit),
             _ => None,
         };
         if let Some(name) = plain {
@@ -614,4 +625,25 @@ fn this_in_block(body: &Block) -> Option<Span> {
         crate::visit::walk_stmt(s, &mut f);
     }
     f.0
+}
+
+/// The property name a number literal key stands for: the number as `String` spells it (`7`,
+/// `1.5`, `1000` for `1e3`; `9007199254740992` for `9007199254740993`, which is not a double).
+/// `None` for a literal with a type suffix (`1u8`).
+pub(super) fn number_key(lit: &Lit) -> Option<String> {
+    match lit {
+        Lit::Int {
+            value,
+            suffix: None,
+        } if *value < 1 << 53 => Some(value.to_string()),
+        Lit::Int {
+            value,
+            suffix: None,
+        } => Some(crate::js_number(*value as f64)),
+        Lit::Float {
+            value,
+            suffix: None,
+        } => Some(crate::js_number(*value)),
+        _ => None,
+    }
 }
