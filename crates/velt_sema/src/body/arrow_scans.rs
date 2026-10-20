@@ -62,21 +62,16 @@ impl ArrowScans {
     /// The variables that closures created in arrow `e` assign.
     pub(crate) fn closure_assigned(&mut self, e: &ast::Expr) -> FxHashMap<String, Span> {
         kept(&mut self.assigned, e, || {
-            let assigned = match arrow_parts(e) {
-                Some((defaults, Some(stmts), _)) => assigned_by_closures(stmts, defaults),
-                Some((defaults, None, value)) => assigned_by_closures(&[], defaults.chain(value)),
-                None => Default::default(),
-            };
-            super::closure_assigned::owned(assigned)
+            let (stmts, exprs) = arrow_parts(e);
+            super::closure_assigned::owned(assigned_by_closures(stmts, exprs))
         })
     }
 
     /// Where each variable arrow `e` assigns is last assigned.
     pub(crate) fn assignment_ends(&mut self, e: &ast::Expr) -> FxHashMap<String, u32> {
-        kept(&mut self.ends, e, || match arrow_parts(e) {
-            Some((defaults, Some(stmts), _)) => assignment_ends(stmts, defaults),
-            Some((defaults, None, value)) => assignment_ends(&[], defaults.chain(value)),
-            None => FxHashMap::default(),
+        kept(&mut self.ends, e, || {
+            let (stmts, exprs) = arrow_parts(e);
+            assignment_ends(stmts, exprs)
         })
     }
 
@@ -90,20 +85,18 @@ impl ArrowScans {
     }
 }
 
-/// The parameter defaults of arrow `e`, and its body's statements or its expression body.
-fn arrow_parts(
-    e: &ast::Expr,
-) -> Option<(
-    impl Iterator<Item = &ast::Expr> + '_,
-    Option<&[ast::Stmt]>,
-    Option<&ast::Expr>,
-)> {
+/// The statements of arrow `e`'s body, and the expressions it has outside them: its parameter
+/// defaults and an expression body.
+fn arrow_parts(e: &ast::Expr) -> (&[ast::Stmt], Vec<&ast::Expr>) {
     let ast::ExprKind::Arrow { params, body, .. } = &e.kind else {
-        return None;
+        return (&[], vec![]);
     };
-    let defaults = params.iter().filter_map(|p| p.default.as_ref());
-    Some(match body {
-        ast::ArrowBody::Block(b) => (defaults, Some(&b.stmts[..]), None),
-        ast::ArrowBody::Expr(x) => (defaults, None, Some(&**x)),
-    })
+    let mut exprs: Vec<&ast::Expr> = params.iter().filter_map(|p| p.default.as_ref()).collect();
+    match body {
+        ast::ArrowBody::Block(b) => (&b.stmts, exprs),
+        ast::ArrowBody::Expr(x) => {
+            exprs.push(x);
+            (&[], exprs)
+        }
+    }
 }
