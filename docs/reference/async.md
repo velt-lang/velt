@@ -539,7 +539,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   Both follow `with`'s rules below (synchronous, results leave the lock as copies of what the
   value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
   passes it to a function that changes it) is an error ("the function passed to `read` modifies
-  the locked value"). Readers share the value without copying or counting it, also what they
+  the locked value"), so `read` takes a function literal or a named function, whose body the
+  compiler checks, not a function value. Readers share the value without copying or counting it, also what they
   keep while the callback runs (a sorted listing of its objects, a value a method returns); a
   write to it through such a reference stops the program (``panic: cannot modify a value an
   `RwLock` holds inside its `read` callback …``). A value that holds function or interface
