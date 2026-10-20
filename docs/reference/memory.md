@@ -10,7 +10,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
 - **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), literal and
   enum types, and unions, tuples and `T | null` of those. A tuple is copied when it is
   assigned or stored, but a function or callback that changes an element of a tuple it was
-  passed (`t[1] = 0`) changes the caller's tuple, as in JS.
+  passed (`t[1] = 0`) changes the caller's tuple, as in JS. The objects a tuple holds are
+  shared, not copied: `pick()[0].x = 5` changes the object in the tuple `pick` returned. A
+  write into an element of a tuple that a call or a conditional gives (`m.get(k)![1] = 2`) is
+  an error, since it would change a copy.
 - **Objects are references**, as in JS: class instances, arrays, maps, structs, object types
   (`type P = { x: i64 }`, object literals) and closures. `const b = a;`, passing `a` to a
   function, storing it in a field, an array or a map, returning it and capturing it all refer

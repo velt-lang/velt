@@ -113,12 +113,20 @@ impl Cx<'_> {
         }
     }
 
-    /// A value type: `Value` when some part owns resources, else `Plain`.
+    /// A value type: `Value` when some part owns resources or is a reference type not counted
+    /// yet (a tuple holding an object type whose fields are assigned: sharing the tuple shares
+    /// that object, so the next pass counts it), else `Plain`.
     fn value_kind(&mut self, t: TyId) -> ShareKind {
         if self.needs_drop(t) {
-            ShareKind::Value
-        } else {
-            ShareKind::Plain
+            return ShareKind::Value;
+        }
+        let parts = self.part_types(t);
+        match parts
+            .into_iter()
+            .any(|p| matches!(self.share_kind(p), ShareKind::Object | ShareKind::Value))
+        {
+            true => ShareKind::Value,
+            false => ShareKind::Plain,
         }
     }
 }
