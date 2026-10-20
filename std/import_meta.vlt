@@ -1,6 +1,6 @@
-// std/import_meta: `import.meta.resolve(specifier)` (docs/reference/modules.md). The parser
-// imports this module into every module that mentions `import.meta`, whose `resolve` calls
-// `__import_meta_resolve` with the module's `file:` URL.
+// std/import_meta (std-internal): `import.meta.resolve(specifier)` (docs/reference/modules.md).
+// The parser imports this module into every module that mentions `import.meta`, whose `resolve`
+// calls `__import_meta_resolve` with the module's `file:` URL. Not part of the public API.
 
 import { encodeSet, PATH } from "velt:url/encode";
 
