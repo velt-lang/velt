@@ -1,0 +1,71 @@
+// check: no leaks
+// A value holding a holder of a shared promise, sent over a channel while still used here
+// (#212): a class instance, an array of promises and a function value that captured one.
+// The other task gets a copy of the value whose promises are other holders, handed over to
+// it, and awaits a copy of each result made on this task. Node (with a channel built on
+// promises) prints the same.
+import { channel, Channel } from "velt:channel";
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Box {
+  p: Promise<Obj>;
+  constructor(p: Promise<Obj>) {
+    this.p = p;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await sleep(5);
+  return new Obj(n);
+}
+async function count(n: number): Promise<number> {
+  await sleep(5);
+  return n;
+}
+async function takeBox(ch: Channel<Box>): Promise<number> {
+  const b = await ch.receive();
+  if (b == null) {
+    return -1;
+  }
+  const o = await b.p;
+  return o.n;
+}
+async function takeArray(ch: Channel<Promise<number>[]>): Promise<number> {
+  const a = await ch.receive();
+  if (a == null) {
+    return -1;
+  }
+  return (await a[0]) + (await a[1]);
+}
+async function takeFn(ch: Channel<() => Promise<number>>): Promise<number> {
+  const f = await ch.receive();
+  if (f == null) {
+    return -1;
+  }
+  return (await f()) + (await f());
+}
+async function main() {
+  const boxes = channel<Box>();
+  const t1 = spawn(takeBox(boxes));
+  const box = new Box(make(4));
+  await boxes.send(box);
+  const got = await t1;
+  console.log("box", (await box.p).n, got);
+
+  const arrays = channel<Promise<number>[]>();
+  const t2 = spawn(takeArray(arrays));
+  const p = count(2);
+  const arr = [p, count(5)];
+  await arrays.send(arr);
+  console.log("array", await arr[0], await arr[1], await p, await t2);
+
+  const fns = channel<() => Promise<number>>();
+  const t3 = spawn(takeFn(fns));
+  const q = make(7);
+  const f = async () => (await q).n;
+  await fns.send(f);
+  console.log("function", await f(), await t3);
+}

@@ -1,0 +1,39 @@
+// check: no leaks
+// A module-level `Map` of in-flight promises, read on other tasks (#212): each lookup is
+// another holder of the same promise, which runs on the task that started it; the tasks that
+// use module state run one at a time, so every holder awaits the same result. Node prints the
+// same.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+const inflight = new Map<string, Promise<Obj>>();
+let computed = 0;
+async function compute(k: string): Promise<Obj> {
+  computed++;
+  await sleep(5);
+  return new Obj(k.length);
+}
+function load(k: string): Promise<Obj> {
+  const hit = inflight.get(k);
+  if (hit != undefined) {
+    return hit;
+  }
+  const p = compute(k);
+  inflight.set(k, p);
+  return p;
+}
+async function worker(k: string): Promise<number> {
+  const o = await load(k);
+  return o.n;
+}
+async function main() {
+  const a = load("abc");
+  const t1 = spawn(worker("abc"));
+  const t2 = spawn(worker("abcd"));
+  const t3 = spawn(worker("abc"));
+  console.log((await a).n, await t1, await t2, await t3, computed);
+  console.log((await load("abcd")).n, computed);
+}

@@ -1,33 +1,17 @@
-//! Copies of promises through generic code. A promise has one owner and can't be copied, so a
-//! share or clone of a value that holds one panics at run time ("a promise cannot be copied",
-//! the clone glue's backstop). Sema never shares a promise it can see; this pass finds the copies
-//! a generic function makes of its type parameters (`m.get(k)`, `arr.at(i)`, `arr.flat()`,
-//! `Object.values(r)`, a user's `first<T>(xs: T[])`, …) and reports the calls that bind such a
-//! parameter to a promise-holding type.
-//!
-//! After all bodies and the ownership passes (which add shares), each function's facts are
-//! collected: the types its `Share` / `Clone` intrinsics copy, and its calls of generic
-//! functions. A fixed point over the call graph (like the record-key check, revisiting only the
-//! functions whose callees' copies grew) gives each function the generic types it copies,
-//! substituted at every call; a call that makes one of them a promise-holding type is reported
-//! there.
+//! The copies each function body makes (`Share` / `Clone` intrinsics) and its calls of generic
+//! functions, collected after all bodies and the ownership passes (which add shares), for the
+//! fixed points over the call graph that need them (`crate::weak_threads`). Promises used to be
+//! checked here (they had one owner); since #212 a copy of a promise shares it.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId, TyKind};
-use crate::inst_sites::{carry_guard, guards_of};
-use crate::types::collect_params;
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId};
+use crate::inst_sites::guards_of;
 use crate::visit::{self, VisitMut};
-
-/// How every note starts: TypeScript allows the read, and why Velt doesn't.
-pub(crate) const WHY: &str =
-    "TypeScript allows this, but a Velt promise has one owner (`await` takes \
-     its result) and can't be copied or shared (shared promises are planned: #212)";
 
 /// A copied type and whether the copy is deep (a clone copies arrays and objects too; a share
 /// only copies values in place and adds a reference to counted objects).
@@ -145,95 +129,6 @@ impl VisitMut for Collect<'_> {
     }
 }
 
-pub(crate) fn check(cx: &mut Ctx) {
-    let mut facts = collect(cx);
-    // Dynamic dispatch becomes calls of every method the value's class can reach.
-    let mut dispatch = Dispatch::default();
-    for (_, fx) in &mut facts {
-        for (t, span) in std::mem::take(&mut fx.dispatch) {
-            for (m, args) in dispatch.targets(cx, t) {
-                fx.dyn_calls.push((m, args, span));
-            }
-        }
-    }
-    let reads = facts.iter().enumerate().flat_map(|(i, (_, fx))| {
-        let calls = fx.calls.iter().chain(&fx.dyn_calls).map(|(d, _, _)| *d);
-        calls
-            .chain(fx.closures.iter().copied())
-            .map(move |d| (i, d))
-    });
-    let mut rounds = Rounds::new(facts.len(), reads);
-    let mut work = dispatch.work;
-    // The generic types each function copies (types that mention its type parameters).
-    let mut needs: FxHashMap<DefId, Vec<(Copy, u64)>> = FxHashMap::default();
-    // Concrete promise-holding copies found at calls: (caller, call span) -> (copied type, callee).
-    let mut found: Vec<(DefId, Span, TyId, DefId)> = vec![];
-    let mut found_at: FxHashSet<(DefId, Span)> = FxHashSet::default();
-    while let Some(i) = rounds.pop() {
-        let (f, fx) = &facts[i];
-        work += (fx.copies.len() + fx.calls.len() + fx.dyn_calls.len() + fx.closures.len()) as u64;
-        let mut grew = false;
-        for ((t, deep), guard, at) in requirements(cx, fx, &needs) {
-            if is_generic(cx, t) {
-                let n = needs.entry(*f).or_default();
-                if !n.contains(&((t, deep), guard)) {
-                    n.push(((t, deep), guard));
-                    grew = true;
-                }
-            } else if let Some((span, callee)) = at {
-                if copies_promise(cx, t, deep, &mut vec![]) && found_at.insert((*f, span)) {
-                    found.push((*f, span, t, callee));
-                }
-            }
-        }
-        if grew {
-            rounds.changed(*f);
-        }
-    }
-    add_work(Pass::PromiseCopies, work);
-    found.sort_by_key(|(_, s, _, _)| (s.file, s.lo));
-    for (f, span, t, callee) in found {
-        // `facts` is in definition order.
-        let iterating = facts
-            .binary_search_by_key(&f, |(g, _)| *g)
-            .is_ok_and(|i| facts[i].1.loops.contains(&span));
-        report(cx, span, t, callee, iterating);
-    }
-}
-
-/// A copy a function makes, its guard bits and the call it comes through.
-type Req = (Copy, u64, Option<(Span, DefId)>);
-
-/// The types function `fx` copies: its own copies, and those of the generic functions it calls
-/// (substituted, with the call), the methods it calls dynamically (instantiated) and the
-/// closures it creates; with their guard bits (`inst_sites::carry_guard`).
-fn requirements(cx: &mut Ctx, fx: &Facts, needs: &FxHashMap<DefId, Vec<(Copy, u64)>>) -> Vec<Req> {
-    let mut reqs: Vec<Req> = fx.copies.iter().map(|c| (*c, 0, None)).collect();
-    for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
-        for ((t, deep), need) in needs.get(d).into_iter().flatten() {
-            if let Some(guard) = carry_guard(cx, *need, targs, *site) {
-                reqs.push(((cx.subst(*t, targs), *deep), guard, Some((*span, *d))));
-            }
-        }
-    }
-    for (m, args, span) in &fx.dyn_calls {
-        for ((t, deep), need) in needs.get(m).into_iter().flatten() {
-            let Some(guard) = carry_guard(cx, *need, args, 0) else {
-                continue;
-            };
-            if let Some(t) = instantiate(cx, *t, args) {
-                reqs.push(((t, *deep), guard, Some((*span, *m))));
-            }
-        }
-    }
-    for c in &fx.closures {
-        for (copy, need) in needs.get(c).into_iter().flatten() {
-            reqs.push((*copy, *need, None));
-        }
-    }
-    reqs
-}
-
 /// `[]` (a defaulted `entries` argument): holds nothing to copy.
 fn is_empty_array(e: &Expr) -> bool {
     matches!(&e.kind, E::ArrayLit(xs) if xs.is_empty())
@@ -274,128 +169,4 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
         out.push((DefId(i as u32), facts));
     }
     out
-}
-
-fn is_generic(cx: &Ctx, t: TyId) -> bool {
-    let mut ps = vec![];
-    collect_params(&cx.ty, t, &mut ps);
-    !ps.is_empty()
-}
-
-/// Does copying a `t` copy a promise? A share copies values in place (options, tuples, unions,
-/// structs) and adds a reference to counted objects (arrays, classes); a clone (`deep`) copies
-/// those too.
-fn copies_promise(cx: &mut Ctx, t: TyId, deep: bool, stack: &mut Vec<TyId>) -> bool {
-    if stack.contains(&t) {
-        return false;
-    }
-    stack.push(t);
-    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Promise(..) => {
-            stack.pop();
-            return true;
-        }
-        TyKind::Option(e, _) => vec![e],
-        TyKind::Tuple(ts) => ts,
-        TyKind::Array(e) if deep => vec![e],
-        TyKind::Adt(d, args) => {
-            let class = cx
-                .adt(d)
-                .is_some_and(|a| a.kind == crate::hir::AdtKind::Class);
-            if class && !deep {
-                vec![]
-            } else {
-                let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
-                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
-                    DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
-                    _ => vec![],
-                };
-                tys.into_iter().map(|f| cx.subst(f, &args)).collect()
-            }
-        }
-        _ => cx.union_members(t).unwrap_or_default(),
-    };
-    let found = parts
-        .into_iter()
-        .any(|p| copies_promise(cx, p, deep, stack));
-    stack.pop();
-    found
-}
-
-/// What the call reads from: `(" out of the `Map`", true)` for a `Map` method, and so on.
-fn container(name: &str) -> (&'static str, bool) {
-    let short = name.rsplit("::").next().unwrap_or("");
-    let owner = short.rsplit_once('.').map_or("", |(o, _)| o);
-    match owner {
-        "Map" => (" out of the `Map`", true),
-        "Record" => (" out of the `Record`", true),
-        "Set" => (" out of the `Set`", false),
-        o if o.ends_with("[]") => (" out of the array", false),
-        _ => ("", false),
-    }
-}
-
-/// How the program wrote the call: the method or function name, or the syntax the compiler
-/// turned into a call of a std helper.
-fn written(name: &str) -> String {
-    let short = name.rsplit("::").next().unwrap_or(name);
-    let method = short.rsplit('.').next().unwrap_or(short);
-    match method {
-        "__get" | "__at" => "reading `r[k]`".into(),
-        "__values" => "`Object.values`".into(),
-        "__entries" => "`Object.entries`".into(),
-        "__arrayFilled" => "`new Array(n).fill(v)`".into(),
-        "constructor" => match short.rsplit_once('.') {
-            Some((owner, _)) => format!("`new {owner}(…)`"),
-            None => "the constructor".into(),
-        },
-        m => format!("`{m}`"),
-    }
-}
-
-fn report(cx: &mut Ctx, span: Span, t: TyId, callee: DefId, iterating: bool) {
-    let name = match &cx.defs[callee.0 as usize] {
-        Some(Def::Fn(f)) => f.name.clone(),
-        _ => String::new(),
-    };
-    let (from, map) = container(&name);
-    // The value reads of a live `for...of` over a map (`body/for_map.rs`) are iterating too.
-    let method = name.rsplit('.').next().unwrap_or("");
-    let iterating = iterating || matches!(method, "__keyAt" | "__valueAt" | "__entryAt");
-    // `T | null` from a read that may miss: name the value.
-    let t = cx.ty.core(t).unwrap_or(t);
-    let tn = cx.display(t);
-    let msg = if iterating {
-        let what = from.trim_start_matches(" out of ");
-        format!("iterating {what} would copy a `{tn}`")
-    } else {
-        format!("{} would copy a `{tn}`{from}", written(&name))
-    };
-    let direct = matches!(cx.ty.kind(t), TyKind::Promise(..));
-    let note = match (direct, map) {
-        (false, true) => format!(
-            "{WHY}, nor can a value type that holds one: store the awaited result instead of the \
-             promise, or make `{tn}` a class (a class instance is shared, not copied)"
-        ),
-        (false, false) => format!(
-            "{WHY}, nor can a value type that holds one: read its fields in place \
-             (`xs[i].field`), take it out with `pop()` or `splice(i, 1)`, or make `{tn}` a class \
-             (a class instance is shared, not copied)"
-        ),
-        (true, true) => format!(
-            "{WHY}: store the awaited result (`m.set(k, await p)`), or keep the promises in an \
-             array and take them out with `pop()` or `splice(i, 1)`"
-        ),
-        (true, false) => format!(
-            "{WHY}: take promises out with `pop()` or `splice(i, 1)`, or await them together \
-             with `Promise.all(arr)`"
-        ),
-    };
-    cx.error(Diagnostic::error(msg, span).with_note(note));
-}
-
-/// Does sharing a `t` (a copy of values in place, a new reference to counted objects) copy a
-/// promise?
-pub(crate) fn share_copies_promise(cx: &mut Ctx, t: TyId) -> bool {
-    copies_promise(cx, t, false, &mut vec![])
 }

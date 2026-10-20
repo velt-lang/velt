@@ -1,0 +1,25 @@
+// A promise shared through another variable (`const q = p`) and passed to a spawned call
+// is awaited on the other task through a copy of the result made on this one (#212); the
+// promise still runs here. Node prints the same.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function make(n: number): Promise<Obj> {
+  await Promise.resolve();
+  return new Obj(n);
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  const o = await p;
+  return o.n;
+}
+async function main() {
+  const p = make(1);
+  const q = p;
+  const t = spawn(use(q));
+  console.log(await t);
+  console.log((await p).n);
+}
+// check: no leaks

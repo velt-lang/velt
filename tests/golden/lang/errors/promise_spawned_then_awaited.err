@@ -1,0 +1,2 @@
+promise_spawned_then_awaited.vlt:12:21: error: use of moved value `p`
+a promise passed to a spawned call moves to the new task

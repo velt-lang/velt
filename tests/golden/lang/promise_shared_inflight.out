@@ -1,0 +1,9 @@
+fetching k1
+fetching k2
+write back value of k1
+a: value of k1 (refs 2)
+b: value of k1 (refs 2)
+write back value of k2
+c: value of k2 (refs 1)
+a,b,c
+left 0
