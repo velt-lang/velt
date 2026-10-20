@@ -135,7 +135,7 @@ jobs:
   # after a Linux-only queue run, so this is where every change meets them there. The plan of a
   # change to the WebAssembly runtime selects exactly them (and that runtime's tests).
   wasm-goldens:
-    if: (inputs.only || 'all') == 'all' || inputs.only == 'wasm'
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'wasm')
     name: wasm-goldens (${{ matrix.os }})
     strategy:
       fail-fast: false

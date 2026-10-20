@@ -38,13 +38,14 @@ runs:
     - name: rust (pinned)
       shell: bash
       run: rustup toolchain install && rustc --version
-    # Keyed by OS, architecture and rust-cache-key.sh's hash of rust-toolchain.toml and Cargo.lock's
-    # external packages, nothing else. rust-cache's own hash takes in every toolchain rustup lists
-    # (runner images differ in their preinstalled stable, which split the cache into two live keys
-    # per OS on Oct 15) and the workspace manifests (any edit made a new entry). Now the `main` job
-    # saves a new entry exactly when the toolchain or a dependency changes; until it has, jobs
-    # start without a cache. The nightly `cache-prune` job deletes the superseded entries. A changed
-    # feature of an external dependency in a Cargo.toml doesn't change the key (Cargo.lock stays).
+    # Keyed by OS, architecture and rust-cache-key.sh's hash of what the dependencies' compiled
+    # output depends on: rust-toolchain.toml, Cargo.lock's external packages, and the manifests'
+    # profiles, dependency tables and features (not `[package]`, so a release keeps the key), plus
+    # .cargo/config.toml. rust-cache's own hash takes in every toolchain rustup lists (runner images
+    # differ in their preinstalled stable, which split the cache into two live keys per OS on Oct
+    # 15) and the whole manifests (any edit made a new entry). Now the `main` job saves a new entry
+    # exactly when one of those inputs changes; until it has, jobs start without a cache. The
+    # nightly `cache-prune` job deletes the superseded entries.
     - name: rust-cache key
       id: rust-cache-key
       shell: bash
