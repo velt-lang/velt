@@ -513,7 +513,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `let <iface hoisted k> = e` (appended to `stmts`), named by the result.
-    fn bind_hoisted(&mut self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+    pub(super) fn bind_hoisted(&mut self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
         let h = self.expr(e, None, Want::Move);
         let name = format!("<iface hoisted {}>", stmts.len());
         let (ty, span) = (h.ty, h.span);

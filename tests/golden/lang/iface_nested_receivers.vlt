@@ -132,5 +132,29 @@ function heldTuples(): void {
   hs[0]![1] = "x";
   (hs[0] as [number, string])[0] = 7;
   console.log(ht.t, hs[0]);
+  // Effectful indexes behind `!` / `as` run once.
+  const ys: ([number, string] | null)[] = [[1, "a"], [2, "b"]];
+  let k = 0;
+  ys[k++]![0] += 5;
+  ys[k++]![1] = "q";
+  (ys[--k] as [number, string])[0] = 9;
+  console.log(ys[0]![0], ys[1]![0], ys[1]![1], k);
+  // A variable a closure assigns.
+  let held: [number, string] | null = [1, "o"];
+  const replace = (): void => { held = [2, "n"]; };
+  const x = (held![1] = "x");
+  (held as [number, string])[0] = 5;
+  held![0] += 1;
+  console.log(x, held![0], held![1]);
+  replace();
+  console.log(held);
 }
 heldTuples();
+
+// The same with a module-level variable.
+let modHeld: [number, string] | null = [1, "m"];
+const clearMod = (): void => { modHeld = null; };
+const my = (modHeld![1] = "y");
+(modHeld as [number, string])[0] = 7;
+console.log(my, modHeld);
+clearMod();
