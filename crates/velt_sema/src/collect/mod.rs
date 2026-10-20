@@ -30,7 +30,7 @@ pub(crate) mod forwarders;
 mod generator_sig;
 pub(crate) mod getters;
 pub(crate) mod iface_extends;
-mod impls;
+pub(crate) mod impls;
 mod imports;
 mod iterable;
 mod lookup;

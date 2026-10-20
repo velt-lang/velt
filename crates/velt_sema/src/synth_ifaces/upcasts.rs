@@ -133,13 +133,18 @@ impl Ctx<'_> {
                 stored.push(self.part_setter(&impls, &name));
                 continue;
             }
-            let k = own
-                .iter()
-                .position(|f| f.name == name && f.private_to.is_none())?;
             let want = self.subst(fty, &args);
-            if own[k].ty != want {
-                return None;
-            }
+            let field = own
+                .iter()
+                .position(|f| f.name == name && f.private_to.is_none());
+            let Some(k) = field.filter(|&k| own[k].ty == want) else {
+                // A `get` (and `set`) accessor of the class provides the field.
+                let (g, set) =
+                    crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;
+                methods.push(g);
+                stored.push(set.map(SetterSrc::Method));
+                continue;
+            };
             methods.push(crate::collect::getters::field_getter(
                 self, d, own_ty, k, want,
             ));

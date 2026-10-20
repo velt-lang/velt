@@ -49,6 +49,8 @@ pub(crate) enum SetterSrc {
         fn_ty: TyId,
         param: TyId,
     },
+    /// A class's `set f(v)` (or the trampoline dispatching to it): the setter slot itself.
+    Method(DefId),
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
 }
@@ -158,6 +160,7 @@ impl Ctx<'_> {
                     fn_ty,
                     param,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
+                SetterSrc::Method(def) => defs.push(def),
                 SetterSrc::Missing { span, name } => {
                     let iname = self.iface_name(iface);
                     self.error(

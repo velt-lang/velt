@@ -2,7 +2,8 @@
 // `x[k]` in generic bodies where the object or the key is not a variable (#350): a call, an
 // index, each evaluated once and in order; writes reach the object, through a value a call
 // returns too. An optional field read by key is `F | undefined`, and `K` is inferred as the
-// union of every key passed for it, as in TypeScript.
+// union of every key passed for it, as in TypeScript. `typeof`, `=== undefined` and `== null`
+// on a `T[K]` value test the instantiation's value.
 type Pt = { x: number; y: number };
 type Opt = { n?: number; s: string };
 const log: string[] = [];
@@ -50,3 +51,37 @@ const q = { s: ["a"], t: ["b"] };
 const s0 = q.s;
 swap(q, "s", "t");
 console.log(q.s[0], q.t[0], q.t === s0);
+function isUndef<T extends object, K extends keyof T>(o: T, k: K): boolean {
+  const v = o[k];
+  return v === undefined;
+}
+function isDef<T extends object, K extends keyof T>(o: T, k: K): boolean {
+  const v = o[k];
+  return v !== undefined;
+}
+function tag<T extends object, K extends keyof T>(o: T, k: K): string {
+  const v = o[k];
+  return typeof v;
+}
+function isNullish<T extends object, K extends keyof T>(o: T, k: K): boolean {
+  const v = o[k];
+  return v == null;
+}
+function tagOf<T extends object, K extends keyof T>(o: T, k: K, v: T[K]): string {
+  return typeof v + (v === undefined);
+}
+function isNum<T extends object, K extends keyof T>(o: T, k: K): boolean {
+  return typeof o[k] === "number";
+}
+function tagRead<T extends object, K extends keyof T>(o: T, k: K): string {
+  return typeof o[k];
+}
+function orDef<T extends object, K extends keyof T>(o: T, k: K, d: T[K]): T[K] {
+  const v = o[k];
+  return v === undefined ? d : v;
+}
+const o3: Opt = { n: 3, s: "b" };
+console.log(isUndef(o, "n"), tag(o, "n"), tag(o, "s"), isNullish(o, "n"), tagOf(o, "n", undefined));
+console.log(isDef(o, "n"), isDef(o, "s"), isNum(o, "n"), tagRead(o, "n"));
+console.log(isUndef(o3, "n"), tag(o3, "n"), isNullish(o3, "n"), isDef(o3, "n"), isNum(o3, "n"));
+console.log(tagRead(o3, "n"), tagOf(o3, "s", "z"), orDef(o, "n", 5), orDef(o3, "n", 5), orDef(o, "s", "z"));

@@ -1103,7 +1103,9 @@ passes (the union of the keys when several arguments pass one: `swap(o, "x", "y"
 `K = "x" | "y"`), and `x[k]` reads or writes that field of `x: T`, the field itself (an array
 read through it is `===` to the original; a write reaches the object, a value a call returned
 too: `first(os)[key()] = v`). The object and the key may be any expressions, each evaluated
-once, in order. An optional field reads as `F | undefined`. A key type of several keys reads or
+once, in order. An optional field reads as `F | undefined`, and `typeof`, `=== undefined` and
+`== null` on a `T[K]` value test the instantiation's value (`typeof o[k]` is `"undefined"` for an
+absent optional field, `"number"` for a present one). A key type of several keys reads or
 writes the field the key holds when those fields have one type (`k: "x" | "y"` on
 `{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
 error at that instantiation. An error at an instantiation is reported in the generic function,
@@ -1218,7 +1220,8 @@ Differences from TypeScript, each a compile error with a note on what to write i
 - An interface with methods is a part: `I & { errors: number }` (and `A & B`, or `T & { … }` at
   an interface `T`) is an interface with every part's members, one whatever the order of the
   parts (`A & B` is `B & A`). An object literal implements it, a class that implements each
-  interface part, itself or through a base class (and has the object parts' fields), converts to
+  interface part, itself or through a base class (and has the object parts' fields, or `get`/`set`
+  accessors for them, which reads and writes through it run), converts to
   it as the same object, generic classes too, and a field written through it reaches the class's
   field. Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
   and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`
