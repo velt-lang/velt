@@ -13,7 +13,7 @@
 //! fields in the same order, so they lay out alike (`velt_vir` maps both to one type), and
 //! `assigned_fields.rs` makes them agree on `AdtDef::assigned`.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -49,15 +49,15 @@ impl ShapeField {
 pub(crate) struct ObjectState {
     /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
     /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).
-    pub frozen: HashMap<DefId, DefId>,
+    pub frozen: FxHashMap<DefId, DefId>,
     /// The values of `frozen`.
-    pub frozen_defs: HashSet<DefId>,
+    pub frozen_defs: FxHashSet<DefId>,
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
     /// `Object.defineProperty` brands (`crate::defined_props`).
     pub brands: crate::defined_props::Brands,
     /// The key names of the brands' hidden fields, once resolved (`Ctx::hidden_keys`).
-    pub hidden: Option<HashSet<String>>,
+    pub hidden: Option<FxHashSet<String>>,
 }
 
 impl Ctx<'_> {
@@ -84,7 +84,7 @@ impl Ctx<'_> {
     /// written (`TypeLevel::op_sites`), so a reduction reports where the type was written.
     pub(crate) fn carry_op_sites(&mut self, t: TyId, sub: &mut dyn FnMut(&mut Self, TyId) -> TyId) {
         let mut stack = vec![t];
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         while let Some(x) = stack.pop() {
             if !seen.insert(x) {
                 continue;
@@ -250,7 +250,7 @@ impl Ctx<'_> {
             self.adt(x)
                 .is_some_and(|a| a.kind == AdtKind::Anon || self.field_only_of.contains_key(&x))
         };
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         let mut stack = self.anon_field_tys(d);
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
@@ -300,7 +300,7 @@ impl Ctx<'_> {
             return false;
         }
         let twins = self.readonly_twins.clone();
-        let mut cache = HashMap::new();
+        let mut cache = FxHashMap::default();
         // Erasure turns a generic field-only interface's instance (`Pair<string, number>`) into
         // its generic anonymous twin applied to the arguments; canonical, that is the object type
         // it spells out.
@@ -357,7 +357,7 @@ impl Ctx<'_> {
         for f in fields {
             crate::types::collect_params(&self.ty, f.ty, &mut params);
         }
-        let new_tys: HashMap<u32, TyId> = params
+        let new_tys: FxHashMap<u32, TyId> = params
             .iter()
             .enumerate()
             .map(|(i, p)| (*p, self.ty.param(i as u32)))
@@ -503,14 +503,14 @@ impl Ctx<'_> {
             own_fields_start: 0,
             redefined: vec![],
             base: None,
-            methods: HashMap::new(),
+            methods: FxHashMap::default(),
             ctor: None,
             own_ctor: None,
             vtable: vec![],
-            vslots: HashMap::new(),
+            vslots: FxHashMap::default(),
             implements: vec![],
             has_dispose: false,
-            statics: HashMap::new(),
+            statics: FxHashMap::default(),
             decl: None,
         };
         let d = self.alloc_def(Span::DUMMY, DefInfo::Adt(Box::new(info)));
@@ -558,8 +558,8 @@ impl Ctx<'_> {
 /// `hir::Program::anon_shapes`: every concrete anonymous def lowering sees, by its (erased)
 /// fields. Defs replaced by a twin before lowering (`crate::readonly`) are left out: lowering
 /// never sees them, and a shape must not resolve to one of them.
-pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool, bool)>, DefId> {
-    let mut out = HashMap::new();
+pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bool)>, DefId> {
+    let mut out = FxHashMap::default();
     for (i, d) in cx.defs.iter().enumerate() {
         let id = DefId(i as u32);
         if let Some(crate::hir::Def::Adt(a)) = d {
@@ -582,8 +582,8 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool, bool
 
 /// `hir::Program::union_shapes`: every concrete union def by its member list (sorted by type id,
 /// as `Ctx::union_of` orders concrete members).
-pub(crate) fn concrete_unions(cx: &Ctx) -> HashMap<Vec<TyId>, DefId> {
-    let mut out = HashMap::new();
+pub(crate) fn concrete_unions(cx: &Ctx) -> FxHashMap<Vec<TyId>, DefId> {
+    let mut out = FxHashMap::default();
     for (key, d) in &cx.unions {
         if let Some(crate::hir::Def::Enum(e)) = &cx.defs[d.0 as usize] {
             if e.generics == 0 {

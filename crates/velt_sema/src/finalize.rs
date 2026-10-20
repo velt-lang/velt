@@ -1,7 +1,7 @@
 //! Build the final `hir::Def`s for type definitions, constants and externs (function bodies are
 //! already built by the body pass), and assemble the `hir::Program`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::collect::{self_type, DISPOSE};
 use crate::ctx::Ctx;
@@ -13,7 +13,7 @@ use crate::hir::{
 use crate::hooks;
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
-    let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
+    let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
     let assigned = crate::assigned_fields::assigned_objects(cx);
     // An object literal's slot method returning a promise that never rejects, in a group whose
     // promises may: async, so its promise has the group's layout.
@@ -167,7 +167,7 @@ fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
 fn field_defaults(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
 ) -> Vec<Option<hir::Expr>> {
     if let Some(v) = memo.get(&d) {
         return v.clone();
@@ -225,7 +225,7 @@ fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
 fn adt_def(
     cx: &mut Ctx,
     d: DefId,
-    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);

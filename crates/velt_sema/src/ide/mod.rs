@@ -13,7 +13,7 @@ pub(crate) mod record;
 mod snapshot;
 mod types;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::OnceLock;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
@@ -47,21 +47,21 @@ pub struct Analysis {
     /// Exported prelude items (visible everywhere).
     prelude: Vec<(String, DefRef)>,
     /// Module index of each file.
-    files: HashMap<FileId, usize>,
+    files: FxHashMap<FileId, usize>,
     /// Type of each local / constant / field definition (by declaration span).
-    def_types: HashMap<Span, (TyId, u32)>,
+    def_types: FxHashMap<Span, (TyId, u32)>,
     /// Per file with a JSX runtime: its intrinsic tags.
-    jsx_tags: HashMap<FileId, JsxTags>,
+    jsx_tags: FxHashMap<FileId, JsxTags>,
     /// Per file: the fields of its JSX runtime's `JSX.IntrinsicAttributes` besides `key`.
-    jsx_common: HashMap<FileId, JsxTags>,
+    jsx_common: FxHashMap<FileId, JsxTags>,
     /// Inferred throws and mutation of each named function (by declaring identifier).
-    effects: HashMap<Span, effects::Effects>,
+    effects: FxHashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
     /// Exact span → first index in `types`, built on the first [`Analysis::type_of`].
-    type_index: OnceLock<HashMap<Span, usize>>,
+    type_index: OnceLock<FxHashMap<Span, usize>>,
     /// Exact span → first index in `refs`, built on the first [`Analysis::def_of`].
-    ref_index: OnceLock<HashMap<Span, usize>>,
+    ref_index: OnceLock<FxHashMap<Span, usize>>,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
@@ -177,7 +177,8 @@ impl Analysis {
     /// recorded wins, as with [`Analysis::def_at`].
     pub fn def_of(&self, span: Span) -> Option<DefRef> {
         let index = self.ref_index.get_or_init(|| {
-            let mut index = HashMap::with_capacity(self.refs.len());
+            let mut index =
+                FxHashMap::with_capacity_and_hasher(self.refs.len(), Default::default());
             for (i, (s, _)) in self.refs.iter().enumerate() {
                 index.entry(*s).or_insert(i);
             }

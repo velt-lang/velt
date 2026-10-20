@@ -15,7 +15,7 @@
 //! (`function run<T>(m, fs: ((s: S) => T)[]): T { return m.with(fs[0]); }` called with
 //! `T = Promise<…>`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -44,7 +44,7 @@ pub(super) fn check(
     let mut reporter = Reporter {
         cands,
         res,
-        reported: HashSet::new(),
+        reported: FxHashSet::default(),
     };
     let mut work: Vec<(DefId, Sig, String)> = vec![];
     for (d, cb) in opaque {
@@ -60,7 +60,7 @@ pub(super) fn check(
             work.push((*d, sig, what));
         }
     }
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     while let Some((f, sig, what)) = work.pop() {
         if !seen.insert((f, sig)) {
             continue;
@@ -81,7 +81,7 @@ pub(super) fn check(
 struct Reporter<'c, 's, 'r> {
     cands: &'c mut Candidates<'s>,
     res: &'r mut Resolver,
-    reported: HashSet<Span>,
+    reported: FxHashSet<Span>,
 }
 
 impl Reporter<'_, '_, '_> {

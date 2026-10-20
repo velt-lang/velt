@@ -35,7 +35,7 @@ pub(crate) struct SigQueries<'m> {
     pub filling_sigs: Vec<(DefId, String)>,
     /// The name spans of the parameters declared with a read-only array type (`xs: readonly
     /// string[]`): an argument for one may be a copy (`widen_fresh::readonly_array_arg`).
-    pub readonly_params: std::collections::HashSet<velt_common::Span>,
+    pub readonly_params: rustc_hash::FxHashSet<velt_common::Span>,
 }
 
 impl Ctx<'_> {

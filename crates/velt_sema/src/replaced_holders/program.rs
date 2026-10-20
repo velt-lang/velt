@@ -1,6 +1,6 @@
 //! The whole program's effects, and the search for an assignment a right-hand side may run.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use super::implicit::{Implicit, Reach};
 use super::{adt_kind, field_types, has_params, Effects, Frame, Layer, MAX_VISITS};
@@ -10,14 +10,14 @@ use crate::hir::{AdtKind, DefId, TyId, TyKind};
 
 /// Every type nested in the type arguments the program passes and in those of the types it
 /// uses.
-fn type_args_closure(cx: &Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
+fn type_args_closure(cx: &Ctx, mut work: Vec<TyId>) -> FxHashSet<TyId> {
     for i in 0..cx.ty.table.len() {
         match cx.ty.kind(TyId(i as u32)) {
             TyKind::Adt(_, args) | TyKind::Dyn(_, args) => work.extend(args),
             _ => {}
         }
     }
-    let mut out = HashSet::new();
+    let mut out = FxHashSet::default();
     while let Some(t) = work.pop() {
         if out.insert(t) {
             work.extend(parts(cx, t));
@@ -51,9 +51,9 @@ pub(super) struct Program {
     pub(super) methods: Vec<(String, DefId)>,
     /// The type arguments the program passes, and every type nested in them or in those of the
     /// types it uses ([`type_args_closure`], computed when first needed).
-    pub(super) type_args: (Vec<TyId>, std::cell::OnceCell<HashSet<TyId>>),
+    pub(super) type_args: (Vec<TyId>, std::cell::OnceCell<FxHashSet<TyId>>),
     /// Types shared values hold inline ([`close_shared`]).
-    pub(super) shared: HashSet<TyId>,
+    pub(super) shared: FxHashSet<TyId>,
     /// The code that runs without a call ([`Implicit`]).
     pub(super) im: Implicit,
 }
@@ -89,10 +89,10 @@ impl Program {
                     .flatten()
                     .any(|fx| self.hits(cx, fx, &None, tys));
         }
-        let mut seen: HashSet<(DefId, Option<Vec<TyId>>)> = HashSet::new();
+        let mut seen: FxHashSet<(DefId, Option<Vec<TyId>>)> = FxHashSet::default();
         let mut work: Vec<(&Effects, Option<Vec<TyId>>)> = vec![(rhs, None)];
         let mut values = false;
-        let mut names: HashSet<Option<String>> = HashSet::new();
+        let mut names: FxHashSet<Option<String>> = FxHashSet::default();
         let (mut resumed, mut open): (bool, Option<Reach>) = (false, None);
         while let Some((fx, frame)) = work.pop() {
             if self.hits(cx, fx, &frame, tys) {
@@ -151,7 +151,7 @@ impl Program {
     }
 
     /// Every type the program passes as a type argument ([`type_args_closure`]).
-    fn type_args_all(&self, cx: &Ctx) -> &HashSet<TyId> {
+    fn type_args_all(&self, cx: &Ctx) -> &FxHashSet<TyId> {
         let (passed, all) = &self.type_args;
         all.get_or_init(|| type_args_closure(cx, passed.clone()))
     }
@@ -243,9 +243,9 @@ impl Program {
 
 /// The types shared values hold inline: a shared object literal type that is never changed in
 /// place is copied field by field, sharing what its fields hold.
-pub(super) fn close_shared(cx: &mut Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
+pub(super) fn close_shared(cx: &mut Ctx, mut work: Vec<TyId>) -> FxHashSet<TyId> {
     let assigned = crate::assigned_fields::assigned_objects(cx);
-    let mut out = HashSet::new();
+    let mut out = FxHashSet::default();
     while let Some(t) = work.pop() {
         if !out.insert(t) {
             continue;

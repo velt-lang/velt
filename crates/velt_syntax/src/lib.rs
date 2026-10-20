@@ -15,7 +15,7 @@ pub mod scope;
 pub mod visit;
 mod work;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostics, FileId};
 
@@ -46,7 +46,7 @@ pub struct ParseOptions<'a> {
     /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
     /// expression of one of these names that nothing in its scope declares parses as the
     /// literal ([`scope::free_values`]).
-    pub defines: Option<&'a HashMap<String, ast::Lit>>,
+    pub defines: Option<&'a std::collections::HashMap<String, ast::Lit>>,
 }
 
 /// An ambient variable declaration: `declare const NAME: T;`, or `var NAME: T;` in
@@ -76,7 +76,7 @@ pub struct Parsed {
 /// (`declare const`, `declare global`) returned in [`Parsed::ambient`] instead of being
 /// errors.
 pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
-    let parse = |define_at: &HashMap<u32, ast::Lit>| {
+    let parse = |define_at: &FxHashMap<u32, ast::Lit>| {
         on_parser_thread(|| {
             let mut parser = parser::Parser::new(file, src);
             parser.plain_ts = opts.plain_ts;
@@ -95,14 +95,14 @@ pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
             }
         })
     };
-    let none = HashMap::new();
+    let none = FxHashMap::default();
     let parsed = parse(&none);
     let Some(defines) = opts.defines.filter(|d| !d.is_empty()) else {
         return parsed;
     };
     // The references to replace are known once the module's scopes are: parse again,
     // replacing them (rare: only modules that name a constant pay for it).
-    let define_at: HashMap<u32, ast::Lit> =
+    let define_at: FxHashMap<u32, ast::Lit> =
         scope::free_values(&parsed.module, &|n| defines.contains_key(n))
             .into_iter()
             .map(|id| (id.span.lo, defines[id.name.as_str()].clone()))

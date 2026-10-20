@@ -100,7 +100,8 @@ mod weak;
 mod weak_object;
 mod widen;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use velt_sema::hir::{self, DefId, LocalId, TyId, TyTable};
@@ -300,41 +301,41 @@ struct Cx<'h> {
     types: TyTable,
     aggs: Vec<AggLayout>,
     externs: Vec<ExternFn>,
-    extern_map: HashMap<String, ExternId>,
+    extern_map: FxHashMap<String, ExternId>,
     statics: Vec<StaticData>,
     /// The module state's descriptor, once a slot is used (module_state.rs).
     module_desc: Option<StaticId>,
     /// The module state slots some code assigns as a whole, once asked (module_state.rs).
-    reassigned_slots: Option<HashSet<hir::DefId>>,
+    reassigned_slots: Option<FxHashSet<hir::DefId>>,
     /// The prelude's `Error` class, once looked up (js_string.rs).
     prelude_error: Option<Option<hir::DefId>>,
-    static_map: HashMap<(Vec<u8>, u32), StaticId>,
+    static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
     /// The stored elements of each module constant table read so far (`table_read`): the data
     /// and the length, or `None` for a constant that is not one.
-    tables: HashMap<hir::DefId, Option<(StaticId, usize)>>,
+    tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
-    work_map: HashMap<Work, FuncId>,
+    work_map: FxHashMap<Work, FuncId>,
     queue: VecDeque<(FuncId, Work)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
-    building: HashSet<FuncId>,
+    building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.
-    asyncs: HashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
+    asyncs: FxHashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
-    by_ref_params: HashSet<(DefId, Vec<TyId>)>,
+    by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
     /// Async closure instances used as http handlers: the capture modes their state machine
     /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: HashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
+    shared_envs: FxHashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
     /// Debug types of source variables (`LowerOptions::debug_info`, debug_vars.rs).
     debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
-    tracked: HashMap<DefId, bool>,
+    tracked: FxHashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
-    str_objects: HashMap<String, StaticId>,
+    str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).
     symbol_records: symbols::SymbolRecords,
     /// Types whose values carry a reference count in this pass (boxing/).
@@ -342,17 +343,17 @@ struct Cx<'h> {
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
-    iface_impls: Option<HashMap<DefId, Rc<[u32]>>>,
+    iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
-    own_clones: Option<HashMap<DefId, DefId>>,
+    own_clones: Option<FxHashMap<DefId, DefId>>,
     /// Memoized `own_clone` answers per class type (only resource owners' are honoured).
-    honoured_clones: HashMap<TyId, Option<DefId>>,
+    honoured_clones: FxHashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
-    dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    dyn_modes_memo: FxHashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
     /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
     /// (json/key.rs); `None` until first asked.
-    json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
+    json_key_memo: Option<(bool, FxHashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
     /// The function whose instance is being built (for `nothing_clashes`).
@@ -479,9 +480,9 @@ struct FnLower<'c, 'h> {
     /// anything jumps to them.
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
-    ref_bindings: HashSet<LocalId>,
+    ref_bindings: FxHashSet<LocalId>,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).
-    scope_ends: HashMap<LocalId, SrcLoc>,
+    scope_ends: FxHashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
     asyncx: Option<async_fn::AsyncCx>,
     /// The next call lowered is awaited or spawned right away: its promise is not started
@@ -531,10 +532,10 @@ struct FnLower<'c, 'h> {
     init_stack: Vec<TyId>,
     /// Closures of this body only ever called here: their envs live in the frame
     /// (frame_envs.rs).
-    frame_closures: HashSet<DefId>,
+    frame_closures: FxHashSet<DefId>,
     /// `Intrinsic::ClosureSibling` locals only ever called: calls go straight to the member
     /// (frame_envs.rs).
-    direct_siblings: HashMap<LocalId, DefId>,
+    direct_siblings: FxHashMap<LocalId, DefId>,
     /// The env param of the closure being lowered (`Intrinsic::ClosureSibling`).
     self_env: Option<Local>,
     /// Lowering a method of the prelude's `Reflect`, where a proxy's reads reach their target:

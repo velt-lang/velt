@@ -5,7 +5,7 @@
 //! in that order, so an initializer that reads a `let` whose initializer has not run yet is an
 //! error, as Node throws a `ReferenceError` there.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -29,11 +29,11 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         return Vec::new();
     }
     let (modules, evaluated, reached) = module_order(cx);
-    let rank: HashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
+    let rank: FxHashMap<usize, usize> = modules.iter().enumerate().map(|(i, m)| (*m, i)).collect();
     // A module no value import reaches is never evaluated: its top-level statements don't run,
     // and neither do the initializers of a module imported only for its types. (A module no
     // import reaches, such as the standard library's, keeps its slots: code may use them.)
-    let skipped: HashSet<DefId> = lets
+    let skipped: FxHashSet<DefId> = lets
         .iter()
         .filter(|(m, _, d)| {
             !evaluated[*m]
@@ -49,7 +49,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         .collect();
     sorted.sort_by_key(|(m, start, _)| (rank.get(m).copied().unwrap_or(usize::MAX), *start));
     let order: Vec<DefId> = sorted.into_iter().map(|(_, _, d)| d).collect();
-    let pos: HashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();
+    let pos: FxHashMap<DefId, usize> = order.iter().enumerate().map(|(i, d)| (*d, i)).collect();
     for (i, &d) in order.iter().enumerate() {
         let Some(g) = cx.global(d) else { continue };
         let Some(init) = g.init.as_ref() else {
@@ -83,7 +83,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
 /// value imports, then any others (which have no code that runs first); per module, whether
 /// the walk reached it (whether Node evaluates it); and whether any import reaches it.
 fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>, Vec<bool>) {
-    let by_path: HashMap<&str, usize> = cx
+    let by_path: FxHashMap<&str, usize> = cx
         .modules
         .iter()
         .enumerate()
@@ -133,7 +133,7 @@ fn module_order(cx: &Ctx) -> (Vec<usize>, Vec<bool>, Vec<bool>) {
 
 /// The slots of `skipped` that no code that may run reads: none of another module's code,
 /// and no interface's default method (which an object of another module may run).
-fn unread_elsewhere(cx: &mut Ctx, mut skipped: HashSet<DefId>) -> HashSet<DefId> {
+fn unread_elsewhere(cx: &mut Ctx, mut skipped: FxHashSet<DefId>) -> FxHashSet<DefId> {
     if skipped.is_empty() {
         return skipped;
     }
@@ -251,7 +251,7 @@ struct Reach {
 struct Facts {
     direct: Option<String>,
     edges: Vec<DefId>,
-    tys: HashSet<TyId>,
+    tys: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run.
     resumes: bool,
 }
@@ -276,7 +276,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         .filter(|d| cx.fn_info(*d).state == crate::defs::BodyState::Done)
         .collect();
     let mut withs: Vec<(hir::Expr, velt_common::Span)> = vec![];
-    let mut facts: HashMap<DefId, Facts> = HashMap::new();
+    let mut facts: FxHashMap<DefId, Facts> = FxHashMap::default();
     for &d in &fns {
         let std = cx.modules[cx.fn_info(d).module].is_std;
         let Some(hir::Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
@@ -389,9 +389,9 @@ fn node_name(cx: &Ctx, d: DefId) -> String {
 
 /// Which functions may reach module state: those that use it, and those that may run one of
 /// them (backwards along the edges, to a fixpoint).
-fn propagate(facts: &HashMap<DefId, Facts>) -> HashMap<DefId, Reach> {
-    let mut reach: HashMap<DefId, Reach> = HashMap::new();
-    let mut callers: HashMap<DefId, Vec<DefId>> = HashMap::new();
+fn propagate(facts: &FxHashMap<DefId, Facts>) -> FxHashMap<DefId, Reach> {
+    let mut reach: FxHashMap<DefId, Reach> = FxHashMap::default();
+    let mut callers: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
     let mut todo = vec![];
     // In `DefId` order, so a diagnostic names the same path on every run.
     let mut order: Vec<(&DefId, &Facts)> = facts.iter().collect();
@@ -453,7 +453,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
             facts: Facts {
                 direct: None,
                 edges: vec![],
-                tys: HashSet::new(),
+                tys: FxHashSet::default(),
                 resumes: false,
             },
             withs: vec![],

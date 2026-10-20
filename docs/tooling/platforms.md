@@ -107,7 +107,8 @@ How `velt` finds its parts (first match wins):
 
 **Debug builds link the shared runtime** (milliseconds instead of the seconds a static link of
 the whole runtime takes): the executable loads it from the toolchain's `lib/` (an rpath on Linux
-and macOS; on Windows `velt_rt_shared.dll` is copied next to the executable). Such an executable
+and macOS; on Windows `velt_rt_shared.dll` is copied next to the executable). The link names only
+the shared runtime and the C library: the runtime brings the system libraries it needs. Such an executable
 needs the toolchain it was built with; ship `--release` builds, which link the runtime statically
 and run anywhere. `VELT_RT_LINK=static` makes debug builds static too.
 

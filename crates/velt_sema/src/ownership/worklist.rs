@@ -9,7 +9,8 @@
 //! call chain in one pass instead of one whole-program round per call level; only recursion
 //! and dynamic dispatch send work back to bodies already visited.
 
-use std::collections::{BTreeSet, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BTreeSet;
 
 use crate::ctx::Ctx;
 use crate::hir::{DefId, Expr, ExprKind as E};
@@ -24,9 +25,9 @@ pub(super) struct Worklist {
     /// Bodies in visiting order (callees before the bodies that read them).
     order: Vec<DefId>,
     /// Positions (into `order`) of the bodies that read a def, the def's own body included.
-    readers: HashMap<DefId, Vec<usize>>,
+    readers: FxHashMap<DefId, Vec<usize>>,
     /// Dispatch groups (`Dispatch`) that contain a def.
-    groups: HashMap<DefId, Vec<usize>>,
+    groups: FxHashMap<DefId, Vec<usize>>,
     bodies: BTreeSet<usize>,
     joins: BTreeSet<usize>,
 }
@@ -36,8 +37,8 @@ impl Worklist {
     pub(super) fn new(cx: &mut Ctx, fns: &[DefId], dispatch: &Dispatch) -> Worklist {
         let reads: Vec<Vec<DefId>> = fns.iter().map(|&d| reads_of(cx, d)).collect();
         let order = callees_first(fns, &reads, dispatch);
-        let at: HashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
-        let mut readers: HashMap<DefId, Vec<usize>> = HashMap::new();
+        let at: FxHashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
+        let mut readers: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
         for (p, d) in order.iter().enumerate() {
             readers.entry(*d).or_default().push(p);
             for &r in reads[at[d]].iter().filter(|r| *r != d) {
@@ -93,7 +94,7 @@ fn reads_of(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
 /// which keeps it linear in size however many bodies call through a slot.
 fn callees_first(fns: &[DefId], reads: &[Vec<DefId>], dispatch: &Dispatch) -> Vec<DefId> {
     let n = fns.len();
-    let at: HashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
+    let at: FxHashMap<DefId, usize> = fns.iter().copied().zip(0..).collect();
     let slots = dispatch.slots();
     let successors = |node: usize| -> Vec<usize> {
         let Some(reads) = reads.get(node) else {

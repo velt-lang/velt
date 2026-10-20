@@ -12,7 +12,7 @@
 //! substituted at every call; a call that makes one of them a promise-holding type is reported
 //! there.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -47,20 +47,20 @@ pub(crate) struct Facts {
     /// The methods those reach, with the class's type arguments.
     pub(crate) dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
     /// Spans of `for...of` iterables (a call there is "iterating").
-    loops: HashSet<Span>,
+    loops: FxHashSet<Span>,
 }
 
 struct Collect<'a> {
     facts: &'a mut Facts,
-    ctors: &'a HashMap<DefId, DefId>,
+    ctors: &'a FxHashMap<DefId, DefId>,
     /// Constructors: `super(...)` passes `this` upcast to one.
-    ctor_fns: &'a HashSet<DefId>,
+    ctor_fns: &'a FxHashSet<DefId>,
     /// Spans of `this` upcast for a base constructor (`super(...)`), which is not a use of the
     /// subclass as its base: counting it would give every subclass constructor its overrides'
     /// copies.
-    super_receivers: HashSet<Span>,
+    super_receivers: FxHashSet<Span>,
     /// Guard bits per expression (`inst_sites::guards_of`).
-    guards: HashMap<*const Expr, u64>,
+    guards: FxHashMap<*const Expr, u64>,
 }
 
 impl Collect<'_> {
@@ -165,10 +165,10 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut rounds = Rounds::new(facts.len(), reads);
     let mut work = dispatch.work;
     // The generic types each function copies (types that mention its type parameters).
-    let mut needs: HashMap<DefId, Vec<(Copy, u64)>> = HashMap::new();
+    let mut needs: FxHashMap<DefId, Vec<(Copy, u64)>> = FxHashMap::default();
     // Concrete promise-holding copies found at calls: (caller, call span) -> (copied type, callee).
     let mut found: Vec<(DefId, Span, TyId, DefId)> = vec![];
-    let mut found_at: HashSet<(DefId, Span)> = HashSet::new();
+    let mut found_at: FxHashSet<(DefId, Span)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, fx) = &facts[i];
         work += (fx.copies.len() + fx.calls.len() + fx.dyn_calls.len() + fx.closures.len()) as u64;
@@ -207,7 +207,7 @@ type Req = (Copy, u64, Option<(Span, DefId)>);
 /// The types function `fx` copies: its own copies, and those of the generic functions it calls
 /// (substituted, with the call), the methods it calls dynamically (instantiated) and the
 /// closures it creates; with their guard bits (`inst_sites::carry_guard`).
-fn requirements(cx: &mut Ctx, fx: &Facts, needs: &HashMap<DefId, Vec<(Copy, u64)>>) -> Vec<Req> {
+fn requirements(cx: &mut Ctx, fx: &Facts, needs: &FxHashMap<DefId, Vec<(Copy, u64)>>) -> Vec<Req> {
     let mut reqs: Vec<Req> = fx.copies.iter().map(|c| (*c, 0, None)).collect();
     for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
         for ((t, deep), need) in needs.get(d).into_iter().flatten() {
@@ -241,13 +241,13 @@ fn is_empty_array(e: &Expr) -> bool {
 
 /// The facts of every function body, in definition order (also `crate::weak_threads`).
 pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
-    let ctors: HashMap<DefId, DefId> = (0..cx.info.len())
+    let ctors: FxHashMap<DefId, DefId> = (0..cx.info.len())
         .filter_map(|i| match &cx.info[i] {
             DefInfo::Adt(a) => a.ctor.map(|c| (DefId(i as u32), c)),
             _ => None,
         })
         .collect();
-    let ctor_fns: HashSet<DefId> = ctors.values().copied().collect();
+    let ctor_fns: FxHashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
@@ -267,7 +267,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
                 facts: &mut facts,
                 ctors: &ctors,
                 ctor_fns: &ctor_fns,
-                super_receivers: HashSet::new(),
+                super_receivers: FxHashSet::default(),
                 guards,
             },
         );

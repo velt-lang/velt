@@ -18,7 +18,7 @@
 //!   `shared<T>`: a typedef of a pointer to `{ count, value }`;
 //! - anything else: its raw words.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use cranelift_codegen::gimli::write::{AttributeValue, DwarfUnit, UnitEntryId};
 use cranelift_codegen::gimli::{self, DwAte, DwTag};
@@ -30,16 +30,16 @@ use super::dwarf_str;
 pub(super) struct Types<'p> {
     program: &'p vir::Program,
     /// By debug type and, for scalars, the VIR type holding the value.
-    described: HashMap<(DebugTyId, Option<Ty>), UnitEntryId>,
-    raw: HashMap<Ty, UnitEntryId>,
+    described: FxHashMap<(DebugTyId, Option<Ty>), UnitEntryId>,
+    raw: FxHashMap<Ty, UnitEntryId>,
 }
 
 impl<'p> Types<'p> {
     pub(super) fn new(program: &'p vir::Program) -> Self {
         Types {
             program,
-            described: HashMap::new(),
-            raw: HashMap::new(),
+            described: FxHashMap::default(),
+            raw: FxHashMap::default(),
         }
     }
 

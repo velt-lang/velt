@@ -13,7 +13,7 @@
 //! variables, so they count as them. The check is syntactic and conservative: it runs before
 //! ownership inference, when pass modes are not known yet.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
@@ -26,9 +26,9 @@ pub(super) struct Sites<'a, 'm> {
     cx: &'a Ctx<'m>,
     local: LocalId,
     /// The enclosing variables the closure captures by reference.
-    borrowed: &'a HashSet<LocalId>,
+    borrowed: &'a FxHashSet<LocalId>,
     /// Borrowing pattern bindings of the function (they may point into `borrowed`).
-    aliases: &'a HashSet<LocalId>,
+    aliases: &'a FxHashSet<LocalId>,
     /// The role of each local of the function.
     kinds: &'a [LocalKind],
     /// No call found so far runs while a reference is held.
@@ -39,8 +39,8 @@ impl<'a, 'm> Sites<'a, 'm> {
     pub(super) fn new(
         cx: &'a Ctx<'m>,
         local: LocalId,
-        borrowed: &'a HashSet<LocalId>,
-        aliases: &'a HashSet<LocalId>,
+        borrowed: &'a FxHashSet<LocalId>,
+        aliases: &'a FxHashSet<LocalId>,
         kinds: &'a [LocalKind],
     ) -> Self {
         Sites {

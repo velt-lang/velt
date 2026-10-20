@@ -3,7 +3,7 @@
 //! `init` on the first access (rt_abi.md "Module state"). A program without module
 //! state gets none of this.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{self, ExprKind as E, StmtKind as S};
 
@@ -217,8 +217,8 @@ impl FnLower<'_, '_> {
 
 /// The globals some function body or global initializer assigns as a whole (one walk over the
 /// program, only for a program with module state).
-fn reassigned_slots(hir: &hir::Program) -> HashSet<hir::DefId> {
-    let mut out = HashSet::new();
+fn reassigned_slots(hir: &hir::Program) -> FxHashSet<hir::DefId> {
+    let mut out = FxHashSet::default();
     if hir.module_state.is_none() {
         return out;
     }
@@ -232,7 +232,7 @@ fn reassigned_slots(hir: &hir::Program) -> HashSet<hir::DefId> {
     out
 }
 
-fn block(b: &hir::Block, out: &mut HashSet<hir::DefId>) {
+fn block(b: &hir::Block, out: &mut FxHashSet<hir::DefId>) {
     for s in &b.stmts {
         match &s.kind {
             S::Let { init, .. } => init.iter().for_each(|e| expr(e, out)),
@@ -269,7 +269,7 @@ fn block(b: &hir::Block, out: &mut HashSet<hir::DefId>) {
     b.value.iter().for_each(|e| expr(e, out));
 }
 
-fn expr(e: &hir::Expr, out: &mut HashSet<hir::DefId>) {
+fn expr(e: &hir::Expr, out: &mut FxHashSet<hir::DefId>) {
     match &e.kind {
         E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
             if let E::Global(d) = place.kind {

@@ -1,7 +1,7 @@
 //! Type-argument inference: match a generic signature type (whose `Param(i)` are the callee's
 //! type parameters, "slots") against the type of an argument / the expected type.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::Bound;
@@ -440,13 +440,13 @@ impl Ctx<'_> {
 #[derive(Default)]
 pub(crate) struct ImplIndex {
     indexed: usize,
-    by_iface: HashMap<DefId, IfaceImpls>,
+    by_iface: FxHashMap<DefId, IfaceImpls>,
 }
 
 #[derive(Default)]
 struct IfaceImpls {
     /// Non-generic impls: the type → its first impl (the only type such an impl fits).
-    exact: HashMap<TyId, u32>,
+    exact: FxHashMap<TyId, u32>,
     /// Generic impls, in order.
     generic: Vec<u32>,
 }

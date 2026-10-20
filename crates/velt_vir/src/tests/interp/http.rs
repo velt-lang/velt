@@ -6,7 +6,7 @@
 //! requests (in request order) and releases the handler environment through its drop function
 //! — the real runtime never frees it, but doing so here keeps the leak check exact.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::async_rt::Fut;
 use super::Interp;
@@ -21,8 +21,8 @@ pub(in crate::tests) struct Http {
     pub requests: Vec<(String, String, String)>,
     /// `(status, body)` per served request, filled by `velt_rt_http_server_close`.
     pub responses: Vec<(u32, String)>,
-    live_reqs: HashMap<u64, (String, String, String)>,
-    resps: HashMap<u64, (u32, String)>,
+    live_reqs: FxHashMap<u64, (String, String, String)>,
+    resps: FxHashMap<u64, (u32, String)>,
     tasks: Vec<usize>,
     env: u64,
     next: u64,
