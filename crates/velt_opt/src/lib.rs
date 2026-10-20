@@ -5,6 +5,8 @@
 //! (+ `verify`) and before `velt_codegen_cl::emit_object`.
 //!
 //! Passes (one module each; every pass keeps the VIR invariants from `vir.rs`):
+//! - `gated_clones`: before the rounds, a gated function's calls of ordinary callees that check
+//!   its CPU extension go to clones gated on it, where the check is `true` (#1330).
 //! - `inline`: bottom-up inlining of small / called-once direct callees.
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive
@@ -61,6 +63,7 @@ mod dead_funcs;
 mod divisions;
 mod frame_slots;
 mod fresh;
+mod gated_clones;
 mod heap_sroa;
 mod inline;
 mod locals;
@@ -145,6 +148,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
         }
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));
+            t.time("gated_clones", || gated_clones::run(program));
             numrep::declare_formatters(&mut program.externs);
             // Once before inlining as well: an array is still one value there, whose length
             // bounds the index loops over it (`numrep` knows a length is below 2^53); after

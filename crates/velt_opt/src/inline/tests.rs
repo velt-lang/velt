@@ -156,3 +156,33 @@ fn unit_callee_with_no_destination() {
     inline(&mut p);
     assert_eq!(calls_to(&p.funcs[1], nothing), 0);
 }
+
+#[test]
+fn gated_callee_stays_a_call_outside_its_target() {
+    // A gated function (#1330) runs only behind the check of its CPU extension: its body never
+    // moves into an ordinary function or one gated on another extension. An ordinary body may
+    // move into a gated one.
+    use velt_vir::simd::Ext;
+    let mut pb = ProgramBuilder::new();
+    let arm = pb.add(adder("arm", 5, Linkage::Internal));
+    let plain = pb.add(adder("plain", 5, Linkage::Internal));
+    let named = |symbol: &str, callees: &[FuncId]| Function {
+        symbol: symbol.into(),
+        ..caller(callees, 1)
+    };
+    let x86 = pb.add(named("x86", &[arm]));
+    let gated = pb.add(named("gated", &[arm, plain]));
+    pb.add(caller(&[arm], 1));
+    let mut p = pb.finish();
+    p.funcs[x86.0 as usize].target = Some(Ext::ShaX86);
+    p.funcs[gated.0 as usize].target = Some(Ext::ShaArm);
+    p.funcs[arm.0 as usize].target = Some(Ext::ShaArm);
+    inline(&mut p);
+    let [_, _, x86, gated, plain_caller] = &p.funcs[..] else {
+        panic!("five functions");
+    };
+    assert_eq!(calls_to(x86, arm), 1, "into another target");
+    assert_eq!(calls_to(plain_caller, arm), 1, "into an ordinary function");
+    assert_eq!(calls_to(gated, arm), 0, "into the same target");
+    assert_eq!(calls_to(gated, plain), 0, "ordinary into gated");
+}
