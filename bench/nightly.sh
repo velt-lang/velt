@@ -13,6 +13,10 @@
 # --out (default: $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
+# compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
+# non-blank, non-comment lines of std/**/*.vlt): the standard library grows with almost every
+# feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
+# baseline row without the lines is compared in total.
 # Needs: cargo, clang, valgrind, python3.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -84,15 +88,25 @@ for src in "${BENCHES[@]}"; do
   count "$name" "$exe" >> "$OUT_FILE"
 done
 echo "compile/check_all_std" >&2
-count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt" >> "$OUT_FILE"
+# Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
+# slowdown of the same size. Not blank lines, `//` lines, or the lines of a comment that starts a
+# line (`/** … */`).
+std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
+  block { if (/\*\//) block = 0; next }
+  /^[ \t]*(\/\/|$)/ { next }
+  /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
+  { n++ }
+  END { print n + 0 }')
+row=$(count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
+printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
 "$PYTHON" - "$OUT_FILE" "$BASELINE" "$THRESHOLD" <<'EOF'
 import sys
 def load(path):
     rows = {}
     for line in open(path):
-        name, instr, ms = line.rstrip("\n").split("\t")
-        rows[name] = (int(instr), int(ms))
+        name, instr, ms, *lines = line.rstrip("\n").split("\t")
+        rows[name] = (int(instr), int(ms), int(lines[0]) if lines else None)
     return rows
 new = load(sys.argv[1])
 base = load(sys.argv[2]) if sys.argv[2] else {}
@@ -100,15 +114,20 @@ limit = float(sys.argv[3])
 print("| benchmark | instructions (M) | baseline (M) | change | native ms |")
 print("|---|---:|---:|---:|---:|")
 worse = []
-for name, (instr, ms) in new.items():
+for name, (instr, ms, lines) in new.items():
     if name in base:
-        b = base[name][0]
+        b, _, b_lines = base[name]
         change = 100 * (instr - b) / b
+        label = name
+        if lines and b_lines:
+            # Per code line of std/: the lines are in the label, the change is per line.
+            change = 100 * (instr / lines - b / b_lines) / (b / b_lines)
+            label = f"{name} (per code line of std: {b_lines} -> {lines} lines)"
         mark = ""
         if change > limit:
             worse.append(name)
             mark = " **regression**"
-        print(f"| {name} | {instr / 1e6:.1f} | {b / 1e6:.1f} | {change:+.2f}%{mark} | {ms} |")
+        print(f"| {label} | {instr / 1e6:.1f} | {b / 1e6:.1f} | {change:+.2f}%{mark} | {ms} |")
     else:
         print(f"| {name} | {instr / 1e6:.1f} | - | new | {ms} |")
 print()
