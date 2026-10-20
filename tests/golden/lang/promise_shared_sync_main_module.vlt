@@ -1,0 +1,59 @@
+// check: no leaks
+// A synchronous `main` keeps in-flight promises in a module-level `Map` and hands a second
+// holder of each to a spawned call (#212). The promises run on the task that code outside a
+// task hands them to; once `main` returns, that task takes the module lock like every task
+// that may reach module state, so the workers that read the same holders from the `Map` and
+// mutate their results never run at the same time as it. Node prints the same.
+class Obj {
+  n: number;
+  items: number[] = [];
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+const cache = new Map<string, Promise<Obj>>();
+async function make(i: number): Promise<Obj> {
+  if (i % 2 == 0) {
+    await sleep(2);
+  } else {
+    await sleep(4);
+  }
+  return new Obj(i);
+}
+async function worker(k: string): Promise<number> {
+  const o = await cache.get(k)!;
+  for (let j = 0; j < 50; j++) {
+    o.items.push(j);
+    if (o.items.length > 30) {
+      o.items.splice(0, 10);
+    }
+  }
+  return o.items.length + o.n;
+}
+async function use(p: Promise<Obj>): Promise<number> {
+  return (await p).n;
+}
+async function report(ws: Promise<number>[], us: Promise<number>[]): Promise<void> {
+  let w = 0;
+  for (const t of ws) {
+    w += await t;
+  }
+  let u = 0;
+  for (const t of us) {
+    u += await t;
+  }
+  console.log("workers", w, "holders", u);
+}
+function main() {
+  const ws: Promise<number>[] = [];
+  const us: Promise<number>[] = [];
+  for (let i = 0; i < 100; i++) {
+    const k = `k${i}`;
+    cache.set(k, make(i));
+    const q = cache.get(k)!;
+    ws.push(spawn(worker(k)));
+    us.push(spawn(use(q)));
+  }
+  spawn(report(ws, us));
+  console.log("main done");
+}

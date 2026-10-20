@@ -186,15 +186,20 @@ shares a promise never calls it, and its futures are unchanged.
   orphan task driving a task's promises after its root returned has the same one; on
   WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
   dropped on another task without having been handed over (above) stops the program with a
-  fatal error (exit code 101), unless that task holds the module lock (§ module state): a
-  holder read from module state (a `Map` of promises in flight) is used by the tasks that use
-  module state, which run one at a time (on WebAssembly: any task of a program with module
-  state).
+  fatal error (exit code 101), unless the thread holds the module lock (§ module state; on
+  WebAssembly: the program has module state). That is all the check tests. It is sound because
+  the task the promise is shared on holds the lock whenever it runs too: a holder reaches
+  module state only through code holding the lock, so the task it is shared on put it there
+  or first used it from there, and is a *touched* task from then on, whose every poll takes
+  the lock; the outside home (below) is a touched task in every program with module state. So
+  the tasks using a holder read from module state (a `Map` of promises in flight), its
+  result, and the objects reached from that run one at a time.
 - A holder handed over outside a task (a synchronous `main`) gets its proxy in the *outside
   home*, a set with a task id of its own that code outside a task enters for each hand-over,
   so every holder handed over from there is one of the same task. When `main` returns, the
   home's set moves to an orphan task, which drives it (and keeps the process alive) until its
-  promises finish.
+  promises finish. In a program with module state the home's polls take the module lock, here
+  and in the orphan, as any touched task's do.
 - A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
   hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
   the other finds it settled.

@@ -402,10 +402,16 @@ unsafe extern "C" fn proxy_drop(state: *mut u8) {
 /// Stop the program when the promise of `h` is used on another task than the one it is shared
 /// on without being handed over (`hand_over`): its original future runs on that task, and its
 /// result would be used from two threads. Outside a task (a synchronous `main`, or the runtime
-/// dropping what is left at exit) anything goes. So it does for a task holding the module lock:
-/// a holder it reached through module state (an in-flight `Map<string, Promise<T>>`) was put
-/// there by a task that holds the lock whenever it runs too, so those tasks never run at once,
-/// as everything reached through module state is shared between them.
+/// dropping what is left at exit) anything goes.
+///
+/// So it does for a thread holding the module lock, and that is all this tests. It is sound
+/// because the task the promise is shared on holds the lock whenever it runs too: a holder
+/// reaches module state (an in-flight `Map<string, Promise<T>>`) only through code holding the
+/// lock, so that task put it there or first used it from there and is a touched task from then
+/// on, whose every poll takes the lock (local/module_state.rs); the outside home, where code
+/// outside a task hands holders over, is a touched task in every program with module state
+/// (`local::in_outside_home`). So the tasks using the holder, its result and what that reaches
+/// never run at once.
 fn on_its_task(h: &Hub) {
     let now = super::local::task_key();
     if now == 0 {

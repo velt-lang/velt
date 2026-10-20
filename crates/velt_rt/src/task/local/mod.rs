@@ -496,11 +496,26 @@ pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
 /// has an id and a set, so the promise is shared on it. Code outside a task enters it for each
 /// hand-over; once that code is done ([`outside_done`]), the set moves to an orphan task that
 /// drives what is still running (until then a wake only queues it).
+///
+/// In a program with module state it is a touched task (module_state.rs): code outside a task
+/// may have put holders of its promises in module state, where tasks holding the module lock
+/// use them (task/shared.rs `on_its_task`), so each of its polls takes the lock too, here and
+/// in the orphan.
 static OUTSIDE_HOME: parking_lot::Mutex<SetPtr> = parking_lot::Mutex::new(SetPtr::NONE);
 
 /// Run `f` (outside a task) as a step of the task of [`OUTSIDE_HOME`].
 pub(crate) fn in_outside_home(f: impl FnOnce()) {
+    if module_state::used() {
+        // The module lock first, then the home's: the order every taker of both keeps.
+        module_state::with_lock(|| outside_home_step(f));
+    } else {
+        outside_home_step(f);
+    }
+}
+
+fn outside_home_step(f: impl FnOnce()) {
     let mut home = OUTSIDE_HOME.lock();
+    home.4 |= module_state::used();
     // Its promises may start timers and I/O, which need the runtime.
     let _rt = super::runtime::handle().enter();
     let mut f = Some(f);
@@ -515,10 +530,10 @@ pub(crate) fn in_outside_home(f: impl FnOnce()) {
 }
 
 /// Code outside a task is done (`main` returned): the promises the outside home runs go on in
-/// an orphan task.
+/// an orphan task, a touched one when the program has module state ([`OUTSIDE_HOME`]).
 pub(crate) fn outside_done() {
-    let home = std::mem::replace(&mut *OUTSIDE_HOME.lock(), SetPtr::NONE);
-    let mut home = home;
+    let mut home = std::mem::replace(&mut *OUTSIDE_HOME.lock(), SetPtr::NONE);
+    home.4 |= module_state::used();
     if let Some(set) = home.take_busy() {
         Orphan::spawn(set);
     }
