@@ -389,6 +389,8 @@ impl FnCx<'_, '_> {
         collect: bool,
     ) -> Vec<hir::Expr> {
         let order = self.arg_order(c, args);
+        // Slots fixed before any argument (explicit type arguments, the receiver's).
+        let given: Vec<bool> = slots.iter().map(Option::is_some).collect();
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
             let p = &c.params[i];
@@ -400,7 +402,9 @@ impl FnCx<'_, '_> {
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             // A parameter of a type parameter that keeps literal keys (`K extends keyof T`)
             // already fixed by an earlier key: this one adds to it (`"x" | "y"`), as in TS.
-            let keys = self.literal_slot(p.ty, slots);
+            let keys = self
+                .literal_slot(p.ty, slots)
+                .filter(|&k| !given[k] && c.constraints.get(k).is_some_and(Option::is_some));
             if let Some(k) = keys {
                 known[k] = None;
             }
