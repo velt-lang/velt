@@ -90,7 +90,10 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         self.guarded(|p| {
             let lo = p.cur_lo();
-            let kind = p.parse_stmt_kind()?;
+            let outer = p.begin_statement();
+            let kind = p.parse_stmt_kind();
+            p.stmt_start = outer;
+            let kind = kind?;
             Ok(Stmt {
                 kind,
                 span: p.span_from(lo),
@@ -141,6 +144,14 @@ impl<'a> Parser<'a> {
             Kw::Break | Kw::Continue => self.parse_break_continue(kw),
             Kw::Throw => {
                 self.bump();
+                if self.line_break_before() {
+                    // TS1142; parsed on, so the rest of the statement is still checked.
+                    let span = self.cur_span();
+                    self.error(
+                        "a line break is not permitted after `throw` (as in TypeScript): start the thrown value on the same line",
+                        span,
+                    );
+                }
                 let e = self.parse_expr()?;
                 self.expect_semi()?;
                 Ok(StmtKind::Throw(e))
@@ -159,7 +170,8 @@ impl<'a> Parser<'a> {
                 true
             }
             Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
-            Some(Kw::Async | Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
+            Some(Kw::Async) => self.at_async_function(),
+            Some(Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
             _ => false,
         }
@@ -242,13 +254,16 @@ impl<'a> Parser<'a> {
         let body = self.parse_body()?;
         self.expect_kw(Kw::While, "while")?;
         let cond = self.parse_paren_cond()?;
-        self.expect_semi()?;
+        // A `;` is inserted after a `do`-`while` even on the same line (ECMAScript 2015).
+        self.eat(Tok::Semi);
         Ok(StmtKind::DoWhile { body, cond })
     }
 
+    /// `return [value]`: a restricted production, so a line break right after `return` ends
+    /// the statement and the next line is not its value (as in JavaScript).
     fn parse_return(&mut self) -> PResult<StmtKind> {
         self.bump(); // return
-        let value = if self.at(Tok::Semi) {
+        let value = if self.at(Tok::Semi) || self.at_inserted_semi() {
             None
         } else {
             Some(self.parse_expr()?)
@@ -259,7 +274,8 @@ impl<'a> Parser<'a> {
 
     fn parse_break_continue(&mut self, kw: Kw) -> PResult<StmtKind> {
         self.bump();
-        let label = if self.at_ident_like() {
+        // The label must be on the same line (a restricted production).
+        let label = if self.at_ident_like() && !self.line_break_before() {
             Some(self.take_ident())
         } else {
             None

@@ -38,8 +38,12 @@ The differences come from three rules:
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
-- Semicolons are required (no automatic semicolon insertion, except after an overload
-  signature).
+- Semicolons are optional, as in TypeScript: automatic semicolon insertion follows
+  JavaScript's rules, so code formatted without semicolons (Prettier's `semi: false`, standard
+  style) compiles as it is, and a line starting with `(`, `[`, `+`, `-` or `/` continues the
+  line before as it does in Node, with a warning
+  ([Comments and semicolons](../reference/lexical.md#comments-and-semicolons)). `velt fmt`
+  prints semicolons.
 
 ## Numbers
 
@@ -354,6 +358,5 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | object literals with methods: `{ *[Symbol.iterator]() { ... } }`, `{ m() { ... } }` | an object literal whose one member is an iterator method is an `Iterable<T>` (no `this`); other methods are errors | — |
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
-| `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 #[test]
 fn diagnostic_wording() {
-    let e = errors("function f() { let x = 1 }");
+    let e = errors("function f() { let x = 1 let y = 2 }");
     assert!(e[0].contains("expected `;`"), "{:?}", e);
     let e = errors("function f() { foo( }");
     assert!(e[0].contains("expected expression"), "{:?}", e);
@@ -31,7 +31,7 @@ fn diagnostic_wording() {
 
 #[test]
 fn expected_semicolon_points_at_offending_token() {
-    let src = "function f() {\n  let x = 1\n  let y = 2;\n}";
+    let src = "function f() {\n  let x = 1 let y = 2;\n}";
     let (_, d) = parse(src);
     assert_eq!(d.len(), 1, "{:?}", d);
     let lo = d[0].labels[0].span.lo as usize;
