@@ -290,7 +290,8 @@ enum KeyRead {
 
 impl FnCx<'_, '_> {
     /// The elements of the literal of literals of different types `as const` that the `const`
-    /// variable `c` holds (`Frame::as_const_tuples`).
+    /// variable `c` holds (`Frame::as_const_tuples`): a local of this function or an enclosing
+    /// one, or a module constant.
     fn as_const_reads(&mut self, init: &Expr) -> Option<Vec<Expr>> {
         let mut e = init;
         while let E::Paren(x) = &e.kind {
@@ -299,12 +300,21 @@ impl FnCx<'_, '_> {
         let E::Ident(name) = &e.kind else {
             return None;
         };
-        if !self.declares_here(&name.name) {
-            return None;
-        }
-        let l = self.lookup_local(&name.name, name.span)?;
         // A `const` holding literals: they are read again, as the literal itself.
-        self.f.as_const_tuples.get(&l).cloned()
+        if let Some(local) = self.local_as_const_tuple(&name.name) {
+            return local.map(<[Expr]>::to_vec);
+        }
+        let d = match self.cx.lookup_item(self.module, &name.name) {
+            Some(crate::ctx::Item::Def(d)) => d,
+            _ => return None,
+        };
+        let init = self.cx.global(d).filter(|g| !g.mutable)?.src.init?;
+        match &init.kind {
+            E::Cast { expr, ty } if super::expr::member::is_as_const(ty) => {
+                super::readonly_arrays::as_const_tuple(expr)
+            }
+            _ => None,
+        }
     }
 
     /// How the object pattern key `key` reads its property: a computed key `[k]` naming a
@@ -341,7 +351,7 @@ impl FnCx<'_, '_> {
 
     /// `...rest` that is not supported here: reported, and declared as an error so its uses say
     /// nothing more.
-    fn unsupported_rest(
+    pub(super) fn unsupported_rest(
         &mut self,
         kind: VarKind,
         r: &ast::Ident,

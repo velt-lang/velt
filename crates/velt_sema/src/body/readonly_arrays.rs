@@ -126,7 +126,7 @@ impl FnCx<'_, '_> {
 
 /// `[2, "y"]` (in parentheses or not): its elements when they are literals of more than one
 /// type (TypeScript's `readonly [2, "y"]` as `as const` gives it).
-fn as_const_tuple(e: &ast::Expr) -> Option<Vec<ast::Expr>> {
+pub(super) fn as_const_tuple(e: &ast::Expr) -> Option<Vec<ast::Expr>> {
     let elems = match &e.kind {
         ast::ExprKind::Paren(inner) => return as_const_tuple(inner),
         ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
