@@ -13,10 +13,10 @@
 # --out (default: $TARGET/bench-nightly/counts.tsv) and prints a Markdown table. With a baseline,
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
-# compile/check_all_std is compared per line of std/ (its row has a fourth column, the lines of
-# std/**/*.vlt): the standard library grows with almost every feature, and checking more of it
-# is not a slowdown, while checking each line more slowly is. A baseline row without the lines
-# is compared in total.
+# compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
+# non-blank, non-comment lines of std/**/*.vlt): the standard library grows with almost every
+# feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
+# baseline row without the lines is compared in total.
 # Needs: cargo, clang, valgrind, python3.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -88,7 +88,15 @@ for src in "${BENCHES[@]}"; do
   count "$name" "$exe" >> "$OUT_FILE"
 done
 echo "compile/check_all_std" >&2
-std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | wc -l | tr -d ' ')
+# Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
+# slowdown of the same size. Not blank lines, `//` lines, or the lines of a comment that starts a
+# line (`/** … */`).
+std_lines=$(find "$ROOT/std" -name '*.vlt' -exec cat {} + | awk '
+  block { if (/\*\//) block = 0; next }
+  /^[ \t]*(\/\/|$)/ { next }
+  /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
+  { n++ }
+  END { print n + 0 }')
 row=$(count "compile/check_all_std" "$VELT" check "$ROOT/bench/compile/all_std.vlt")
 printf '%s\t%s\n' "$row" "$std_lines" >> "$OUT_FILE"
 
@@ -112,9 +120,9 @@ for name, (instr, ms, lines) in new.items():
         change = 100 * (instr - b) / b
         label = name
         if lines and b_lines:
-            # Per line of std/: the lines are in the label, the change is per line.
+            # Per code line of std/: the lines are in the label, the change is per line.
             change = 100 * (instr / lines - b / b_lines) / (b / b_lines)
-            label = f"{name} (per line of std: {b_lines} -> {lines} lines)"
+            label = f"{name} (per code line of std: {b_lines} -> {lines} lines)"
         mark = ""
         if change > limit:
             worse.append(name)
