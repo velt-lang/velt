@@ -23,4 +23,8 @@ function main() {
   const v = (names[kf()] += "2");
   const w = (counts[k] += 1);
   console.log(v, w);
+  // Values that may be `null` already: the message names `null` once.
+  const maybe: Record<string, string | null> = {};
+  maybe["m"] += "!";
+  console.log(maybe);
 }

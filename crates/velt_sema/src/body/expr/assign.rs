@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
                 if self.static_field_target(object, prop) {
                     return None;
                 }
-                let obj = self.expr(object, None, Want::Borrow);
+                let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => return d.map(AssignTarget::Dynamic),
                     Err(obj) => obj,
@@ -75,7 +75,7 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let obj = self.expr(object, None, Want::Borrow);
+                let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => {
                         if d.is_none() {
@@ -306,6 +306,21 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        // The target's hidden statements (`assign_receiver`) run before the assignment.
+        let outer = std::mem::take(&mut self.call_temps);
+        let (h, valued) = self.assign_as_here(op, target, value, as_value, span);
+        let temps = std::mem::replace(&mut self.call_temps, outer);
+        (self.with_lets(temps, h), valued)
+    }
+
+    fn assign_as_here(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> (hir::Expr, bool) {
         if let Some(h) = self.keyed_assign(op, target, value, span) {
             return (h, false);
         }
@@ -502,6 +517,20 @@ impl FnCx<'_, '_> {
 
     /// `++x` / `x--`. `as_value`: the result is used (needs the Block encoding).
     pub(crate) fn update(
+        &mut self,
+        op: ast::UpdateOp,
+        prefix: bool,
+        target: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> hir::Expr {
+        let outer = std::mem::take(&mut self.call_temps);
+        let h = self.update_here(op, prefix, target, as_value, span);
+        let temps = std::mem::replace(&mut self.call_temps, outer);
+        self.with_lets(temps, h)
+    }
+
+    fn update_here(
         &mut self,
         op: ast::UpdateOp,
         prefix: bool,

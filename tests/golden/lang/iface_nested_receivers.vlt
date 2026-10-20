@@ -108,3 +108,29 @@ function values(): void {
   console.log(v, z, a, b, g, s, w, k, n, c.t[0], c.t[1], arr[0], strs[0], os[0].t[0], os[0].t[1]);
 }
 values();
+
+// Used as a value on a tuple held behind `!` or `as`: the write lands in the held tuple.
+function heldTuples(): void {
+  let opt: [number, string] | null = [1, "o"];
+  const ts: [number, string][] = [[1, "a"]];
+  let u: [number, string] | number = [1, "u"];
+  const ht: { t: [number, string] | null } = { t: [1, "h"] };
+  let n = 0;
+  const at = (): number => { n++; return 0; };
+  const a = (opt![0] = 5);
+  const b = (ts[0]![0] += 1);
+  const c = ((u as [number, string])[0] = 9);
+  const d = ((ts[0] as [number, string])[1] += "as");
+  const e = (ht.t![0] = 3);
+  const f = (ts[at()]![0] += 10);
+  console.log(a, b, c, d, e, f, n);
+  console.log(opt, ts[0], u, ht.t);
+  ht.t![1] = "s";
+  ht.t![0] += 1;
+  ht.t![0]++;
+  const hs: ([number, string] | null)[] = [[1, "a"]];
+  hs[0]![1] = "x";
+  (hs[0] as [number, string])[0] = 7;
+  console.log(ht.t, hs[0]);
+}
+heldTuples();

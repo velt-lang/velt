@@ -22,3 +22,5 @@ record_open_errors.vlt:23:14: error: cannot use `+=` on a key of a `Record<strin
 say what a missing key starts from: `r[k] = (r[k] ?? "") + "2"`
 record_open_errors.vlt:24:14: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) + 1`
+record_open_errors.vlt:28:3: error: cannot use `+=` on a key of a `Record<string, string | null>`: the key may be missing, so `maybe["m"]` is `string | null`
+read `maybe["m"]` into a variable, check it for `null`, then assign the new value

@@ -434,7 +434,7 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let object = Box::new(self.hoist(object, false, true, &mut stmts));
+                let object = Box::new(self.hoist_held(object, &mut stmts));
                 let index = match is_pure_value(index) || literal_key(index).is_some() {
                     true => index.clone(),
                     false => Box::new(self.bind_hoisted(index, &mut stmts)),
@@ -470,6 +470,29 @@ impl FnCx<'_, '_> {
         self.pop_scope();
         let ty = if value.ty == unit { unit } else { value.ty };
         Some(self.mk(H::Block(block(stmts, Some(value), span)), ty, span))
+    }
+
+    /// [`Self::hoist`] of the receiver of an element assigned as a value, seeing through `!` and
+    /// `as`: `p!` and `p as T` name the place `p` names, so a tuple held there stays the place
+    /// written (`(opt![0] = 5)`, `((u as [number, string])[0] = 9)`), not a copy bound to a
+    /// temporary.
+    fn hoist_held(&mut self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>) -> ast::Expr {
+        let b = bare(e);
+        let kind = match &b.kind {
+            ast::ExprKind::NonNull(x) => {
+                ast::ExprKind::NonNull(Box::new(self.hoist_held(x, stmts)))
+            }
+            ast::ExprKind::Cast { expr, ty } => ast::ExprKind::Cast {
+                expr: Box::new(self.hoist_held(expr, stmts)),
+                ty: ty.clone(),
+            },
+            _ => return self.hoist(e, false, true, stmts),
+        };
+        ast::Expr {
+            id: b.id,
+            kind,
+            span: b.span,
+        }
     }
 
     /// `t` (a pure target just assigned) read again: a record key is present now, so `r[k]` is

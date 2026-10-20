@@ -26,7 +26,11 @@ impl FnCx<'_, '_> {
         bop: ast::BinaryOp,
         value: Option<&ast::Expr>,
     ) {
-        let (rn, vn) = (self.cx.display(rec), self.cx.display(v));
+        let (rn, mut vn) = (self.cx.display(rec), self.cx.display(v));
+        // A missing key reads as `null`, which a `V` that has a nothing value already names.
+        if self.cx.ty.nothing_of(v).is_none() {
+            vn.push_str(" | null");
+        }
         let place = expr_text(target).unwrap_or_else(|| "r[k]".to_string());
         let rhs = value
             .and_then(expr_text)
@@ -50,7 +54,7 @@ impl FnCx<'_, '_> {
         self.cx.error(
             velt_common::Diagnostic::error(
                 format!(
-                    "cannot use `{op}` on a key of a `{rn}`: the key may be missing, so `{place}` is `{vn} | null`"
+                    "cannot use `{op}` on a key of a `{rn}`: the key may be missing, so `{place}` is `{vn}`"
                 ),
                 target.span,
             )
