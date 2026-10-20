@@ -2204,13 +2204,15 @@ function main(): void {
 ```
 
 `Object.hasOwn(x, k)` and `Object.prototype.hasOwnProperty.call(x, k)` of an `any` or `object`
-test the keys `Object.keys(x)` lists (and an array's or string's `length`).
+test the keys `Object.keys(x)` lists (and an array's or string's `length`); the key may be a
+`string | symbol` (a proxy trap's `prop`), and a symbol is not among those keys.
 `Object.getPrototypeOf(x)` gives the prototype of the class of the value held (`C.prototype`),
 `Object.prototype` for an object or a record (`null` for one made by `Object.create(null)`) and
 `Array.prototype` for an array, so `proto === Object.prototype || proto === null` tells a plain
 object apart; a value whose prototype Velt doesn't name (a number, a function, a `Date`) stops with
 a `TypeError` naming #924. `Object.prototype.toString.call(x)` gives the `[object Tag]` of the
-value held.
+value held. `k in Object.prototype` with a string known only at run time tests the members every
+object inherits (`toString`, `constructor`, ...).
 
 `JSON.stringify(x)` of an `any`, `unknown` or `object` (also inside a typed value, such as an
 `unknown[]` or a `Record<string, any>`) writes the value held as Node does, with a class's
