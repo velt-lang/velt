@@ -368,6 +368,38 @@ pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     }
 }
 
+/// `k` with each direct component type mapped by `f` (in [`children`]'s order).
+pub(crate) fn map_children(k: &TyKind, f: &mut dyn FnMut(TyId) -> TyId) -> TyKind {
+    fn m(ts: &[TyId], f: &mut dyn FnMut(TyId) -> TyId) -> Vec<TyId> {
+        ts.iter().map(|t| f(*t)).collect()
+    }
+    match k {
+        TyKind::Adt(d, a) => TyKind::Adt(*d, m(a, f)),
+        TyKind::Dyn(d, a) => TyKind::Dyn(*d, m(a, f)),
+        TyKind::Tuple(a) => TyKind::Tuple(m(a, f)),
+        TyKind::Op(o, a) => TyKind::Op(*o, m(a, f)),
+        TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+        } => {
+            let params = m(params, f);
+            TyKind::FnPtr {
+                params,
+                ret: f(*ret),
+                throws: f(*throws),
+            }
+        }
+        TyKind::Array(e) => TyKind::Array(f(*e)),
+        TyKind::Option(e, n) => TyKind::Option(f(*e), *n),
+        TyKind::Shared(e) => TyKind::Shared(f(*e)),
+        TyKind::Map(a, b) => TyKind::Map(f(*a), f(*b)),
+        TyKind::Result(a, b) => TyKind::Result(f(*a), f(*b)),
+        TyKind::Promise(a, b) => TyKind::Promise(f(*a), f(*b)),
+        k => k.clone(),
+    }
+}
+
 /// The generic parameters `t` mentions, in order of first occurrence (appended to `out`).
 pub(crate) fn collect_params(ty: &Types, t: TyId, out: &mut Vec<u32>) {
     if let TyKind::Param(i) = ty.kind(t) {

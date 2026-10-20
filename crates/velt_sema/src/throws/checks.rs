@@ -15,6 +15,10 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for &d in fns {
         if let Some(decl) = cx.fn_info(d).declared_throws {
             let own = own_final(cx, d);
+            // A closure created for a site's type throws into its variable (`vars`).
+            if cx.fn_sites.use_vars && cx.throw_into_vars(decl.ty, own) {
+                continue;
+            }
             match cx.error_outside(decl.ty, own) {
                 Some(m) if decl.from_body => closure_too_early(cx, d, m),
                 Some(m) => clause_violation(cx, d, m, decl.ty, decl.span),
@@ -43,6 +47,9 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     }
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
+    }
+    if cx.fn_sites.use_vars && !cx.fn_sites.vars.is_empty() && !cx.solve_err_vars() {
+        cx.var_seeds();
     }
 }
 
@@ -140,6 +147,9 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
 /// now: add their errors to the sites the type may come from (`fn_types`), so calls through
 /// those sites throw them in this inference too. True when a site's set grew.
 pub(super) fn seed_stored(cx: &mut Ctx, fns: &[DefId]) -> bool {
+    if cx.fn_sites.use_vars {
+        return false;
+    }
     let before = cx.fn_sites.added;
     for &d in fns {
         let f = cx.fn_info(d);
@@ -247,8 +257,12 @@ fn generic_group(cx: &mut Ctx, members: &[DefId]) {
 
 /// A type sema built while checking bodies must agree with the final inference.
 fn observed(cx: &mut Ctx, c: &ThrowCheck) {
-    let fin = super::infer::srcs_final(cx, &c.srcs);
+    let mut fin = super::infer::srcs_final(cx, &c.srcs);
     let obs = cx.canon_error(c.observed);
+    // A `catch` variable's type assumed the variables in it empty (`vars`).
+    if !c.exact && cx.fn_sites.use_vars {
+        fin = cx.assume_vars_empty(fin);
+    }
     let ok = if c.exact {
         fin == obs
     } else {

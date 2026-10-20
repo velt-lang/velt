@@ -57,6 +57,12 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        // Types equal but for their error-set variables (`throws::vars`).
+        if self.cx.fn_sites.use_vars && self.cx.unify_err_vars(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         if self.cx.unfreezes(h.ty, exp) {
             return Err(h);
         }

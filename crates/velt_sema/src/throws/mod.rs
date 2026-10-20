@@ -22,6 +22,7 @@ mod groups;
 mod infer;
 mod inits;
 mod sets;
+mod vars;
 
 use rustc_hash::FxHashSet;
 

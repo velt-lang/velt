@@ -18,12 +18,16 @@ use crate::visit;
 
 /// Replace every readonly object type in the finished program by its plain twin.
 pub(crate) fn erase(cx: &mut Ctx) {
-    if cx.readonly_twins.is_empty() && cx.brands.is_empty() {
+    if cx.readonly_twins.is_empty() && cx.brands.is_empty() && cx.fn_sites.vars.is_empty() {
         return;
     }
     let twins = cx.readonly_twins.clone();
     // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: FxHashMap<TyId, TyId> = FxHashMap::default();
+    // An error-set variable is its solved type (`throws::fn_types`).
+    for (t, s) in cx.solved_types() {
+        cache.insert(t, s);
+    }
     for (&d, &base) in &cx.brands {
         let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
         cache.insert(brand, base);
@@ -36,6 +40,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
         type_level,
         ..
     } = cx;
+    let never = ty.never;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).
     let assigned: Vec<(DefId, bool)> = twins
@@ -58,7 +63,8 @@ pub(crate) fn erase(cx: &mut Ctx) {
                 }
                 f.ret = e(f.ret);
                 f.self_ty = f.self_ty.map(&mut e);
-                f.throws = f.throws.map(&mut e);
+                // An error type that was only error-set variables solved empty: nothing.
+                f.throws = f.throws.map(&mut e).filter(|t| *t != never);
                 for l in &mut f.body.locals {
                     l.ty = e(l.ty);
                 }

@@ -40,6 +40,8 @@ pub(crate) struct FnTypeSeeds {
     /// is checked, by `DefId` and declaration span: what a recursive call counts while the
     /// callee is still being checked ([`Ctx::recursion_hint`]).
     hints: HashMap<DefId, (Span, Vec<Portable>)>,
+    /// Check with the sets written in, without variables (`throws::vars`).
+    no_vars: bool,
 }
 
 /// The sites of one check: the sets it applies and what it found.
@@ -75,6 +77,15 @@ pub(crate) struct FnSites {
     /// The site types resolved with an inferred error type: shown as written, without it.
     pub inferred: HashSet<TyId>,
     last: bool,
+    /// Sites get an error-set variable (`TyOp::ErrSite`) instead of a seeded set.
+    pub use_vars: bool,
+    /// The variable of each site, by its span, and the site of each variable.
+    pub(super) var_of: HashMap<Span, TyId>,
+    pub vars: Vec<Span>,
+    /// Each variable's solved error type, once solved (`never` for an empty set).
+    pub solved: HashMap<TyId, TyId>,
+    /// The constraints on the variables (`throws::vars`).
+    pub(super) var_sets: super::vars::VarSets,
 }
 
 impl FnSites {
@@ -82,6 +93,9 @@ impl FnSites {
     /// this check finds.
     pub fn new(seeds: FnTypeSeeds, last: bool) -> Self {
         FnSites {
+            use_vars: seeds.sites.is_empty()
+                && !seeds.no_vars
+                && std::env::var_os("VELT_NO_SITE_VARS").is_none(),
             found: seeds.clone(),
             seeds,
             last,
@@ -92,6 +106,13 @@ impl FnSites {
     /// The sets to check the program with again, when this check added to them.
     pub fn grown(&self) -> Option<FnTypeSeeds> {
         (self.grew && !self.last).then(|| self.found.clone())
+    }
+
+    /// The variables could not express what this check found: check again with their solved
+    /// sets written in (`throws::vars`).
+    pub(super) fn fallback(&mut self) {
+        self.found.no_vars = true;
+        self.grew = true;
     }
 
     /// Is this the last check, whatever it finds?
@@ -130,9 +151,10 @@ impl Ctx<'_> {
         let inferred = throws.is_none();
         let err = match err {
             Some(e) => self.canon_error(Some(e)),
+            None if self.fn_sites.use_vars => self.site_var(span, env.module),
             None => self.site_error(span, env.module),
         };
-        let inferred = inferred && err.is_some();
+        let inferred = inferred && err.is_some() && !self.fn_sites.use_vars;
         let err = err.unwrap_or(never);
         let throws = match self.ty.kind(ret).clone() {
             TyKind::Promise(v, e) if err != never => {
@@ -192,6 +214,24 @@ impl Ctx<'_> {
         self.record_fn_site(span, module, s);
         self.fn_sites.inferred.insert(s);
         s
+    }
+
+    /// The error-set variable of the site at `span` in module `module` (`None` outside user
+    /// modules).
+    fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
+        if self.scopes.get(module).is_none_or(|s| s.is_std) || span == Span::DUMMY {
+            return None;
+        }
+        if let Some(&v) = self.fn_sites.var_of.get(&span) {
+            return Some(v);
+        }
+        let id = self.fn_sites.vars.len() as u32;
+        let v = self
+            .ty
+            .intern(TyKind::Op(crate::hir::TyOp::ErrSite(id), vec![]));
+        self.fn_sites.vars.push(span);
+        self.fn_sites.var_of.insert(span, v);
+        Some(v)
     }
 
     /// A function type without `throws` written at `span` in module `module`, resolved to
@@ -356,6 +396,16 @@ impl Ctx<'_> {
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => all(xs, ys),
             _ => false,
         }
+    }
+
+    /// `t` as a [`Portable`] type, for the seeds of another check.
+    pub(super) fn port_type(&self, t: TyId) -> Option<Portable> {
+        self.port(t, 0)
+    }
+
+    /// Add `members` to the seeds of site `s`.
+    pub(super) fn add_seed(&mut self, s: Span, members: Vec<Portable>) {
+        self.add_to_site(s, &members);
     }
 
     /// `t` as a [`Portable`] type (`None`: it has parts that only exist in this check).

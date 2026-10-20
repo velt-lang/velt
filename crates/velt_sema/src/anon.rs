@@ -123,6 +123,7 @@ impl Ctx<'_> {
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => return t,
             TyKind::Op(o, args) => {
                 // A deferred type whose arguments are all known now is evaluated (#934).
                 let args: Vec<TyId> = args.iter().map(|a| c(self, *a)).collect();

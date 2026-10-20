@@ -100,6 +100,7 @@ impl Names {
                 .map(|t| self.show(*t, param))
                 .collect::<Vec<_>>()
                 .join(" & "),
+            TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => "Error".to_string(),
             TyKind::FnPtr {
                 params,
                 ret,
