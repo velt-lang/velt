@@ -153,7 +153,6 @@ fn turns_follow_the_order() {
             key: Some(key),
             at,
             task: Some(task.clone()),
-            waker: None,
             ran: None,
         })) as u64;
         let second = velt_rt_timer_new(0);

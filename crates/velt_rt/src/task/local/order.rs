@@ -186,6 +186,8 @@ struct Order {
     pass: Option<u64>,
     /// The last look at what comes next, while the order has not changed (order_pass.rs).
     cache: Option<Peek>,
+    /// The timer whose turn sleeps until the earliest due time (it wakes the loop then).
+    armed: Option<Key>,
     /// The gate of the task that took the last turn, and the count of its polls that had ended
     /// then: the turn is held until that poll ends.
     holder: Option<(Arc<Gate>, u64)>,
@@ -219,6 +221,7 @@ impl Order {
             list_ids: 0,
             pass: None,
             cache: None,
+            armed: None,
             holder: None,
         }
     }
@@ -386,11 +389,28 @@ impl Order {
                 .then(|| self.peek(current, false, &mut clock_ms).next)
                 .flatten(),
         ];
-        for (k, _) in nexts.into_iter().flatten() {
+        let mut keys = nexts.map(|n| n.map(|(k, _)| k));
+        if keys[0].is_none() {
+            // Nothing is due: the earliest timer sleeps until it is (if it is not already).
+            keys[1] = self
+                .earliest()
+                .map(|(k, _)| k)
+                .filter(|k| self.armed != Some(*k));
+        }
+        for k in keys.into_iter().flatten() {
             if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
                 w.wake();
             }
         }
+    }
+
+    /// The first timer of the first list, and when it is due (whole milliseconds).
+    fn earliest(&self) -> Option<(Key, u64)> {
+        let &(_, gate) = self.heads.first()?;
+        let group = &self.groups[&gate];
+        let &(_, ms) = group.order.first()?;
+        let (seq, e) = group.lists[&ms].timers.first()?;
+        Some((Key { gate, ms, seq }, e.start.saturating_add(ms)))
     }
 }
 
@@ -407,8 +427,6 @@ struct Handle {
     at: Instant,
     /// The gate of the task that created the timer, which runs its callback.
     task: Option<Arc<Gate>>,
-    /// The waker of the turn while it sleeps (woken when the timer is cleared).
-    waker: Option<Waker>,
     /// The clock when it last took its turn: an interval's next run counts from there.
     ran: Option<std::time::Instant>,
 }
@@ -424,7 +442,6 @@ pub extern "C" fn velt_rt_timer_new(ms: i64) -> u64 {
         key: Some(key),
         at,
         task,
-        waker: None,
         ran: None,
     })) as u64
 }
@@ -457,8 +474,10 @@ pub unsafe extern "C" fn velt_rt_timer_clear(h: u64) {
     let h = h as *mut Handle;
     let current = super::with_gate(Arc::clone);
     let mut order = ORDER.lock();
-    // SAFETY: the key and the waker are used under the lock only (see `Handle`).
-    let (key, waker) = unsafe { ((*h).key.take(), (*h).waker.take()) };
+    // SAFETY: the key is used under the lock only (see `Handle`).
+    let key = unsafe { (*h).key.take() };
+    // Its turn waits with its waker in the entry.
+    let waker = key.and_then(|k| order.entry_mut(k).and_then(|e| e.waker.take()));
     if let Some(key) = key {
         order.remove(key, current.as_ref());
     }
@@ -504,8 +523,13 @@ unsafe impl Send for HandlePtr {}
 
 struct Turn {
     handle: HandlePtr,
-    /// Waits for the deadline (none once due).
-    sleep: Option<Pin<Box<TimerLeaf>>>,
+    /// While it is the earliest timer, or comes next before its delay has passed: a sleep
+    /// until then (most turns never sleep: the timer before them wakes them).
+    sleep: Option<(Instant, Pin<Box<TimerLeaf>>)>,
+    /// The gate of the task polling the turn first, and the count of its polls that had ended
+    /// then: no callback runs before that poll has ended (the code that created the timer and
+    /// the microtasks it queued).
+    born: Option<(Arc<Gate>, u64)>,
     creator: gate::Wait,
     /// Not polled yet.
     fresh: bool,
@@ -517,10 +541,25 @@ impl Turn {
     unsafe fn new(handle: *mut Handle, creator: Option<Arc<Gate>>) -> Turn {
         Turn {
             handle: HandlePtr(handle),
-            sleep: Some(Box::pin(TimerLeaf::new((*handle).at))),
+            sleep: None,
+            born: None,
             creator: gate::Wait::new(creator),
             fresh: true,
         }
+    }
+}
+
+impl Turn {
+    /// Sleeps until `at` (a timer leaf of the task); true once it has passed.
+    fn sleep_until(&mut self, at: Instant, cx: &mut Context<'_>) -> bool {
+        if Instant::now() >= at {
+            return true;
+        }
+        if self.sleep.as_ref().is_none_or(|(t, _)| *t != at) {
+            self.sleep = Some((at, Box::pin(TimerLeaf::new(at))));
+        }
+        let (_, leaf) = self.sleep.as_mut().expect("ICE: armed above");
+        leaf.as_mut().poll(cx).is_ready()
     }
 }
 
@@ -533,31 +572,15 @@ impl Future for Turn {
             // `fireOnce` / `fireEvery`): it does not keep an orphaned set alive.
             // SAFETY: the waker of the poll being run.
             unsafe { super::node::mark_timer_starting(cx.waker()) };
-        }
-        let hp = self.handle.0;
-        if let Some(s) = self.sleep.as_mut() {
-            {
-                let _order = ORDER.lock();
-                // SAFETY: the handle outlives this future (velt_rt_timer_turn); its key and
-                // waker are used under the lock.
-                let h = unsafe { &mut *hp };
-                if h.key.is_none() {
-                    return Poll::Ready(());
-                }
-                if !h.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
-                    h.waker = Some(cx.waker().clone());
-                }
-            }
-            if s.as_mut().poll(cx).is_pending() {
-                return Poll::Pending;
-            }
-            self.sleep = None;
+            self.born = super::with_gate(|g| (g.clone(), g.polls()));
         }
         if self.creator.poll_wait(cx).is_pending() {
             return Poll::Pending;
         }
+        let hp = self.handle.0;
         let mut order = ORDER.lock();
-        // SAFETY: as above.
+        // SAFETY: the handle outlives this future (velt_rt_timer_turn); its key is used under
+        // the lock.
         let h = unsafe { &mut *hp };
         let Some(key) = h.key else {
             return Poll::Ready(());
@@ -565,40 +588,66 @@ impl Future for Turn {
         let current = super::with_gate(Arc::clone);
         let look = order.peek_cached(current.as_ref(), true, &mut clock_ms);
         let first = look.next.map(|(k, _)| k);
-        if first != Some(key) {
-            // Not next: woken when a timer leaves the order, or when the next one's task starts
-            // a poll (it is busy then and need not be waited for).
-            if let Some(g) = first.and_then(|k| order.groups[&k.gate].gate.clone()) {
-                g.note_blocking();
-                // Checked again: that task may have started its poll before it saw the note.
-                let again = order.peek_cached(current.as_ref(), true, &mut clock_ms);
-                if again.next.map(|(k, _)| k) != first {
-                    cx.waker().wake_by_ref();
+        if first == Some(key) {
+            // Due by the clock in whole milliseconds; the turn also waits the whole delay.
+            let born = self.born.as_ref();
+            if born.is_some_and(|(g, seen)| !g.ended_or_wake(*seen, cx.waker()))
+                || !self.sleep_until(h.at, cx)
+            {
+                if let Some(e) = order.entry_mut(key) {
+                    e.waker = Some(cx.waker().clone());
+                }
+                return Poll::Pending;
+            }
+            if let Some((g, seen)) = &order.holder {
+                if !g.ended_or_wake(*seen, cx.waker()) {
                     return Poll::Pending;
                 }
             }
-            if let Some(e) = order.entry_mut(key) {
+            // The loop reaches this timer now.
+            order.commit(&look, current.as_ref());
+            order.holder = current.clone().map(|g| {
+                let polls = g.polls();
+                (g, polls)
+            });
+            if order.armed == Some(key) {
+                order.armed = None;
+            }
+            h.key = None;
+            // Node reads the clock just before an interval's callback; its next run counts
+            // from it.
+            h.ran = Some(std::time::Instant::now());
+            order.remove(key, current.as_ref());
+            return Poll::Ready(());
+        }
+        // Not next: woken when the timer before it leaves the order, when the next one's task
+        // starts a poll (it is busy then and need not be waited for), or by its own sleep.
+        if let Some(e) = order.entry_mut(key) {
+            if !e.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
                 e.waker = Some(cx.waker().clone());
+            }
+        }
+        if first.is_none() {
+            if let Some((k, due)) = order.earliest().filter(|(k, _)| *k == key) {
+                // The earliest timer, nothing due yet: it wakes the loop when it is.
+                order.armed = Some(k);
+                let origin = crate::process::clock_origin();
+                let at = Instant::from_std(origin + Duration::from_millis(due)).max(h.at);
+                if self.sleep_until(at, cx) {
+                    cx.waker().wake_by_ref();
+                }
             }
             return Poll::Pending;
         }
-        if let Some((g, seen)) = &order.holder {
-            if !g.ended_or_wake(*seen, cx.waker()) {
-                return Poll::Pending;
+        if let Some(g) = first.and_then(|k| order.groups[&k.gate].gate.clone()) {
+            g.note_blocking();
+            // Checked again: that task may have started its poll before it saw the note.
+            let again = order.peek_cached(current.as_ref(), true, &mut clock_ms);
+            if again.next.map(|(k, _)| k) != first {
+                cx.waker().wake_by_ref();
             }
         }
-        // The loop reaches this timer now.
-        order.commit(&look, current.as_ref());
-        order.holder = current.clone().map(|g| {
-            let polls = g.polls();
-            (g, polls)
-        });
-        h.key = None;
-        h.waker = None;
-        // Node reads the clock just before an interval's callback; its next run counts from it.
-        h.ran = Some(std::time::Instant::now());
-        order.remove(key, current.as_ref());
-        Poll::Ready(())
+        Poll::Pending
     }
 }
 
