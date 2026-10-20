@@ -146,6 +146,13 @@ impl Split {
                             let place = expr_of(E::Ident(k.clone()), k.span);
                             fields.push((k.clone(), self.hidden(&place, None)));
                         }
+                        // `{ [k]: place }`: the parser's computed-key call; a key naming a
+                        // variable reads `value[k]` (`literal_patterns`).
+                        ast::ObjectProp::Spread(r) if computed_key(r).is_some() => {
+                            let (k, v) = computed_key(r)?;
+                            let key = ident(&format!("[{}]", k.name), k.span);
+                            fields.push((key, self.pattern(v)?));
+                        }
                         ast::ObjectProp::Spread(r) if i + 1 == props.len() => {
                             rest = Some(self.rest(r)?);
                         }
@@ -182,6 +189,21 @@ pub(super) fn value_use_message(target: &ast::Expr) -> &'static str {
             "a destructuring assignment cannot be used as a value yet; assign the value to a variable first (`const v = c; [a, b] = v;`)"
         }
         _ => "an assignment to an element or a computed place cannot be used as a value",
+    }
+}
+
+/// The key (a variable) and value of a computed-key property `[k]: value`, as the parser gives
+/// it (`ast::COMPUTED_KEY_FN`).
+fn computed_key(e: &ast::Expr) -> Option<(&ast::Ident, &ast::Expr)> {
+    let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
+        return None;
+    };
+    match (&callee.kind, args.as_slice()) {
+        (ast::ExprKind::Ident(f), [k, v]) if f.name == ast::COMPUTED_KEY_FN => match &k.kind {
+            ast::ExprKind::Ident(k) => Some((k, v)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

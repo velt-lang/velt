@@ -247,7 +247,10 @@ fn loop_targets_and_holes_print_as_written() {
   }
   for ([k, x] of m) {}
   for (k in { a: 1 }) {}
+  for ({ a = 9 } of [{ a: 1 }]) {}
+  for ([, x] of [[\"a\", 1]]) {}
   [x, , k] = [1, 2, \"s\"];
+  ({ x, k = \"d\" } = o);
 }
 ";
     holds(src);

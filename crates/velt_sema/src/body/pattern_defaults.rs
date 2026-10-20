@@ -38,10 +38,22 @@ impl FnCx<'_, '_> {
         match &pattern.kind {
             P::Object { fields, rest } => {
                 let tmp = self.temp_decl(init, out);
+                if self
+                    .temp_ty(&tmp)
+                    .is_some_and(|t| self.cx.dynamic(t).is_some())
+                {
+                    return self.any_pattern_decls(kind, pattern, &tmp, out);
+                }
                 self.object_decls(kind, fields, rest.as_ref(), &tmp, out);
             }
             P::Array { elems, rest } => {
                 let tmp = self.temp_decl(init, out);
+                if self
+                    .temp_ty(&tmp)
+                    .is_some_and(|t| self.cx.dynamic(t).is_some())
+                {
+                    return self.any_pattern_decls(kind, pattern, &tmp, out);
+                }
                 if self.is_tuple_value(&tmp) {
                     // A tuple always has its elements: the defaults never apply.
                     return self.tuple_decl(kind, pattern, tmp, out);

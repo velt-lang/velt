@@ -1562,6 +1562,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   an object or interface value is a function value (`const { insert, remove } = options;`),
   bound to the object it was read from (in JS it is unbound, so the two differ only where JS
   would throw a `TypeError` for a method that uses `this`).
+  As in TypeScript, an array pattern over an array literal types the literal as a tuple
+  (`const [n, s] = [1, "s"]` gives a `number` and a `string`, also for `[…] as const` and in a
+  destructuring assignment). Destructuring an `any` reads each element or property through it
+  (`const [a, b] = v` is `v[0]`, `v[1]`, each an `any`; a default applies where the read gives
+  `undefined`; a `...rest` of an `any` is not supported yet). A computed key naming a variable
+  (`const { [k]: v = 0 } = r`, `({ [k]: p } = r)`) reads `r[k]`; next to it a `...rest` is not
+  supported yet.
 - **Object rest** `const { children, ...rest } = props;` (also in `let`, nested patterns,
   next to defaults and in parameters, `function f({ id, ...rest }: P)`): `rest` holds the
   other own properties, in the object's order, as in JS. Its type is TypeScript's: on an object

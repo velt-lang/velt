@@ -126,10 +126,15 @@ impl FnCx<'_, '_> {
                         && !crate::collect::exports::member_maybe_dropped(self.cx, ty, &name.name)
                     {
                         let tn = self.cx.display(ty);
-                        self.cx.err(
-                            format!("no field `{}` on type `{tn}`", name.name),
-                            name.span,
-                        );
+                        let msg = match name.name.starts_with('[') && !name.name.starts_with("[Symbol.") {
+                            // `{ [k]: v }` with a `k` that is not a constant naming a field.
+                            true => format!(
+                                "a computed key in a destructuring pattern must name a field of `{tn}` through a constant (`[KEY]`); a key known only at run time is not supported yet: read it with `o{}`",
+                                name.name
+                            ),
+                            false => format!("no field `{}` on type `{tn}`", name.name),
+                        };
+                        self.cx.err(msg, name.span);
                     }
                     (0, err)
                 }

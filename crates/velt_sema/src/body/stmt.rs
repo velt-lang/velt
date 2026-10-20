@@ -330,6 +330,9 @@ impl FnCx<'_, '_> {
             );
             return;
         };
+        if self.literal_pattern_decl(v, out) || self.computed_key_decl(v, out) {
+            return;
+        }
         if super::pattern_defaults::has_default(&v.pattern)
             || super::object_rest::has_object_rest(&v.pattern)
         {
@@ -344,6 +347,21 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
+        if self.cx.dynamic(init.ty).is_some()
+            && matches!(
+                v.pattern.kind,
+                ast::PatternKind::Array { .. } | ast::PatternKind::Object { .. }
+            )
+        {
+            let name = ast::Ident {
+                name: format!("#d{}", self.f.locals.len()),
+                span,
+            };
+            self.hidden_local(name.clone(), init, false, out);
+            let tmp = super::pattern_defaults::mk(ast::ExprKind::Ident(name), span);
+            return self.any_pattern_decls(v.kind, &v.pattern, &tmp, out);
+        }
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
                 if let Some(src) = self.method_source(fields, e, init.clone(), out) {

@@ -66,6 +66,17 @@ impl<'a> Printer<'a> {
                         *is_async,
                         Some(doc),
                     ),
+                    // `{ a = 1 }` (a shorthand default in an assignment target), which the
+                    // parser gives as `a: a = 1` with the assignment starting at the key.
+                    ExprKind::Assign {
+                        op: None,
+                        target,
+                        value: dflt,
+                    } if value.span.lo == key.span.lo
+                        && matches!(&target.kind, ExprKind::Ident(t) if t.name == key.name) =>
+                    {
+                        cat![doc, " = ", self.expr(dflt)]
+                    }
                     // `*name(params) { body }` / `async *name()`, which the parser gives as a
                     // property holding a generator function whose span starts before the name.
                     ExprKind::Function(f) if method => {

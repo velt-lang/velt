@@ -168,6 +168,12 @@ impl FnCx<'_, '_> {
         frame_lookup(&self.f, name).is_some()
     }
 
+    /// Is `name` a local of this function or of a function around it (no capture is
+    /// recorded)?
+    pub(crate) fn outer_names(&self, name: &str) -> bool {
+        self.outer.iter().any(|f| frame_lookup(f, name).is_some())
+    }
+
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
             if !self.f.late.caps.is_empty() {

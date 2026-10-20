@@ -588,6 +588,13 @@ impl FnLower<'_, '_> {
                     let v = self.share_value(Operand::Copy(ep), elem);
                     self.any_box_into(v, elem, &outp);
                     self.ret_status(ST_OK);
+                } else if self.cx.is_union(elem) {
+                    // A union element (`[1, "two"]` as `any`): the member it holds.
+                    let ep = self.elem_place(&arr, idx, elem);
+                    let v = self.share_value(Operand::Copy(ep), elem);
+                    let any = self.cx.any_ty();
+                    self.any_into(v, elem, any, &outp);
+                    self.ret_status(ST_OK);
                 } else {
                     self.ret_status(ST_UNSUPPORTED);
                 }

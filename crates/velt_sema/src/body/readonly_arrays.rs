@@ -92,6 +92,11 @@ impl FnCx<'_, '_> {
     }
 
     fn as_const_array_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+        // `[2, "y"] as const` (literals of different types): a tuple, as TypeScript's
+        // `readonly [2, "y"]` (each element widened to its type).
+        if let Some(t) = self.as_const_tuple_ty(e) {
+            return Some(t);
+        }
         let elems = as_const_strings(e)?;
         let mut members = vec![];
         for s in elems {
@@ -105,6 +110,28 @@ impl FnCx<'_, '_> {
             _ => self.cx.union_of(&members, false, e.span),
         };
         Some(self.cx.ty.array(u))
+    }
+
+    fn as_const_tuple_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+        let elems = match &e.kind {
+            ast::ExprKind::Paren(inner) => return self.as_const_tuple_ty(inner),
+            ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
+            _ => return None,
+        };
+        let tys: Vec<TyId> = elems
+            .iter()
+            .map(|x| match &x.kind {
+                ast::ExprKind::Lit(ast::Lit::Str(_)) => Some(self.cx.ty.str_),
+                ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
+                | ast::ExprKind::Lit(ast::Lit::Float { suffix: None, .. }) => Some(self.cx.ty.f64),
+                ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some(self.cx.ty.bool_),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if tys.iter().all(|t| *t == tys[0]) {
+            return None;
+        }
+        Some(self.cx.ty.intern(TyKind::Tuple(tys)))
     }
 
     /// Records local `l` initialized with `init` as a read-only array when that is an array
