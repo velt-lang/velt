@@ -13,6 +13,9 @@ use reshape::{convert, narrow, widen, zip};
 mod masks;
 mod partial;
 mod reshape;
+mod sha;
+
+pub(crate) use sha::has_ext;
 
 /// The instruction sets a helper's body depends on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,8 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         }
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
+        SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
+        SimdCall::Sha(op) => Some(sha::op(&mut body, arch, op)),
     };
     let args: Vec<String> = params
         .iter()
@@ -68,7 +73,15 @@ pub(crate) fn helper(symbol: &str, arch: Arch) -> Option<(String, Vec<String>, V
         Some(value) => format!("ret {} {value}", crate::types::llvm_type(ret)?),
         None => "ret void".to_string(),
     };
-    let features = if arch == Arch::Wasm { WASM_SIMD } else { "" };
+    let ext_features;
+    let features = match call {
+        _ if arch == Arch::Wasm => WASM_SIMD,
+        SimdCall::Sha(op) if has_ext(arch, op.ext()) => {
+            ext_features = format!(" \"target-features\"=\"{}\"", op.ext().op_features());
+            ext_features.as_str()
+        }
+        _ => "",
+    };
     let definition = format!(
         "define internal {} {name}({}) alwaysinline nounwind{features} {{\n{}  {ret_line}\n}}",
         abi_ret(ret).ok()?,

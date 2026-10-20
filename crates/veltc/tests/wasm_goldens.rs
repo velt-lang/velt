@@ -199,6 +199,7 @@ const WASI_STD: &[&str] = &[
     "simd_load_range",
     "simd_names",
     "simd_positions",
+    "simd_sha",
     "simd_shuffle",
     "simd_store_range",
     "simd_values",

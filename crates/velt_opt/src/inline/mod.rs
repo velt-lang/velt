@@ -6,7 +6,9 @@
 //!   so there is no growth) — up to `ONCE_COST`;
 //! - small (cost ≤ `SMALL_COST`) — while the program-wide growth `Budget` lasts.
 //!
-//! Functions that never return (panic helpers) are never inlined: their calls are cold.
+//! Functions that never return (panic helpers) are never inlined: their calls are cold. A gated
+//! function (`Function::target`) is never inlined into a function of another target, or into an
+//! ordinary one; an ordinary function may be inlined into a gated one.
 //! Recursive functions (members of a cycle) are never inlined, neither within their cycle
 //! (that would not terminate) nor into outside callers (it only duplicates the entry of the
 //! recursion). Signatures stay scalar-only because
@@ -190,7 +192,12 @@ fn inline_into(
         let Some(target) = program.funcs.get(callee.0 as usize) else {
             continue;
         };
-        if !splice::arity_matches(args, target) {
+        // A gated function (`Function::target`, #1330) is compiled for its CPU extension and
+        // runs only where the CPU has it: its body must not move into a function compiled
+        // without (or for another) extension. An ordinary body may move into it: there it only
+        // runs where the CPU has the extension.
+        let gated_elsewhere = target.target.is_some() && target.target != program.funcs[fi].target;
+        if !splice::arity_matches(args, target) || gated_elsewhere {
             continue;
         }
         let Some(decision) = decide(state, program, callee, caller_cost, budget) else {
