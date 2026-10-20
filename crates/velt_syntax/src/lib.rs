@@ -30,6 +30,15 @@ pub const FOR_TARGET: &str = "#of";
 /// other than a name or a literal, `{ [f()]: v }`): its binding is checked as an error.
 pub const REPORTED_KEY: &str = "#reported-key";
 
+/// The variable a computed key `[NAME]` of an object pattern or literal names (the parser's
+/// `[NAME]` key, whose span is `NAME` alone), or `None` for any other key (a quoted `"[NAME]"`
+/// spans its quotes too; `[Symbol.iterator]` names a well-known symbol).
+pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
+    let inner = key.name.strip_prefix('[')?.strip_suffix(']')?;
+    let len = key.span.hi.checked_sub(key.span.lo)? as usize;
+    (!key.name.starts_with("[Symbol.") && len == inner.len()).then_some(inner)
+}
+
 use velt_common::{Diagnostics, FileId};
 
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level

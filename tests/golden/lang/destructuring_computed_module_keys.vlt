@@ -24,6 +24,8 @@ function run(): void {
     return x;
   }
   console.log(inner());
+  // A nested function that captures nothing but the key.
+  console.log(onlyKey());
   let p = 0;
   ({ [K2]: p } = o);
   console.log(p);
@@ -32,6 +34,23 @@ function run(): void {
   const { [KL]: w2 = 0 } = r;
   const lit = { [KL]: 6 };
   console.log(w2, lit);
+}
+const R2: Record<string, number> = { a: 1, b: 2 };
+function onlyKey(): number {
+  const KK = "b";
+  function inner(): number {
+    const { [KK]: x = 0 } = R2;
+    return x;
+  }
+  function param({ [KK]: y = 0 }: Record<string, number>): number {
+    return y;
+  }
+  function assign(): number {
+    let z = 0;
+    ({ [KK]: z = 9 } = R2);
+    return z;
+  }
+  return inner() * 100 + param(R2) * 10 + assign();
 }
 function main(): void {
   run();
