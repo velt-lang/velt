@@ -1,0 +1,20 @@
+// Interface conversions that are errors (#350): a field in one part of an intersection and a
+// method of the same name in another (no value has both), reported where the intersection is
+// written with its parts in written order; and an interface value where a field-only
+// interface it extends is expected (that interface is an object type: the value would be
+// copied, where TypeScript keeps the same object).
+interface F { f: number }
+interface M { f(): number }
+type FM = F & M;
+interface B { x: number }
+interface A extends B { g(): number }
+class C implements A {
+  x = 1;
+  g() { return this.x; }
+}
+function use(v: FM): number {
+  return v.f;
+}
+const a: A = new C();
+const b: B = a;
+console.log(b.x);

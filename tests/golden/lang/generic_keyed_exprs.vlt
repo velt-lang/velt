@@ -1,0 +1,52 @@
+// check: no leaks
+// `x[k]` in generic bodies where the object or the key is not a variable (#350): a call, an
+// index, each evaluated once and in order; writes reach the object, through a value a call
+// returns too. An optional field read by key is `F | undefined`, and `K` is inferred as the
+// union of every key passed for it, as in TypeScript.
+type Pt = { x: number; y: number };
+type Opt = { n?: number; s: string };
+const log: string[] = [];
+function key<K>(ks: K[], i: number): K {
+  log.push("key" + i);
+  return ks[i];
+}
+function first<T>(os: T[]): T {
+  log.push("obj");
+  return os[0];
+}
+function val<V>(v: V): V {
+  log.push("val");
+  return v;
+}
+function pick<T extends object, K extends keyof T>(os: T[], ks: K[]): T[K] {
+  return first(os)[key(ks, 0)];
+}
+function put<T extends object, K extends keyof T>(os: T[], ks: K[], v: T[K]): void {
+  first(os)[key(ks, 1)] = val(v);
+}
+function putTo<T extends object, K extends keyof T>(o: T, ks: K[], v: T[K]): void {
+  o[key(ks, 1)] = v;
+}
+function get<T extends object, K extends keyof T>(o: T, k: K): T[K] {
+  return o[k];
+}
+function swap<T extends object, K extends keyof T>(o: T, a: K, b: K): void {
+  const t = o[a];
+  o[a] = o[b];
+  o[b] = t;
+}
+const p: Pt = { x: 1, y: 2 };
+const ks: ("x" | "y")[] = ["y", "x"];
+console.log(pick([p], ks));
+put([p], ks, 7);
+console.log(p.x, p.y, log.join(" "));
+putTo(p, ["y", "x"], 9);
+console.log(p.x, p.y);
+const o: Opt = { s: "s" };
+console.log(get(o, "n"), get({ n: 3, s: "x" } as Opt, "n"), get(o, "s"));
+swap(p, "x", "y");
+console.log(p.x, p.y);
+const q = { s: ["a"], t: ["b"] };
+const s0 = q.s;
+swap(q, "s", "t");
+console.log(q.s[0], q.t[0], q.t === s0);

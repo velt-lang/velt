@@ -138,10 +138,10 @@ impl FnCx<'_, '_> {
         obj: hir::Expr,
         key: hir::Expr,
         span: Span,
-    ) -> Result<hir::Expr, (hir::Expr, hir::Expr)> {
+    ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
         let t = obj.ty;
         if !self.generic_keyed(t, key.ty) {
-            return Err((obj, key));
+            return Err(Box::new((obj, key)));
         }
         let mut lets = vec![];
         let Some((parts, ty)) = self.key_parts(obj, t, key, false, span, &mut lets) else {

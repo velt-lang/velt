@@ -497,7 +497,8 @@ impl FnCx<'_, '_> {
                 let key = self.expr(index, None, Want::Borrow);
                 match self.key_read_of(obj, key, span) {
                     Ok(h) => h,
-                    Err((obj, key)) => {
+                    Err(parts) => {
+                        let (obj, key) = *parts;
                         if !self.cx.ty.has_error(key.ty) {
                             self.cannot_index(&obj);
                         }

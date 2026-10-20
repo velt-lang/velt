@@ -1099,12 +1099,16 @@ with an unbounded `T` is not an `object` (at `T = string` it is a branded `strin
 type over a type parameter (`Partial<T>`, `Pick<T, K>`, …) may be written in a generic function's
 signature or body, not only in an alias: it is evaluated at every instantiation, as TypeScript
 evaluates it there. A key parameter `K extends keyof T` is inferred as the literal key the call
-passes, and `x[k]` reads or writes that field of `x: T`, the field itself (an array read through
-it is `===` to the original; a write reaches the object). A key type of several keys reads or
+passes (the union of the keys when several arguments pass one: `swap(o, "x", "y")` has
+`K = "x" | "y"`), and `x[k]` reads or writes that field of `x: T`, the field itself (an array
+read through it is `===` to the original; a write reaches the object, a value a call returned
+too: `first(os)[key()] = v`). The object and the key may be any expressions, each evaluated
+once, in order. An optional field reads as `F | undefined`. A key type of several keys reads or
 writes the field the key holds when those fields have one type (`k: "x" | "y"` on
 `{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
-error at that instantiation. An alias declared in a generic function's body may name the function's
-type parameters.
+error at that instantiation. An error at an instantiation is reported in the generic function,
+where the failing form is, with the call that instantiates it and the type arguments. An alias
+declared in a generic function's body may name the function's type parameters.
 
 ```ts
 function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
@@ -1130,8 +1134,14 @@ with nested objects and arrays shared rather than copied. The literal is a `T`, 
 type (`$set: (v) => …` gets its parameter type from `Signal<T>`). An instantiation whose `T` is
 not an object type (`{ ...t }` at `T = number`) is an error there. An optional field of a later
 part overrides an earlier value of it only while present, as in Node: an absent `name` keeps the
-earlier one, a present `undefined` replaces it (both parts must give the field one type; a
-present `undefined` over a field that can't hold `undefined` is a `TypeError`).
+earlier one, a present `undefined` replaces it, so a required field under an optional one is
+`F | undefined` (both parts must give the field one type). As for a concrete spread, a spread
+used directly as a `T` (`return { ...x, ...patch }` from a function returning `T`) is built as
+`T`, and a present `undefined` over a field of `T` that can't hold `undefined` is a `TypeError`
+there: Node keeps `undefined` in a field typed `number`, which Velt can't represent. A source
+whose type argument is an interface with methods is an error at that instantiation: a spread
+copies an object's own properties, which are its methods for an object literal but not for a
+class instance, and an interface value may be either.
 
 ```ts
 type Signal<T> = T & { $set: (v: T) => void };
@@ -1206,13 +1216,19 @@ Differences from TypeScript, each a compile error with a note on what to write i
   the call) and function types (overloads) are not parts either; `T extends A & B` stays a
   bound on two interfaces.
 - An interface with methods is a part: `I & { errors: number }` (and `A & B`, or `T & { … }` at
-  an interface `T`) is an interface with every part's members. An object literal implements it,
-  a class that implements each interface part (and has the object parts' fields) converts to it
-  as the same object, and its values convert to each interface part as the same object (`===`
-  holds). `Pick<I, K>` and `Omit<I, K>` of such an interface are interfaces with those members,
-  which values of `I` convert to the same way. Methods of one name with different signatures in
-  two parts (overloads in TypeScript) are an error, and so is converting such a value to its
-  object part (`{ errors: number }`), which would copy it. `T & object` at an interface or class
+  an interface `T`) is an interface with every part's members, one whatever the order of the
+  parts (`A & B` is `B & A`). An object literal implements it, a class that implements each
+  interface part, itself or through a base class (and has the object parts' fields), converts to
+  it as the same object, generic classes too, and a field written through it reaches the class's
+  field. Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
+  and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`
+  convert to the same way; in general an interface value converts to any interface whose members
+  it has (an interface it extends, a structurally equal one, in both directions). Methods of one
+  name with different signatures in two parts (overloads in TypeScript) are an error, and so is a
+  field in one part with a method of that name in another (no value has both), and converting
+  such a value to its object part (`{ errors: number }`), which would copy it. For the same
+  reason, a value of an interface that extends a field-only interface `B` does not convert to
+  `B`: `B` is an object type with a fixed layout, and TypeScript keeps the same object. `T & object` at an interface or class
   `T` is `T`: `t as T & object` is the same value.
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
   is passed on and returned as it is, and the members of its object parts are read (also with

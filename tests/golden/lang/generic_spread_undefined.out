@@ -1,0 +1,5 @@
+{"s":"a"} undefined true
+{"n":1,"s":"b"} 1 n,s
+{"n":4,"s":"a","o":2} true
+{"n":1,"s":"z","o":3} false
+{"s":"a"}
