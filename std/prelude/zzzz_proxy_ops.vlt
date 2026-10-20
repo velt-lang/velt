@@ -67,28 +67,36 @@ export function __proxyNewAny(target: any, handler: any): any {
     panic("TypeError: Cannot create proxy with a non-object as target or handler");
   }
   const h: ProxyHandler<any> = {
-    get: "get" in handler
-      ? (t: any, k: string | symbol, r: any): any => handler.get(t, k, r)
-      : undefined,
-    set: "set" in handler
-      ? (t: any, k: string | symbol, v: any, r: any): boolean =>
+    get:
+      "get" in handler
+        ? (t: any, k: string | symbol, r: any): any => handler.get(t, k, r)
+        : undefined,
+    set:
+      "set" in handler
+        ? (t: any, k: string | symbol, v: any, r: any): boolean =>
           handler.set(t, k, v, r) ? true : false
-      : undefined,
-    has: "has" in handler
-      ? (t: any, k: string | symbol): boolean => (handler.has(t, k) ? true : false)
-      : undefined,
-    deleteProperty: "deleteProperty" in handler
-      ? (t: any, k: string | symbol): boolean => (handler.deleteProperty(t, k) ? true : false)
-      : undefined,
+        : undefined,
+    has:
+      "has" in handler
+        ? (t: any, k: string | symbol): boolean => (handler.has(t, k) ? true : false)
+        : undefined,
+    deleteProperty:
+      "deleteProperty" in handler
+        ? (t: any, k: string | symbol): boolean => (handler.deleteProperty(t, k) ? true : false)
+        : undefined,
     ownKeys: "ownKeys" in handler ? (t: any): any => handler.ownKeys(t) : undefined,
-    getOwnPropertyDescriptor: "getOwnPropertyDescriptor" in handler
-      ? (t: any, k: string | symbol): PropertyDescriptor | undefined =>
-          handler.getOwnPropertyDescriptor(t, k)
-      : undefined,
-    defineProperty: "defineProperty" in handler
-      ? (t: any, k: string | symbol, d: PropertyDescriptor): boolean =>
+    getOwnPropertyDescriptor:
+      "getOwnPropertyDescriptor" in handler
+        ? (
+          t: any,
+          k: string | symbol,
+        ): PropertyDescriptor | undefined => handler.getOwnPropertyDescriptor(t, k)
+        : undefined,
+    defineProperty:
+      "defineProperty" in handler
+        ? (t: any, k: string | symbol, d: PropertyDescriptor): boolean =>
           handler.defineProperty(t, k, d) ? true : false
-      : undefined,
+        : undefined,
   };
   return new Proxy(target, h);
 }
@@ -122,6 +130,8 @@ export function __proxyKeys(o: any): string[] | null {
  */
 export function __proxySpreadCheck(o: any): void {
   if (o instanceof Proxy) {
-    panic("TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)");
+    panic(
+      "TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)",
+    );
   }
 }

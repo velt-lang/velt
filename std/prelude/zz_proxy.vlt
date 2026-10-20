@@ -525,7 +525,9 @@ export class Proxy {
   __json(self: any): any {
     const toJSON = this.__get("toJSON", self);
     if (typeof toJSON === "function") {
-      panic("TypeError: `JSON.stringify` of a proxy whose `toJSON` is a function is not supported yet (#823)");
+      panic(
+        "TypeError: `JSON.stringify` of a proxy whose `toJSON` is a function is not supported yet (#823)",
+      );
     }
     if (Array.isArray(this.#target)) {
       const items: any[] = [];
@@ -710,10 +712,14 @@ export class Reflect {
       attributes.writable === false ||
       attributes.enumerable === false ||
       attributes.configurable === false ||
-      (t === undefined &&
-        (attributes.writable !== true ||
+      (
+        t === undefined &&
+        (
+          attributes.writable !== true ||
           attributes.enumerable !== true ||
-          attributes.configurable !== true))
+          attributes.configurable !== true
+        )
+      )
     ) {
       panic(
         "TypeError: Reflect.defineProperty with attributes other than true is not supported yet (#823)",
@@ -733,4 +739,3 @@ export class Reflect {
 function proxyDeletePlain(o: any, k: string | symbol): boolean {
   panic("TypeError: deleting a property of this value through `any` is not supported yet (#823)");
 }
-
