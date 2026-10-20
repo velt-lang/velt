@@ -568,19 +568,16 @@ export class Reflect {
       }
       proxyReceiverCheck("get", target, receiver);
     }
-    if (typeof key === "string") {
-      // An array element named by its string (`"1"`), as a trap passes it on.
-      if (Array.isArray(target)) {
-        const i = proxyIndex(key);
-        if (i >= 0) {
-          return target[i];
-        }
-        // `toJSON` (what `JSON.stringify` asks for): an array has none.
-        if (key === "toJSON") {
-          return undefined;
-        }
+    // An array element named by its string (`"1"`), as a trap passes it on.
+    if (typeof key === "string" && Array.isArray(target)) {
+      const i = proxyIndex(key);
+      if (i >= 0) {
+        return target[i];
       }
-      return target[key];
+      // `toJSON` (what `JSON.stringify` asks for): an array has none.
+      if (key === "toJSON") {
+        return undefined;
+      }
     }
     if (typeof key === "symbol") {
       const self: any = target;
@@ -605,16 +602,12 @@ export class Reflect {
         return receiver.__receive(key, value);
       }
     }
-    if (typeof key === "string") {
-      if (Array.isArray(target)) {
-        const i = proxyIndex(key);
-        if (i >= 0) {
-          target[i] = value;
-          return true;
-        }
+    if (typeof key === "string" && Array.isArray(target)) {
+      const i = proxyIndex(key);
+      if (i >= 0) {
+        target[i] = value;
+        return true;
       }
-      target[key] = value;
-      return true;
     }
     if (typeof key === "symbol") {
       const self: any = target;
