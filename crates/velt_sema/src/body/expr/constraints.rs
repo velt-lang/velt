@@ -13,6 +13,9 @@ use crate::body::FnCx;
 use crate::defs::Bound;
 use crate::hir::{TyId, TyKind};
 
+/// An argument of a call: its parameter's type, its own type and its span.
+pub(super) type ArgSite = (TyId, TyId, Span);
+
 impl FnCx<'_, '_> {
     /// The type an argument holding literals is checked against for a parameter of type `pty`
     /// that mentions slots no argument fixed yet whose type bounds have literal types: `pty`
@@ -76,7 +79,7 @@ impl FnCx<'_, '_> {
         c: &Callable,
         k: usize,
         t: TyId,
-        (slots, sites): (&[Option<TyId>], &[(TyId, TyId, Span)]),
+        (slots, sites): (&[Option<TyId>], &[ArgSite]),
         name: &str,
         span: Span,
     ) -> bool {
@@ -143,7 +146,7 @@ impl FnCx<'_, '_> {
         slots: &[Option<TyId>],
         quiet: bool,
         span: Span,
-        sites: &[(TyId, TyId, Span)],
+        sites: &[ArgSite],
     ) -> Vec<TyId> {
         let mut out = vec![];
         if !quiet {

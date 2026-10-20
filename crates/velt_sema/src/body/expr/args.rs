@@ -149,7 +149,7 @@ impl FnCx<'_, '_> {
         // error about inferring them.
         let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
         self.default_slots(c, &mut slots);
-        let sites: Vec<(TyId, TyId, Span)> = (c.params.iter().zip(&checked))
+        let sites: Vec<super::constraints::ArgSite> = (c.params.iter().zip(&checked))
             .map(|(p, h)| (p.ty, h.ty, h.span))
             .collect();
         let type_args = self.solve_slots(c, &slots, quiet, span, &sites);
