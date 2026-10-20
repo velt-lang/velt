@@ -63,6 +63,9 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let place = self.field_access(obj, prop, Want::BorrowMut, target.span)?;
+                if self.temp_tuple_write(&place, target.span) {
+                    return None;
+                }
                 self.check_readonly(&place, prop);
                 self.require_mutable(&place, "assign to a field of");
                 Some(place)
@@ -116,7 +119,7 @@ impl FnCx<'_, '_> {
                     }
                 }
                 let place = self.index_of(obj, index, Want::BorrowMut, target.span);
-                if self.cx.ty.is_bottom(place.ty) {
+                if self.cx.ty.is_bottom(place.ty) || self.temp_tuple_write(&place, target.span) {
                     return None;
                 }
                 self.require_mutable(&place, "assign to an element of");
