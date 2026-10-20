@@ -26,6 +26,14 @@ async fn turns(timers: &[u64], polled: &[usize]) -> Vec<usize> {
     order
 }
 
+/// The next timer, taking its turn (the loop moves on; it stays queued until taken out).
+fn step(o: &mut Order, clock: &mut dyn FnMut() -> u64) -> Option<Key> {
+    let p = o.peek_cached(None, true, clock);
+    let (k, _) = p.next?;
+    o.commit(&p, None);
+    Some(k)
+}
+
 /// The order a timers pass runs `timers` (delay, start) in when every one is due by `now`
 /// (one task, Node's lists): indices into `timers`.
 fn pass(timers: &[(u64, u64)], now: u64) -> Vec<usize> {
@@ -36,7 +44,7 @@ fn pass(timers: &[(u64, u64)], now: u64) -> Vec<usize> {
         .collect();
     let mut ran = Vec::new();
     let mut clock = || now;
-    while let Some(k) = o.next(None, true, &mut clock) {
+    while let Some(k) = step(&mut o, &mut clock) {
         ran.push(keys.iter().position(|x| *x == k).unwrap());
         assert!(o.take(k));
     }
@@ -66,15 +74,15 @@ fn a_partly_due_list_gets_a_new_id() {
     let c = o.insert_at(13, 5, None); // 13 list, expiry 18, id 2
     let mut now = 12;
     let mut clock = || now;
-    assert_eq!(o.next(None, true, &mut clock), Some(a));
+    assert_eq!(step(&mut o, &mut clock), Some(a));
     assert!(o.take(a));
     // Nothing else is due by 12; the 10 list now waits for 18 with id 3, after the 13 list.
-    assert_eq!(o.next(None, true, &mut clock), None);
+    assert_eq!(step(&mut o, &mut clock), None);
     now = 30;
     let mut clock = || now;
-    assert_eq!(o.next(None, true, &mut clock), Some(c));
+    assert_eq!(step(&mut o, &mut clock), Some(c));
     assert!(o.take(c));
-    assert_eq!(o.next(None, true, &mut clock), Some(b));
+    assert_eq!(step(&mut o, &mut clock), Some(b));
     assert!(o.take(b));
     assert!(o.is_empty());
 }
@@ -88,10 +96,10 @@ fn a_pass_keeps_its_now() {
     let b = o.insert_at(6, 0, None);
     let mut reads = vec![20, 5];
     let mut clock = || reads.pop().unwrap();
-    assert_eq!(o.next(None, true, &mut clock), Some(a));
+    assert_eq!(step(&mut o, &mut clock), Some(a));
     assert!(o.take(a));
     // The pass at 5 has nothing more: `b` is due at 6, by the next pass (read 20).
-    assert_eq!(o.next(None, true, &mut clock), Some(b));
+    assert_eq!(step(&mut o, &mut clock), Some(b));
     assert!(o.take(b));
     assert!(o.is_empty());
 }
@@ -170,18 +178,18 @@ fn immediates_run_between_passes() {
     let early = o.insert_at(IMMEDIATE, 3, None);
     let mut now = 10;
     let mut clock = || now;
-    assert_eq!(o.next(None, true, &mut clock), Some(x));
+    assert_eq!(step(&mut o, &mut clock), Some(x));
     assert!(o.take(x));
     // A callback of the pass at 10 creates a timeout, then an immediate.
     let t = o.insert_at(1, 12, None);
     let late = o.insert_at(IMMEDIATE, 13, None);
     now = 20;
     let mut clock = || now;
-    assert_eq!(o.next(None, true, &mut clock), Some(early));
+    assert_eq!(step(&mut o, &mut clock), Some(early));
     assert!(o.take(early));
-    assert_eq!(o.next(None, true, &mut clock), Some(late));
+    assert_eq!(step(&mut o, &mut clock), Some(late));
     assert!(o.take(late));
-    assert_eq!(o.next(None, true, &mut clock), Some(t));
+    assert_eq!(step(&mut o, &mut clock), Some(t));
     assert!(o.take(t));
     assert!(o.is_empty());
 }

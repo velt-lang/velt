@@ -43,6 +43,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tokio::time::Instant;
 
+use self::pass::Peek;
 use super::gate::{self, Gate};
 use super::timers::TimerLeaf;
 use crate::task::{leaf, VeltFut};
@@ -183,8 +184,8 @@ struct Order {
     list_ids: u64,
     /// The `now` of the timers pass under way (none between passes).
     pass: Option<u64>,
-    /// The last [`Order::next`] passed over the lists of a busy task.
-    skipped: bool,
+    /// The last look at what comes next, while the order has not changed (order_pass.rs).
+    cache: Option<Peek>,
     /// The gate of the task that took the last turn, and the count of its polls that had ended
     /// then: the turn is held until that poll ends.
     holder: Option<(Arc<Gate>, u64)>,
@@ -194,7 +195,11 @@ static ORDER: Mutex<Order> = Mutex::new(Order::new());
 
 /// The clock in whole milliseconds since its origin, and the moment read.
 fn clock() -> (u64, std::time::Instant) {
-    let now = std::time::Instant::now();
+    clock_at(std::time::Instant::now())
+}
+
+/// The clock at moment `now`, in whole milliseconds since its origin, and the moment.
+fn clock_at(now: std::time::Instant) -> (u64, std::time::Instant) {
     let ms = now.saturating_duration_since(crate::process::clock_origin());
     (ms.as_millis() as u64, now)
 }
@@ -213,7 +218,7 @@ impl Order {
             seq: 0,
             list_ids: 0,
             pass: None,
-            skipped: false,
+            cache: None,
             holder: None,
         }
     }
@@ -261,6 +266,7 @@ impl Order {
     /// Insert a timer of `task` with delay `ms`, started at `start`, at the end of its list.
     fn insert_at(&mut self, ms: u64, start: u64, task: Option<Arc<Gate>>) -> Key {
         let gate = task.as_ref().map_or(0, |g| Arc::as_ptr(g) as GateId);
+        self.cache = None;
         // Mostly the list exists: the timer goes at its end, and no list moves.
         if let Some(list) = self
             .groups
@@ -331,6 +337,7 @@ impl Order {
         if !list.timers.remove(k.seq) {
             return false;
         }
+        self.cache = None;
         if list.timers.is_empty() {
             group.order.remove(&(list.key, k.ms));
             group.lists.remove(&k.ms);
@@ -351,119 +358,12 @@ impl Order {
         let Some(list) = group.lists.get_mut(&ms) else {
             return;
         };
+        self.cache = None;
         group.order.remove(&(list.key, ms));
         self.list_ids += 1;
         list.key = (expiry, self.list_ids);
         group.order.insert((list.key, ms));
         self.reseat(gate, before);
-    }
-
-    /// The first immediate created up to `limit` (seen from `current`, see [`Order::next`]).
-    fn immediate(
-        &mut self,
-        current: Option<&Arc<Gate>>,
-        skip_busy: bool,
-        limit: u64,
-    ) -> Option<Key> {
-        for &(seq, gate) in &self.immediates {
-            if seq > limit {
-                break;
-            }
-            if skip_busy && self.groups[&gate].busy_elsewhere(current) {
-                self.skipped = true;
-                continue;
-            }
-            return Some(Key {
-                gate,
-                ms: IMMEDIATE,
-                seq,
-            });
-        }
-        None
-    }
-
-    /// The timer that comes next, as in Node's event loop, seen from the task with gate
-    /// `current`; `skip_busy`: the lists of a task busy in another poll are passed over. None
-    /// when nothing is due. A timers pass (started, reading `clock`, when none is under way)
-    /// runs the timers due by its `now`; once none is left, the immediates created by then run
-    /// (Node's check phase), and then the next pass reads the clock again.
-    fn next(
-        &mut self,
-        current: Option<&Arc<Gate>>,
-        skip_busy: bool,
-        clock: &mut dyn FnMut() -> u64,
-    ) -> Option<Key> {
-        self.skipped = false;
-        if let Some(limit) = self.check {
-            if let Some(k) = self.immediate(current, skip_busy, limit) {
-                return Some(k);
-            }
-            // Left of the phase: none, or only immediates of tasks busy in other polls, which
-            // do not hold back the timers of the others.
-            if self.immediates.first().is_none_or(|i| i.0 > limit) {
-                self.check = None;
-                self.pass = None;
-            }
-        }
-        let (mut now, mut fresh) = match self.pass {
-            Some(p) => (p, false),
-            None => (clock(), true),
-        };
-        loop {
-            let mut found = None;
-            for &(lk, gate) in &self.heads {
-                let group = &self.groups[&gate];
-                if skip_busy && group.busy_elsewhere(current) {
-                    self.skipped = true;
-                    continue;
-                }
-                if lk.0 > now {
-                    break;
-                }
-                let &(_, ms) = group
-                    .order
-                    .first()
-                    .expect("ICE: a timer group without lists");
-                let (seq, e) = group.lists[&ms]
-                    .timers
-                    .first()
-                    .expect("ICE: an empty timer list");
-                let due = e.start.saturating_add(ms);
-                found = Some((Key { gate, ms, seq }, due));
-                break;
-            }
-            match found {
-                Some((k, due)) if due <= now => {
-                    self.pass = Some(now);
-                    return Some(k);
-                }
-                // Partly due: the list waits for its next timer, behind the lists due now.
-                Some((k, due)) => self.rekey(k.gate, k.ms, due.max(now + 1)),
-                // The pass is over: the immediates created so far run next.
-                None if self.check.is_none() && !self.immediates.is_empty() => {
-                    self.pass = None;
-                    self.check = Some(self.seq);
-                    if let Some(k) = self.immediate(current, skip_busy, self.seq) {
-                        return Some(k);
-                    }
-                    if fresh {
-                        return None;
-                    }
-                    now = clock();
-                    fresh = true;
-                }
-                // Kept: a callback running now (its turn was just taken) is part of this pass,
-                // so the timers it creates wait for the next one, after its immediates.
-                None if fresh => {
-                    self.pass = Some(now);
-                    return None;
-                }
-                None => {
-                    now = clock();
-                    fresh = true;
-                }
-            }
-        }
     }
 
     /// Remove `k` (a no-op if it is not queued); wake the timers that may go next now.
@@ -477,15 +377,16 @@ impl Order {
     /// not busy in another poll, and the next one of all (its task may be busy, and then runs
     /// it once that poll has ended).
     fn wake_next(&mut self, current: Option<&Arc<Gate>>) {
-        let first = self.next(current, true, &mut clock_ms);
+        let first = self.peek_cached(current, true, &mut clock_ms);
         // The next one of all is another only if a busy task's lists were passed over.
-        let busy = self.skipped;
         let nexts = [
-            first,
-            busy.then(|| self.next(current, false, &mut clock_ms))
+            first.next,
+            first
+                .skipped
+                .then(|| self.peek(current, false, &mut clock_ms).next)
                 .flatten(),
         ];
-        for k in nexts.into_iter().flatten() {
+        for (k, _) in nexts.into_iter().flatten() {
             if let Some(w) = self.entry_mut(k).and_then(|e| e.waker.take()) {
                 w.wake();
             }
@@ -509,7 +410,7 @@ struct Handle {
     /// The waker of the turn while it sleeps (woken when the timer is cleared).
     waker: Option<Waker>,
     /// The clock when it last took its turn: an interval's next run counts from there.
-    ran: Option<(u64, std::time::Instant)>,
+    ran: Option<std::time::Instant>,
 }
 
 /// Queue a timer due `ms` milliseconds from now (negative = 0); returns its handle for
@@ -541,7 +442,7 @@ pub unsafe extern "C" fn velt_rt_timer_again(h: u64, ms: i64) {
     if let Some(key) = h.key.take() {
         order.remove(key, current.as_ref());
     }
-    let (key, at) = order.insert(ms, h.task.clone(), h.ran);
+    let (key, at) = order.insert(ms, h.task.clone(), h.ran.map(clock_at));
     h.key = Some(key);
     h.at = at;
 }
@@ -662,14 +563,16 @@ impl Future for Turn {
             return Poll::Ready(());
         };
         let current = super::with_gate(Arc::clone);
-        let first = order.next(current.as_ref(), true, &mut clock_ms);
+        let look = order.peek_cached(current.as_ref(), true, &mut clock_ms);
+        let first = look.next.map(|(k, _)| k);
         if first != Some(key) {
             // Not next: woken when a timer leaves the order, or when the next one's task starts
             // a poll (it is busy then and need not be waited for).
             if let Some(g) = first.and_then(|k| order.groups[&k.gate].gate.clone()) {
                 g.note_blocking();
                 // Checked again: that task may have started its poll before it saw the note.
-                if order.next(current.as_ref(), true, &mut clock_ms) != first {
+                let again = order.peek_cached(current.as_ref(), true, &mut clock_ms);
+                if again.next.map(|(k, _)| k) != first {
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
@@ -684,6 +587,8 @@ impl Future for Turn {
                 return Poll::Pending;
             }
         }
+        // The loop reaches this timer now.
+        order.commit(&look, current.as_ref());
         order.holder = current.clone().map(|g| {
             let polls = g.polls();
             (g, polls)
@@ -691,11 +596,14 @@ impl Future for Turn {
         h.key = None;
         h.waker = None;
         // Node reads the clock just before an interval's callback; its next run counts from it.
-        h.ran = Some(clock());
+        h.ran = Some(std::time::Instant::now());
         order.remove(key, current.as_ref());
         Poll::Ready(())
     }
 }
+
+#[path = "order_pass.rs"]
+mod pass;
 
 #[cfg(test)]
 #[path = "order_tests.rs"]

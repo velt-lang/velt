@@ -568,7 +568,7 @@ fn fire_due(now: f64) {
     loop {
         let sleep = with_exec(|e| e.timers.peek().map(|t| t.0.deadline));
         if let Some(list) = super::order::first_expiry().filter(|x| *x <= now) {
-            if sleep.is_none_or(|s| list <= s) && super::order::fire_list(now) {
+            if sleep.is_none_or(|s| list <= s) && super::order::fire_phase(now) {
                 continue;
             }
         }

@@ -1,12 +1,11 @@
 //! The timer order of `setTimeout` / `setInterval` / `setImmediate` (velt_rt's
-//! task/local/order.rs), Node's rule: one list per delay, in insertion order, the lists run by
-//! (expiry, list id). A timers pass ([`fire_list`], called by the executor with the `now` it read
-//! once) fires, list by list, every timer due by `now`; a list whose next timer is not due yet
-//! waits for it with a new id. One thread runs everything here: firing a timer wakes its task at
-//! the back of the ready queue, so the callbacks run in firing order, each after the microtasks
-//! before it. Immediates (`setImmediate`, delay 0) are not in a list: the executor's next firing
-//! fires them first, so one created by a callback runs after the timers fired with it and before
-//! the timers created after it (Node runs them after the timers pass).
+//! task/local/order.rs), as Node's event loop runs them: one list per delay, in insertion order,
+//! the lists by (expiry, list id). The executor asks for the next phase ([`fire_phase`]) once
+//! the callbacks of the last one have taken their turns: a timers pass fires, list by list, every
+//! timer due by the `now` it read (a list whose next timer is not due yet waits for it with a new
+//! id); the check phase that follows fires the immediates created so far (`setImmediate`, delay
+//! 0). One thread runs everything here: firing a timer wakes its task at the back of the ready
+//! queue, so the callbacks run in firing order, each after the microtasks before it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,6 +21,17 @@ use super::VeltFut;
 struct Slot {
     fired: Cell<bool>,
     waker: RefCell<Option<Waker>>,
+    /// Fired by a phase whose turn is not taken yet ([`RUNNING`]).
+    counted: Cell<bool>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // A turn that never completes (its task was dropped) does not hold the loop.
+        if self.counted.get() {
+            RUNNING.with(|r| r.set(r.get() - 1));
+        }
+    }
 }
 
 impl Slot {
@@ -53,10 +63,14 @@ struct Lists {
     order: BTreeSet<((u64, u64), u64)>,
     seq: u64,
     ids: u64,
+    /// The check phase comes next (a timers pass ran last).
+    check_next: bool,
 }
 
 thread_local! {
     static LISTS: RefCell<Lists> = RefCell::new(Lists::default());
+    /// Timers the last phase fired whose turns are not taken yet: the next phase waits for them.
+    static RUNNING: Cell<usize> = const { Cell::new(0) };
 }
 
 /// The clock in whole milliseconds, one more: a timer is due once the clock (in whole
@@ -109,10 +123,15 @@ impl Lists {
     }
 }
 
-/// The expiry of the first list (whole milliseconds; 0 for immediates), if any.
+/// When the next phase is due (whole milliseconds; 0: now), if there is one and the callbacks
+/// of the last one took their turns.
 pub(super) fn first_expiry() -> Option<f64> {
+    if RUNNING.with(Cell::get) > 0 {
+        return None;
+    }
     LISTS.with(|l| {
         let l = l.borrow();
+        // Immediates: a timers pass (maybe with nothing due) and the check phase, now.
         if !l.immediates.is_empty() {
             return Some(0.0);
         }
@@ -120,50 +139,70 @@ pub(super) fn first_expiry() -> Option<f64> {
     })
 }
 
-/// One step of a timers pass at `now`: fires the due timers of the first list (in insertion
-/// order), or gives it a new place if its next timer is not due yet. False when no list is due.
-pub(super) fn fire_list(now: f64) -> bool {
+impl Lists {
+    /// A timers pass at `now`: the due timers of every list due by then, list by list.
+    fn pass(&mut self, now: u64, fired: &mut Vec<Weak<Slot>>) {
+        while let Some(&((expiry, _), ms)) = self.order.first() {
+            if expiry > now {
+                return;
+            }
+            let list = self
+                .by_ms
+                .get_mut(&ms)
+                .expect("ICE: a timer list in the order");
+            let mut rekeyed = false;
+            while let Some(e) = list.timers.first_entry() {
+                let due = e.get().start.saturating_add(ms);
+                if due > now {
+                    self.ids += 1;
+                    let key = (due.max(now + 1), self.ids);
+                    self.order.remove(&(list.key, ms));
+                    list.key = key;
+                    self.order.insert((key, ms));
+                    rekeyed = true;
+                    break;
+                }
+                fired.push(e.remove().slot);
+            }
+            if !rekeyed {
+                let key = list.key;
+                self.by_ms.remove(&ms);
+                self.order.remove(&(key, ms));
+            }
+        }
+    }
+}
+
+/// The next phase of the loop at `now`, once the callbacks of the last one took their turns: a
+/// timers pass, then the check phase (the immediates created so far). False if nothing fired.
+pub(super) fn fire_phase(now: f64) -> bool {
+    if RUNNING.with(Cell::get) > 0 {
+        return false;
+    }
     let now = now.floor() as u64;
     let mut fired = Vec::new();
-    let any = LISTS.with(|l| {
+    LISTS.with(|l| {
         let mut l = l.borrow_mut();
-        let l = &mut *l;
-        if !l.immediates.is_empty() {
-            fired.extend(std::mem::take(&mut l.immediates).into_values());
-            return true;
-        }
-        let Some(&((expiry, _), ms)) = l.order.first() else {
-            return false;
-        };
-        if expiry > now {
-            return false;
-        }
-        let list = l
-            .by_ms
-            .get_mut(&ms)
-            .expect("ICE: a timer list in the order");
-        while let Some(e) = list.timers.first_entry() {
-            let due = e.get().start.saturating_add(ms);
-            if due > now {
-                l.ids += 1;
-                let key = (due.max(now + 1), l.ids);
-                l.order.remove(&(list.key, ms));
-                list.key = key;
-                l.order.insert((key, ms));
-                return true;
+        for _ in 0..2 {
+            if std::mem::take(&mut l.check_next) {
+                fired.extend(std::mem::take(&mut l.immediates).into_values());
+            } else {
+                l.pass(now, &mut fired);
+                l.check_next = true;
             }
-            fired.push(e.remove().slot);
+            if !fired.is_empty() {
+                return;
+            }
         }
-        let key = list.key;
-        l.by_ms.remove(&ms);
-        l.order.remove(&(key, ms));
-        true
     });
+    let slots: Vec<Rc<Slot>> = fired.into_iter().filter_map(|s| s.upgrade()).collect();
+    RUNNING.with(|r| r.set(r.get() + slots.len()));
     // Woken outside the borrow: a waker may run nothing here, but stays clear of the lists.
-    for s in fired.into_iter().filter_map(|s| s.upgrade()) {
+    for s in &slots {
+        s.counted.set(true);
         s.fire();
     }
-    any
+    !slots.is_empty()
 }
 
 /// A timer's place in the order and its slot (replaced for an interval's next run).
@@ -246,6 +285,9 @@ pub unsafe extern "C" fn velt_rt_timer_turn(h: u64, _gate: u64) -> *mut VeltFut 
             // SAFETY: the handle outlives the turn.
             let h = unsafe { &mut *h };
             // Fired: out of the order. Node reads the clock just before an interval's callback.
+            if slot.counted.replace(false) {
+                RUNNING.with(|r| r.set(r.get() - 1));
+            }
             h.key = None;
             h.ran = Some(start_now());
             return Poll::Ready(());

@@ -276,7 +276,19 @@ async function fireEvery(
     // settled. Queued after the callback's synchronous part, like Node, so a timer it creates
     // with the same delay runs first.
     const run = runOnce(task, state.clone());
-    velt_rt_timer_again(timer, ms);
+    // Not again once the callback cleared it (checked under the lock `clear()` takes), like
+    // Node, which does not re-insert a timer whose `_idleTimeout` is -1.
+    const again = state.with((s) => {
+      if (s.stopped) {
+        s.release();
+        return false;
+      }
+      velt_rt_timer_again(timer, ms);
+      return true;
+    });
+    if (!again) {
+      return;
+    }
   }
 }
 
