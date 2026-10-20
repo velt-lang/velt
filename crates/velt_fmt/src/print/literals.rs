@@ -173,16 +173,20 @@ impl<'a> Printer<'a> {
         self.assignment(key, ":", value)
     }
 
-    /// Was property name `key` written as a string literal (`"a-b"`)?
+    /// Was property name `key` written as a string literal (`"a-b"`) or a template (`` [`a-b`] ``)?
     pub(super) fn quoted(&self, key: &Ident) -> bool {
-        slice(self.src, key.span).starts_with(['"', '\''])
+        slice(self.src, key.span).starts_with(['"', '\'', '`'])
     }
 
-    /// A property name as written: identifier, or string literal (in house quotes).
+    /// A property name as written: identifier, string literal (in house quotes), or a template
+    /// without substitutions in its brackets (`` [`a-b`] ``, kept as written: its escapes are in
+    /// the source only).
     pub(super) fn prop_key(&self, key: &Ident) -> Doc {
         let raw = slice(self.src, key.span);
         let printed = if raw.starts_with(['"', '\'']) {
             string_literal(raw)
+        } else if raw.starts_with('`') {
+            format!("[{raw}]")
         } else if raw.starts_with(|c: char| c.is_ascii_digit()) {
             // A numeric name (`7`, `0x10`) as written.
             raw.to_string()
@@ -197,7 +201,8 @@ impl<'a> Printer<'a> {
     /// as the plain key.
     fn literal_key(&self, key: &Ident) -> Doc {
         let before = self.src[..key.span.lo as usize].trim_end();
-        if before.ends_with('[') && !key.name.starts_with('[') {
+        let template = slice(self.src, key.span).starts_with('`');
+        if before.ends_with('[') && !key.name.starts_with('[') && !template {
             return cat!["[", self.prop_key(key), "]"];
         }
         self.prop_key(key)

@@ -49,6 +49,17 @@ function f(h: H) {
 }
 
 #[test]
+fn template_computed_keys() {
+    // A template key keeps its brackets: as a bare word `a-b` would not parse, and `0x10`
+    // would read the key \"16\".
+    holds(
+        "const o: any = { [`a-b`]: 1, [`0x10`]: 2 };
+const { [`a-b`]: t1, [`0x10`]: t4, [`x y`]: t8, [\"0x10\"]: q, [`z`]: z, [`\\u0041`]: u } = o;
+function f() { ({ [`a-b`]: t1, [`x`]: x } = o); }",
+    );
+}
+
+#[test]
 fn resource_management() {
     holds(
         "class R { [Symbol.dispose]() {} async   [Symbol.asyncDispose]() {} }
