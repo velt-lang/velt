@@ -186,7 +186,18 @@ shares a promise never calls it, and its futures are unchanged.
   orphan task driving a task's promises after its root returned has the same one; on
   WebAssembly, the task a started promise runs for). A holder that is polled, shared, peeked or
   dropped on another task without having been handed over (above) stops the program with a
-  fatal error (exit code 101).
+  fatal error (exit code 101), unless that task holds the module lock (§ module state): a
+  holder read from module state (a `Map` of promises in flight) is used by the tasks that use
+  module state, which run one at a time (on WebAssembly: any task of a program with module
+  state).
+- A holder handed over outside a task (a synchronous `main`) gets its proxy in the *outside
+  home*, a set with a task id of its own that code outside a task enters for each hand-over,
+  so every holder handed over from there is one of the same task. When `main` returns, the
+  home's set moves to an orphan task, which drives it (and keeps the process alive) until its
+  promises finish.
+- A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
+  hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
+  the other finds it settled.
 
 ## 2. Tasks
 
