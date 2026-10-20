@@ -1,0 +1,9 @@
+[ 'mounted ok', '<button>ok</button>' ] [ '<span>label</span>' ]
+true false true
+true true 1 same
+[ 'via instance' ]
+true false true false
+true <span>label</span>
+50
+1 2 false emit go
+[ 'literal' ] false
