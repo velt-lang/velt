@@ -343,6 +343,7 @@ impl FnCx<'_, '_> {
         }
         if super::pattern_defaults::has_default(&v.pattern)
             || super::object_rest::has_object_rest(&v.pattern)
+            || super::index_keys::has_index_key(&v.pattern)
         {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.

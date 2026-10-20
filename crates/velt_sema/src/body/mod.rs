@@ -51,6 +51,7 @@ mod for_iter;
 mod for_map;
 mod gated;
 mod generators;
+mod index_keys;
 mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;

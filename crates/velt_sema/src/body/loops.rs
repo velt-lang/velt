@@ -128,9 +128,11 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } if super::pattern_defaults::has_default(pattern)
-                || super::object_rest::has_object_rest(pattern) =>
+                || super::object_rest::has_object_rest(pattern)
+                || super::index_keys::has_index_key(pattern) =>
             {
-                // `for (const { a = 1, ...rest } of xs)`: each element bound to a hidden
+                // `for (const { a = 1, ...rest } of xs)`, `for (const { 0: k, 1: v } of
+                // pairs)`: each element bound to a hidden
                 // variable, then taken apart as a declaration does it.
                 let lp = item_loop(*kind, pattern, iter, body, *is_await, span);
                 self.loop_stmt(&lp, label, out);

@@ -44,6 +44,10 @@ impl FnCx<'_, '_> {
                 {
                     return self.any_pattern_decls(kind, pattern, &tmp, out);
                 }
+                // `const { 0: a, length } = xs` of an array or a tuple (`index_keys.rs`).
+                if self.index_key_decls(kind, fields, rest.as_ref(), &tmp, out) {
+                    return;
+                }
                 self.object_decls(kind, fields, rest.as_ref(), &tmp, out);
             }
             P::Array { elems, rest } => {
@@ -70,6 +74,10 @@ impl FnCx<'_, '_> {
                     matches!(self.cx.ty.kind(t), hir::TyKind::Array(e) if self.cx.dynamic(*e).is_some())
                 });
                 for (k, sub) in elems.iter().enumerate() {
+                    // A hole reads nothing (`[, , c = 0] = xs` of a shorter array).
+                    if matches!(sub.kind, P::Wildcard) {
+                        continue;
+                    }
                     let elem = index(&tmp, k);
                     let value = match &sub.kind {
                         // An `any` element holding `undefined` takes the default too.

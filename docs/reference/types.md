@@ -1564,7 +1564,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   would throw a `TypeError` for a method that uses `this`).
   As in TypeScript, an array pattern over an array literal types the literal as a tuple
   (`const [n, s] = [1, "s"]` gives a `number` and a `string`, also in a destructuring
-  assignment, for `[…] as const` and for a `const c = [2, "y"] as const` taken apart; `c` itself
+  assignment, for `[…] as const` and for a `const c = [2, "y"] as const` taken apart, also in
+  a closure or function that captures `c` and where `c` is a module constant; `c` itself
   stays a read-only array of the union, with `length`, indexing, iteration and the read
   methods). Destructuring an `any` reads each element or property through it (`const [a, b] =
   v` is `v[0]`, `v[1]`, each an `any`, read once; a default applies where the read gives
@@ -1573,7 +1574,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   variable, read when the pattern runs) reads `r[k]`; one naming a module constant holding a
   string or a symbol (`[KEY]`) reads that member, also of an object, interface or class; a
   string, number or template key (`{ ["a"]: v }`, `{ [0]: v }`), like a quoted or numeric
-  property name (`{ "a": v, 0: w }`), names that property. Any other key expression
+  property name (`{ "a": v, 0: w }`), names that property. On an array or a tuple a numeric
+  key reads that element and `length` the length (`const { 0: first, length } = xs`, also with
+  defaults, nested, in `for...of` and in parameters; `...rest` there is not supported yet, nor
+  a numeric key above 4096). Any other key expression
   (`{ [f()]: v }`) is an error: store the key in a variable first. Next to a computed key a
   `...rest` is not supported yet. Defaults on a `Record` or index-signature pattern apply where
   the key is missing (`const { port = 80 } = env`).
