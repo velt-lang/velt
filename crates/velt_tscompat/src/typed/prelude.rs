@@ -39,6 +39,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "NaN",
     "Number",
     "Object",
+    // What a proxy's `getOwnPropertyDescriptor` trap answers (data properties).
+    "PropertyDescriptor",
     // `new Proxy(target, handler)` is an `any` in Velt for now (#823); the operations on it
     // run the handler's traps as in Node.
     "Proxy",
@@ -332,7 +334,18 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Object", &["entries", "fromEntries", "keys", "values"]),
-    ("Reflect", &["get", "has", "set"]),
+    (
+        "Reflect",
+        &[
+            "defineProperty",
+            "deleteProperty",
+            "get",
+            "getOwnPropertyDescriptor",
+            "has",
+            "ownKeys",
+            "set",
+        ],
+    ),
     ("String", &["fromCharCode"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
