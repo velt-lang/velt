@@ -67,7 +67,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_init(p: *mut u64) {
 
 /// Shared lock. With one thread a writer can never release while we wait.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64) -> u64 {
+pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, _reader: u64) -> u64 {
     if *p == u64::MAX {
         crate::panic::fatal("deadlock: RwLock read while written");
     }
@@ -84,16 +84,17 @@ pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, _how: u64) {
 
 /// Exclusive lock.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64) {
+pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, _reader: u64) -> u64 {
     if *p != 0 {
         crate::panic::fatal("deadlock: RwLock written while held");
     }
     *p = u64::MAX;
     enter_exclusive();
+    0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64) {
+pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, _how: u64) {
     leave_exclusive();
     *p = 0;
 }

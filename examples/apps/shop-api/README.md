@@ -106,13 +106,19 @@ compiler; 5 s per scenario, 64 connections, M-series Mac, 3 interleaved rounds):
 
 | scenario | `Mutex` req/s | `RwLock` req/s |
 |---|---:|---:|
-| product by id | 206.6k–208.3k | 208.9k–214.0k |
-| list 100, sorted by price | 3,468–3,479 | 15,573–15,943 |
-| search + filter, 20 | 9,752–9,832 | 53,607–53,758 |
-| orders page of 50 | 9,161–9,291 | 43,284–45,365 |
-| stats over 20k orders | 287–292 | 1,291–1,300 |
-| create order | 184.2k–188.0k | 181.8k–184.8k |
-| bulk 200: decode + reject | 5,898–5,926 | 5,877–5,977 |
+| product by id | 201.7k–206.9k | 208.8k–216.7k |
+| list 100, sorted by price | 3,472–3,522 | 15,504–15,923 |
+| search + filter, 20 | 9,822–9,865 | 49,706–53,740 |
+| orders page of 50 | 9,374–9,457 | 45,211–46,365 |
+| stats over 20k orders | 290–292 | 1,290–1,303 |
+| create order | 185.5k–187.9k | 172.0k–183.5k |
+| bulk 200: decode + reject | 5,864–5,892 | 5,925–5,954 |
+
+Creating orders, the lock is busy about 8% of the time (0.4 µs of 5 µs per request), so it
+does not set the pace and the two tie within this laptop's noise: 8 more interleaved rounds
+gave medians of 164.7k (`Mutex`) and 165.7k (`RwLock`). Where the lock sets the pace, as with
+4 or 10 tasks creating orders in one process without HTTP, `RwLock` gets through ×1.6–1.8 as
+many.
 
 On one core (instructions retired in-process, the same routes) the two are within −5% and +1%.
 `listProducts` still computes each product's lowest price once before sorting, rather than on

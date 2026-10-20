@@ -540,6 +540,8 @@ struct FnLower<'c, 'h> {
     read_target: bool,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
+    /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).
+    rw_reader: Option<Local>,
     /// Whether this function runs in read mode (`Work::Checked`, `Work::Read`).
     mode: LkMode,
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its

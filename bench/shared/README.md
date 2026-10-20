@@ -25,19 +25,18 @@ velt build --release bench/shared/lock_mix.vlt -o /tmp/lock_mix
 /tmp/lock_mix rwlock 10 90   # 10 tasks, 90 reads per 100 operations: M operations/s
 ```
 
-`RwLock` / `Mutex` throughput, median of 3 interleaved runs (M-series Mac, 4+6 cores):
+`RwLock` / `Mutex` throughput, median of 5 interleaved runs (M-series Mac, 4+6 cores):
 
 | reads | tasks | `lock_mix` | `lock_mix_tiny` |
 |---:|---:|---:|---:|
-| 0% | 1 / 4 / 10 | 1.05 / 1.02 / 0.97 | 1.07 / 0.99 / 1.07 |
-| 50% | 1 / 4 / 10 | 1.04 / 0.98 / 0.89 | 0.91 / 0.92 / 0.88 |
-| 90% | 1 / 4 / 10 | 1.05 / 0.98 / 0.97 | 0.96 / 0.87 / 0.80 |
-| 99% | 1 / 4 / 10 | 1.18 / 1.04 / 1.13 | 1.02 / 0.91 / 0.76 |
-| 100% | 1 / 4 / 10 | 1.16 / 6.2 / 15.7 | 1.06 / 7.2 / 13.4 |
+| 0% | 1 / 4 / 10 | 1.11 / 1.96 / 2.34 | 1.27 / 2.38 / 1.94 |
+| 50% | 1 / 4 / 10 | 1.21 / 2.11 / 1.86 | 1.22 / 2.42 / 1.28 |
+| 90% | 1 / 4 / 10 | 1.23 / 2.17 / 1.52 | 1.16 / 2.38 / 1.17 |
+| 99% | 1 / 4 / 10 | 1.24 / 2.21 / 1.55 | 1.13 / 2.43 / 1.23 |
+| 100% | 1 / 4 / 10 | 1.19 / 7.4 / 17.9 | 1.30 / 11.8 / 15.0 |
 
-While writes come often the lock is revoked and readers take its mutex, so the two cost about
-the same. Where `lock_mix_tiny` still trails, two things the lock itself does not cost show:
-`Mutex`'s read and write go through one `with`, which the compiler merges into one call with
-the branch inside the lock (an `RwLock` whose reads also go through `write` ties: 142 against
-140 M/s at 90% and 10 tasks), and the check of the lock's mode before taking the mutex, which a
-callback of one load and ten threads taking turns magnify to about 15%.
+Where `RwLock` gets ahead while writes come often: its common reads and writes skip the
+thread-local lookup a `Mutex` makes on each lock and unlock (generated code hands the reader
+state from one lock call to the next), and its waiters back off between looks at the lock, so
+the holder keeps the lock's cache line and short callbacks run several in a row. Two runs of
+`lock_mix_tiny` at 10 tasks at once (20 busy threads on 10 cores) stay ahead too (×1.1–1.7).

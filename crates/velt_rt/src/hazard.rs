@@ -60,7 +60,7 @@ pub(crate) struct Reader {
     /// The `RwLock` this thread last found revoked (shared.rs): its outermost reads take the
     /// mutex without looking at the bias first.
     pub(crate) revoked: Cell<usize>,
-    /// Outermost reads this thread made holding a mutex (every 64th looks at the bias).
+    /// Outermost reads this thread made holding a mutex (every `LOOK_EVERY`th looks at the bias, shared.rs).
     pub(crate) took: Cell<u32>,
 }
 
@@ -98,6 +98,14 @@ impl Reader {
         // of one block, never a reuse while used.
         let _ = OWNER.try_with(|o| o.0.set(b));
         b
+    }
+
+    /// Slot 0, once this thread has a block (`slot` claims one).
+    #[inline]
+    pub(crate) fn slot0(&self) -> Option<&'static AtomicPtr<u64>> {
+        let b = self.block.get();
+        // SAFETY: blocks are never freed.
+        (!b.is_null()).then(|| unsafe { &(*b).slot[0] })
     }
 
     /// Slot `i` of this thread.

@@ -29,7 +29,7 @@ pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
     drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
-    release_outside as module_release_outside,
+    release_outside as module_release_outside, used as module_used,
 };
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};

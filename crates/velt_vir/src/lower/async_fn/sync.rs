@@ -19,7 +19,7 @@ use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{ice, FnLower};
+use crate::lower::{cint, ice, FnLower};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 /// When a read of a `shared<T>` in its box retains the box for the statement. While the value or
@@ -306,11 +306,23 @@ impl FnLower<'_, '_> {
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
         let ret = self.sub(ty);
-        // A shared `read` says how it went in, which its unlock takes back.
-        let how = match shared_read {
+        // An `RwLock`'s lock takes this thread's reader state (0: it looks it up) and says how
+        // it went in, which its unlock takes back.
+        let how = match rw {
             true => {
+                let reader = self.rw_reader();
                 let h = self.temp(Ty::U64);
-                self.call_rt(lock_fn, vec![lock.clone()], Some(Place::local(h)));
+                let args = vec![lock.clone(), Operand::Copy(Place::local(reader))];
+                self.call_rt(lock_fn, args, Some(Place::local(h)));
+                // The result without its tag (velt_rt `shared::HOW`).
+                self.assign(
+                    Place::local(reader),
+                    Rvalue::Binary(
+                        vir::BinOp::BitAnd,
+                        Operand::Copy(Place::local(h)),
+                        cint(-8, Ty::U64),
+                    ),
+                );
                 Some(Operand::Copy(Place::local(h)))
             }
             false => {
@@ -341,6 +353,21 @@ impl FnLower<'_, '_> {
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         self.call_rt(unlock_fn, unlock_args, None);
+        r
+    }
+
+    /// This thread's `RwLock` reader state for `velt_rt_rwlock_read` (0: it looks it up), kept
+    /// from the last read's result. Reset on every entry, a poll's too: a task may continue on
+    /// another thread after an `await`.
+    fn rw_reader(&mut self) -> crate::vir::Local {
+        if let Some(r) = self.rw_reader {
+            return r;
+        }
+        let r = self.temp(Ty::U64);
+        let init = crate::vir::Stmt::Assign(Place::local(r), Rvalue::Use(cint(0, Ty::U64)));
+        self.blocks[0].0.insert(0, init);
+        self.block_locs[0].0.insert(0, None);
+        self.rw_reader = Some(r);
         r
     }
 

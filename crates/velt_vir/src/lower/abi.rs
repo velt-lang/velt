@@ -69,6 +69,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frozen_binds: false,
             read_target: false,
             lk_mode: None,
+            rw_reader: None,
             mode: LkMode::Plain,
             lock_callback: None,
             scope_ends: FxHashMap::default(),

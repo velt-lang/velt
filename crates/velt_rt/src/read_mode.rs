@@ -52,13 +52,17 @@ pub(crate) fn enter_exclusive_in(r: &crate::hazard::Reader) {
 
 /// Leaving a `write` or `with` section.
 pub(crate) fn leave_exclusive() {
-    READER.with(|r| {
-        let v = r.saved.get();
-        r.saved.set(v >> 1);
-        if v & 1 == 1 {
-            r.read_depth.set(r.read_depth.get() & !EXCLUSIVE);
-        }
-    })
+    READER.with(leave_exclusive_in)
+}
+
+/// [`leave_exclusive`] with this thread's state at hand.
+#[inline]
+pub(crate) fn leave_exclusive_in(r: &crate::hazard::Reader) {
+    let v = r.saved.get();
+    r.saved.set(v >> 1);
+    if v & 1 == 1 {
+        r.read_depth.set(r.read_depth.get() & !EXCLUSIVE);
+    }
 }
 
 /// In read mode, outside any `write` / `with` section of its own?

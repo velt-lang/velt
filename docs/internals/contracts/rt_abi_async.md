@@ -590,9 +590,10 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
-| `velt_rt_rwlock_read` | `(u64* lock) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back [additive, #708] |
+| `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 [additive, #708] |
 | `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
-| `velt_rt_rwlock_write` / `velt_rt_rwlock_write_unlock` | `(u64* lock)` | `rw.write(f)`: the lock exclusively; like `velt_rt_mutex_lock`, it leaves read mode for its duration [additive, #708] |
+| `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; like `velt_rt_mutex_lock`, it leaves read mode for its duration. `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
+| `velt_rt_rwlock_write_unlock` | `(u64* lock, u64 reader)` | the end of the `write` that returned `reader` [additive, #708] |
 | `velt_rt_lk_mode` | `() -> u8` | 1 when this thread is in read mode (a thread-local read, §9.1) [additive, #708] |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) [additive, #708] |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
@@ -635,6 +636,13 @@ mutex as a `Mutex` is taken, so a lock written often costs about what a `Mutex` 
 reader holding the mutex finds the revocation old enough and biases the lock again. How long a
 revocation lasts adapts to how long the bias before it lasted (at most 10 ms). The lock words
 are the mutex, then (on the next 128-byte line, which only revocations write) the state.
+
+A thread waiting for the mutex backs off exponentially between looks at it (about 0.5 µs
+doubling to 35 µs, yielding each time, parking after about 0.7 ms or once a thread sleeps on it):
+a waiter that looks takes the line from the holder, so short callbacks taking turns run several
+in a row on one core. Generated code passes each lock call the reader state an earlier one in
+the same call of the function returned, so the common reads and writes run without a
+thread-local lookup or a call.
 
 ## 10. Output with many tasks
 
