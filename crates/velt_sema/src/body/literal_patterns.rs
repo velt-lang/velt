@@ -10,7 +10,8 @@
 //! ```
 //!
 //! Only a literal without spreads or holes, at least as long as the pattern, and a pattern
-//! without a rest; `[…] as const` counts as the literal.
+//! without a rest; `[…] as const` counts as the literal. A literal of literals of one type
+//! (`[10, 20]`) already has their type and is taken apart as an array.
 //!
 //! A pattern taking apart an `any` (`const [a, b] = v`, `const { p, q = 1 } = v`) reads each
 //! element or property through the `any` (`v[0]`, `v.p`), each an `any`, as TypeScript types
@@ -42,6 +43,21 @@ fn literal_elems(e: &Expr) -> Option<&[Expr]> {
         }
         _ => None,
     }
+}
+
+/// Are `items` literals of one type (`[10, 20]`, `["a", "b"]`)? Their element type is
+/// already that type, so the pattern takes the array apart as before.
+fn same_kind_literals(items: &[Expr]) -> bool {
+    let kind = |x: &Expr| match &x.kind {
+        E::Lit(ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. }) => {
+            Some(0)
+        }
+        E::Lit(ast::Lit::Str(_)) => Some(1),
+        E::Lit(ast::Lit::Bool(_)) => Some(2),
+        _ => None,
+    };
+    let first = items.first().and_then(kind);
+    first.is_some() && items.iter().all(|x| kind(x) == first)
 }
 
 impl FnCx<'_, '_> {
@@ -98,7 +114,7 @@ impl FnCx<'_, '_> {
         let Some(items) = literal_elems(init) else {
             return false;
         };
-        if items.len() < elems.len() {
+        if items.len() < elems.len() || same_kind_literals(items) {
             return false;
         }
         let mut binds = vec![];
