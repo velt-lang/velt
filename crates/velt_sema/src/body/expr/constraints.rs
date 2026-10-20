@@ -48,6 +48,25 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The slot of `pty` when it is a type parameter an earlier argument fixed to string
+    /// literal types (`K extends keyof T`).
+    pub(super) fn literal_slot(&mut self, pty: TyId, slots: &[Option<TyId>]) -> Option<usize> {
+        let TyKind::Param(k) = *self.cx.ty.kind(pty) else {
+            return None;
+        };
+        let t = (*slots.get(k as usize)?)?;
+        self.string_literals(t).map(|_| k as usize)
+    }
+
+    /// Slot `k` (string literal types) with the string literal types `t` added.
+    pub(super) fn add_literal_key(&mut self, k: usize, t: TyId, slots: &mut [Option<TyId>]) {
+        let Some(prev) = slots[k] else { return };
+        if prev == t || self.string_literals(t).is_none() {
+            return;
+        }
+        slots[k] = Some(self.cx.union_of(&[prev, t], false, Span::DUMMY));
+    }
+
     /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound.
     pub(super) fn check_constraint(
         &mut self,

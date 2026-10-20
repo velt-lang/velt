@@ -4,7 +4,7 @@
 //! writes. At every instantiation `K` must be one key of `T`'s object type
 //! (`Ctx::reduce_key_read`); lowering then reads that field.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::places::{is_place, set_place_mode};
@@ -13,7 +13,7 @@ use crate::hir::{self, Intrinsic, TyKind, TyOp, UseMode};
 
 impl FnCx<'_, '_> {
     /// `object[index]` read where `object` is a type parameter's value and `index` a key known
-    /// only per instantiation (see [`Self::generic_key_read`]).
+    /// only per instantiation, both paths (see [`Self::key_read_of`]).
     pub(super) fn generic_key_index(
         &mut self,
         object: &ast::Expr,
@@ -28,12 +28,14 @@ impl FnCx<'_, '_> {
         if !self.generic_keyed(t, k) {
             return None;
         }
+        let obj = self.expr(object, None, Want::Borrow);
         let key = self.expr(index, None, Want::Borrow);
-        self.generic_key_read(object, t, key, span)
+        self.key_read_of(obj, key, span).ok()
     }
 
     /// `object[index] = value` where `object` is a type parameter's value and `index` a key
-    /// known only per instantiation: an `Intrinsic::KeyWrite`. `None` for any other target.
+    /// known only per instantiation, both paths: an `Intrinsic::KeyWrite`. `None` for any
+    /// other target.
     pub(super) fn generic_key_write(
         &mut self,
         object: &ast::Expr,
@@ -45,21 +47,82 @@ impl FnCx<'_, '_> {
         if !self.generic_keyed(t, k) {
             return None;
         }
+        let obj = self.expr(object, None, Want::BorrowMut);
         let key = self.expr(index, None, Want::Borrow);
+        Some(self.key_write_of(obj, key, None, value, span))
+    }
+
+    /// `obj[index]` as an assignment target, `obj` (checked) of a type parameter: `Ok(Some)`
+    /// with the object and the key (checked) when the key is known only per instantiation,
+    /// `Ok(None)` (reported) for any other key, `Err` (`obj` back) when `obj` is no type
+    /// parameter's value or the key is a constant.
+    pub(super) fn generic_key_target(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+    ) -> Result<Option<(hir::Expr, hir::Expr)>, hir::Expr> {
+        let constant = super::member::literal_key(index).is_some();
+        if !matches!(self.cx.ty.kind(obj.ty), TyKind::Param(_)) || constant {
+            return Err(obj);
+        }
+        let key = self.expr(index, None, Want::Borrow);
+        if self.generic_keyed(obj.ty, key.ty) {
+            return Ok(Some((obj, key)));
+        }
+        if !self.cx.ty.has_error(key.ty) {
+            self.cannot_index(&obj);
+        }
+        Ok(None)
+    }
+
+    /// `obj[key] = value` (`op=`: not supported) for a target of [`Self::generic_key_target`].
+    pub(super) fn key_write_of(
+        &mut self,
+        obj: hir::Expr,
+        key: hir::Expr,
+        op: Option<ast::BinaryOp>,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        if op.is_some() {
+            self.cannot_index(&obj);
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        // Any field of any object type the parameter is may be written (`crate::object_copies`:
+        // a value written through an alias is shared, not copied).
+        let write = crate::object_copies::Write {
+            ty: None,
+            name: String::new(),
+            span,
+        };
+        self.cx.object_copies.writes.push(write);
+        let t = obj.ty;
         let mut lets = vec![];
-        let (parts, ty) = self.key_parts(object, t, key, true, span, &mut lets)?;
+        let Some((mut parts, ty)) = self.key_parts(obj, t, key, true, span, &mut lets) else {
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        };
         let v = self.expr(value, Some(ty), Want::Move);
-        let v = self.coerce(v, ty);
-        let mut args = parts;
-        args.push(v);
+        parts.push(self.coerce(v, ty));
         let unit = self.cx.ty.unit;
-        let write = self.intrinsic(Intrinsic::KeyWrite, args, unit, span);
-        Some(self.with_lets(lets, write))
+        let write = self.intrinsic(Intrinsic::KeyWrite, parts, unit, span);
+        self.with_lets(lets, write)
+    }
+
+    /// "cannot index a value of type `T`", at `obj`.
+    pub(super) fn cannot_index(&mut self, obj: &hir::Expr) {
+        let tn = self.cx.display(obj.ty);
+        let mut d = Diagnostic::error(format!("cannot index a value of type `{tn}`"), obj.span);
+        if self.cx.class_of(obj.ty).is_some() {
+            d = d.with_note("use a method such as `m.get(key)`");
+        }
+        self.cx.error(d);
     }
 
     /// Is `object[key]` (with these types) a key access of a generic body: a type parameter's
     /// value by a key type known only per instantiation?
-    fn generic_keyed(&self, t: hir::TyId, k: hir::TyId) -> bool {
+    pub(super) fn generic_keyed(&self, t: hir::TyId, k: hir::TyId) -> bool {
         let deferred_key = matches!(
             self.cx.ty.kind(k),
             TyKind::Param(_) | TyKind::Op(TyOp::Inline(_), _)
@@ -67,30 +130,35 @@ impl FnCx<'_, '_> {
         matches!(self.cx.ty.kind(t), TyKind::Param(_)) && deferred_key
     }
 
-    /// `object[key]` with `object` of type `t`, a type parameter, and `key` (checked already)
-    /// of a key type known only per instantiation; `None` for any other index.
-    pub(super) fn generic_key_read(
+    /// `obj[key]` read, both checked, when `obj` is a type parameter's value and `key` of a
+    /// key type known only per instantiation: an `Intrinsic::KeyRead` of type `T[K]`. `Err`
+    /// gives both back for any other access.
+    pub(super) fn key_read_of(
         &mut self,
-        object: &ast::Expr,
-        t: hir::TyId,
+        obj: hir::Expr,
         key: hir::Expr,
         span: Span,
-    ) -> Option<hir::Expr> {
+    ) -> Result<hir::Expr, (hir::Expr, hir::Expr)> {
+        let t = obj.ty;
         if !self.generic_keyed(t, key.ty) {
-            return None;
+            return Err((obj, key));
         }
         let mut lets = vec![];
-        let (parts, ty) = self.key_parts(object, t, key, false, span, &mut lets)?;
+        let Some((parts, ty)) = self.key_parts(obj, t, key, false, span, &mut lets) else {
+            return Ok(self.error_expr(span));
+        };
         let read = self.intrinsic(Intrinsic::KeyRead, parts, ty, span);
-        Some(self.with_lets(lets, read))
+        Ok(self.with_lets(lets, read))
     }
 
-    /// The object and key of `object[key]` as borrowed places (`write`: the object mutably),
-    /// with the type `T[K]` of the field, the form the signature writes, and its requirement
-    /// recorded (`Ctx::key_read_requirement`).
+    /// The object (checked, of type `t`, a type parameter) and key of `obj[key]` as borrowed
+    /// places (`write`: the object mutably), bound to temporaries in that order when they are
+    /// no places, with the type `T[K]` of the field, the form the signature writes, and its
+    /// requirement recorded (`Ctx::key_read_requirement`). `None` (reported) when `T[K]` is
+    /// no type.
     fn key_parts(
         &mut self,
-        object: &ast::Expr,
+        obj: hir::Expr,
         t: hir::TyId,
         key: hir::Expr,
         write: bool,
@@ -108,7 +176,7 @@ impl FnCx<'_, '_> {
         };
         let form = ast::TypeExpr {
             kind: ast::TypeExprKind::Indexed {
-                object: Box::new(named(name(self, i)?, object.span)),
+                object: Box::new(named(name(self, i)?, obj.span)),
                 key: Box::new(key_ast),
             },
             span,
@@ -118,11 +186,10 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(ty) {
             return None;
         }
-        let (want, mode) = match write {
-            true => (Want::BorrowMut, UseMode::BorrowMut),
-            false => (Want::Borrow, UseMode::Borrow),
+        let mode = match write {
+            true => UseMode::BorrowMut,
+            false => UseMode::Borrow,
         };
-        let obj = self.expr(object, None, want);
         let mut parts = vec![];
         for (h, mode) in [(obj, mode), (key, UseMode::Borrow)] {
             let mut h = match is_place(&h) {
@@ -132,9 +199,9 @@ impl FnCx<'_, '_> {
             set_place_mode(&mut h, mode);
             parts.push(h);
         }
-        let req = self.cx.key_read_requirement(&form, &env, span);
-        let reads = &mut self.cx.type_level.inline.reads;
-        reads.insert((parts[0].ty, parts[1].ty), req);
+        let req = self.cx.key_read_requirement(&form, &env, write, span);
+        let at = (parts[0].ty, parts[1].ty, span);
+        self.cx.type_level.inline.reads.insert(at, req);
         Some((parts, ty))
     }
 }

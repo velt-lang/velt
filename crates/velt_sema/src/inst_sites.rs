@@ -117,15 +117,15 @@ fn convert_site(
     u: &mut Uses,
     seen: &mut FxHashSet<TyId>,
     e: &Expr,
-    converts: &FxHashMap<(TyId, TyId), TyId>,
+    converts: &FxHashMap<(TyId, TyId, Span), TyId>,
 ) {
     use crate::hir::{ExprKind as H, Intrinsic};
     let key = match &e.kind {
-        H::Upcast(inner) => Some((inner.ty, e.ty)),
+        H::Upcast(inner) => Some((inner.ty, e.ty, e.span)),
         H::Call {
             callee: crate::hir::Callee::Intrinsic(Intrinsic::KeyRead | Intrinsic::KeyWrite),
             args,
-        } => Some((args[0].ty, args[1].ty)),
+        } => Some((args[0].ty, args[1].ty, e.span)),
         _ => None,
     };
     if let Some(key) = key {

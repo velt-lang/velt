@@ -25,6 +25,9 @@ pub(crate) struct Form {
     /// The requirement of a read `x[k]` (`Intrinsic::KeyRead`): `T[K]` where `K` must be one
     /// key, never a value's type.
     read: bool,
+    /// The requirement of a write `x[k] = v` (`Intrinsic::KeyWrite`): as `read`, and the
+    /// object type `T` is at each instantiation has a field assigned (`AdtDef::assigned`).
+    write: bool,
 }
 
 /// The forms, and each one's id by where it is written and how.
@@ -32,8 +35,11 @@ pub(crate) struct Form {
 pub(crate) struct Forms {
     pub(crate) forms: Vec<Form>,
     ids: FxHashMap<(usize, Vec<String>, String), u32>,
-    /// The requirement of each read `x[k]`, by the types of `x` and `k` (`crate::inst_sites`).
-    pub(crate) reads: FxHashMap<(TyId, TyId), TyId>,
+    /// The requirement of each read or write `x[k]`, by the types of `x` and `k` and where it
+    /// is (`crate::inst_sites`).
+    pub(crate) reads: FxHashMap<(TyId, TyId, Span), TyId>,
+    /// The object types written through a key at some instantiation (`Form::write`).
+    pub(crate) written: rustc_hash::FxHashSet<crate::hir::DefId>,
 }
 
 impl Ctx<'_> {
@@ -91,18 +97,19 @@ impl Ctx<'_> {
         }
         // Evaluated again, and reported, once the arguments are known.
         self.diags.truncate(reported);
-        self.inline_op(t, env, false)
+        self.inline_op(t, env, None)
     }
 
-    /// The requirement that the read `x[k]` of the form `t` (`T[K]`) names one key at every
-    /// instantiation (`Form::read`), written at `span`.
+    /// The requirement that the read (or `write`) `x[k]` of the form `t` (`T[K]`) names one
+    /// key at every instantiation (`Form::read`), written at `span`.
     pub(crate) fn key_read_requirement(
         &mut self,
         t: &ast::TypeExpr,
         env: &TyEnv,
+        write: bool,
         span: Span,
     ) -> TyId {
-        let op = self.inline_op(t, env, true);
+        let op = self.inline_op(t, env, Some(write));
         self.type_level.op_sites.insert(op, span);
         op
     }
@@ -112,12 +119,17 @@ impl Ctx<'_> {
         self.type_level.inline.forms[f as usize].ty.clone()
     }
 
-    /// The deferred form `t` of `env` (a read's requirement when `read`).
-    fn inline_op(&mut self, t: &ast::TypeExpr, env: &TyEnv, read: bool) -> TyId {
+    /// The deferred form `t` of `env` (a read's requirement when `access` is, a write's when
+    /// it is `Some(true)`).
+    fn inline_op(&mut self, t: &ast::TypeExpr, env: &TyEnv, access: Option<bool>) -> TyId {
+        // A read's requirement is its own (reported where the read is); other forms written
+        // alike in one definition are one type.
+        let (read, write) = (access.is_some(), access == Some(true));
+        let site = access.map(|w| (w, t.span));
         let key = (
             env.module,
             env.params.clone(),
-            format!("{read}{}", shape_key(t)),
+            format!("{site:?}{}", shape_key(t)),
         );
         let id = match self.type_level.inline.ids.get(&key) {
             Some(&id) => id,
@@ -130,6 +142,7 @@ impl Ctx<'_> {
                     ty: t.clone(),
                     shown: type_text(t),
                     read,
+                    write,
                 });
                 self.type_level.inline.ids.insert(key, id);
                 id
@@ -158,7 +171,7 @@ impl Ctx<'_> {
     pub(crate) fn reduce_inline(&mut self, i: u32, args: Vec<TyId>, span: Span) -> TyId {
         let f = &self.type_level.inline.forms[i as usize];
         let ty = f.ty.clone();
-        let (read, this_ty) = (f.read, f.this_ty);
+        let (read, write, this_ty) = (f.read, f.write, f.this_ty);
         let mut env = TyEnv::new(f.module, &f.params);
         env.this_ty = this_ty.map(|t| self.subst(t, &args));
         env.args = args.clone();
@@ -169,6 +182,13 @@ impl Ctx<'_> {
         let mut body = self.resolve_type(&ty, &env);
         if read && !self.ty.has_error(body) {
             body = self.one_key(&ty, &env, body, span);
+        }
+        if let (true, ast::TypeExprKind::Indexed { object, .. }) = (write, &ty.kind) {
+            let o = self.resolve_type(object, &env);
+            let o = self.subst(o, &args);
+            if let TyKind::Adt(d, _) = *self.ty.kind(o) {
+                self.type_level.inline.written.insert(d);
+            }
         }
         if outermost {
             self.type_level.alias_site = None;

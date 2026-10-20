@@ -11,6 +11,7 @@
 //! walked through their fields, so a field of a deferred type is reduced too.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -48,12 +49,13 @@ pub(crate) fn reach(cx: &mut Ctx) {
     let mut reduced: FxHashSet<TyId> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
-        let mut found: Vec<(TyId, u64)> = vec![];
+        let mut found: Vec<(TyId, u64, Option<Origin>)> = vec![];
         let mut pending: Vec<ParamCall> = u.param_calls.iter().map(|(p, _)| p.clone()).collect();
-        for ((d, targs, _), site) in u.calls.iter().zip(&u.guards) {
+        for ((d, targs, call), site) in u.calls.iter().zip(&u.guards) {
             for (k, need) in needs.get(d).into_iter().flatten() {
                 if let Some(g) = carry_guard(cx, *need, targs, *site) {
-                    found.push((at(cx, *k, targs), g));
+                    let origin = Some((*d, targs.clone(), *call));
+                    found.push((at(cx, *k, targs), g, origin));
                 }
             }
             for p in pneeds.get(d).into_iter().flatten() {
@@ -61,16 +63,16 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         for c in &u.closures {
-            found.extend(needs.get(c).into_iter().flatten().copied());
+            found.extend((needs.get(c).into_iter().flatten()).map(|&(k, g)| (k, g, None)));
             pending.extend(pneeds.get(c).into_iter().flatten().cloned());
         }
-        for (m, args, _) in &u.dyn_calls {
+        for (m, args, span) in &u.dyn_calls {
             for (k, need) in needs.get(m).into_iter().flatten() {
                 let mut ps = vec![];
                 collect_params(&cx.ty, *k, &mut ps);
                 let g = carry_guard(cx, *need, args, 0);
                 if let Some(g) = g.filter(|_| ps.iter().all(|p| (*p as usize) < args.len())) {
-                    found.push((at(cx, *k, args), g));
+                    found.push((at(cx, *k, args), g, Some((*m, args.clone(), *span))));
                 }
             }
             for p in pneeds.get(m).into_iter().flatten() {
@@ -79,7 +81,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
         let generic = resolve_param_calls(cx, &mut rounds, i, pending, &mut |cx, m, args| {
             for (k, _) in needs.get(&m).into_iter().flatten() {
-                found.push((at(cx, *k, args), 0));
+                found.push((at(cx, *k, args), 0, None));
             }
             let ps = pneeds.get(&m).into_iter().flatten();
             ps.map(|p| p.subst(cx, args)).collect()
@@ -97,8 +99,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
         for (t, _) in &u.types {
             ops_in(cx, *t, &mut walked, &mut own);
         }
-        found.extend(own.into_iter().map(|k| (k, 0)));
-        while let Some((k, guard)) = found.pop() {
+        found.extend(own.into_iter().map(|k| (k, 0, None)));
+        while let Some((k, guard, origin)) = found.pop() {
             if has_params(cx, k) {
                 let n = needs.entry(*f).or_default();
                 if !n.contains(&(k, guard)) {
@@ -107,15 +109,54 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 }
             } else if reduced.insert(k) {
                 // Reduced, and what the reduced type holds walked in turn.
+                let before = cx.diags.len();
                 let r = cx.reduce_op(k);
+                if let Some(o) = &origin {
+                    instantiated_at(cx, before, o);
+                }
                 let mut held = vec![];
                 ops_in(cx, r, &mut walked, &mut held);
-                found.extend(held.into_iter().map(|k| (k, 0)));
+                found.extend(held.into_iter().map(|k| (k, 0, origin.clone())));
             }
         }
         if grew {
             rounds.changed(*f);
         }
+    }
+}
+
+/// The instantiation a concrete deferred type comes from: the generic definition, its type
+/// arguments and where it is used with them (a call).
+type Origin = (DefId, Vec<TyId>, Span);
+
+/// Points the errors from `before` on (reported at the generic definition) at the
+/// instantiation `o` too: a label at the use, and a note with the type arguments.
+fn instantiated_at(cx: &mut Ctx, before: usize, (d, args, at): &Origin) {
+    if cx.diags.len() == before {
+        return;
+    }
+    let (name, names) = match &cx.info[d.0 as usize] {
+        DefInfo::Fn(f) => (f.name.clone(), f.generics.names.clone()),
+        _ => return,
+    };
+    let name = name.rsplit([':', '.']).next().unwrap_or(&name).to_string();
+    let shown: Vec<String> = args.iter().map(|a| cx.display(*a)).collect();
+    let list = match names.len() == shown.len() {
+        true => (names.iter().zip(&shown))
+            .map(|(n, t)| format!("`{n} = {t}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        false => format!("`<{}>`", shown.join(", ")),
+    };
+    let note = format!("in `{name}` at this instantiation: {list}");
+    for d in &mut cx.diags[before..] {
+        if *at != Span::DUMMY {
+            d.labels.push(velt_common::Label {
+                span: *at,
+                message: format!("`{name}` is instantiated here"),
+            });
+        }
+        d.notes.push(note.clone());
     }
 }
 

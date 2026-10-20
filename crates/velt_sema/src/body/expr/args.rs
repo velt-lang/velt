@@ -398,13 +398,26 @@ impl FnCx<'_, '_> {
             }
             let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
+            // A parameter of a type parameter that keeps literal keys (`K extends keyof T`)
+            // already fixed by an earlier key: this one adds to it (`"x" | "y"`), as in TS.
+            let keys = self.literal_slot(p.ty, slots);
+            if let Some(k) = keys {
+                known[k] = None;
+            }
             if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
             let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
             self.cx.type_level.use_site = outer;
-            let expected = self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots));
+            let expected = match keys {
+                Some(k) => {
+                    let mut open = slots.to_vec();
+                    open[k] = None;
+                    self.constraint_expected(c, &args[i], p.ty, expected, (&known, &open))
+                }
+                None => self.constraint_expected(c, &args[i], p.ty, expected, (&known, slots)),
+            };
             let mode = self.callback_mode(&args[i]);
             let arrow = as_arrow(&args[i]);
             let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
@@ -453,6 +466,9 @@ impl FnCx<'_, '_> {
                 true => self.collected_arg(h, p.ty),
                 false => h,
             };
+            if let Some(k) = keys {
+                self.add_literal_key(k, h.ty, slots);
+            }
             self.cx.match_ty(p.ty, h.ty, slots);
             out[i] = Some(h);
         }

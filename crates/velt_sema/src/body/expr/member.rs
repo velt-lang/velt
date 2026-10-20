@@ -492,14 +492,21 @@ impl FnCx<'_, '_> {
                 }
                 self.member_of(obj, &prop, want, span)
             }
-            _ => {
-                let tn = self.cx.display(t);
-                let mut d =
-                    Diagnostic::error(format!("cannot index a value of type `{tn}`"), obj.span);
-                if self.cx.class_of(t).is_some() {
-                    d = d.with_note("use a method such as `m.get(key)`");
+            // `obj(os)[key(ks, 0)]` in a generic body: a key known only per instantiation.
+            TyKind::Param(_) if want != Want::BorrowMut && literal_key(index).is_none() => {
+                let key = self.expr(index, None, Want::Borrow);
+                match self.key_read_of(obj, key, span) {
+                    Ok(h) => h,
+                    Err((obj, key)) => {
+                        if !self.cx.ty.has_error(key.ty) {
+                            self.cannot_index(&obj);
+                        }
+                        self.error_expr(span)
+                    }
                 }
-                self.cx.error(d);
+            }
+            _ => {
+                self.cannot_index(&obj);
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
             }

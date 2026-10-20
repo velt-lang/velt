@@ -158,18 +158,17 @@ impl FnCx<'_, '_> {
         if !(self.deferred_object(h.ty) || self.deferred_object(exp)) || !self.covers(h.ty, exp) {
             return Err(h);
         }
-        let op = self
-            .cx
-            .ty
-            .intern(TyKind::Op(TyOp::Convert, vec![h.ty, exp]));
+        let site = self.cx.type_level.converts.len() as u32;
+        let convert = TyKind::Op(TyOp::Convert(site), vec![h.ty, exp]);
+        let op = self.cx.ty.intern(convert);
         self.cx.type_level.op_sites.entry(op).or_insert(h.span);
         self.cx
             .type_level
             .op_modules
             .entry(op)
             .or_insert(self.module);
-        self.cx.type_level.converts.insert((h.ty, exp), op);
         let span = h.span;
+        self.cx.type_level.converts.insert((h.ty, exp, span), op);
         Ok(self.mk(H::Upcast(Box::new(h)), exp, span))
     }
 

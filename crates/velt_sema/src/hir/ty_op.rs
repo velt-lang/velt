@@ -15,8 +15,9 @@ pub enum TyOp {
     /// value is an `Intrinsic::SpreadObject` (hir_encodings.md "Spreads and conversions").
     Spread,
     /// Never a value's type: the requirement that an `Upcast` from the first argument to the
-    /// second keeps one object type at every instantiation (reduced to the second, #350).
-    Convert,
+    /// second keeps one object type at every instantiation (reduced to the second, #350). One
+    /// per conversion written (sema's conversion #n), so each is reported where it is.
+    Convert(u32),
     /// A conditional, mapped, indexed access, `keyof` or utility type written in a generic
     /// definition, not in an alias, that needs its type parameters (`{ [K in keyof M]: V<M[K]> }`
     /// in a signature, #350): sema's form #n, its arguments the definition's type parameters.

@@ -26,7 +26,7 @@ use crate::hir::{AdtKind, TyId, TyKind, TyOp};
 pub(crate) fn op_sep(o: TyOp) -> &'static str {
     match o {
         TyOp::Spread => ", ...",
-        TyOp::Convert => " as ",
+        TyOp::Convert(_) => " as ",
         _ => " & ",
     }
 }
@@ -36,7 +36,7 @@ impl Ctx<'_> {
     pub(crate) fn reduce_part_op(&mut self, o: TyOp, t: TyId, args: Vec<TyId>, span: Span) -> TyId {
         match o {
             TyOp::Spread => self.reduce_spread(t, args, span),
-            TyOp::Convert => self.reduce_convert(args, span),
+            TyOp::Convert(_) => self.reduce_convert(args, span),
             _ => self.reduce_intersection(t, args, span),
         }
     }

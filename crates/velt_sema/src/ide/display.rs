@@ -115,7 +115,7 @@ impl Names {
             TyKind::Op(crate::hir::TyOp::Inline(i), _) => {
                 (self.inline_forms.get(*i as usize)).map_or_else(|| "unknown".into(), |s| s.clone())
             }
-            TyKind::Op(crate::hir::TyOp::Convert, args) => args
+            TyKind::Op(crate::hir::TyOp::Convert(_), args) => args
                 .iter()
                 .map(|t| self.show(*t, param))
                 .collect::<Vec<_>>()

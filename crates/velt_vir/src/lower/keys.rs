@@ -53,8 +53,8 @@ impl Cx<'_> {
             TyKind::Op(velt_sema::hir::TyOp::Spread, args) => {
                 format!("op...<{}>", list(args, stack))
             }
-            TyKind::Op(velt_sema::hir::TyOp::Convert, args) => {
-                format!("opas<{}>", list(args, stack))
+            TyKind::Op(velt_sema::hir::TyOp::Convert(c), args) => {
+                format!("opas{c}<{}>", list(args, stack))
             }
             TyKind::Op(velt_sema::hir::TyOp::Inline(i), args) => {
                 format!("opi{i}<{}>", list(args, stack))

@@ -28,9 +28,6 @@ pub(crate) struct TyEnv {
     pub locals: Vec<(String, TyId)>,
     /// `infer X` names that found nothing (TypeScript's `unknown`).
     pub unknowns: Vec<String>,
-    /// Inside a conditional or mapped type: `T[K]` of an optional field is `F | undefined`, as
-    /// TypeScript reads it.
-    pub ts_optional: bool,
     /// In a class's instance method (its signature and body): the class type, which the
     /// polymorphic `this` type resolves to (`m(): this`).
     pub this_ty: Option<TyId>,
@@ -44,7 +41,6 @@ impl TyEnv {
             args: vec![],
             locals: vec![],
             unknowns: vec![],
-            ts_optional: false,
             this_ty: None,
         }
     }

@@ -1339,8 +1339,8 @@ the result is an ordinary object type, union or literal type.
   otherwise; `-?` also removes `undefined` from the field's type. `as N` renames a key, and a key
   renamed to `never` is dropped; keys renamed alike have the union of the values. A number literal
   key stays a number. With `keyof T` for a type parameter `T`, a union argument gives the union of
-  each member's mapped type. Inside these forms, `T[K]` of an optional field is
-  `F | undefined`, as TypeScript reads it.
+  each member's mapped type. `T[K]` of an optional field is `F | undefined`, as TypeScript
+  reads it (inside these forms and outside them).
 - **Template literal types** `` `on${K}` ``: the union of the strings they spell, with
   `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`; after `extends` they are patterns
   (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
