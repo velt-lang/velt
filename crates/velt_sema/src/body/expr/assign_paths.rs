@@ -4,7 +4,7 @@ use velt_syntax::ast;
 
 use crate::body::places::is_place;
 use crate::body::Want;
-use crate::hir::{self, ExprKind as H};
+use crate::hir::{self, ExprKind as H, TyKind};
 
 /// `x`, `this.a`, `x.a.b`: re-reading it has no side effects.
 /// A place that reading again has no effect: names, `this`, member paths, and indexes by such
@@ -50,8 +50,8 @@ pub(super) fn is_plain_path(e: &ast::Expr) -> bool {
 
 impl crate::body::FnCx<'_, '_> {
     /// The object of a member or element assignment target, checked. `p!` (or `p as T`, `T` the
-    /// type `p` holds when present) on a place `p` that reading again has no effect
-    /// (`ht.t![0] = 3`, `hs[0]![1] = "x"`) is the place holding `p`'s value, so a tuple held there is written in place, not in a copy; the null check runs
+    /// type `p` holds when present) on a place `p` that reading again has no effect and that
+    /// holds a tuple (`ht.t![0] = 3`, `hs[0]![1] = "x"`) is the place holding `p`'s value, so a tuple held there is written in place, not in a copy; the null check runs
     /// first, as a hidden statement before the assignment (`FnCx::call_temps`).
     pub(super) fn assign_receiver(&mut self, object: &ast::Expr) -> hir::Expr {
         let mut b = object;
@@ -72,7 +72,10 @@ impl crate::body::FnCx<'_, '_> {
                 (Some(ty), Some(payload)) => self.resolve(ty) == payload,
                 _ => true,
             };
-            if let (Some(payload), true, true) = (payload, same, is_place(&p)) {
+            // Only a tuple needs its place: an object the check gives is the object itself,
+            // which a later operand replacing `p` must not change (`B!.n += clearB()`).
+            let tuple = payload.is_some_and(|t| matches!(self.cx.ty.kind(t), TyKind::Tuple(_)));
+            if let (Some(payload), true, true, true) = (payload, same, tuple, is_place(&p)) {
                 if self.cx.dynamic(p.ty).is_none() {
                     let check = self.expr(object, None, Want::Borrow);
                     let span = check.span;
