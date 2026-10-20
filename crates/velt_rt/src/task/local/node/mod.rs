@@ -41,7 +41,7 @@ mod waker;
 pub(super) use self::transfer::set_transfer;
 pub(super) use self::waker::{local_awaiter, queue};
 
-pub(super) use self::owner::{is_done, poll_unadopted};
+pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;

@@ -482,18 +482,11 @@ impl Ctx<'_> {
     }
 
     /// Why a `t` cannot be deep-copied, for a diagnostic: "`Conn` owns a resource
-    /// (`[Symbol.dispose]`) and has no `clone()`", "`Pair` holds a `Conn`, which …", or "…
-    /// holds a promise, which cannot be copied".
+    /// (`[Symbol.dispose]`) and has no `clone()`", or "`Pair` holds a `Conn`, which …".
     pub fn uncopyable_why(&mut self, t: TyId) -> String {
         let tn = self.display(t);
         let part = self.uncopyable_part(t).unwrap_or(t);
         let resource = "owns a resource (`[Symbol.dispose]`) and has no `clone()`";
-        if matches!(self.ty.kind(part), TyKind::Promise(..)) {
-            return match part == t {
-                true => "a promise cannot be copied".to_string(),
-                false => format!("`{tn}` holds a promise, which cannot be copied"),
-            };
-        }
         match part == t {
             true => format!("`{tn}` {resource}"),
             false => {

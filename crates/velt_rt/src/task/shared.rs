@@ -333,7 +333,17 @@ pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) 
     let h = hub(f);
     on_its_task(&h);
     let size = h.size;
-    let proxy = new_proxy(h.clone(), transfer);
+    let proxy = match super::local::task_key() {
+        // Outside a task (a synchronous `main`): the proxy is a promise of the task that runs
+        // what code there hands over, so every holder handed over is one of the same task.
+        0 => {
+            let mut proxy = std::ptr::null_mut();
+            let hh = h.clone();
+            super::local::in_outside_home(|| proxy = new_proxy(hh, transfer));
+            proxy
+        }
+        _ => new_proxy(h.clone(), transfer),
+    };
     FORWARDS.lock().get_or_insert_with(HashMap::new).insert(
         f as usize,
         Forward {
@@ -390,9 +400,12 @@ unsafe extern "C" fn proxy_drop(state: *mut u8) {
 }
 
 /// Stop the program when the promise of `h` is used on another task than the one it is shared
-/// on (a holder passed to `spawn` or sent over a channel): its original future runs on that
-/// task, and its result would be used from two threads. Outside a task (the runtime dropping
-/// what is left at exit) anything goes.
+/// on without being handed over (`hand_over`): its original future runs on that task, and its
+/// result would be used from two threads. Outside a task (a synchronous `main`, or the runtime
+/// dropping what is left at exit) anything goes. So it does for a task holding the module lock:
+/// a holder it reached through module state (an in-flight `Map<string, Promise<T>>`) was put
+/// there by a task that holds the lock whenever it runs too, so those tasks never run at once,
+/// as everything reached through module state is shared between them.
 fn on_its_task(h: &Hub) {
     let now = super::local::task_key();
     if now == 0 {
@@ -404,6 +417,7 @@ fn on_its_task(h: &Hub) {
     {
         Ok(_) => {}
         Err(t) if t == now => {}
+        Err(_) if super::local::module_held() => {}
         Err(_) => crate::panic::fatal(
             "a promise shared on one task was used on another without being handed over (#212)",
         ),
@@ -438,10 +452,12 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             drop(st);
             let hw = Waker::from(h.clone());
             let mut c = Context::from_waker(&hw);
-            if super::local::await_unadopted(h.orig, raw_cx(&mut c).ptr()) != READY {
+            if !super::local::await_unadopted(h.orig, raw_cx(&mut c).ptr()) {
                 return PENDING;
             }
-            // It had finished already: this waiter settles it now.
+            // It had finished already: this waiter settles it now, unless the hub's waker did
+            // meanwhile, on the promise's task ([`settle`]).
+            st = h.st.lock();
         } else {
             if !first {
                 return PENDING;
@@ -452,13 +468,11 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             if (h.poll)(h.orig, cx) != READY {
                 return PENDING;
             }
+            st = h.st.lock();
         }
-        st = h.st.lock();
-        let mut result = vec![0u128; h.size.div_ceil(16)];
-        std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
-        st.result = result;
-        st.done = true;
-        st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
+    }
+    if !st.done {
+        keep_result(h, &mut st);
         // The waiters resume in the order they started waiting. This one, when it is the
         // first, goes on now when its `await` would have (as an unshared promise's awaiter
         // does), ahead of the others it queues; otherwise it is queued in its place.
@@ -494,6 +508,21 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
     READY
 }
 
+/// The original future of `h` finished: keep its result in the hub (`st` is its locked state, not
+/// settled yet). The result of a started original is claimed here, under the lock, so the hub's
+/// waker on the promise's task and a holder polled on another (module state) never claim it
+/// both.
+unsafe fn keep_result(h: &Hub, st: &mut HubState) {
+    if h.node {
+        super::local::deliver_unadopted(h.orig);
+    }
+    let mut result = vec![0u128; h.size.div_ceil(16)];
+    std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
+    st.result = result;
+    st.done = true;
+    st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
+}
+
 /// The hub's waker, registered with a started original future ([`poll_holder`]): it fires as
 /// the original finishes, on its task.
 impl Wake for Hub {
@@ -519,13 +548,7 @@ unsafe fn settle(h: &Arc<Hub>) {
         wake.into_iter().for_each(Waker::wake);
         return;
     }
-    let mut c = Context::from_waker(Waker::noop());
-    super::local::await_unadopted(h.orig, raw_cx(&mut c).ptr());
-    let mut result = vec![0u128; h.size.div_ceil(16)];
-    std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
-    st.result = result;
-    st.done = true;
-    st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
+    keep_result(h, &mut st);
     let waiters = std::mem::take(&mut st.waiters);
     drop(st);
     let queued: Vec<(usize, Waker, u64)> = waiters

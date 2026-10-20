@@ -347,6 +347,11 @@ thread_local! {
     static MODULE_READY: Cell<u64> = const { Cell::new(0) };
 }
 
+/// Has the program's module state been set up (it has some, and `init` ran or runs)?
+pub(crate) fn module_state_used() -> bool {
+    !MODULE_STATE.with(Cell::get).is_null()
+}
+
 /// The module state, allocated zeroed and initialized by `desc.init` on first access, to reach
 /// slot `slot` (one whose initializer has not run yet is a `ReferenceError`).
 ///

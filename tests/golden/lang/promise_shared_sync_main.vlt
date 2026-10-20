@@ -1,0 +1,25 @@
+// check: no leaks
+// A synchronous `main` shares a promise and hands its holders to spawned calls (#212): the
+// promise runs on a task of its own, and each spawned call awaits a copy of its result. The
+// interval keeps the process alive until the results are printed. Node prints the same.
+async function make(n: number): Promise<number> {
+  await sleep(5);
+  return n;
+}
+async function use(s: string, p: Promise<number>): Promise<string> {
+  return `${s} ${await p}`;
+}
+async function report(a: Promise<string>, b: Promise<string>, keep: Timer): Promise<void> {
+  console.log(await a);
+  console.log(await b);
+  clearInterval(keep);
+}
+function main() {
+  const p = make(3);
+  const q = p;
+  const keep = setInterval(async () => {}, 1000);
+  const a = spawn(use("a", q));
+  const b = spawn(use("b", p));
+  spawn(report(a, b, keep));
+  console.log("main done");
+}

@@ -332,13 +332,10 @@ impl FnCx<'_, '_> {
         } else if i == Intrinsic::Clone && self.cx.owns_uncopyable(recv.ty) {
             let why = self.cx.uncopyable_why(recv.ty);
             let part = self.cx.uncopyable_part(recv.ty).unwrap_or(recv.ty);
-            let note = match self.cx.ty.kind(part) {
-                TyKind::Promise(..) => "a promise runs once and has one owner; await it and copy the result".to_string(),
-                _ => format!(
-                    "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
-                    self.cx.display(part)
-                ),
-            };
+            let note = format!(
+                "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
+                self.cx.display(part)
+            );
             self.cx.error(
                 Diagnostic::error(
                     format!("{why}, so it has no automatic `clone()`"),

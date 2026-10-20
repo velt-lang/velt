@@ -143,6 +143,13 @@ fn release(how: u8) {
     });
 }
 
+/// Does this thread hold the lock (for a task's poll, or outside a task)? Every task that
+/// reaches module state holds it while it runs, so values from there (a shared promise kept in a
+/// `Map`, task/shared.rs) may move between those tasks.
+pub(crate) fn held() -> bool {
+    used() && HELD.with(Cell::get) != NOT_HELD
+}
+
 /// Code outside a task is done for now (`main` returned, or the program goes on in tasks): let
 /// the tasks have the lock.
 pub(crate) fn release_outside() {

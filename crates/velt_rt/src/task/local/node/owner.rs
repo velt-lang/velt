@@ -35,14 +35,15 @@ pub(super) unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -
 
 /// Await started node `f` without adopting it (a shared promise's hub, task/shared.rs): the set
 /// drives it, and `cx`'s waker is woken as it finishes, so the hub learns of the settle then.
-pub(in crate::task::local) unsafe fn poll_unadopted(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    let h = head(f);
-    let fl = h.flags.load(Ordering::Acquire);
-    if fl & DONE == 0 && !wait(f, cx, fl) {
-        return PENDING;
-    }
-    h.owner.set(OWNER_DELIVERED);
-    READY
+/// True once it finished; the result is claimed with [`deliver_unadopted`].
+pub(in crate::task::local) unsafe fn poll_unadopted(f: *mut VeltFut, cx: *mut c_void) -> bool {
+    let fl = head(f).flags.load(Ordering::Acquire);
+    fl & DONE != 0 || wait(f, cx, fl)
+}
+
+/// The owner of finished node `f` claims its result (a shared promise's hub, under its lock).
+pub(in crate::task::local) unsafe fn deliver_unadopted(f: *mut VeltFut) {
+    head(f).owner.set(OWNER_DELIVERED);
 }
 
 /// Has started node `f` finished (its result is in the slot)?

@@ -27,7 +27,7 @@ pub use losers::velt_rt_fut_detach;
 pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
-    drop_at_exit as module_drop_at_exit, mutex_locked, mutex_unlocked,
+    drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
     release_outside as module_release_outside,
 };
 pub use module_state::{velt_rt_module_ready, velt_rt_module_state};
@@ -480,9 +480,48 @@ pub(crate) unsafe fn is_started_node(f: *mut VeltFut) -> bool {
 }
 
 /// Await started promise `f` without adopting it: its set drives it, and `cx`'s waker is woken
-/// as it finishes (a shared promise's hub, task/shared.rs).
-pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void) -> u32 {
+/// as it finishes (a shared promise's hub, task/shared.rs). True once it finished; its owner
+/// then claims the result with [`deliver_unadopted`].
+pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void) -> bool {
     node::poll_unadopted(f, cx)
+}
+
+/// The owner of finished started promise `f` claims its result.
+pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
+    node::deliver_unadopted(f)
+}
+
+/// The task that runs the promises code outside a task hands to tasks (a holder of a shared
+/// promise given to a spawned call in a synchronous `main`, task/shared.rs): like any task it
+/// has an id and a set, so the promise is shared on it. Code outside a task enters it for each
+/// hand-over; once that code is done ([`outside_done`]), the set moves to an orphan task that
+/// drives what is still running (until then a wake only queues it).
+static OUTSIDE_HOME: parking_lot::Mutex<SetPtr> = parking_lot::Mutex::new(SetPtr::NONE);
+
+/// Run `f` (outside a task) as a step of the task of [`OUTSIDE_HOME`].
+pub(crate) fn in_outside_home(f: impl FnOnce()) {
+    let mut home = OUTSIDE_HOME.lock();
+    // Its promises may start timers and I/O, which need the runtime.
+    let _rt = super::runtime::handle().enter();
+    let mut f = Some(f);
+    // SAFETY: the no-op waker is static; the set is the home's own.
+    unsafe {
+        home.enter(Waker::noop(), &mut || {
+            if let Some(f) = f.take() {
+                f()
+            }
+        })
+    };
+}
+
+/// Code outside a task is done (`main` returned): the promises the outside home runs go on in
+/// an orphan task.
+pub(crate) fn outside_done() {
+    let home = std::mem::replace(&mut *OUTSIDE_HOME.lock(), SetPtr::NONE);
+    let mut home = home;
+    if let Some(set) = home.take_busy() {
+        Orphan::spawn(set);
+    }
 }
 
 /// Has started promise `f` finished?
