@@ -1,0 +1,5 @@
+generic_key_constraint.vlt:13:14: error: the type `"w"` does not satisfy the constraint `"x" | "y"`
+  = note: required by `K extends "x" | "y"` of function `swap`
+
+generic_key_constraint.vlt:14:20: error: the type `"w"` does not satisfy the constraint `"x" | "y"`
+  = note: required by `K extends "x" | "y"` of function `get`

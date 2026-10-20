@@ -36,6 +36,27 @@ impl Ctx<'_> {
         parts: &[ast::TypeExpr],
         env: &TyEnv,
     ) -> TyId {
+        // An interface made from the parts names its type parameters as written here.
+        let names = match self.display_params.len() < env.params.len() {
+            true => Some(std::mem::replace(
+                &mut self.display_params,
+                env.params.clone(),
+            )),
+            false => None,
+        };
+        let r = self.resolve_intersection_in(t, parts, env);
+        if let Some(names) = names {
+            self.display_params = names;
+        }
+        r
+    }
+
+    fn resolve_intersection_in(
+        &mut self,
+        t: &ast::TypeExpr,
+        parts: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
         // In an alias expanded at known arguments, the parts are those arguments' types. At
         // arguments that are still type parameters (`Signal<{ value: V }>` in a generic
         // function) the parts stay in the alias's parameters, which the alias substitutes once:

@@ -279,19 +279,30 @@ impl Ctx<'_> {
                 omit,
             },
         };
+        // Its parameters are named as where it is written (`G<T> & M`, not `G<T0> & M`).
+        let own_names: Vec<String> = params
+            .iter()
+            .map(|&n| crate::ide::named_param(&self.display_params, n))
+            .collect();
+        let shown_as_written = written.as_ref().map(|w| self.parts_name(w));
         let written: Option<Vec<TyId>> =
             written.map(|w| w.iter().map(|&t| renumber(self, t)).collect());
         let args: Vec<TyId> = params.iter().map(|&n| self.ty.param(n)).collect();
         if let Some(&d) = self.synth_ifaces.by_form.get(&generic) {
             return self.ty.intern(TyKind::Dyn(d, args));
         }
-        let name = match &written {
-            Some(w) => self.parts_name(w),
-            None => self.form_name(&generic),
+        let name = match shown_as_written {
+            Some(n) => n,
+            None => {
+                let saved = std::mem::replace(&mut self.display_params, own_names.clone());
+                let n = self.form_name(&generic);
+                self.display_params = saved;
+                n
+            }
         };
         let mut generics = Generics::default();
-        for i in 0..params.len() {
-            generics.push(&format!("T{i}"));
+        for n in &own_names {
+            generics.push(n);
         }
         let d = self.alloc_def(
             Span::DUMMY,
@@ -430,8 +441,13 @@ impl Ctx<'_> {
         let (form, span) = self.synth_ifaces.forms[&d].clone();
         match form {
             Form::Meet { ifaces, object } => {
-                // Checked again now that the parts' methods are known.
-                if let Some(why) = self.method_clash(&ifaces, object) {
+                // Checked again now that the parts' methods are known (its parameters named as
+                // where it is written).
+                let names = self.iface(d).map(|i| i.generics.names.clone());
+                let saved = std::mem::replace(&mut self.display_params, names.unwrap_or_default());
+                let clash = self.method_clash(&ifaces, object);
+                self.display_params = saved;
+                if let Some(why) = clash {
                     self.error(
                         Diagnostic::error(
                             format!("no value has type `{}`: {why}", self.synth_ifaces_name(d)),

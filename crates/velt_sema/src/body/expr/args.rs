@@ -149,7 +149,11 @@ impl FnCx<'_, '_> {
         // error about inferring them.
         let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
         self.default_slots(c, &mut slots);
-        let type_args = self.solve_slots(c, &slots, quiet, span);
+        let sites: Vec<(TyId, TyId, Span)> = (c.params.iter().zip(&checked))
+            .map(|(p, h)| (p.ty, h.ty, h.span))
+            .collect();
+        let type_args = self.solve_slots(c, &slots, quiet, span, &sites);
+        let before = self.cx.diags.len();
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let outer = self.cx.type_level.use_site.replace(h.span);
@@ -205,6 +209,7 @@ impl FnCx<'_, '_> {
         let outer = self.cx.type_level.use_site.replace(span);
         let ret = self.cx.subst(c.ret, &type_args);
         self.cx.type_level.use_site = outer;
+        self.instance_context(c, before, &type_args, span);
         Checked {
             args: hargs,
             ret,
@@ -597,76 +602,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
-    /// of the known ones.
-    pub(super) fn solve_slots(
-        &mut self,
-        c: &Callable,
-        slots: &[Option<TyId>],
-        quiet: bool,
-        span: Span,
-    ) -> Vec<TyId> {
-        let mut out = vec![];
-        if !quiet {
-            self.report_uninferred(c, slots, span);
-        }
-        for (k, s) in slots.iter().enumerate() {
-            let name = c
-                .slot_names
-                .get(k)
-                .cloned()
-                .unwrap_or_else(|| format!("T{k}"));
-            let Some(t) = *s else {
-                out.push(self.cx.ty.error);
-                continue;
-            };
-            let bounds = c.bounds.get(k).cloned().unwrap_or_default();
-            for b in bounds {
-                let b = Bound {
-                    iface: b.iface,
-                    args: b
-                        .args
-                        .iter()
-                        .map(|a| self.cx.subst_known(*a, slots))
-                        .collect(),
-                };
-                let in_scope = self.bounds.clone();
-                if !self.cx.satisfies(t, &b, &in_scope) {
-                    let tn = self.cx.display(t);
-                    let bn = self
-                        .cx
-                        .iface(b.iface)
-                        .map(|i| i.name.clone())
-                        .unwrap_or_default();
-                    let mut d = Diagnostic::error(
-                        format!("the type `{tn}` does not implement `{bn}`"),
-                        span,
-                    )
-                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
-                    if let Some(i) = self
-                        .cx
-                        .iface(b.iface)
-                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
-                    {
-                        let fields: Vec<String> = i
-                            .fields
-                            .iter()
-                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
-                            .collect();
-                        d = d.with_note(format!(
-                            "`{bn}` has only fields: a type satisfies it by having them ({})",
-                            fields.join(", ")
-                        ));
-                    }
-                    self.cx.error(d);
-                }
-            }
-            self.check_constraint(c, k, t, slots, &name, span);
-            out.push(t);
-        }
-        out
-    }
-
     /// Slots nothing inferred take their defaults (while the slots before them are known); an
     /// error type parameter nothing fixed (it appears only as a promise's or function's error
     /// type) is `never`.
@@ -706,7 +641,7 @@ impl FnCx<'_, '_> {
     }
 
     /// One error naming every type parameter of `c` that no argument or expected type fixed.
-    fn report_uninferred(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) {
+    pub(super) fn report_uninferred(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) {
         let names: Vec<String> = (0..slots.len())
             .filter(|k| slots[*k].is_none())
             .map(|k| {

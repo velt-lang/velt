@@ -42,20 +42,21 @@ pub(crate) fn reach(cx: &mut Ctx) {
     let mut rounds = Rounds::new(uses.len(), reads);
     // The generic deferred types each function's instances need, with their guard bits
     // (`inst_sites::carry_guard`).
-    let mut needs: FxHashMap<DefId, Vec<(TyId, u64)>> = FxHashMap::default();
+    // With the calls each comes through (`Chain`).
+    let mut needs: FxHashMap<DefId, Vec<(TyId, u64, Chain)>> = FxHashMap::default();
     // The param calls whose receiver is generic in each function.
     let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
     // Concrete deferred types reduced so far.
     let mut reduced: FxHashSet<TyId> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
-        let mut found: Vec<(TyId, u64, Option<Origin>)> = vec![];
+        let mut found: Vec<(TyId, u64, Chain)> = vec![];
         let mut pending: Vec<ParamCall> = u.param_calls.iter().map(|(p, _)| p.clone()).collect();
         for ((d, targs, call), site) in u.calls.iter().zip(&u.guards) {
-            for (k, need) in needs.get(d).into_iter().flatten() {
+            for (k, need, chain) in needs.get(d).into_iter().flatten() {
                 if let Some(g) = carry_guard(cx, *need, targs, *site) {
-                    let origin = Some((*d, targs.clone(), *call));
-                    found.push((at(cx, *k, targs), g, origin));
+                    let chain = through(cx, chain, (*d, targs.clone(), *call));
+                    found.push((at(cx, *k, targs), g, chain));
                 }
             }
             for p in pneeds.get(d).into_iter().flatten() {
@@ -63,16 +64,17 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         for c in &u.closures {
-            found.extend((needs.get(c).into_iter().flatten()).map(|&(k, g)| (k, g, None)));
+            found.extend((needs.get(c).into_iter().flatten()).cloned());
             pending.extend(pneeds.get(c).into_iter().flatten().cloned());
         }
         for (m, args, span) in &u.dyn_calls {
-            for (k, need) in needs.get(m).into_iter().flatten() {
+            for (k, need, chain) in needs.get(m).into_iter().flatten() {
                 let mut ps = vec![];
                 collect_params(&cx.ty, *k, &mut ps);
                 let g = carry_guard(cx, *need, args, 0);
                 if let Some(g) = g.filter(|_| ps.iter().all(|p| (*p as usize) < args.len())) {
-                    found.push((at(cx, *k, args), g, Some((*m, args.clone(), *span))));
+                    let chain = through(cx, chain, (*m, args.clone(), *span));
+                    found.push((at(cx, *k, args), g, chain));
                 }
             }
             for p in pneeds.get(m).into_iter().flatten() {
@@ -80,8 +82,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         let generic = resolve_param_calls(cx, &mut rounds, i, pending, &mut |cx, m, args| {
-            for (k, _) in needs.get(&m).into_iter().flatten() {
-                found.push((at(cx, *k, args), 0, None));
+            for (k, _, _) in needs.get(&m).into_iter().flatten() {
+                found.push((at(cx, *k, args), 0, vec![]));
             }
             let ps = pneeds.get(&m).into_iter().flatten();
             ps.map(|p| p.subst(cx, args)).collect()
@@ -99,24 +101,22 @@ pub(crate) fn reach(cx: &mut Ctx) {
         for (t, _) in &u.types {
             ops_in(cx, *t, &mut walked, &mut own);
         }
-        found.extend(own.into_iter().map(|k| (k, 0, None)));
-        while let Some((k, guard, origin)) = found.pop() {
+        found.extend(own.into_iter().map(|k| (k, 0, vec![])));
+        while let Some((k, guard, chain)) = found.pop() {
             if has_params(cx, k) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(k, guard)) {
-                    n.push((k, guard));
+                if !n.iter().any(|(m, g, _)| *m == k && *g == guard) {
+                    n.push((k, guard, chain));
                     grew = true;
                 }
             } else if reduced.insert(k) {
                 // Reduced, and what the reduced type holds walked in turn.
                 let before = cx.diags.len();
                 let r = cx.reduce_op(k);
-                if let Some(o) = &origin {
-                    instantiated_at(cx, before, o);
-                }
+                instantiated_at(cx, before, &chain);
                 let mut held = vec![];
                 ops_in(cx, r, &mut walked, &mut held);
-                found.extend(held.into_iter().map(|k| (k, 0, origin.clone())));
+                found.extend(held.into_iter().map(|k| (k, 0, chain.clone())));
             }
         }
         if grew {
@@ -129,34 +129,74 @@ pub(crate) fn reach(cx: &mut Ctx) {
 /// arguments and where it is used with them (a call).
 type Origin = (DefId, Vec<TyId>, Span);
 
+/// The instantiations a deferred type comes through, innermost (the definition where it is
+/// written) first: `getA` called by `outer` called with concrete arguments.
+type Chain = Vec<Origin>;
+
+/// `chain` (in the terms of definition `o.0`) reached through the use `o`: its arguments
+/// substituted, then `o` itself.
+fn through(cx: &mut Ctx, chain: &Chain, o: Origin) -> Chain {
+    let mut out: Chain = chain
+        .iter()
+        .map(|(d, args, at)| {
+            let args = args.iter().map(|a| cx.subst(*a, &o.1)).collect();
+            (*d, args, *at)
+        })
+        .collect();
+    out.push(o);
+    out
+}
+
 /// Points the errors from `before` on (reported at the generic definition) at the
-/// instantiation `o` too: a label at the use, and a note with the type arguments.
-fn instantiated_at(cx: &mut Ctx, before: usize, (d, args, at): &Origin) {
+/// instantiations `chain` too: a label at each use, and a note with the type arguments of the
+/// definition the error is in (and of each one it is reached through).
+fn instantiated_at(cx: &mut Ctx, before: usize, chain: &Chain) {
     if cx.diags.len() == before {
         return;
     }
+    let mut labels = vec![];
+    let mut notes = vec![];
+    for (i, o) in chain.iter().enumerate() {
+        let Some((name, list)) = instance_text(cx, o) else {
+            continue;
+        };
+        if o.2 != Span::DUMMY {
+            labels.push(velt_common::Label {
+                span: o.2,
+                message: format!("`{name}` is instantiated here"),
+            });
+        }
+        notes.push(match i {
+            0 => format!("in `{name}` at this instantiation: {list}"),
+            _ => format!("reached through `{name}` at this instantiation: {list}"),
+        });
+    }
+    for d in &mut cx.diags[before..] {
+        d.labels.extend(labels.iter().cloned());
+        d.notes.extend(notes.iter().cloned());
+    }
+}
+
+/// The short name of the generic definition of `o` and its type arguments, as notes show them.
+fn instance_text(cx: &Ctx, (d, args, _): &Origin) -> Option<(String, String)> {
     let (name, names) = match &cx.info[d.0 as usize] {
         DefInfo::Fn(f) => (f.name.clone(), f.generics.names.clone()),
-        _ => return,
+        _ => return None,
     };
     let name = name.rsplit([':', '.']).next().unwrap_or(&name).to_string();
+    Some((name, type_args_text(cx, &names, args)))
+}
+
+/// The type arguments `args` of parameters `names` as notes list them (`T = Pt`, `K = "x"`,
+/// each in backticks).
+pub(crate) fn type_args_text(cx: &Ctx, names: &[String], args: &[TyId]) -> String {
     let shown: Vec<String> = args.iter().map(|a| cx.display(*a)).collect();
-    let list = match names.len() == shown.len() {
+    match names.len() == shown.len() {
         true => (names.iter().zip(&shown))
             .map(|(n, t)| format!("`{n} = {t}`"))
             .collect::<Vec<_>>()
             .join(", "),
         false => format!("`<{}>`", shown.join(", ")),
-    };
-    let note = format!("in `{name}` at this instantiation: {list}");
-    for d in &mut cx.diags[before..] {
-        if *at != Span::DUMMY {
-            d.labels.push(velt_common::Label {
-                span: *at,
-                message: format!("`{name}` is instantiated here"),
-            });
-        }
-        d.notes.push(note.clone());
     }
 }
 

@@ -10,6 +10,7 @@ use velt_syntax::ast;
 
 use super::args::Callable;
 use crate::body::FnCx;
+use crate::defs::Bound;
 use crate::hir::{TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -67,23 +68,30 @@ impl FnCx<'_, '_> {
         slots[k] = Some(self.cx.union_of(&[prev, t], false, Span::DUMMY));
     }
 
-    /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound.
-    pub(super) fn check_constraint(
+    /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound (false),
+    /// at the first argument of a parameter `Param(k)` whose own type breaks it (the `"w"` of
+    /// `swap(p, "x", "w")`), else at the call.
+    fn check_constraint(
         &mut self,
         c: &Callable,
         k: usize,
         t: TyId,
-        slots: &[Option<TyId>],
+        (slots, sites): (&[Option<TyId>], &[(TyId, TyId, Span)]),
         name: &str,
         span: Span,
-    ) {
+    ) -> bool {
         let Some(bound) = c.constraints.get(k).copied().flatten() else {
-            return;
+            return true;
         };
         let bound = self.cx.subst_known(bound, slots);
         if self.constraint_holds(t, bound) {
-            return;
+            return true;
         }
+        let at = sites.iter().find(|&&(p, a, _)| {
+            matches!(self.cx.ty.kind(p), TyKind::Param(j) if *j as usize == k)
+                && !self.constraint_holds(a, bound)
+        });
+        let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
         let tn = self.cx.display(t);
         let bn = self.cx.display(bound);
         self.cx.error(
@@ -93,6 +101,112 @@ impl FnCx<'_, '_> {
             )
             .with_note(format!("required by `{name} extends {bn}` of {}", c.what)),
         );
+        false
+    }
+
+    /// Points the errors from `before` on that the type arguments of a call (at `span`) to `c`
+    /// cause outside it (where a deferred type of the signature is written) at the call: a
+    /// label and a note with the type arguments, as for an error in the callee's body
+    /// (`type_level::instances`).
+    pub(super) fn instance_context(
+        &mut self,
+        c: &Callable,
+        before: usize,
+        type_args: &[TyId],
+        span: Span,
+    ) {
+        if self.cx.diags.len() == before || type_args.is_empty() {
+            return;
+        }
+        let name = c.what.split('`').nth(1).unwrap_or(&c.what).to_string();
+        let list = crate::type_level::instances::type_args_text(self.cx, &c.slot_names, type_args);
+        let inside = |s: Span| s.file == span.file && s.lo >= span.lo && s.hi <= span.hi;
+        for d in &mut self.cx.diags[before..] {
+            if d.labels.first().is_none_or(|l| inside(l.span)) {
+                continue;
+            }
+            d.labels.push(velt_common::Label {
+                span,
+                message: format!("`{name}` is instantiated here"),
+            });
+            d.notes
+                .push(format!("in `{name}` at this instantiation: {list}"));
+        }
+    }
+
+    /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
+    /// of the known ones (`sites`: each argument's parameter type, type and span). A slot whose
+    /// type bound is broken is an error type.
+    pub(super) fn solve_slots(
+        &mut self,
+        c: &Callable,
+        slots: &[Option<TyId>],
+        quiet: bool,
+        span: Span,
+        sites: &[(TyId, TyId, Span)],
+    ) -> Vec<TyId> {
+        let mut out = vec![];
+        if !quiet {
+            self.report_uninferred(c, slots, span);
+        }
+        for (k, s) in slots.iter().enumerate() {
+            let name = c
+                .slot_names
+                .get(k)
+                .cloned()
+                .unwrap_or_else(|| format!("T{k}"));
+            let Some(t) = *s else {
+                out.push(self.cx.ty.error);
+                continue;
+            };
+            let bounds = c.bounds.get(k).cloned().unwrap_or_default();
+            for b in bounds {
+                let b = Bound {
+                    iface: b.iface,
+                    args: b
+                        .args
+                        .iter()
+                        .map(|a| self.cx.subst_known(*a, slots))
+                        .collect(),
+                };
+                let in_scope = self.bounds.clone();
+                if !self.cx.satisfies(t, &b, &in_scope) {
+                    let tn = self.cx.display(t);
+                    let bn = self
+                        .cx
+                        .iface(b.iface)
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
+                    let mut d = Diagnostic::error(
+                        format!("the type `{tn}` does not implement `{bn}`"),
+                        span,
+                    )
+                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    if let Some(i) = self
+                        .cx
+                        .iface(b.iface)
+                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
+                    {
+                        let fields: Vec<String> = i
+                            .fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
+                            .collect();
+                        d = d.with_note(format!(
+                            "`{bn}` has only fields: a type satisfies it by having them ({})",
+                            fields.join(", ")
+                        ));
+                    }
+                    self.cx.error(d);
+                }
+            }
+            // A call breaking a constraint is not instantiated (no errors from its body).
+            match self.check_constraint(c, k, t, (slots, sites), &name, span) {
+                true => out.push(t),
+                false => out.push(self.cx.ty.error),
+            }
+        }
+        out
     }
 
     /// Does `t` satisfy type bound `bound`? A type parameter of the function being checked

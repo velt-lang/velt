@@ -589,3 +589,23 @@ fn mapped_types_and_indexed_access_over_records() {
         ],
     );
 }
+
+#[test]
+fn a_call_breaking_a_key_constraint_is_not_instantiated() {
+    // One error, at the argument that widened `K` (as tsc reports it), and none from the body.
+    let e = err_src(
+        "function swap<T extends object, K extends keyof T>(o: T, a: K, b: K): void {
+           const t = o[a]; o[a] = o[b]; o[b] = t;
+         }
+         function get<T extends object, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
+         type Pt = { x: number; y: number };
+         function main() { const p: Pt = { x: 1, y: 2 }; swap(p, \"x\", \"w\"); get(p, \"w\"); }",
+    );
+    assert_eq!(e.matches("error:").count(), 2, "{e}");
+    assert_eq!(
+        e.matches("does not satisfy the constraint").count(),
+        2,
+        "{e}"
+    );
+    assert!(!e.contains("has no field"), "{e}");
+}

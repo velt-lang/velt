@@ -1111,7 +1111,10 @@ absent optional field, `"number"` for a present one). A key type of several keys
 writes the field the key holds when those fields have one type (`k: "x" | "y"` on
 `{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
 error at that instantiation. An error at an instantiation is reported in the generic function,
-where the failing form is, with the call that instantiates it and the type arguments. An alias
+where the failing form is, with the call that instantiates it and the type arguments (and each
+call on the way, when another generic function's body makes the call). A call whose argument
+breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that
+argument, as in TypeScript, and is not instantiated. An alias
 declared in a generic function's body may name the function's type parameters.
 
 ```ts
