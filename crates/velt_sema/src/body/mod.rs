@@ -49,6 +49,7 @@ mod for_any;
 mod for_await;
 mod for_iter;
 mod for_map;
+mod gated;
 mod generators;
 mod late_consts;
 pub(crate) mod literal_hosts;
@@ -199,6 +200,12 @@ pub(crate) const ADOPT_LABEL: &str = "<adopt>";
 #[derive(Clone)]
 pub(crate) struct Frame {
     pub kind: FnKind,
+    /// The CPU extension this function is gated on (`__intrinsic_target`, `body::gated`): it
+    /// may call the gated functions of that target. A closure's frame starts without it.
+    pub target: Option<crate::hir::CpuTarget>,
+    /// The checks of CPU extensions that hold where the code being checked runs: the `then`
+    /// branches of the `if (u32x4.hasShaArm())` being checked, innermost last.
+    pub cpu_guards: Vec<crate::hir::CpuTarget>,
     pub locals: Vec<LocalDef>,
     pub kinds: Vec<LocalKind>,
     pub scopes: Vec<Scope>,
@@ -339,6 +346,8 @@ impl Frame {
     pub fn new(kind: FnKind, ret: Option<TyId>) -> Self {
         Frame {
             kind,
+            target: None,
+            cpu_guards: vec![],
             locals: vec![],
             kinds: vec![],
             scopes: vec![Scope::default()],
