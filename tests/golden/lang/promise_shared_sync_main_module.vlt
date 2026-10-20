@@ -3,7 +3,8 @@
 // holder of each to a spawned call (#212). The promises run on the task that code outside a
 // task hands them to; once `main` returns, that task takes the module lock like every task
 // that may reach module state, so the workers that read the same holders from the `Map` and
-// mutate their results never run at the same time as it. Node prints the same.
+// mutate their results never run at the same time as it. The interval keeps the process alive
+// until the results are printed (#1366). Node prints the same.
 class Obj {
   n: number;
   items: number[] = [];
@@ -33,7 +34,7 @@ async function worker(k: string): Promise<number> {
 async function use(p: Promise<Obj>): Promise<number> {
   return (await p).n;
 }
-async function report(ws: Promise<number>[], us: Promise<number>[]): Promise<void> {
+async function report(ws: Promise<number>[], us: Promise<number>[], keep: Timer): Promise<void> {
   let w = 0;
   for (const t of ws) {
     w += await t;
@@ -43,10 +44,12 @@ async function report(ws: Promise<number>[], us: Promise<number>[]): Promise<voi
     u += await t;
   }
   console.log("workers", w, "holders", u);
+  clearInterval(keep);
 }
 function main() {
   const ws: Promise<number>[] = [];
   const us: Promise<number>[] = [];
+  const keep = setInterval(async () => {}, 1000);
   for (let i = 0; i < 100; i++) {
     const k = `k${i}`;
     cache.set(k, make(i));
@@ -54,6 +57,6 @@ function main() {
     ws.push(spawn(worker(k)));
     us.push(spawn(use(q)));
   }
-  spawn(report(ws, us));
+  spawn(report(ws, us, keep));
   console.log("main done");
 }
