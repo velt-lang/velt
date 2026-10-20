@@ -70,7 +70,7 @@ impl Ctx<'_> {
             .find(|m| !self.ty.is_bottom(*m) && !allowed.iter().any(|b| self.error_fits(*m, *b)));
         // An error-set variable outside a bound (`throws::vars`).
         if out.is_some_and(|m| self.err_var(m).is_some()) {
-            self.fn_sites.doubt.set(true);
+            self.fn_sites.set_doubt();
         }
         out
     }

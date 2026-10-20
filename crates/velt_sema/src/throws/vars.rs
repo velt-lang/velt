@@ -21,9 +21,12 @@
 //! written without variables) assume the variables they meet are empty; when one is not, or a
 //! function value's error type differs from the site's set it was stored as, the program is
 //! checked again with the solved sets written in, as before (`FnSites::fallback`). When the
-//! check reports errors and a type with a variable failed a comparison or was shown in a
-//! diagnostic, the program is checked again without variables too (`FnSites::doubted`): its
-//! errors are then exactly those of a check without them.
+//! check reports errors and two types that differ in more than their variables were compared
+//! where they must be one type, or a variable was outside a bound, the program is checked
+//! again without variables too (`FnSites::doubted`): its errors are then exactly those of a
+//! check without them. A conversion that fails with the variables and as written fails
+//! without them too, and diagnostics show a type with variables as written (a variable as
+//! nothing), so neither raises that doubt.
 
 use rustc_hash::FxHashMap;
 
@@ -45,6 +48,9 @@ pub(crate) struct VarSets {
     exact: Vec<(u32, TyId)>,
     /// `t` with every variable replaced by `never` (the type as written).
     plain: FxHashMap<TyId, TyId>,
+    /// The earliest type id each plain or solved type stands for: the id it would have in a
+    /// check without variables, as far as the order goes (`Ctx::solved_union`).
+    first: FxHashMap<TyId, u32>,
     /// Memo of `mentions_err_var`.
     mentions: FxHashMap<TyId, bool>,
     /// Something the variables can't express was met: check again with the solved sets.
@@ -52,9 +58,21 @@ pub(crate) struct VarSets {
 }
 
 impl VarSets {
-    /// Is `t` known to mention a variable (without computing it)?
-    pub(super) fn known_to_mention(&self, t: TyId) -> bool {
-        self.mentions.get(&t) == Some(&true)
+    /// `p` is the plain or solved form of `t`.
+    fn note_first(&mut self, p: TyId, t: TyId) {
+        let k = self.order_key(p).min(self.order_key(t));
+        self.first.insert(p, k);
+    }
+
+    /// Where `t` sorts among a union's members: the id of the type it is without variables
+    /// when that is known, else its own (`Ctx::solved_union`).
+    pub(crate) fn order_key(&self, t: TyId) -> u32 {
+        self.first.get(&t).copied().unwrap_or(t.0)
+    }
+
+    /// `t`, a site's type with a variable, is `plain` as written.
+    pub(super) fn note_written(&mut self, t: TyId, plain: TyId) {
+        self.first.insert(t, plain.0);
     }
 
     fn ensure(&mut self, v: u32) {
@@ -103,6 +121,11 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `t` an error-set variable?
+    pub(crate) fn is_err_var(&self, t: TyId) -> bool {
+        self.err_var(t).is_some()
+    }
+
     /// Does `t` mention an error-set variable (also as a member of a union in it)?
     pub(crate) fn mentions_err_var(&mut self, t: TyId) -> bool {
         if self.fn_sites.vars.is_empty() {
@@ -136,15 +159,16 @@ impl Ctx<'_> {
             self.ty.never
         } else if !self.mentions_err_var(t) {
             t
-        } else if let Some(ms) = self.union_members(t) {
-            let ms: Vec<TyId> = ms.into_iter().map(|m| self.plain_type(m)).collect();
-            self.error_union(&ms).unwrap_or(self.ty.never)
+        } else if let Some(orig) = self.union_members(t) {
+            let ms: Vec<TyId> = orig.iter().map(|m| self.plain_type(*m)).collect();
+            self.solved_union(&orig, &ms)
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.plain_type(x));
             self.ty.intern(k)
         };
         self.fn_sites.var_sets.plain.insert(t, p);
+        self.fn_sites.var_sets.note_first(p, t);
         p
     }
 
@@ -171,9 +195,31 @@ impl Ctx<'_> {
         }
         let same = self.unify_err_vars(a, b);
         if !same && (self.mentions_err_var(a) || self.mentions_err_var(b)) {
-            self.fn_sites.doubt.set(true);
+            self.fn_sites.set_doubt();
         }
         same
+    }
+
+    /// Are `a` and `b` pairwise equal but for their variables? Then they are unified.
+    pub(crate) fn unify_err_var_lists(&mut self, a: &[TyId], b: &[TyId]) -> bool {
+        if !self.fn_sites.use_vars || a.len() != b.len() {
+            return false;
+        }
+        let pairs: Vec<(TyId, TyId)> = a.iter().copied().zip(b.iter().copied()).collect();
+        let mut vars = false;
+        for &(x, y) in &pairs {
+            vars |= x != y && (self.mentions_err_var(x) || self.mentions_err_var(y));
+            if self.plain_type(x) != self.plain_type(y) {
+                return false;
+            }
+        }
+        if !vars {
+            return false;
+        }
+        for (x, y) in pairs {
+            self.unify_parts(x, y, 0);
+        }
+        true
     }
 
     /// [`same_ty`](Self::same_ty) for each pair (all of them unified).
@@ -363,16 +409,56 @@ impl Ctx<'_> {
         if !self.mentions_err_var(t) {
             return t;
         }
-        let s = if let Some(ms) = self.union_members(t) {
-            let ms: Vec<TyId> = ms.into_iter().map(|m| self.solved_type(m)).collect();
-            self.error_union(&ms).unwrap_or(self.ty.never)
+        let s = if let Some(orig) = self.union_members(t) {
+            let ms: Vec<TyId> = orig.iter().map(|m| self.solved_type(*m)).collect();
+            self.solved_union(&orig, &ms)
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.solved_type(x));
             self.ty.intern(k)
         };
         self.fn_sites.solved.insert(t, s);
+        self.fn_sites.var_sets.note_first(s, t);
         s
+    }
+
+    /// The union of `ms`, the solved (or plain) forms of the members `orig` of a union with
+    /// variables. A union's members are ordered by type id, and a solved member is interned
+    /// later than the type it would be without variables: a new union def made here orders
+    /// each member by the earlier of the two ids, the order it has without variables (and the
+    /// order of its variants in VIR).
+    fn solved_union(&mut self, orig: &[TyId], ms: &[TyId]) -> TyId {
+        let before = self.unions.len();
+        let u = self.error_union(ms).unwrap_or(self.ty.never);
+        if self.unions.len() == before {
+            return u;
+        }
+        let Some((d, args)) = self.union_def(u) else {
+            return u;
+        };
+        let plain = |cx: &Self, t: TyId| {
+            cx.union_def(t).is_none()
+                && !matches!(
+                    cx.ty.kind(t),
+                    TyKind::Option(..) | TyKind::Never | TyKind::Unit
+                )
+        };
+        if !args.is_empty() || !ms.iter().all(|m| plain(self, *m)) {
+            return u;
+        }
+        let mut order: Vec<(u32, TyId)> = vec![];
+        for (&o, &m) in orig.iter().zip(ms) {
+            let vs = &self.fn_sites.var_sets;
+            let key = vs.order_key(m).min(vs.order_key(o));
+            match order.iter_mut().find(|(_, x)| *x == m) {
+                Some(e) => e.0 = e.0.min(key),
+                None => order.push((key, m)),
+            }
+        }
+        order.sort_by_key(|(k, _)| *k);
+        let order: Vec<TyId> = order.into_iter().map(|(_, m)| m).collect();
+        self.reorder_union_def(d, &order);
+        u
     }
 
     /// Every interned type that mentions a variable, with its solved form (for

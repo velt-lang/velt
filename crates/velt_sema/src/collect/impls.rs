@@ -98,7 +98,8 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Ve
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
             .map(|i| (i, cx.adt(p.d).expect("ICE: adt").fields[i].ty));
-        if let Some((i, ty)) = have.filter(|(_, ty)| *ty == want) {
+        // The same type, or the same but for error-set variables (`throws::vars`).
+        if let Some((i, ty)) = have.filter(|(_, ty)| cx.same_ty(*ty, want)) {
             let g = match cache.get(&(p.d, i)) {
                 Some(&g) => g,
                 None => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),

@@ -125,7 +125,7 @@ impl Ctx<'_> {
     /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
         if let TyOp::ErrSite(_) = o {
-            return self.fn_sites.shown_var();
+            return "never".to_string(); // As written: it throws nothing (`throws::vars`).
         }
         let args: Vec<String> = args.iter().map(|t| self.display_in(*t, names)).collect();
         let TyOp::Alias(a) = o else {

@@ -335,7 +335,8 @@ impl FnCx<'_, '_> {
         let Some((index, iargs, imp_ty)) = self.cx.find_impl(h.ty, iface) else {
             return Err(h);
         };
-        if iargs != args {
+        // Arguments that differ only in their error-set variables are one (`throws::vars`).
+        if iargs != args && !self.cx.unify_err_var_lists(&iargs, args) {
             // A value implementing `I<A>`: an `I<A>` first, then adapted.
             if !self.iface_adapts(iface, &iargs, args) {
                 return Err(h);
@@ -382,9 +383,6 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
-        if self.cx.mentions_err_var(expected) || self.cx.mentions_err_var(found.ty) {
-            self.cx.fn_sites.doubt.set(true);
-        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }

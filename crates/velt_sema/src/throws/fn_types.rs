@@ -85,7 +85,7 @@ pub(crate) struct FnSites {
     /// Each variable's solved error type, once solved (`never` for an empty set).
     pub solved: HashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
-    pub(super) var_sets: super::vars::VarSets,
+    pub(crate) var_sets: super::vars::VarSets,
     /// A type with a variable failed a comparison or a bound: when the check reports errors,
     /// they may come from the variables ([`FnSites::doubted`]).
     pub doubt: std::cell::Cell<bool>,
@@ -129,17 +129,10 @@ impl FnSites {
         })
     }
 
-    /// A diagnostic shows type `t`: when it holds a variable, the errors are in doubt.
-    pub fn note_shown(&self, t: TyId) {
-        if self.use_vars && self.var_sets.known_to_mention(t) {
-            self.doubt.set(true);
-        }
-    }
-
-    /// A diagnostic shows a variable itself (as `Error`): the errors are in doubt.
-    pub fn shown_var(&self) -> String {
+    /// A type with a variable failed a comparison: the errors are in doubt
+    /// ([`FnSites::doubted`]).
+    pub fn set_doubt(&self) {
         self.doubt.set(true);
-        "Error".to_string()
     }
 
     /// Is this the last check, whatever it finds?
@@ -181,8 +174,10 @@ impl Ctx<'_> {
             None if self.fn_sites.use_vars => self.site_var(span, env.module),
             None => self.site_error(span, env.module),
         };
+        let var_site = inferred && err.is_some() && self.fn_sites.use_vars;
         let inferred = inferred && err.is_some() && !self.fn_sites.use_vars;
         let err = err.unwrap_or(never);
+        let plain_ret = ret;
         let throws = match self.ty.kind(ret).clone() {
             TyKind::Promise(v, e) if err != never => {
                 let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
@@ -198,6 +193,19 @@ impl Ctx<'_> {
         });
         if throws_clause.is_none() {
             self.record_fn_site(span, env.module, t);
+        }
+        // The type as written is interned here too, as in a check without variables: unions
+        // order their members by it (`throws::vars`).
+        if var_site {
+            let TyKind::FnPtr { params, .. } = self.ty.kind(t).clone() else {
+                unreachable!("ICE: a function type");
+            };
+            let plain = self.ty.intern(TyKind::FnPtr {
+                params,
+                ret: plain_ret,
+                throws: never,
+            });
+            self.fn_sites.var_sets.note_written(t, plain);
         }
         if inferred {
             self.fn_sites.inferred.insert(t);

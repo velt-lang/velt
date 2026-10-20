@@ -634,7 +634,6 @@ impl<'m> Ctx<'m> {
 
     /// Display `t` with `Param(i)` named `names[i]`.
     pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
-        self.fn_sites.note_shown(t);
         let list = |s: &Self, ts: &[TyId]| {
             ts.iter()
                 .map(|t| s.display_in(*t, names))
@@ -681,7 +680,10 @@ impl<'m> Ctx<'m> {
             TyKind::Option(t, n) if *t == self.ty.never => n.suffix()[3..].to_string(),
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
-            TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
+            // A variable is shown as written: nothing (`throws::vars`).
+            TyKind::Promise(t, e) if *e == self.ty.never || self.is_err_var(*e) => {
+                with_args(self, "Promise", &[*t])
+            }
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
             TyKind::Shared(t) => with_args(self, "shared", &[*t]),
             TyKind::FnPtr {
@@ -691,11 +693,9 @@ impl<'m> Ctx<'m> {
             } => {
                 let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
                 // A function type written without `throws`, as written (`throws::fn_types`).
-                let var = |x: TyId| {
-                    matches!(self.ty.kind(x), TyKind::Op(crate::hir::TyOp::ErrSite(_), _))
-                };
-                let promise_var = matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if var(*e));
-                if self.fn_sites.inferred.contains(&t) || var(*throws) || promise_var {
+                let promise_var =
+                    matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));
+                if self.fn_sites.inferred.contains(&t) || self.is_err_var(*throws) || promise_var {
                     let ret = match self.ty.kind(*ret) {
                         TyKind::Promise(v, _) => {
                             format!("Promise<{}>", self.display_in(*v, names))

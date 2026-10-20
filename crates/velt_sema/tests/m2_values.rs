@@ -373,6 +373,11 @@ fn closures_and_function_values_carry_error_types() {
          }",
     );
     assert!(func(&p, "main").throws.is_none(), "caught");
+    // Diagnostics show such a type as written, without what it may throw.
+    let r =
+        err_src("function main() { let g: (n: i64) => void = (n) => {}; const s: string = g; }");
+    assert!(r.contains("found (i64) => void"), "{r}");
+    assert!(!r.contains("throws"), "{r}");
     // A written `throws` clause still bounds what may be stored.
     let r = err_src(
         "class A extends Error {} function run(f: () => void throws A) { f(); }
