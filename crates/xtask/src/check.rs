@@ -306,11 +306,14 @@ impl Gate<'_> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
         };
+        // In CI, nextest's `ci` profile writes a JUnit report (.config/nextest.toml).
+        let mut junit = None;
         let mut tests = if has_nextest() {
             let mut c = cargo(&["nextest", "run"]);
             c.args(ws).args(["--no-tests", "pass", "-E", &filterset]);
             if std::env::var_os("CI").is_some() {
                 c.args(["--profile", "ci"]);
+                junit = Some(target_dir(self.root).join("nextest/ci/junit.xml"));
             }
             c
         } else {
@@ -328,7 +331,14 @@ impl Gate<'_> {
             tests.env("VELT_GOLDEN", filter);
         }
         tests.envs(plan.sweep_env());
-        self.step("unit + integration tests", &mut tests)?;
+        if let Some(report) = &junit {
+            let _ = std::fs::remove_file(report);
+        }
+        let result = self.step("unit + integration tests", &mut tests);
+        if let (Err(_), Some(report)) = (&result, &junit) {
+            summarize_failed_tests(report);
+        }
+        result?;
         if plan.rust {
             let crates = doctests::crates_with_doctests(self.root, &graph.dirs);
             let selected: Vec<&String> = crates
@@ -418,6 +428,66 @@ impl Gate<'_> {
         }
         println!("  {total:>5}s  total");
     }
+}
+
+/// Lists the failed tests of a nextest JUnit report in the job summary (`$GITHUB_STEP_SUMMARY`),
+/// so a failure is attributable from the run's page. Best effort: without the report or the
+/// summary file there is nothing to add to nextest's own output.
+fn summarize_failed_tests(report: &Path) {
+    let (Some(summary), Ok(xml)) = (
+        std::env::var_os("GITHUB_STEP_SUMMARY"),
+        std::fs::read_to_string(report),
+    ) else {
+        return;
+    };
+    let failed = junit_failures(&xml);
+    if failed.is_empty() {
+        return;
+    }
+    let mut text = format!(
+        "### {} failed tests ({})\n\n",
+        failed.len(),
+        std::env::consts::OS
+    );
+    for test in &failed {
+        text += &format!("- `{test}`\n");
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(summary)
+    {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
+/// The test cases a JUnit report records as failed (a `<failure>` or `<error>` child), as
+/// `classname name` (nextest: `velt_sema::scaling sema_time_grows_linearly`).
+fn junit_failures(xml: &str) -> Vec<String> {
+    let mut failed = vec![];
+    for case in xml.split("<testcase ").skip(1) {
+        if !(case.contains("<failure") || case.contains("<error")) {
+            continue;
+        }
+        let tag = format!(" {}", &case[..case.find('>').unwrap_or(case.len())]);
+        let attr = |name: &str| {
+            let key = format!(" {name}=\"");
+            let Some(start) = tag.find(&key).map(|i| i + key.len()) else {
+                return String::new();
+            };
+            let value = &tag[start..];
+            let value = &value[..value.find('"').unwrap_or(value.len())];
+            value
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&amp;", "&")
+        };
+        failed.push(format!("{} {}", attr("classname"), attr("name")));
+    }
+    failed
 }
 
 pub(crate) fn cargo(args: &[&str]) -> Command {
@@ -542,4 +612,35 @@ pub(crate) fn show(cmd: &Command) -> String {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod junit_tests {
+    use super::junit_failures;
+
+    #[test]
+    fn failed_cases_are_named_by_class_and_name() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="3" failures="1" errors="1">
+    <testsuite name="velt_sema::scaling" tests="2" failures="1">
+        <testcase name="sema_time_grows_linearly" classname="velt_sema::scaling" time="17.5">
+            <failure type="test failure">thread panicked: &lt;grew&gt;</failure>
+        </testcase>
+        <testcase name="instantiation_work_grows_linearly" classname="velt_sema::scaling" time="1.0"/>
+    </testsuite>
+    <testsuite name="xtask" tests="1" errors="1">
+        <testcase name="a &amp; b &lt;T&gt;" classname="xtask" time="0.1">
+            <error type="test abort">SIGSEGV</error>
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+        assert_eq!(
+            junit_failures(xml),
+            [
+                "velt_sema::scaling sema_time_grows_linearly",
+                "xtask a & b <T>"
+            ]
+        );
+        assert!(junit_failures("<testsuites/>").is_empty());
+    }
 }

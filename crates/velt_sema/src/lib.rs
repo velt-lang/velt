@@ -321,6 +321,7 @@ fn check_on_current_thread(
         any,
         gen_throw,
         super_calls,
+        cpu_targets,
         ..
     } = cx;
     let defs = defs
@@ -346,6 +347,7 @@ fn check_on_current_thread(
         dyn_members: dyn_members.map(|m| m.into_iter().collect()),
         generator_throw: gen_throw,
         super_calls: super_calls.into_iter().collect(),
+        cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)
 }

@@ -260,7 +260,15 @@ impl FnCx<'_, '_> {
         // Each branch starts from the state before the `if` with the condition's facts assumed,
         // and ends with what still holds there: a branch's own assignments win over the facts it
         // started from (#1226). Those end states are joined below.
+        // `if (u32x4.hasShaX86())`: the `then` branch may call functions gated on it.
+        let guard = self.cpu_guard(&c);
+        if let Some(g) = guard {
+            self.f.cpu_guards.push(g);
+        }
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
+        if guard.is_some() {
+            self.f.cpu_guards.pop();
+        }
         then_facts.iter().for_each(|f| self.narrow(f));
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
