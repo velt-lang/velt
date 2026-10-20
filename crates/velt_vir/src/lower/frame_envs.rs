@@ -20,43 +20,86 @@
 //! called when the closure value is dropped. Its clone and transfer entries are null: nothing
 //! copies or transfers a closure that is only called.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S};
 
-/// The closures of `f`'s body that get a frame environment.
-pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
+/// The closures of `f`'s body that get a frame environment, and the
+/// `Intrinsic::ClosureSibling` locals of a group member's body that are only ever called
+/// (with the member they hold): such a call goes straight to that member's code with the
+/// running closure's env (callee.rs `call_indirect`), and the local is never made.
+pub(super) fn scan(
+    hir: &hir::Program,
+    f: &hir::FnDef,
+) -> (FxHashSet<DefId>, FxHashMap<LocalId, DefId>) {
     let mut s = Scan {
         hir,
-        lets: HashMap::new(),
-        uses: HashMap::new(),
-        calls: HashMap::new(),
-        captured: HashSet::new(),
-        immediate: HashSet::new(),
+        lets: FxHashMap::default(),
+        siblings: FxHashMap::default(),
+        uses: FxHashMap::default(),
+        calls: FxHashMap::default(),
+        captured: FxHashSet::default(),
+        immediate: FxHashSet::default(),
     };
     s.block(&f.body.block);
     let mut out = s.immediate;
     for (local, def) in s.lets {
+        // A member of a recursive closure group shares its env with the members it makes.
+        if matches!(hir.def(def), hir::Def::Fn(c) if group_member(c)) {
+            continue;
+        }
         let uses = s.uses.get(&local).copied().unwrap_or(0);
         let calls = s.calls.get(&local).copied().unwrap_or(0);
         if uses == calls && !s.captured.contains(&local) {
             out.insert(def);
         }
     }
-    out
+    let only_called = |l: &LocalId| {
+        s.uses.get(l).copied().unwrap_or(0) == s.calls.get(l).copied().unwrap_or(0)
+            && !s.captured.contains(l)
+    };
+    let siblings = s
+        .siblings
+        .iter()
+        .filter(|(l, _)| only_called(l))
+        .map(|(l, d)| (*l, *d))
+        .collect();
+    (out, siblings)
+}
+
+/// Is closure `f` a member of a recursive closure group (its body starts with the
+/// `Intrinsic::ClosureSibling` lets of the members it uses)?
+pub(super) fn group_member(f: &hir::FnDef) -> bool {
+    f.body.block.stmts.iter().any(|s| {
+        matches!(
+            &s.kind,
+            hir::StmtKind::Let {
+                init: Some(hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        callee: hir::Callee::Intrinsic(hir::Intrinsic::ClosureSibling(_)),
+                        ..
+                    },
+                    ..
+                }),
+                ..
+            }
+        )
+    })
 }
 
 struct Scan<'h> {
     hir: &'h hir::Program,
     /// Locals initialized with a closure literal.
-    lets: HashMap<LocalId, DefId>,
+    lets: FxHashMap<LocalId, DefId>,
+    /// Locals initialized with `Intrinsic::ClosureSibling`.
+    siblings: FxHashMap<LocalId, DefId>,
     /// Per local: every use, and the uses that are the callee of a call.
-    uses: HashMap<LocalId, usize>,
-    calls: HashMap<LocalId, usize>,
+    uses: FxHashMap<LocalId, usize>,
+    calls: FxHashMap<LocalId, usize>,
     /// Locals some closure captures.
-    captured: HashSet<LocalId>,
+    captured: FxHashSet<LocalId>,
     /// Immediately called closures.
-    immediate: HashSet<DefId>,
+    immediate: FxHashSet<DefId>,
 }
 
 impl Scan<'_> {
@@ -78,10 +121,17 @@ impl Scan<'_> {
         match &s.kind {
             S::Let { local, init } => {
                 if let Some(e) = init {
-                    if let E::Closure(d) = e.kind {
-                        if self.plain(d) {
+                    match e.kind {
+                        E::Closure(d) if self.plain(d) => {
                             self.lets.insert(*local, d);
                         }
+                        E::Call {
+                            callee: Callee::Intrinsic(Intrinsic::ClosureSibling(d)),
+                            ..
+                        } => {
+                            self.siblings.insert(*local, d);
+                        }
+                        _ => {}
                     }
                     self.expr(e);
                 }
@@ -189,7 +239,7 @@ impl Scan<'_> {
 
 /// The direct sub-expressions of `e` (blocks, closures and calls through function values are
 /// handled by the caller).
-fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+pub(super) fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     match &e.kind {
         E::Lit(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) | E::Block(_) => {}
         E::Unary { expr: x, .. }

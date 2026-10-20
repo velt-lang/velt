@@ -1,0 +1,6 @@
+import { value } from "../_module_let_live/counter";
+
+function main() {
+  value = 3;
+  console.log(value);
+}

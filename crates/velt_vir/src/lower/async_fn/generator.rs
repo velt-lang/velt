@@ -55,7 +55,7 @@ pub(in crate::lower) struct GenLocal {
 }
 
 /// Where a generator operand's state is and how to drive it.
-enum GenRef {
+pub(super) enum GenRef {
     /// Inline state at `state` (a pointer): direct calls of the instance's functions.
     Inline { state: Operand, gen: GenLocal },
     /// A generator object (its state at byte `off`): through its table.
@@ -68,15 +68,25 @@ impl Cx<'_> {
     pub(in crate::lower) fn gen_args(&mut self, f: &FnDef, targs: &[TyId]) -> (TyId, TyId) {
         let ret = self.subst(f.ret, targs);
         match self.kind(ret) {
-            TyKind::Adt(_, a) | TyKind::Dyn(_, a) if a.len() == 2 => (a[0], a[1]),
+            TyKind::Adt(_, a) | TyKind::Dyn(_, a) if a.len() >= 2 => (a[0], a[1]),
             _ => crate::lower::ice("generator result is not a generator type"),
         }
     }
 
-    /// `[T, E]` of a `Generator<T, E>` value type.
+    /// `N` of a generator's declared result `Generator<T, E, N>` (`never` for any other),
+    /// substituted.
+    pub(in crate::lower) fn gen_next_arg(&mut self, f: &FnDef, targs: &[TyId]) -> TyId {
+        let ret = self.subst(f.ret, targs);
+        match self.kind(ret) {
+            TyKind::Adt(_, a) if a.len() == 3 => a[2],
+            _ => self.intern(TyKind::Never),
+        }
+    }
+
+    /// `[T, E]` of a `Generator<T, E, N>` value type.
     fn gen_value_args(&mut self, t: TyId) -> (TyId, TyId) {
         match self.kind(t) {
-            TyKind::Adt(_, a) if a.len() == 2 => (a[0], a[1]),
+            TyKind::Adt(_, a) if a.len() >= 2 => (a[0], a[1]),
             _ => crate::lower::ice("generator operand is not a `Generator<T, E>`"),
         }
     }
@@ -105,11 +115,30 @@ impl FnLower<'_, '_> {
         self.actx().cases.push((DONE, b));
     }
 
-    /// `yield v` (`Intrinsic::Yield`) in a generator body (module docs).
-    pub(in crate::lower) fn yield_value(&mut self, v: &hir::Expr) -> Operand {
+    /// `yield v` (`Intrinsic::Yield`) in a generator body (module docs): its value once
+    /// resumed (type `ty`; `dflt` when `next()` passed none, gen_send.rs).
+    pub(in crate::lower) fn yield_value(
+        &mut self,
+        v: &hir::Expr,
+        dflt: Option<&hir::Expr>,
+        ty: TyId,
+    ) -> Operand {
         let value = self.consume(v);
         if self.dead() {
             return unit();
+        }
+        if self.actx().async_gen {
+            // `yield v` awaits `v` first in Node: one step before the request settles.
+            let ty = self.sub(v.ty);
+            let held = match &value {
+                Operand::Copy(p) => Some(p.clone()),
+                _ => None,
+            };
+            self.await_step(|lw| {
+                if let Some(p) = held {
+                    lw.drop_glue(p, ty);
+                }
+            });
         }
         if !matches!(value, Operand::Const(vir::Const::Unit, _)) {
             let p = self.out_place();
@@ -120,9 +149,10 @@ impl FnLower<'_, '_> {
         let yielded = self.gen_code(GEN_YIELDED);
         self.terminate(Terminator::Return(cint(yielded, Ty::U32)));
         self.close_block(k);
+        self.throw_block(k);
         self.switch_to(resume);
         self.set_tag(GEN_RUNNING);
-        unit()
+        self.received(dflt, ty)
     }
 
     /// The dispatch cases of a running generator, resumed (`GEN_RUNNING`, also `CLOSE_BIT |
@@ -142,7 +172,7 @@ impl FnLower<'_, '_> {
     /// The close path of `yield` `k`: what `return;` at the `yield` runs (module docs). In an
     /// async generator it is the `CLOSE_BIT` case (awaited); the `DROP_BIT` case (dropped,
     /// nothing awaits it) is the same unless that cleanup awaits, when it only drops.
-    fn close_block(&mut self, k: i128) {
+    pub(super) fn close_block(&mut self, k: i128) {
         let saved = self.cur;
         let d = self.new_block();
         self.live[d.0 as usize] = true;
@@ -172,7 +202,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The generator operand `g` (a `Generator<T, E>` place).
-    fn gen_ref(&mut self, g: &hir::Expr) -> GenRef {
+    pub(super) fn gen_ref(&mut self, g: &hir::Expr) -> GenRef {
         if let hir::ExprKind::Local(l, _) = &g.kind {
             if let Some(gen) = self.info[l.0 as usize].gen.clone() {
                 let p = self.local_place(*l);
@@ -191,7 +221,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Pointer to the state of `g`.
-    fn gen_state(&mut self, g: &GenRef) -> Operand {
+    pub(super) fn gen_state(&mut self, g: &GenRef) -> Operand {
         match g {
             GenRef::Inline { state, .. } => state.clone(),
             GenRef::Boxed { obj, off } => self.rvalue_temp(
@@ -221,7 +251,7 @@ impl FnLower<'_, '_> {
 
     /// Run `g` to its next `yield` or its end (an async generator: or until it awaits, with the
     /// poll context `cx`): the resume result (`u32`).
-    fn gen_step(&mut self, g: &GenRef, cx: Operand) -> Operand {
+    pub(super) fn gen_step(&mut self, g: &GenRef, cx: Operand) -> Operand {
         let state = self.gen_state(g);
         match g {
             GenRef::Inline { gen, .. } => {
@@ -268,6 +298,10 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
+        // Node awaits the return value first (AsyncGeneratorUnwrapYieldResumption, or
+        // AsyncGeneratorAwaitReturn when the body is not at a `yield`): one step before the
+        // close, in `return()` (std code) too.
+        self.step(|_| {});
         let gr = self.gen_ref(g);
         let state = self.gen_state(&gr);
         match &gr {
@@ -294,7 +328,13 @@ impl FnLower<'_, '_> {
 
     /// The outcome of a resume of `g` that returned `r` (`shift`: 1 for an async generator's
     /// codes): true when a value was yielded; a thrown error is rethrown here.
-    fn gen_result(&mut self, g: &hir::Expr, gr: &GenRef, r: Operand, shift: i128) -> Operand {
+    pub(super) fn gen_result(
+        &mut self,
+        g: &hir::Expr,
+        gr: &GenRef,
+        r: Operand,
+        shift: i128,
+    ) -> Operand {
         let gty = self.sub(g.ty);
         let (t, e) = self.cx.gen_value_args(gty);
         let yielded = self.rvalue_temp(

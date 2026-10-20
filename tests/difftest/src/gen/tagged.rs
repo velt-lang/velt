@@ -53,6 +53,8 @@ impl Gen {
             "\ntype Sh = { kind: \"pt\"; x: i64 } | { kind: \"box\"; x: i64; s: string }",
             " | { kind: \"nil\" };\n",
             "type Lvl = \"lo\" | \"mid\" | \"hi\";\n",
+            "function shOf(s: Sh): Sh {\n  return s;\n}\n",
+            "function lvlOf(l: Lvl): Lvl {\n  return l;\n}\n",
         ));
         self.out.push_str(&format!(
             "enum Col {{ R = \"{}\", G = \"{}\", B = \"{}\" }}\n",
@@ -70,6 +72,19 @@ impl Gen {
         };
         self.out
             .push_str(&format!("enum Num {{ A, {second}, {third} }}\n"));
+    }
+
+    /// `value` as stored into a local of `ty`. A union-typed local is narrowed by what is assigned
+    /// to it (`const c: Lvl = "lo"` has type `"lo"` until the next assignment, in TS and Velt), and
+    /// a tag test the narrowing makes impossible is an error (TS2678, TS2367); the generator
+    /// doesn't track that narrowing, so `Sh` and `Lvl` values go through an identity function
+    /// whose return type is the whole union.
+    pub(super) fn unnarrowed_init(&self, ty: Ty, value: String) -> String {
+        match ty {
+            Ty::Shape => format!("shOf({value})"),
+            Ty::Lvl => format!("lvlOf({value})"),
+            _ => value,
+        }
     }
 
     /// An object literal of a random `Sh` member (only where `Sh` is the expected type).

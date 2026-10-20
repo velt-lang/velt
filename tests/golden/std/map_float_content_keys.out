@@ -1,7 +1,8 @@
-1 b true
-1 null
-p 1
-map
+2 a false
+1 undefined 2
+p false 1
+map false
 true true false
 true false
 assertEq ok
+true false true

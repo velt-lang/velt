@@ -4,7 +4,7 @@ class V { n: number; constructor(n: number) { this.n = n; } }
 interface Peek { peek(): number; }
 interface Local { look(): number; }
 class P implements Peek { n: number; constructor(n: number) { this.n = n; } peek(): number { return this.n; } }
-class W implements Local { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } look(): number { const x = this.r.deref(); return x === null ? -1 : x.n; } }
+class W implements Local { r: WeakRef<V>; constructor(r: WeakRef<V>) { this.r = r; } look(): number { const x = this.r.deref(); return x === undefined ? -1 : x.n; } }
 class Box { p: Peek; constructor(p: Peek) { this.p = p; } }
 async function run(p: Peek): Promise<number> { return p.peek(); }
 function lockWith<T, R>(m: shared<Mutex<T>>, f: (v: T) => R): R { return m.with(f); }

@@ -2,16 +2,18 @@
 //! with TypeScript's object syntax. `K` is `string` (an *open* record: keys may be missing) or a
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!
-//! - `r[k]`, `r.name`: `r.__get(k)` (`V | null`) on open records, `r.__at(k)` (`V`) on closed
+//! - `r[k]`, `r.name`: `r.__get(k)` (`V | undefined`) on open records, `r.__at(k)` (`V`) on closed
 //!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
-//! - `r[k] = v`: `r.__set(k, v)`; `r[k] ??= v` and, on closed records, `r[k] op= v` and
-//!   `++`/`--` are `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects
-//!   (like setters). On open records the arithmetic forms are errors (`record_compound.rs`).
+//! - `r[k] = v`: `r.__set(k, v)`; on closed records `r[k] op= v` and `++`/`--` are
+//!   `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects (like
+//!   setters). On open records the arithmetic forms are errors (`record_compound.rs`).
+//!   `r[k] ??= v`, `||=` and `&&=` read the key once and store only when it does not decide the
+//!   result, on open and closed records (`record_logical.rs`).
 //! - `delete r[k]`: `r.__delete(k)` (open records only).
 //! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
 //!   t.__extend(spread); t }` (`record_literal.rs`).
 //! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
-//!   null`), but cannot start empty (except from a spread) or lose a key.
+//!   undefined`), but cannot start empty (except from a spread) or lose a key.
 //!
 //! Inside the class itself (`this.entries`) none of this applies. The calls and the rule
 //! against writing them by hand are in `record_call.rs`; key types in `crate::record_keys`.
@@ -127,8 +129,8 @@ impl FnCx<'_, '_> {
         false
     }
 
-    /// `target = value` / `target op= value` where `target` is `obj[key]` / `obj.name` of a
-    /// record (`obj` checked).
+    /// `target = value` / `target op= value` (`op` not logical) where `target` is `obj[key]` /
+    /// `obj.name` of a record (`obj` checked).
     #[allow(clippy::too_many_arguments)] // target parts + assignment parts
     pub(super) fn record_assign(
         &mut self,
@@ -143,9 +145,7 @@ impl FnCx<'_, '_> {
         let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
-        // `r[k] ??= v` is defined for a missing key (`r.__set(k, r[k] ?? v)`).
-        let arithmetic = op.filter(|o| *o != ast::BinaryOp::Nullish);
-        if let (Some(bop), None) = (arithmetic, self.record_keys(k)) {
+        if let (Some(bop), None) = (op, self.record_keys(k)) {
             let sym = format!("{}=", super::ops::op_str(bop));
             self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
             self.check_args_loose(std::slice::from_ref(value));

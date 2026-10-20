@@ -1,0 +1,27 @@
+// check: no leaks
+// A variable passed as an `object` key or `WeakRef` target for the last time stays alive to the
+// end of its scope, as a typed one does (issue #926): a fresh `WeakRef` still has its target.
+class K {
+  n = 1;
+}
+
+function keep(o: object): WeakRef<object> {
+  return new WeakRef(o);
+}
+
+function main(): void {
+  const k = new K();
+  const r = new WeakRef<object>(k);
+  console.log(r.deref() !== undefined);
+  const lit = { a: 1 };
+  const r2 = new WeakRef<object>(lit);
+  console.log(r2.deref() !== undefined);
+  const wm = new WeakMap<object, number>();
+  const k3 = new K();
+  wm.set(k3, 1);
+  const r3 = new WeakRef<object>(k3);
+  console.log(r3.deref() !== undefined);
+  const k4 = new K();
+  const r4 = keep(k4);
+  console.log(r4.deref() !== undefined);
+}

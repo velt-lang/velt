@@ -1,0 +1,43 @@
+// A module constant initialized by a call that is not pure (a loop, recursion, an effect, a
+// call through a function value, a non-constant argument) is module state: evaluated once,
+// before main, as in Node.
+
+function sum(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += i;
+  }
+  return s;
+}
+
+function viaSum(): number {
+  return sum(3) + 1;
+}
+
+function fact(n: number): number {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+function logged(): number {
+  console.log("hi");
+  return 1;
+}
+
+function apply(f: (n: number) => number): number {
+  return f(1);
+}
+
+function pick(xs: number[]): number {
+  return xs.length;
+}
+
+const A = viaSum();
+const B = fact(3);
+const C = logged();
+const G = apply((n: number) => n);
+const P = pick([1, 2]);
+
+function main() {
+  console.log("main");
+  console.log(A, B, C, G, P, C);
+}

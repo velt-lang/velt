@@ -2,7 +2,7 @@
 //! key its signature, fingerprint and the pinned functions it refers to; the layouts live data
 //! may have; which keys live data may hold as code addresses; and `main`'s keys.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{Callee, Const, Function, Program, Rvalue, Stmt, Terminator, Ty};
 
@@ -21,15 +21,15 @@ pub(crate) struct FunctionFacts {
 /// Facts about a whole version.
 pub(crate) struct Facts {
     /// By function key (symbol).
-    pub funcs: HashMap<String, FunctionFacts>,
+    pub funcs: FxHashMap<String, FunctionFacts>,
     /// Per layout name: its structural spellings, each with its field count (state machines
     /// excluded: pinned). Generic types have one spelling per instance.
-    pub layouts: HashMap<String, HashMap<String, usize>>,
+    pub layouts: FxHashMap<String, FxHashMap<String, usize>>,
     /// Keys whose address is taken (function values, closures, vtable slots): live data may
     /// still call them after an edit.
-    pub address_taken: HashSet<String>,
+    pub address_taken: FxHashSet<String>,
     /// `velt_main` and the user `main` functions it starts (already running, never re-run).
-    pub main: HashSet<String>,
+    pub main: FxHashSet<String>,
 }
 
 impl Facts {
@@ -37,10 +37,10 @@ impl Facts {
     pub(crate) fn of(program: &Program) -> Facts {
         let canon = Canon::new(program);
         let mut facts = Facts {
-            funcs: HashMap::new(),
-            layouts: HashMap::new(),
-            address_taken: HashSet::new(),
-            main: HashSet::new(),
+            funcs: FxHashMap::default(),
+            layouts: FxHashMap::default(),
+            address_taken: FxHashSet::default(),
+            main: FxHashSet::default(),
         };
         for (i, layout) in program.aggs.iter().enumerate() {
             if !is_state_layout(&layout.name) {
@@ -95,8 +95,8 @@ fn symbol(program: &Program, f: u32) -> String {
 }
 
 /// `velt_main` plus the user functions it calls or starts (not glue).
-fn main_keys(program: &Program, refs: &[(u32, bool)]) -> HashSet<String> {
-    let mut keys: HashSet<String> = refs
+fn main_keys(program: &Program, refs: &[(u32, bool)]) -> FxHashSet<String> {
+    let mut keys: FxHashSet<String> = refs
         .iter()
         .map(|&(f, _)| symbol(program, f))
         .filter(|s| !s.starts_with("_G"))

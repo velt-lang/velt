@@ -294,9 +294,12 @@ will use them too. Design: [weak-refs.md](../design/weak-refs.md).
 | `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
 | `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
 | `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
-| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj` |
+| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj`; bit 0 of `obj` may be set (a typed proxy, the object being `obj` with it clear), and `deref` returns the word as given |
 | `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
 | `velt_rt_weakref_drop` | `(uint32_t r)` | |
+| `velt_rt_weakmap_set_traced` | `(uint32_t m, uint8_t* key, uint64_t value, TraceFn key_trace)` | `velt_rt_weakmap_set` with the key's own trace glue instead of the map's (keys of a map whose key type is `object` differ in type; the map is made with a null `key_trace`) |
+| `velt_rt_weakref_new_with` | `(uint8_t* obj, uint64_t word) -> uint32_t` | `velt_rt_weakref_new`, keeping `word` with the slot (the descriptor of an `object` target) |
+| `velt_rt_weakref_word` | `(uint32_t r) -> uint64_t` | the word given to `velt_rt_weakref_new_with` (0 for `velt_rt_weakref_new`), also after the target was freed |
 | `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols [additive]
@@ -327,6 +330,86 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
   `velt_rt_symbol_description(s, out: *mut VeltStr)` (`""` without a description).
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
+
+## SIMD [additive]
+
+A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
+8-byte aligned in memory (loads and stores are unaligned), passed and returned by value between
+Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes, as in an array.
+A mask lane is all ones or all zeros.
+
+The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
+them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
+verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
+inline. They never cross the C ABI, so no target's vector calling convention is involved.
+`load` and `store` take the array (a pointer to its header) and an element index, and do not
+check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
+too, below the lane count, and touch only those elements.
+
+A shuffle is `velt_simd_<type>_shuffle_<i0>_<i1>…`, one lane index per lane spelled in the symbol
+(`velt_simd_u32x4_shuffle_1_0_7_6`; indices below twice the lane count, a lane of the first
+argument then of the second), so the mask is a constant wherever the call is: `(a, b) -> v`. No
+std file declares one: sema checks the literals of `T.shuffle(a, b, …)` and lowering declares the
+extern (HIR `Intrinsic::SimdShuffle`). `velt_simd_<type>_reverse_bytes` (16-, 32- and 64-bit
+integer lanes) reverses the bytes within each lane.
+
+**CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
+`sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
+aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,
+`sha1msg2` on x86-64; `velt_vir::simd::ShaOp`) are the instructions themselves: a caller runs one
+only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` (`-> bool`) is true. On the
+architecture with the extension that check reads the runtime's flag byte, otherwise (another
+architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
+The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
+changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` leaves them 0:
+
+```c
+uint8_t velt_cpu_sha_arm;  /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
+uint8_t velt_cpu_sha_x86;  /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
+```
+
+LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
+`+sha`), which it uses for nothing else; a *gated* function (VIR `Function::target`, HIR
+`Program::cpu_targets`, from std's `__intrinsic_target("sha-arm" | "sha-x86")`, every call of
+which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
+and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
+emulation behind it is dead code. The ordinary functions it calls that check that extension
+(the `velt:simd` methods), themselves or through their callees, are cloned for it by `velt_opt`
+with the check `true`, so this holds whether or not they would be inlined. A gated function is never inlined into an ordinary one or one
+gated on another target (`velt_opt`, and `noinline` on the call for LLVM); ordinary code may be
+inlined into a gated function.
+
+## Module state [additive, #76]
+
+```c
+struct ModuleDesc {
+  uint64_t size, align;
+  void (*init)(void *state);
+  void (*drop)(void *state);
+  const char *names;   /* each slot's name, NUL-terminated, in slot order */
+};
+void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
+void velt_rt_module_ready(void *state, uint64_t n);
+```
+
+`velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
+allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
+while `init` runs). `init` calls `velt_rt_module_ready(state, i + 1)` after it stored slot `i`;
+an access to a slot whose initializer has not run yet (through a function an earlier
+initializer calls) prints `Uncaught ReferenceError: Cannot access '<name>' before
+initialization` and exits with code 1. The block is not dropped while the program runs (only at
+exit under the debug runtime's `VELT_RC_STATS=1`, for the leak counters). A call with a
+different descriptor than the block was made with (code swapped in by `velt dev`) gets a block
+of its own.
+
+The call takes the process-wide *module lock* unless the thread holds it: inside a task until
+the end of the poll, and every later poll of that task takes it at its start; outside a task (a
+synchronous `main`) until `velt_rt_block_on` or until `main` returns. A program that never
+calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
+keeps the module lock while it blocks; taking the module lock while the thread holds a `Mutex`
+stops with an `ICE:` panic (sema rejects module state in a `with` callback). On WebAssembly (one
+thread) there is no lock.
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
@@ -411,6 +494,9 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
+  `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for
+  a finite `x`; `radix` clamped to 2..36), `velt_rt_i64_to_radix(x: i64, radix: i64): string`
+  and `velt_rt_u64_to_radix(x: u64, radix: i64): string` (exact integer digits) (additive),
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product).
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`), `async velt_rt_stdin_read_all_bytes(): IoResult<u8[]>` and

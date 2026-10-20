@@ -1,0 +1,9 @@
+// A symbol in an `any` written by a template literal (or a string `+`) stops with Node's
+// `TypeError` (#924); `String(s)` writes it as `Symbol(desc)`.
+function main(): void {
+  const s: any = Symbol("x");
+  console.log(String(s));
+  const n: any = 1;
+  console.log(`n=${n}`, "n=" + n);
+  console.log(`s=${s}`);
+}

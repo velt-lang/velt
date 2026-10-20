@@ -14,7 +14,7 @@
 //! whole local, so a candidate with partial writes has its (scalar) field locals
 //! zero-initialized on entry; otherwise every whole assignment defines all fields at once.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{
     AggId, AggLayout, Const, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt,
@@ -55,7 +55,7 @@ fn split_once(aggs: &[AggLayout], func: &mut Function) -> bool {
     if cands.is_empty() {
         return false;
     }
-    let mut fields: HashMap<Local, Vec<Local>> = HashMap::new();
+    let mut fields: FxHashMap<Local, Vec<Local>> = FxHashMap::default();
     let mut entry_inits = Vec::new();
     let mut sorted: Vec<(&Local, &Candidate)> = cands.iter().collect();
     sorted.sort_by_key(|(l, _)| l.0);
@@ -89,9 +89,9 @@ fn split_once(aggs: &[AggLayout], func: &mut Function) -> bool {
 }
 
 /// Aggregate locals (not params) whose address is never taken.
-fn candidates(aggs: &[AggLayout], func: &Function) -> HashMap<Local, Candidate> {
+fn candidates(aggs: &[AggLayout], func: &Function) -> FxHashMap<Local, Candidate> {
     let usage = Usage::of(func);
-    let mut out = HashMap::new();
+    let mut out = FxHashMap::default();
     for (i, decl) in func.locals.iter().enumerate().skip(func.params.len()) {
         let Ty::Agg(id) = decl.ty else { continue };
         let Some(layout) = aggs.get(id.0 as usize) else {
@@ -125,10 +125,10 @@ pub(crate) fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
                 _ => return false,
             },
             Ty::Unit => return false,
-            scalar => {
-                let n = scalar.scalar_size().unwrap_or(0);
-                (n, n)
-            }
+            scalar => (
+                scalar.scalar_size().unwrap_or(0),
+                scalar.scalar_align().unwrap_or(1),
+            ),
         };
         fields.push((offset, size, align.max(1)));
     }
@@ -145,10 +145,10 @@ pub(crate) fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
 }
 
 /// Remove candidates used in ways the rewrite does not handle.
-fn disqualify(aggs: &[AggLayout], func: &Function, cands: &mut HashMap<Local, Candidate>) {
+fn disqualify(aggs: &[AggLayout], func: &Function, cands: &mut FxHashMap<Local, Candidate>) {
     let mut bad: Vec<Local> = Vec::new();
-    let mut whole_reads: HashMap<Local, u32> = HashMap::new();
-    let mut allowed_reads: HashMap<Local, u32> = HashMap::new();
+    let mut whole_reads: FxHashMap<Local, u32> = FxHashMap::default();
+    let mut allowed_reads: FxHashMap<Local, u32> = FxHashMap::default();
     let check_place = |p: &Place, bad: &mut Vec<Local>| {
         if cands.contains_key(&p.local) && !matches!(p.proj.first(), None | Some(Proj::Field(_))) {
             bad.push(p.local);
@@ -220,7 +220,7 @@ fn classify_write(dst: &Place, rv: &Rvalue, bad: &mut Vec<Local>) {
 
 /// Candidates written field by field need their field locals initialized on entry; nested
 /// aggregate fields cannot be (no aggregate constants), so those candidates are dropped.
-fn mark_partial(aggs: &[AggLayout], func: &Function, cands: &mut HashMap<Local, Candidate>) {
+fn mark_partial(aggs: &[AggLayout], func: &Function, cands: &mut FxHashMap<Local, Candidate>) {
     let mut partial = Vec::new();
     for block in &func.blocks {
         let dests = block.stmts.iter().filter_map(|s| match s {
@@ -264,8 +264,8 @@ fn has_aggregate_field(aggs: &[AggLayout], func: &Function, l: Local) -> bool {
 
 /// The rewrite of one function's candidates.
 struct Split {
-    fields: HashMap<Local, Vec<Local>>,
-    cands: HashMap<Local, Candidate>,
+    fields: FxHashMap<Local, Vec<Local>>,
+    cands: FxHashMap<Local, Candidate>,
 }
 
 impl Split {

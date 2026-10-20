@@ -3,7 +3,7 @@
 //! out-pointer for aggregate or `Result` returns, hidden env param for closures), allocates VIR
 //! locals for HIR locals and drop flags, then lowers the body.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
@@ -60,8 +60,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ret_ty: None,
             throws: None,
             div_zero_bbs: vec![],
-            ref_bindings: HashSet::new(),
-            scope_ends: HashMap::new(),
+            ref_bindings: FxHashSet::default(),
+            scope_ends: FxHashMap::default(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
@@ -70,11 +70,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             stable_binds: false,
             transfer_args: false,
             transfer_call: false,
+            proxy_recv: None,
+            super_call: false,
             same_mode: false,
+            value_mode: false,
             key_mode: false,
+            init_locals: false,
             ctor_self: None,
             init_stack: vec![],
-            frame_closures: HashSet::new(),
+            frame_closures: FxHashSet::default(),
+            direct_siblings: FxHashMap::default(),
+            self_env: None,
+            in_reflect: false,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -97,6 +104,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
             Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
+            Work::GenThrow(def, targs) => Self::build_gen_throw(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -110,6 +118,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
+            Work::ModuleInit => Self::build_module_init(cx),
         }
     }
 
@@ -164,9 +173,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
         lw.ctor_self = lw.ctor_class(def, f);
+        lw.in_reflect = f
+            .name
+            .starts_with(super::any_proxy::PRELUDE_REFLECT_METHODS);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
-        lw.frame_closures = super::frame_envs::scan(hir_prog, f);
+        (lw.frame_closures, lw.direct_siblings) = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
@@ -184,6 +196,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
+        func.target = hir_prog.cpu_targets.get(&def).map(|t| match t {
+            hir::CpuTarget::ShaArm => crate::simd::Ext::ShaArm,
+            hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+        });
         func
     }
 
@@ -198,7 +214,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(ParamAttrs::default());
             self.new_local(Ty::Ptr, Some("env".into()))
         });
-        let captured: HashSet<_> = f.captures.iter().map(|c| c.inner).collect();
+        let captured: FxHashSet<_> = f.captures.iter().map(|c| c.inner).collect();
         let by_ref = self.cx.by_ref_params.contains(&(def, self.targs.clone()));
         for p in &f.params {
             if captured.contains(&p.local) {
@@ -243,6 +259,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             attrs.push(self.cx.out_ptr_attrs(out));
         }
         if let Some(env) = env {
+            self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
         }
         self.declare_body_locals(f, info);

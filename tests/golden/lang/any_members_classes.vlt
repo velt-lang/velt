@@ -1,0 +1,30 @@
+// check: no leaks
+// Member reads and calls on `any` (#924) on generic class instances, a subclass seen through
+// its base class, a left-out optional field (`undefined`), objects inside arrays and indexes
+// past the end, compared with Node.
+class Box<T> {
+  v: T;
+  constructor(v: T) { this.v = v; }
+  get(): T { return this.v; }
+  with(x: T): Box<T> { return new Box<T>(x); }
+}
+class Base { a: number = 1; hello(n: number): string { return "base" + n; } }
+class Kid extends Base { b: string = "k"; override hello(n: number): string { return "kid" + n; } }
+interface Cfg { name: string; port?: number; }
+function main(): void {
+  const b: any = new Box<number>(5);
+  console.log(b.v, b.get(), b.with(7).v);
+  const bs: any = new Box<string>("s");
+  console.log(bs.get(), bs.v.length);
+  const base: Base = new Kid();
+  const k: any = base;
+  console.log(k.a, k.b, k.hello(2));
+  const c: any = { name: "srv" } as Cfg;
+  console.log(c.name, c.port);
+  const arr: any = [new Base(), new Kid()];
+  console.log(arr[1].hello(3), arr[0].b);
+  for (let i = 0; i < 3; i++) {
+    const xs: any = ["a", "b"];
+    console.log(xs[i]);
+  }
+}

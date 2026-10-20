@@ -46,7 +46,10 @@ export function larger(a: i64, b: i64): i64 {
 }
 ```
 
-- Semicolons are required after statements. There is no automatic semicolon insertion.
+- Semicolons are required after statements. There is no automatic semicolon insertion, except
+  that a line break ends a signature without a body ([overloads](functions.md#overloads)) and
+  a member of a class, an interface or an object type (`interface P {` / `x: number` /
+  `y: number` / `}` on four lines).
 
 ## Identifiers
 
@@ -63,8 +66,15 @@ members and in `#name in o` ([Classes](classes.md#classes)).
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an
   optional type suffix: `10u8`, `5i32`, `1.0f32`. There are no `BigInt` literals (`10n`); use
   [`velt:bigint`](../std/bigint.md).
-- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \uHHHH \u{H…}`.
-- **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`.
+- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \b \v \f \\ \" \' \0 \xHH \uHHHH
+  \u{H…}`, cooked as JavaScript does: a backslash before a line break continues the line, a
+  surrogate pair written as two escapes (`\uD83D\uDE00`) is one character, and a backslash
+  before any other character is dropped (`"a\d"` is `"ad"`, so `new RegExp("\\d")` needs the
+  doubled backslash, as in JS). Legacy octal escapes (`\1`, `\01`) and `\8` `\9` are errors, as
+  in TypeScript; a lone surrogate (`"\uD800"`) is an error too, since Velt strings are UTF-8.
+- **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`,
+  with the same escapes as strings. There are no tagged templates (`` tag`…` ``) or
+  `String.raw`.
   `${expr}` writes a value as JS's `String(x)` does: numbers, strings and booleans as JS writes
   them, an array as its elements joined with `,` (`${[1, 2]}` is `1,2`), a class instance
   through its `toString()` (its own or inherited, a subclass's override also through a
@@ -92,11 +102,11 @@ type typeof void while yield
 
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
-Not part of the language: `var`, `any`, `unknown`, `abstract`, `protected` (as a
+Not part of the language: `var` outside the top level of a function body or a module
+([Variables](variables.md)), `any`, `unknown`, `abstract`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)),
-`export default`, `function` expressions other than generators (`function* (…) { … }` is
-supported; otherwise use arrow functions), `mut`, `match`. Writing most of
+`export default`, `mut`, `match`. Writing most of
 these is an error that names the Velt replacement.
 
 ## Operators

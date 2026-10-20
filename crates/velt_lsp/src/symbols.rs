@@ -58,7 +58,11 @@ impl Builder<'_> {
             ast::ItemKind::TypeAlias(t) => one(&t.name, SymbolKind::TYPE_PARAMETER, vec![]),
             ast::ItemKind::Var(v) => self.globals(item, v),
             ast::ItemKind::Extend(ext) => self.extend(item, ext),
-            ast::ItemKind::Import(_) => vec![],
+            ast::ItemKind::Namespace(n) => {
+                let children = n.items.iter().flat_map(|i| self.item(i)).collect();
+                one(&n.name, SymbolKind::NAMESPACE, children)
+            }
+            ast::ItemKind::Import(_) | ast::ItemKind::Augment(_) => vec![],
         }
     }
 

@@ -1,0 +1,7 @@
+number true true true
+2
+object 2 [ 1, 2 ]
+number true object true null
+string true
+0 number true true false true true
+f f object

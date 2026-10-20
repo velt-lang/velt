@@ -17,8 +17,8 @@ impl FnCx<'_, '_> {
     /// the member reading the field; its type is the union of the fields' types (a literal
     /// field reads as its constant, a non-Copy field as a copy — `.clone()`; narrow the value to
     /// borrow it instead). `Err(obj)` when a member has no such field, except for `value` on an
-    /// `IteratorResult<T>`, which reads as `T | null` (`null` when done), as TypeScript code
-    /// expects (`g().next().value`).
+    /// `IteratorResult<T>`, which reads as `T | undefined` (`undefined` when done), as in
+    /// TypeScript (`g().next().value`).
     pub(super) fn union_field(
         &mut self,
         obj: hir::Expr,
@@ -43,13 +43,12 @@ impl FnCx<'_, '_> {
                 None => without.push((v, m)),
             }
         }
-        // `r.value` on an `IteratorResult<T>`: `T | null`, `null` when done (TypeScript's is
-        // `undefined` there).
-        let value_or_null = !without.is_empty()
+        // `r.value` on an `IteratorResult<T>`: `T | undefined`, `undefined` when done.
+        let value_or_undefined = !without.is_empty()
             && prop.name == "value"
             && fields.iter().all(|f| f.3 != self.cx.ty.unit)
             && self.cx.is_iterator_result(obj.ty);
-        if !without.is_empty() && !value_or_null {
+        if !without.is_empty() && !value_or_undefined {
             return Err(obj);
         }
         // Every member's field must be usable here (`private`, `#x`), as on a single value. A
@@ -81,11 +80,21 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let ftys: Vec<TyId> = fields.iter().map(|f| f.3).collect();
-        let ty = self.cx.union_of(&ftys, value_or_null, span);
+        let ty = self.cx.union_with(
+            &ftys,
+            value_or_undefined.then_some(hir::Nothing::Undefined),
+            span,
+        );
         let consume = !is_place(&obj);
         let mut arms = vec![];
         for (v, m) in without {
             let wild = self.pat(P::Wildcard, m, span);
+            // An `IteratorResult<any>` (`Generator<any>`): the dynamic `undefined`, as in JS
+            // (`T | undefined` of a dynamic `T` is that `T`, which has no `Lit::Null`).
+            let none = match self.cx.dynamic(ty) {
+                Some(_) => self.dynamic_nothing(hir::Nothing::Undefined, ty, span),
+                None => self.mk(H::Lit(hir::Lit::Null), ty, span),
+            };
             arms.push(hir::Arm {
                 pat: self.pat(
                     P::Variant {
@@ -97,7 +106,7 @@ impl FnCx<'_, '_> {
                     span,
                 ),
                 guard: None,
-                body: self.mk(H::Lit(hir::Lit::Null), ty, span),
+                body: none,
             });
         }
         for (v, m, i, fty) in fields {

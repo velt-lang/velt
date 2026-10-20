@@ -9,7 +9,9 @@
 //! | Format    | `(buf: ptr, p: ptr, depth: u32)`   | append console.log text (nested style) at node's depth `depth` |
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
+//! | SameValue | `(a: ptr, b: ptr) -> bool`         | `Object.is`: Same with floats by SameValue (same.rs) |
 //! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
+//! | KeySame   | `(a: ptr, b: ptr) -> bool`         | Same with floats compared by SameValueZero: `Map` keys (same.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
 //! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b` and free it, or the boxed value `b` (drop_depth.rs) |
@@ -29,6 +31,7 @@
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
 //! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
+//! | ProxyGet / ProxySet | `(proxy: ptr, key: ptr, v: ptr)` | a field of type `ty` through a typed proxy's `get` / `set` trap (proxy_typed.rs) |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -71,7 +74,9 @@ pub(crate) enum Glue {
     Format,
     Eq,
     Same,
+    SameValue,
     KeyEq,
+    KeySame,
     Hash,
     ObjDrop,
     QueuedDrop,
@@ -95,6 +100,21 @@ pub(crate) enum Glue {
     WeakRetain,
     WeakRelease,
     WeakBoxTrace,
+    AnyTruthy,
+    AnySame,
+    AnyNumber,
+    AnyHash,
+    AnyGet,
+    AnyIndex,
+    AnyCall,
+    AnyApply,
+    AnySet,
+    AnySetIndex,
+    AnyHas,
+    AnyKeys,
+    AnyJson,
+    ProxyGet,
+    ProxySet,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -117,7 +137,9 @@ impl Glue {
             Glue::Format => "format",
             Glue::Eq => "eq",
             Glue::Same => "same",
+            Glue::SameValue => "samevalue",
             Glue::KeyEq => "keyeq",
+            Glue::KeySame => "keysame",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::QueuedDrop => "queueddrop",
@@ -141,6 +163,21 @@ impl Glue {
             Glue::WeakRetain => "weakretain",
             Glue::WeakRelease => "weakrelease",
             Glue::WeakBoxTrace => "weakboxtrace",
+            Glue::AnyTruthy => "anytruthy",
+            Glue::AnySame => "anysame",
+            Glue::AnyNumber => "anynumber",
+            Glue::AnyHash => "anyhash",
+            Glue::AnyGet => "anyget",
+            Glue::AnyIndex => "anyindex",
+            Glue::AnyCall => "anycall",
+            Glue::AnyApply => "anyapply",
+            Glue::AnySet => "anyset",
+            Glue::AnySetIndex => "anysetindex",
+            Glue::AnyHas => "anyhas",
+            Glue::AnyKeys => "anykeys",
+            Glue::AnyJson => "anyjson",
+            Glue::ProxyGet => "proxyget",
+            Glue::ProxySet => "proxyset",
         }
     }
 
@@ -162,7 +199,9 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq | Glue::Same | Glue::KeyEq => (vec![Ptr, Ptr], Bool),
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeyEq | Glue::KeySame => {
+                (vec![Ptr, Ptr], Bool)
+            }
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
             Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
@@ -170,6 +209,18 @@ impl Glue {
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
+            Glue::AnyTruthy => (vec![Ptr], Bool),
+            Glue::AnySame => (vec![Ptr, Ptr], Bool),
+            Glue::AnyNumber => (vec![Ptr], F64),
+            Glue::AnyHash => (vec![Ptr], U64),
+            Glue::AnyGet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnyIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyCall => (vec![Ptr, Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
+            Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
+            Glue::AnyHas | Glue::AnyKeys | Glue::AnyJson => (vec![Ptr, Ptr], U8),
+            Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
         }
     }
 }
@@ -187,7 +238,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Format => lw.format_body(a(0), args[1], a(2), ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
+            Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
             Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
+            Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
@@ -213,6 +266,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
             Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
             Glue::WeakRelease => lw.weak_release_body(args[0], ty),
+            Glue::AnyTruthy => lw.any_truthy_body(args[0], ty),
+            Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
+            Glue::AnyNumber => lw.any_number_body(args[0], ty),
+            Glue::AnyHash => lw.any_hash_body(args[0], ty),
+            Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {
+                lw.any_member_glue(g, &args, ty)
+            }
+            Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
+            Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
+            Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
+            Glue::AnyJson => lw.any_json_glue(args[0], args[1], ty),
+            Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
+            Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

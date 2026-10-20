@@ -1,0 +1,10 @@
+// `this` in a function expression without a `this` parameter (TypeScript's TS2683), and a
+// `this` parameter on an arrow (TS2730). Not supported yet: a function expression's own name
+// inside its body (`this` in one with a `this` parameter is in `this_param_unsupported`).
+const g = function () {
+  return this;
+};
+const fact = function fact(n: number): number {
+  return n <= 1 ? 1 : n * fact(n - 1);
+};
+const k = (this: number) => 1;

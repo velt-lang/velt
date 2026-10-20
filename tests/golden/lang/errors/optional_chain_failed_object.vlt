@@ -1,6 +1,6 @@
-// An optional chain on an object whose type is not supported yet (`T | null | undefined`, the
-// shape of `provides?.get(token) as T | undefined`) or unknown reports that type only, not the
-// local the chain binds its object to.
+// An optional chain on an object of an unknown type reports that only, not the local the chain
+// binds its object to. The cast of `provides?.get(token)` (a `T | undefined`, as `Map.get` gives
+// `undefined` for a missing key) compiles.
 
 function getProvided<T>(provides: Map<string, T> | null | undefined, token: string): T | undefined {
   return provides?.get(token) as T | undefined;

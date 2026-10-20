@@ -3,7 +3,8 @@
 //! overrides (whole-program), laid out base slots first. Constructors are inherited when a class
 //! declares none; fields without a default need a constructor that initializes them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -11,7 +12,7 @@ use velt_syntax::ast;
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
 use crate::ctx::Ctx;
-use crate::defs::MethodRef;
+use crate::defs::{MethodRef, RetSource};
 use crate::hir::{AdtKind, DefId, TyId};
 
 pub(super) fn check_classes(cx: &mut Ctx) {
@@ -20,7 +21,7 @@ pub(super) fn check_classes(cx: &mut Ctx) {
         .filter(|d| cx.adt(*d).is_some_and(|a| a.decl.is_some()))
         .collect();
     let mut order = vec![];
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     for &d in &adts {
         base_first(cx, d, &mut seen, &mut order);
     }
@@ -37,7 +38,7 @@ fn base_of_def(cx: &Ctx, d: DefId) -> Option<DefId> {
     cx.class_of(base).map(|(b, _)| b)
 }
 
-fn base_first(cx: &Ctx, d: DefId, seen: &mut HashSet<DefId>, order: &mut Vec<DefId>) {
+fn base_first(cx: &Ctx, d: DefId, seen: &mut FxHashSet<DefId>, order: &mut Vec<DefId>) {
     if !seen.insert(d) {
         return;
     }
@@ -56,11 +57,14 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
         for m in decl
             .methods
             .iter()
-            .filter(|m| m.is_override && !m.decl.sig.name.is_private_name())
+            .filter(|m| !m.decl.sig.name.is_private_name())
         {
             let name = &m.decl.sig.name;
             let module = cx.adt(d).expect("ICE: adt").module;
             let key = cx.method_key(module, name, m.is_setter);
+            if !m.is_override && (m.is_static || !std_override(cx, d, &key)) {
+                continue;
+            }
             match introducer(cx, d, &key) {
                 // Generic methods get no vtable slot: calls through a base class are rejected
                 // (`body::expr::method_call`), calls on the concrete class are direct.
@@ -81,6 +85,13 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
         }
     }
     out
+}
+
+/// Does `d`'s method `key` redefine one a std class declares (`Error.toString`)? TypeScript
+/// code redefines its lib's methods without `override`, so such a redefinition overrides
+/// without it.
+fn std_override(cx: &Ctx, d: DefId, key: &str) -> bool {
+    introducer(cx, d, key).is_some_and(|o| cx.declared_in_std(o))
 }
 
 /// The ancestor of `d` (excluding `d`) that first declares the instance method `name` without
@@ -132,7 +143,7 @@ fn has_default(cx: &Ctx, c: DefId, name: &str) -> bool {
 /// A class's vtable while it is being laid out.
 struct Vtable {
     entries: Vec<DefId>,
-    slots: HashMap<String, u32>,
+    slots: FxHashMap<String, u32>,
 }
 
 impl Vtable {
@@ -157,7 +168,7 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
         }
         None => Vtable {
             entries: vec![],
-            slots: HashMap::new(),
+            slots: FxHashMap::default(),
         },
     };
     own_methods(cx, d, overridden, &mut vt);
@@ -211,7 +222,7 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
             .filter(|f| !f.is_static());
-        if m.is_override {
+        if m.is_override || (inherited.is_some() && std_override(cx, d, &key)) {
             if let Some(f) = inherited {
                 check_override_sig(cx, mref, &f, name);
             }
@@ -290,6 +301,19 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
     Some(fwd)
 }
 
+/// May an override returning `this` (the class `own`) give the base method's result `base`:
+/// is `base` a class that `own` extends?
+fn this_result_ok(cx: &mut Ctx, own: TyId, base: TyId) -> bool {
+    let mut cur = own;
+    while let Some(next) = cx.base_of(cur) {
+        if next == base {
+            return true;
+        }
+        cur = next;
+    }
+    false
+}
+
 fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_syntax::ast::Ident) {
     let (mp, mr, mg) = {
         let f = cx.fn_info(m.def);
@@ -323,7 +347,30 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         "method `{}` does not have the same signature as the base class method it overrides",
         name.name
     );
+    // A call through the base's type converts the result of a `this`-returning method to the
+    // receiver's class (`body::expr::this_type`), so its overrides must return `this` too.
+    if cx.fn_info(base.def()).returns_this() && !cx.fn_info(m.def).returns_this() {
+        if cx.fn_info(m.def).ret_source == RetSource::Body {
+            cx.fn_info_mut(m.def).inherits_this = true;
+        } else {
+            cx.error(
+                Diagnostic::error(message, name.span).with_note(
+                    "TypeScript's TS2416: the base class method returns `this`, the class of the object it is called on; declare the override's result as `this` and return `this`",
+                ),
+            );
+            return;
+        }
+    }
     let at = (name.span, message.clone());
+    // `override m(): this`: the override returns its receiver, typed as the base method's
+    // result, which a call converts to the receiver's class (`body::expr::this_type`).
+    let mr = match cx.fn_info(m.def).returns_this() && mr != br && this_result_ok(cx, mr, br) {
+        true => {
+            cx.fn_info_mut(m.def).ret = br;
+            br
+        }
+        false => mr,
+    };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if mp != bp || !ret_ok || mg != bg {
         cx.err(message, name.span);

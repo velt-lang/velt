@@ -1,0 +1,73 @@
+// check: no leaks
+// In a program that calls `throw()`, a generator's own class errors become `any` where they meet
+// what `throw()` passes in (`throw(e: any)`), including generators `throw()` is never called on.
+class AppErr extends Error {}
+
+function* catches(n: number): Generator<number> {
+  try {
+    if (n > 5) {
+      throw new AppErr("big");
+    }
+    yield n;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+function* throwsAfter(n: number): Generator<number> {
+  yield n;
+  if (n > 0) {
+    throw new AppErr("after");
+  }
+}
+
+function* declared(n: number): Generator<number, AppErr> {
+  yield n;
+  throw new AppErr(`declared ${n}`);
+}
+
+function* plain(): Generator<number> {
+  yield 1;
+}
+
+function main(): void {
+  console.log([...catches(9)].length);
+  const c = catches(1);
+  c.next();
+  try {
+    c.throw(new Error("z"));
+  } catch (e) {
+    console.log("thrown", (e as Error).message);
+  }
+
+  const t = throwsAfter(1);
+  t.next();
+  try {
+    t.throw(new Error("into throwsAfter"));
+  } catch (e) {
+    console.log("thrown", (e as Error).message);
+  }
+
+  const d = declared(2);
+  console.log(d.next().value);
+  try {
+    d.next();
+  } catch (e) {
+    console.log("declared threw", e instanceof AppErr, (e as Error).message);
+  }
+  const d2 = declared(3);
+  d2.next();
+  try {
+    d2.throw(new AppErr("into declared"));
+  } catch (e) {
+    console.log("thrown", (e as Error).message);
+  }
+
+  const p = plain();
+  p.next();
+  try {
+    p.throw(new Error("into plain"));
+  } catch (e) {
+    console.log("thrown", (e as Error).message);
+  }
+}

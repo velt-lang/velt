@@ -1,0 +1,12 @@
+// `...args: A` with `A` a type parameter (TypeScript infers `A` as the tuple of the argument
+// types) is not supported yet; a rest parameter whose type is no array type is TypeScript's
+// TS2370. Each is reported once, with no errors about the parameter's default or its calls.
+function call<A extends unknown[]>(f: (xs: A) => void, ...args: A): void {
+  f(args);
+}
+
+function count(...xs: number): number {
+  return 1;
+}
+
+console.log(count(1));

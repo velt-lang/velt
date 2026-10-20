@@ -7,7 +7,7 @@
 //! The spelling is injective for the types lowering sees: ADTs, interfaces and closures are named
 //! by their fully qualified HIR names (unique per definition), everything else structurally.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
@@ -39,9 +39,17 @@ impl Cx<'_> {
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "error".into(),
+            // Only in a generic def's own fields: an instance's are reduced (`Cx::subst`).
+            TyKind::Op(velt_sema::hir::TyOp::Alias(a), args) => {
+                format!("op{a}<{}>", list(args, stack))
+            }
+            TyKind::Op(velt_sema::hir::TyOp::Intersect, args) => {
+                format!("op&<{}>", list(args, stack))
+            }
             // Anonymous object types are structural: one shape can be several defs (a generic
             // def's instance, sema's concrete def, Cx::canon), and its symbols must not depend
             // on which one a program happens to use.
@@ -72,8 +80,9 @@ impl Cx<'_> {
                 format!("{{ {} }}", fs.join("; "))
             }
             // Unions likewise: their members, sorted (a generic union's instance and the written
-            // union are one type, Cx::canon).
-            TyKind::Adt(d, args) if self.is_union_def(*d) => {
+            // union are one type, Cx::canon). A recursive union (`type Json = … | Json[]`) names
+            // itself inside.
+            TyKind::Adt(d, args) if self.is_union_def(*d) && !stack.contains(d) => {
                 let env: Vec<String> = args
                     .iter()
                     .map(|a| self.type_key_in(*a, env, stack))
@@ -81,15 +90,29 @@ impl Cx<'_> {
                 let velt_sema::hir::Def::Enum(e) = self.hir.def(*d) else {
                     unreachable!("union def")
                 };
+                stack.push(*d);
                 let mut ms: Vec<String> = e
                     .variants
                     .iter()
                     .map(|v| self.type_key_in(v.payload[0], &env, stack))
                     .collect();
+                stack.pop();
                 ms.sort();
                 ms.join(" | ")
             }
-            TyKind::Adt(d, args) => with_args(&self.def_name(*d), &list(args, stack)),
+            TyKind::Adt(d, args) => {
+                // `Generator<T, E, never>` is spelled `Generator<T, E>`, as before `N` existed.
+                let args = match args.as_slice() {
+                    [_, _, n] if self.generator_obj_kind(t) == Some(false) => {
+                        match self.types.kind(*n) {
+                            TyKind::Never => &args[..2],
+                            _ => &args[..],
+                        }
+                    }
+                    _ => &args[..],
+                };
+                with_args(&self.def_name(*d), &list(args, stack))
+            }
             TyKind::Dyn(d, args) => {
                 with_args(&format!("dyn {}", self.def_name(*d)), &list(args, stack))
             }
@@ -132,6 +155,16 @@ impl Cx<'_> {
     /// collide with other names).
     pub(super) fn instance_symbol(&self, name: &str, targs: &[TyId]) -> String {
         let mut s = mangle(name);
+        // A method of `Generator<T, E, never>` is spelled as `Generator<T, E>`'s, as before `N`.
+        let targs = match targs {
+            [_, _, n]
+                if name.starts_with("std/prelude/iter::Generator.")
+                    && matches!(self.types.kind(*n), TyKind::Never) =>
+            {
+                &targs[..2]
+            }
+            _ => targs,
+        };
         if !targs.is_empty() {
             s.push_str("_T");
             s.push_str(&segment(&self.type_args_key(targs)));
@@ -178,7 +211,7 @@ impl Cx<'_> {
 /// keeps symbols unique (as backends need) regardless, and `velt dev` treats such keys as
 /// ambiguous.
 pub(super) fn disambiguate(funcs: &mut [Function]) {
-    let mut seen: HashMap<String, u32> = HashMap::new();
+    let mut seen: FxHashMap<String, u32> = FxHashMap::default();
     for f in funcs {
         let n = seen.entry(f.symbol.clone()).or_insert(0);
         *n += 1;

@@ -1,0 +1,74 @@
+// check: no leaks
+// TypeScript's `object` (issue #926): any value that is not a primitive. Class instances,
+// object literals, arrays, functions and maps convert to it; it keys `Set` and `Map` by
+// identity; `T extends object` takes only objects; `as T` converts back.
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+function describe(o: object): string {
+  return typeof o;
+}
+const p = new Point(1, 2);
+const lit = { name: "a" };
+const arr = [1, 2, 3];
+const fn = (n: number): number => n * 2;
+const m = new Map<string, number>();
+console.log(describe(p), describe(lit), describe(arr), describe(fn), describe(m));
+
+const seen = new Set<object>();
+seen.add(p);
+seen.add(p);
+seen.add(lit);
+seen.add(new Point(1, 2));
+console.log(seen.size, seen.has(p), seen.has(lit), seen.has(new Point(1, 2)));
+
+const cache = new Map<object, string>();
+cache.set(p, "point");
+cache.set(arr, "array");
+console.log(cache.get(p), cache.get(arr), cache.has(lit));
+
+const ws = new Set<object>();
+ws.add(lit);
+console.log(ws.has(lit), ws.has(p));
+
+function find(id: number): object | null {
+  return id === 1 ? p : null;
+}
+const f1 = find(1);
+const f2 = find(2);
+console.log(f1 === p, f2 === null, f1 !== null, f2 === p);
+
+function mark<T extends object>(v: T): T {
+  ws.add(v);
+  return v;
+}
+const q = mark(new Point(3, 4));
+console.log(q.x, ws.has(q));
+const r = mark({ name: "b" });
+const marked = ws.has(r);
+console.log(r.name, marked);
+
+const back = (find(1) as Point).y;
+console.log(back);
+
+function kind(u: unknown): string {
+  if (typeof u === "object" && u !== null) {
+    const o: object = u;
+    return "object " + seen.has(o);
+  }
+  return typeof u;
+}
+console.log(kind(p), kind(lit), kind(5), kind("s"), kind(null));
+
+const pair: [object, string] = [p, "x"];
+console.log(pair[0] === p, pair[1]);
+
+const a: any = p as object;
+console.log(a.x);
+const u: unknown = lit;
+const ou = u as object;
+console.log(ou === lit, seen.has(ou));

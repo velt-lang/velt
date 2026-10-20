@@ -3,24 +3,25 @@
 //!
 //! A written `Record<K, V>` with a concrete `K` is checked where the type is resolved
 //! (`resolve.rs`). A key that comes from a type parameter is checked where the parameter meets a
-//! concrete type: after all bodies, [`check_instantiations`] collects the key types each
-//! function's types mention (through struct, class and union fields too), propagates the generic
-//! ones to every caller (and from a closure to its enclosing function) like the JSON check, and
-//! to every function that mentions a class type whose methods are dispatched dynamically
+//! concrete type: after all bodies, [`check_instantiations`] collects the key types each function's
+//! types mention (through struct, class and union fields too), propagates the generic ones to every
+//! instantiation site (calls, function values, `new` and generic methods called through a type
+//! parameter: [`crate::inst_sites`]) and from a closure to its enclosing function like the JSON
+//! check, and to every function that mentions a class type whose methods are dispatched dynamically
 //! ([`crate::dispatch`]), revisiting only the functions whose callees' keys grew
 //! ([`crate::dispatch::Rounds`]), and reports the concrete ones that are not keys. Lowering never
 //! sees a record with another key.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LitValue, TyId, TyKind};
+use crate::hir::{Def, DefId, LitValue, TyId, TyKind};
+use crate::inst_sites::{self, carry_guard, resolve_param_calls, ParamCall, Uses};
 use crate::types::{children, collect_params};
-use crate::visit;
 
 const KEY_NOTE: &str =
     "record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys";
@@ -91,39 +92,17 @@ impl Ctx<'_> {
     }
 }
 
-/// Record-key facts of one function body.
-#[derive(Default)]
-struct Uses {
-    /// Every type the body mentions (expressions, locals and type arguments of calls), with its
-    /// first span.
-    types: Vec<(TyId, Span)>,
-    calls: Vec<(DefId, Vec<TyId>, Span)>,
-    closures: Vec<DefId>,
-    /// The methods the class types among `types` dispatch dynamically to, with those types'
-    /// arguments and the span of the type.
-    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
-}
+/// A key type a function needs to be valid, the function whose types mention it and its guard
+/// bits (`inst_sites::carry_guard`).
+type Need = (TyId, DefId, u64);
 
-impl Uses {
-    /// The defs whose requirements this function's requirements are made of.
-    fn reads(&self) -> impl Iterator<Item = DefId> + '_ {
-        let calls = self.calls.iter().map(|(d, _, _)| *d);
-        let dyn_calls = self.dyn_calls.iter().map(|(d, _, _)| *d);
-        calls.chain(self.closures.iter().copied()).chain(dyn_calls)
-    }
-
-    /// The work of one visit, for [`crate::dispatch::instantiation_work`].
-    fn size(&self) -> u64 {
-        (self.types.len() + self.calls.len() + self.closures.len() + self.dyn_calls.len()) as u64
-    }
-}
-
-/// A key type a function needs to be valid, and the function whose types mention it.
-type Need = (TyId, DefId);
+/// A key type a function needs, the span to report it at, the function whose types mention it
+/// and its guard bits.
+type Req = (TyId, Span, DefId, u64);
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
-    let mut uses = collect(cx);
-    let mut memo: HashMap<TyId, Vec<TyId>> = HashMap::new();
+    let mut uses = inst_sites::collect(cx, false);
+    let mut memo: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
     let mut dispatch = Dispatch::default();
     for (_, u) in &mut uses {
         for (t, span) in &u.types {
@@ -138,19 +117,38 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work;
-    let mut needs: HashMap<DefId, Vec<Need>> = HashMap::new();
+    let mut needs: FxHashMap<DefId, Vec<Need>> = FxHashMap::default();
+    // The param calls whose receiver is generic in each function.
+    let mut pneeds: FxHashMap<DefId, Vec<ParamCall>> = FxHashMap::default();
     // Concrete keys per (function, key): the span and origin to report a bad one with.
     let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
-    let mut seen: HashSet<(DefId, TyId, DefId)> = HashSet::new();
+    let mut seen: FxHashSet<(DefId, TyId, DefId)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
         let mut grew = false;
-        for (k, span, origin) in requirements(cx, *f, u, &needs, &mut memo) {
+        let (mut reqs, pending) = requirements(cx, *f, u, &needs, &pneeds, &mut memo);
+        for (p, span) in pending {
+            let generic = resolve_param_calls(cx, &mut rounds, i, vec![p], &mut |cx, m, args| {
+                for (k, origin, _) in needs.get(&m).into_iter().flatten() {
+                    reqs.push((cx.subst(*k, args), span, *origin, 0));
+                }
+                let ps = pneeds.get(&m).into_iter().flatten();
+                ps.map(|p| p.subst(cx, args)).collect()
+            });
+            for p in generic {
+                let n = pneeds.entry(*f).or_default();
+                if !n.contains(&p) {
+                    n.push(p);
+                    grew = true;
+                }
+            }
+        }
+        for (k, span, origin, guard) in reqs {
             if cx.is_generic_key(k) {
                 let n = needs.entry(*f).or_default();
-                if !n.contains(&(k, origin)) {
-                    n.push((k, origin));
+                if !n.contains(&(k, origin, guard)) {
+                    n.push((k, origin, guard));
                     grew = true;
                 }
             } else if seen.insert((*f, k, origin)) {
@@ -168,50 +166,68 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
 /// The key types function `f` needs: those its own types mention, and those of the generic
 /// functions it calls (substituted), closures it creates and methods the class types it
 /// mentions dispatch dynamically to (instantiated with those types' arguments), with the span
-/// to report them at.
+/// to report them at; and the param calls that reach it (its own, and those of its callees,
+/// closures and dynamically dispatched methods), with the span to report what they bring in at.
 fn requirements(
     cx: &mut Ctx,
     f: DefId,
     u: &Uses,
-    needs: &HashMap<DefId, Vec<Need>>,
-    memo: &mut HashMap<TyId, Vec<TyId>>,
-) -> Vec<(TyId, Span, DefId)> {
+    needs: &FxHashMap<DefId, Vec<Need>>,
+    pneeds: &FxHashMap<DefId, Vec<ParamCall>>,
+    memo: &mut FxHashMap<TyId, Vec<TyId>>,
+) -> (Vec<Req>, Vec<(ParamCall, Span)>) {
     let mut reqs = vec![];
-    for (d, targs, span) in &u.calls {
-        for (k, origin) in needs.get(d).into_iter().flatten() {
-            reqs.push((cx.subst(*k, targs), *span, *origin));
+    let mut pending = u.param_calls.clone();
+    for ((d, targs, span), site) in u.calls.iter().zip(&u.guards) {
+        for (k, origin, need) in needs.get(d).into_iter().flatten() {
+            if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                reqs.push((cx.subst(*k, targs), *span, *origin, g));
+            }
+        }
+        for p in pneeds.get(d).into_iter().flatten() {
+            pending.push((p.subst(cx, targs), *span));
         }
     }
     for c in &u.closures {
-        for (k, origin) in needs.get(c).into_iter().flatten() {
-            reqs.push((*k, cx.def_spans[c.0 as usize], *origin));
+        let span = cx.def_spans[c.0 as usize];
+        for (k, origin, need) in needs.get(c).into_iter().flatten() {
+            reqs.push((*k, span, *origin, *need));
+        }
+        for p in pneeds.get(c).into_iter().flatten() {
+            pending.push((p.clone(), span));
         }
     }
     for (t, span) in &u.types {
         for k in keys_in(cx, *t, memo, &mut vec![]) {
-            reqs.push((k, *span, f));
+            reqs.push((k, *span, f, 0));
         }
     }
     for (m, args, span) in &u.dyn_calls {
-        for (k, origin) in needs.get(m).into_iter().flatten() {
+        for (k, origin, need) in needs.get(m).into_iter().flatten() {
+            let Some(g) = carry_guard(cx, *need, args, 0) else {
+                continue;
+            };
             if let Some(k) = instantiate(cx, *k, args) {
-                reqs.push((k, *span, *origin));
+                reqs.push((k, *span, *origin, g));
             }
         }
+        for p in pneeds.get(m).into_iter().flatten() {
+            pending.extend(p.instantiate(cx, args).map(|p| (p, *span)));
+        }
     }
-    reqs
+    (reqs, pending)
 }
 
 /// Report each bad key once per function, preferably where a generic function brought it in.
 fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
     // The first entry per (function, key) that a generic function brought in.
-    let mut brought: HashMap<(DefId, TyId), (Span, DefId)> = HashMap::new();
+    let mut brought: FxHashMap<(DefId, TyId), (Span, DefId)> = FxHashMap::default();
     for (fk, span, origin) in concrete {
         if *origin != fk.0 {
             brought.entry(*fk).or_insert((*span, *origin));
         }
     }
-    let mut done: HashSet<(DefId, TyId)> = HashSet::new();
+    let mut done: FxHashSet<(DefId, TyId)> = FxHashSet::default();
     let mut picked = vec![];
     for (fk, span, origin) in concrete {
         if done.insert(*fk) {
@@ -226,50 +242,16 @@ fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
     }
 }
 
-/// Where a key that failed at a call comes from: the generic function that uses it.
+/// Where a key that failed at a call comes from: the generic function that uses it, or the
+/// class or struct whose field initializers do (instantiated by `new`).
 fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
-    let Some(Def::Fn(f)) = &cx.defs[origin.0 as usize] else {
-        return None;
+    let name = match (&cx.defs[origin.0 as usize], &cx.info[origin.0 as usize]) {
+        (Some(Def::Fn(f)), _) => f.name.as_str(),
+        (_, DefInfo::Adt(a)) => a.name.as_str(),
+        _ => return None,
     };
-    let std = f.name.starts_with("std/");
-    (origin != here && !std)
-        .then(|| format!("required because `{}` uses it as a `Record` key", f.name))
-}
-
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
-    let mut out = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
-        let Some(Def::Fn(f)) = d else { continue };
-        let mut u = Uses::default();
-        let mut seen: HashSet<TyId> = HashSet::new();
-        for l in &f.body.locals {
-            if seen.insert(l.ty) {
-                u.types.push((l.ty, l.span));
-            }
-        }
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            if seen.insert(e.ty) {
-                u.types.push((e.ty, e.span));
-            }
-            match &e.kind {
-                E::Call {
-                    callee: Callee::Def(d, targs),
-                    ..
-                } if !targs.is_empty() => {
-                    for t in targs {
-                        if seen.insert(*t) {
-                            u.types.push((*t, e.span));
-                        }
-                    }
-                    u.calls.push((*d, targs.clone(), e.span));
-                }
-                E::Closure(c) => u.closures.push(*c),
-                _ => {}
-            }
-        });
-        out.push((DefId(i as u32), u));
-    }
-    out
+    let std = name.starts_with("std/");
+    (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
 }
 
 /// The record key types `t` contains, also through the fields of structs, classes and unions
@@ -277,7 +259,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
 fn keys_in(
     cx: &mut Ctx,
     t: TyId,
-    memo: &mut HashMap<TyId, Vec<TyId>>,
+    memo: &mut FxHashMap<TyId, Vec<TyId>>,
     stack: &mut Vec<TyId>,
 ) -> Vec<TyId> {
     if let Some(ks) = memo.get(&t) {

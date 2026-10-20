@@ -5,6 +5,8 @@
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
+- `JSON.stringify` of an `any`, `unknown` or `object` writes the value held, as Node does
+  ([Reference](../reference/types.md#any-and-unknown)).
 - `JSON.stringify(x, replacer, space)` writes as JavaScript does. `space` indents: a number of
   spaces (its integer part, at most 10; a number in (0, 1) keeps the line breaks without
   indentation, as in Node, and 0 or less writes no whitespace) or a string (its first 10
@@ -187,22 +189,28 @@ console.log(text, m.cents); // {"cents":250} 250
   stays a lone surrogate, in `JSON.parse` and `JSON.parseValue` alike
   (`JSON.parse<string>('"\\ud800"').length` is 1). `JSON.stringify` writes it back as `\ud800`;
   printing or writing the string elsewhere gives U+FFFD (`�`).
-- Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
-  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`. The offset counts bytes of
-  the input's UTF-8, which is where an editor or `Buffer`-level tool finds it (not a string
-  position: for ASCII input the two agree).
-  In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
+- Text that is not JSON fails with Node's message, from `JSON.parse<T>` and `JSON.parseValue`
+  alike: `JSON.parse<number[]>("{bad")` throws `Expected property name or '}' in JSON at
+  position 1 (line 1 column 2)`, as `JSON.parse` does in Node 22, even where the decoder would
+  stop earlier at a value of the wrong type (Node reads the whole text first). Positions count
+  UTF-16 units, as in JavaScript. A `JsonError` is a `SyntaxError` (`e.name` is
+  `"SyntaxError"`, `e instanceof SyntaxError` holds), and an uncaught one is reported as
+  Node reports `JSON.parse`'s (`Uncaught SyntaxError: …`).
+  In Velt's own messages (a value of the wrong type, an unknown field, nesting too deep), a path
+  of more than 20 segments keeps its first and last 10 with `…` between
   (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
-  the byte offset still points at the exact place.
-- `JSON.parse<T>` lets a `T | null` field (including `a?: T`) be missing, and then it is `null`;
-  every other field is required. `JSON.stringify` omits an optional field (`a?: T`) of a class,
-  object type or interface while it is absent, as JavaScript omits a missing property, and
-  writes other `null`s (a `b: T | null` field, a `null` array element). An `a?: T` field
-  without `null` in its type is absent exactly when it is `null` (TypeScript doesn't let it hold
-  `null`). A field of an object type declared `a?: T | null` keeps the two apart, as JavaScript
-  does: `JSON.parse` records whether the key was there, and `JSON.stringify` writes a present
-  `null` (`"a":null`) and leaves out an absent field. In a class, such a field is still left out
-  while it is `null`.
+  the byte offset of a nesting error still points at the exact place.
+- `JSON.parse<T>` lets an optional field (`a?: T`) be missing, and then it is absent
+  (`undefined`), and a field declared `a: T | null` be missing, and then it is `null`; every
+  other field is required. An explicit JSON `null` for an `a?: T` field, whose type has no
+  `null`, leaves it absent too (a Velt rule: the type cannot hold the `null`); for an
+  `a?: T | null` field it is a present `null`. `JSON.parse(text) as T` and
+  `const t: T = JSON.parse(text)` (the type from the context, as TypeScript writes it) fail on
+  that `null` instead (`expected string at $.a`), as on a value of another type.
+- `JSON.stringify` leaves out an optional field (`a?: T`) of a class, object type or interface
+  while it is absent or holds `undefined`, as JavaScript leaves out a missing property and one
+  holding `undefined`, and writes a `null` (a present `null` of an `a?: T | null` field, a
+  `b: T | null` field, a `null` array element).
 - `Value`:
   - navigation: `get(key)`, `at(i)`, both returning `Value | null`; `has(key)` (the key is
     present, even with a `null` value: absent vs explicit `null` is only visible here, as

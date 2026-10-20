@@ -34,9 +34,9 @@ const NOT_AN_OBJECT: &str =
 
 /// A key of an object type: its name, whether it is listed only while present, and whether its
 /// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
-struct Key {
-    name: String,
-    optional: bool,
+pub(super) struct Key {
+    pub(super) name: String,
+    pub(super) optional: bool,
     presence: bool,
 }
 
@@ -159,6 +159,11 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if d == prelude => {}
             _ => return None,
         }
+        if !keys {
+            if let Some(h) = self.any_values(&prop.name, arg, span) {
+                return Some(h);
+            }
+        }
         let obj = self.expr(arg, None, Want::Borrow);
         if self.cx.ty.is_bottom(obj.ty) {
             return Some(self.error_expr(span));
@@ -202,6 +207,17 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        match self.cx.dynamic(obj.ty) {
+            // TypeScript takes `{}`, which an `unknown` is not (TS2345).
+            Some(crate::any::Dynamic::Unknown) => {
+                self.unknown_use_error(obj.span);
+                return self.error_expr(span);
+            }
+            // The keys of the value an `any`, `object` or `Function` holds, listed at run time
+            // through its descriptor (`Intrinsic::AnyKeys`).
+            Some(_) => return self.any_keys(obj, span),
+            None => {}
+        }
         self.cx
             .object_copies
             .observe(obj.ty, span, crate::object_copies::Seen::Keys);
@@ -242,6 +258,51 @@ impl FnCx<'_, '_> {
         self.mk(kind, str_array, span)
     }
 
+    /// `Object.keys(x)` of an `any`, `object` or `Function` `x`.
+    fn any_keys(&mut self, mut obj: hir::Expr, span: Span) -> hir::Expr {
+        crate::body::places::set_place_mode(&mut obj, hir::UseMode::Borrow);
+        // A record's keys are its `__keyNames()`, called through the member slots.
+        self.note_dyn_members();
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
+        self.intrinsic(hir::Intrinsic::AnyKeys, vec![obj], str_array, span)
+    }
+
+    /// `Object.values(x)` / `Object.entries(x)` (`helper`) of an `any`, `object` or `Function`
+    /// `x`: the prelude's `__anyValues(x)` / `__anyEntries(x)` (an `any[]` / `[string, any][]`,
+    /// as TypeScript types them). `None`: `x` is not dynamic.
+    fn any_values(&mut self, helper: &str, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+        let t = self.trial_type(arg)?;
+        let t = self.cx.ty.core(t).unwrap_or(t);
+        let d = self.cx.dynamic(t)?;
+        if d == crate::any::Dynamic::Unknown {
+            self.expr(arg, None, Want::Borrow);
+            self.unknown_use_error(arg.span);
+            return Some(self.error_expr(span));
+        }
+        let f = match helper {
+            "values" => "__anyValues",
+            _ => "__anyEntries",
+        };
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(synth(
+                    ast::ExprKind::Ident(ast::Ident {
+                        name: f.to_string(),
+                        span,
+                    }),
+                    span,
+                )),
+                type_args: vec![],
+                args: vec![arg.clone()],
+                optional: false,
+            },
+            span,
+        );
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        Some(self.expr(&call, None, Want::Move))
+    }
+
     /// `["a", "b"]`.
     fn name_array(&mut self, keys: &[Key], span: Span) -> hir::Expr {
         let lits = keys.iter().map(|k| self.str_lit(&k.name, span)).collect();
@@ -268,7 +329,12 @@ impl FnCx<'_, '_> {
     /// The classes whose instances an interface value of `iface` (type `t`) can hold, deepest
     /// first; `None` (reported at `span`) when a type that is not a class implements it, whose
     /// values carry no class to tell them apart.
-    fn iface_classes(&mut self, iface: DefId, t: TyId, span: Span) -> Option<Vec<DefId>> {
+    pub(super) fn iface_classes(
+        &mut self,
+        iface: DefId,
+        t: TyId,
+        span: Span,
+    ) -> Option<Vec<DefId>> {
         let mut classes = vec![];
         for d in (0..self.cx.info.len() as u32).map(DefId) {
             let Some(a) = self.cx.adt(d) else { continue };
@@ -280,6 +346,10 @@ impl FnCx<'_, '_> {
                 if self.holds_class(d, iface) {
                     classes.push((self.class_depth(d), d));
                 }
+                continue;
+            }
+            // An `any` may hold anything (`Object.keys` of one is `Intrinsic::AnyKeys`).
+            if self.cx.any.is_some_and(|a| a.any == iface) {
                 continue;
             }
             if self.implements(d, iface) {
@@ -320,7 +390,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The number of base classes of class `d`.
-    fn class_depth(&self, d: DefId) -> usize {
+    pub(super) fn class_depth(&self, d: DefId) -> usize {
         let mut cur = self.cx.adt(d).and_then(|a| a.base);
         let mut n = 0;
         while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
@@ -457,7 +527,7 @@ impl FnCx<'_, '_> {
 
     /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
     /// `None` (reported at `span`): `t` is not an object type, struct or class.
-    fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
+    pub(super) fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
         let d = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => Some(*d),
             _ => None,

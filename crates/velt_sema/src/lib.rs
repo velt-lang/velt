@@ -28,12 +28,18 @@ pub mod hir;
 
 mod absent_fields;
 mod anon;
+mod any;
 mod assigned_fields;
 mod ast_walk;
 mod body;
 mod brands;
+mod call_sigs;
+mod callables;
 mod collect;
+mod copy_flow;
+mod creation_notes;
 mod ctx;
+mod defined_props;
 mod defs;
 mod discriminants;
 mod dispatch;
@@ -42,17 +48,27 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod holds_promise;
 mod hooks;
 pub mod ide;
+mod iface_writes;
 mod index_signatures;
 mod infer;
+mod inst_sites;
 mod instantiation_cycles;
+mod interface_merge;
+mod intersection_members;
 mod intersections;
 mod js_api;
 mod json;
 mod known;
 mod literals;
+mod module_chunks;
+mod module_scripts;
+mod module_state;
 mod moves;
+mod namespaces;
+mod nested_closures;
 mod object_copies;
 mod overloads;
 mod ownership;
@@ -61,6 +77,7 @@ pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
+mod recursive_unions;
 mod replaced_holders;
 mod resolve;
 mod suggest;
@@ -68,6 +85,7 @@ mod symbols;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
+mod type_level;
 mod type_queries;
 mod types;
 mod undefined_args;
@@ -158,13 +176,43 @@ pub fn check_with(
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, opts, SEMA_STACK_BUDGET)
+                check_on_current_thread(modules, root, opts, &[], SEMA_STACK_BUDGET)
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts, FALLBACK_STACK_BUDGET),
+            Err(_) => check_on_current_thread(modules, root, opts, &[], FALLBACK_STACK_BUDGET),
+        }
+    })
+}
+
+/// [`check_with`] of modules some of which the parser had to recover (`recovered`: their
+/// indices in `modules` with their source text), for `velt check` to report the errors of the
+/// other modules too. A name imported from a recovered module (directly or through re-exports)
+/// that it doesn't declare but whose source has that word may be a declaration the parser
+/// dropped: importing and using it reports nothing. The caller drops the diagnostics located in
+/// recovered modules (their syntax errors come first). Never builds a program.
+pub fn check_recovered(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    recovered: &[(usize, &str)],
+) -> Diagnostics {
+    std::thread::scope(|s| {
+        let spawned = std::thread::Builder::new()
+            .name("velt-sema".into())
+            .stack_size(SEMA_STACK_BYTES)
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, recovered, SEMA_STACK_BUDGET).1
+            });
+        match spawned {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => {
+                check_on_current_thread(modules, root, opts, recovered, FALLBACK_STACK_BUDGET).1
+            }
         }
     })
 }
@@ -173,22 +221,45 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    recovered: &[(usize, &str)],
     stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    let chunks = module_chunks::split(modules, root);
+    let modules = chunks.modules.as_deref().unwrap_or(modules);
+    let mut merge_diags = chunks.diags.clone();
+    merge_diags.extend(call_sigs::check(modules));
+    let (flat, ns_private, diags) = namespaces::flatten(modules);
+    merge_diags.extend(diags);
+    let modules = flat.as_deref().unwrap_or(modules);
+    let (merged, diags) = interface_merge::rewrite(modules);
+    merge_diags.extend(diags);
+    let modules = merged.as_deref().unwrap_or(modules);
+    let (callable, diags) = call_sigs::rewrite(modules);
+    merge_diags.extend(diags);
+    let modules = callable.as_deref().unwrap_or(modules);
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let overloaded = overloads::rewrite(modules);
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let (brands, branded) = defined_props::rewrite(modules);
+    let modules = branded.as_deref().unwrap_or(modules);
+    let closures = nested_closures::rewrite(modules);
+    let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
+    let null_proto = modules
+        .iter()
+        .any(|m| !m.is_std && calls_object_create_null(&m.ast));
     let new_cx = |held_borrows: bool| {
         let mut cx = ctx::Ctx::new(modules, root);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
+        cx.ns_private = ns_private.clone();
+        cx.gen_throw = ts_protocol::calls_throw(modules);
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -197,7 +268,19 @@ fn check_on_current_thread(
             cx.has_overloads = true;
             cx.overloaded_methods = o.methods.clone();
         }
-        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        cx.objects.null_proto_records = null_proto;
+        cx.objects.brands = brands.clone();
+        cx.recovered = (recovered.iter())
+            .map(|&(m, src)| (m, collect::exports::words(src)))
+            .collect();
+        cx.diags.extend(merge_diags.iter().cloned());
+        cx.promoted_consts = chunks.promoted.clone();
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+            cx.kept_nested = c.kept.clone();
+            cx.set_closure_groups(&c.groups);
+        }
+        let entry = analyze(&mut cx, root, root_mod, opts);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
@@ -207,19 +290,27 @@ fn check_on_current_thread(
     if retry_sharing(&cx) {
         (cx, entry) = new_cx(false);
     }
-    if cx.diags.iter().any(|d| d.is_error()) {
+    if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let module_state = module_state::build(&mut cx);
+    let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
+    let dyn_members = any::dyn_members(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
         diags,
         impls,
         counted_objects,
+        objects,
+        any,
+        gen_throw,
+        super_calls,
+        cpu_targets,
         ..
     } = cx;
     let defs = defs
@@ -231,9 +322,21 @@ fn check_on_current_thread(
         defs,
         entry,
         impls,
-        anon_shapes,
-        union_shapes,
+        // The HIR contract keeps std maps; the checker builds Fx maps.
+        anon_shapes: anon_shapes.into_iter().collect(),
+        union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
+        null_proto_records: objects.null_proto_records,
+        module_state,
+        type_ops: type_ops.into_iter().collect(),
+        any_impl: any.and_then(|a| a.imp),
+        unknown: any.and_then(|a| a.imp.map(|_| a.unknown)),
+        object: any.and_then(|a| a.imp.map(|_| a.object)),
+        function: any.and_then(|a| a.imp.map(|_| a.function)),
+        dyn_members: dyn_members.map(|m| m.into_iter().collect()),
+        generator_throw: gen_throw,
+        super_calls: super_calls.into_iter().collect(),
+        cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)
 }
@@ -243,12 +346,10 @@ fn analyze(
     cx: &mut ctx::Ctx,
     root: usize,
     root_mod: &SourceModule,
-    modules: &[SourceModule],
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
     let entry = check_main(cx, root, root_mod, opts.require_main);
-    check_imported_scripts(cx, root, modules);
     resolve::check_unused_aliases(cx);
     entry
 }
@@ -271,6 +372,7 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    module_scripts::declare(cx);
     absent_fields::check(cx);
     fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
@@ -278,6 +380,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    // Before the passes that read instantiated types: deferred types reduced per instance.
+    type_level::instances::reach(cx);
     hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);
@@ -285,6 +389,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
     replaced_holders::check(cx);
+    cx.module_slots = module_state::order(cx);
+    module_state::check_locked_access(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held
@@ -311,30 +417,6 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::check_many_threads(cx);
     promise_copies::check(cx);
     weak_threads::check(cx, weak);
-}
-
-/// Top-level statements run only in the root file: the parser turned an imported module's into
-/// a `main` whose name has an empty span (`velt_syntax` `parser::script`).
-fn check_imported_scripts(cx: &mut ctx::Ctx, root: usize, modules: &[SourceModule]) {
-    for (i, m) in modules.iter().enumerate() {
-        let script = m.ast.items.iter().find_map(|it| match &it.kind {
-            velt_syntax::ast::ItemKind::Function(f)
-                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
-            {
-                Some(f.sig.span)
-            }
-            _ => None,
-        });
-        if let (true, Some(span)) = (i != root, script) {
-            cx.error(
-                Diagnostic::error(
-                    "top-level statements are only allowed in the file the program starts from",
-                    span,
-                )
-                .with_note("an imported module runs nothing when it loads; put this code in a function and call it"),
-            );
-        }
-    }
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.
@@ -438,4 +520,36 @@ pub(crate) fn reserved_prefixes(name: &str) -> &'static str {
         true => "`#`, `[Symbol.` and U+FFFF",
         false => "`#` and `[Symbol.`",
     }
+}
+
+/// Does `module` call `Object.create(null)`? Then records may have no prototype, which `in`,
+/// printing and cloning test at run time (`hir::Program::null_proto_records`); other programs
+/// get none of that code.
+fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
+    use velt_syntax::ast::{self, ExprKind as E};
+    struct Find(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            let E::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            let (E::Member { object, prop, .. }, [arg]) = (&callee.kind, args.as_slice()) else {
+                return;
+            };
+            // As `object_create` accepts it: `null` in any parentheses.
+            let mut arg = arg;
+            while let E::Paren(inner) = &arg.kind {
+                arg = inner;
+            }
+            if prop.name == "create"
+                && matches!(&object.kind, E::Ident(o) if o.name == "Object")
+                && matches!(arg.kind, E::Lit(ast::Lit::Null))
+            {
+                self.0 = true;
+            }
+        }
+    }
+    let mut f = Find(false);
+    velt_syntax::visit::walk_module(module, &mut f);
+    f.0
 }

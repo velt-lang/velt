@@ -1,0 +1,32 @@
+// `typeof` of a value whose type is a type parameter is the instantiation's tag, and
+// `=== undefined` its answer, found without boxing the value: a loop of a million tests
+// allocates nothing per step.
+// check: heap blocks at most 0
+// check: no leaks
+function isNumber<T>(x: T): boolean {
+  return typeof x === "number";
+}
+
+function tag<T>(x: T): string {
+  return typeof x;
+}
+
+interface Point {
+  x: number;
+}
+
+function count<T>(v: T, n: number): number {
+  let hits = 0;
+  for (let i = 0; i < n; i++) {
+    if (isNumber(v)) hits++;
+    if (tag(v) === "object") hits += 2;
+    if (v === undefined) hits += 4;
+  }
+  return hits;
+}
+
+const p: Point = { x: 1 };
+console.log(count(1, 1000000), count(p, 1000000), count("s", 1000000));
+console.log(count<undefined>(undefined, 1000000), count<number | undefined>(undefined, 1000000));
+console.log(tag<number | null>(null), tag<number | null>(5), tag<string | undefined>(undefined));
+console.log(tag<undefined>(undefined), tag<null>(null), tag(undefined), tag(null));

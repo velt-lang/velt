@@ -1,0 +1,26 @@
+// check: no leaks
+// Destructuring defaults apply to `undefined` only, never to `null` (issue #930).
+interface O {
+  a: string | null | undefined;
+  b?: number | null | undefined;
+}
+
+function fields(o: O): string {
+  const { a = "def", b = 7 } = o;
+  return `${a} ${b}`;
+}
+
+function main(): void {
+  console.log(fields({ a: null, b: null }), fields({ a: undefined }), fields({ a: "x", b: 2 }));
+  const xs: (number | null | undefined)[] = [null, undefined];
+  const [p = 1, q = 2, r = 3] = xs;
+  console.log(p, q, r);
+  const t: [string | null | undefined, string | null | undefined] = [null, undefined];
+  const [s = "s", u = "u"] = t;
+  console.log(s, u);
+  const nested: { inner: O } = { inner: { a: null } };
+  const {
+    inner: { a = "d" },
+  } = nested;
+  console.log(a);
+}

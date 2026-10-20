@@ -4,17 +4,28 @@
 //! cargo xtask check                  the checks the changes since origin/main need
 //! cargo xtask check --full           the whole gate (what the merge queue runs)
 //! cargo xtask affected               print what `check` would run, and why
+//! cargo xtask precheck               fmt, file sizes and clippy on the changed files (fast)
+//! cargo xtask install-hooks          a pre-push hook that runs `precheck`
+//! cargo xtask pr-lint                check a pull request's text and commits
 //! ```
 //!
 //! Run `cargo xtask help` for every option.
 
+#[cfg(all(test, unix))]
+mod cache_key_tests;
 mod changes;
 mod check;
 mod comments;
 mod doctests;
+mod file_size;
+mod golden_archive;
 mod graph;
+mod hooks;
 mod os;
 mod plan;
+mod pr_lint;
+mod pr_size;
+mod precheck;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -30,6 +41,15 @@ Commands:
   check       Run the quality gate: by default only the checks the changed files need
               (changed since the merge base with --base, plus uncommitted and untracked files)
   affected    Print the plan `check` would run, and why
+  precheck    The fast checks most failed pull requests miss, on the changed files only:
+              cargo fmt, velt fmt (std/, examples/), the file-size rule, and clippy of the
+              changed crates and their dependents
+  install-hooks
+              Install a git pre-push hook that runs `precheck` (shared by every worktree;
+              `git push --no-verify` skips it)
+  pr-lint     Check a pull request's title, description and commits for tool footers and
+              trailers, session links, machine paths, review wording and the commit author
+              (`cargo xtask pr-lint --help` for its options)
 
 Options:
   --full               Check everything (the merge queue and nightly run this)
@@ -40,8 +60,15 @@ Options:
   --fast               Goldens in debug mode only, no smoke test
   --golden-modes <m>   debug or release (default: both, or debug with --fast)
   --no-smoke           Skip the smoke test (it runs only with --full, on Linux and macOS)
+  --pack <file>        (--part golden) Build what the goldens run and pack it into a tar
+                       instead of running them; the path is relative to the repository root
+  --archive <file>     (--part golden) Run the goldens from a `--pack` tar, unpacked into a
+                       checkout at the same path, without building (VELT_GOLDEN_SHARD=<i>/<n>
+                       runs one of n shards)
   --dry-run            Print the commands without running them
   --github             (affected) Write the plan to $GITHUB_OUTPUT and $GITHUB_STEP_SUMMARY
+  --force              (install-hooks) Replace a pre-push hook xtask didn't install (kept as
+                       pre-push.orig)
 ";
 
 #[derive(Default)]
@@ -54,8 +81,11 @@ struct Args {
     fast: bool,
     golden_modes: Option<String>,
     no_smoke: bool,
+    pack: Option<String>,
+    archive: Option<String>,
     dry_run: bool,
     github: bool,
+    force: bool,
 }
 
 fn parse(argv: Vec<String>) -> Result<Args, String> {
@@ -71,8 +101,11 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--golden-modes" => args.golden_modes = Some(value("--golden-modes")?),
             "--fast" => args.fast = true,
             "--no-smoke" => args.no_smoke = true,
+            "--pack" => args.pack = Some(value("--pack")?),
+            "--archive" => args.archive = Some(value("--archive")?),
             "--dry-run" => args.dry_run = true,
             "--github" => args.github = true,
+            "--force" => args.force = true,
             "--paths" => {
                 let mut paths = vec![];
                 while let Some(p) = it.next_if(|p| !p.starts_with("--")) {
@@ -97,7 +130,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let args = parse(std::env::args().skip(1).collect())?;
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().is_some_and(|c| c == "pr-lint") {
+        return pr_lint::main(&repo_root()?, &argv[1..]);
+    }
+    let args = parse(argv)?;
     let root = repo_root()?;
     match args.command.as_str() {
         "check" => {
@@ -105,6 +142,12 @@ fn run() -> Result<(), String> {
             println!("root: {}", root.display());
             print!("{}", plan.describe());
             let part = args.part.as_deref().unwrap_or("all");
+            if (args.pack.is_some() || args.archive.is_some()) && part != "golden" {
+                return Err("--pack and --archive need `--part golden`".into());
+            }
+            if args.pack.is_some() && args.archive.is_some() {
+                return Err("--pack builds, --archive runs without building: use one".into());
+            }
             let opts = Options {
                 parts: Parts::parse(part).ok_or(format!("unknown part `{part}`"))?,
                 golden_modes: args
@@ -112,6 +155,8 @@ fn run() -> Result<(), String> {
                     .clone()
                     .or(args.fast.then(|| "debug".to_string())),
                 smoke: !args.no_smoke && !args.fast,
+                pack: args.pack.clone(),
+                archive: args.archive.clone(),
                 dry_run: args.dry_run,
             };
             check::run(&root, &Graph::load(&root)?, &plan, &opts)?;
@@ -127,6 +172,16 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "precheck" => {
+            let (paths, reason) = precheck_paths(&root, &args)?;
+            let graph = Graph::load(&root)?;
+            let sel = precheck::select(&graph, &paths, |p| root.join(p).exists());
+            precheck::run(&root, &sel, &reason)
+        }
+        "install-hooks" => {
+            println!("{}", hooks::describe(&hooks::install(&root, args.force)?));
+            Ok(())
+        }
         "help" | "--help" | "-h" => {
             print!("{HELP}");
             Ok(())
@@ -137,43 +192,99 @@ fn run() -> Result<(), String> {
 
 fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
     if args.full {
-        return Ok(Plan::everything("--full"));
+        let mut plan = Plan::everything("--full");
+        if std::env::var("VELT_WASM_GOLDENS").as_deref() == Ok("skip") {
+            plan.wasm = false;
+            plan.reasons
+                .push("VELT_WASM_GOLDENS=skip: no WebAssembly goldens".into());
+        }
+        return Ok(plan);
     }
     let graph = Graph::load(root)?;
     if let Some(paths) = &args.paths {
         return Ok(Plan::for_paths(&graph, paths));
     }
     let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
-        return Ok(Plan::everything(
+        return Ok(Plan::unknown_changes(
             "no base revision (origin/main or main) to compare with",
         ));
     };
     match changes::changes(root, &base) {
         Ok(c) => Ok(Plan::for_changes(&graph, &c.paths, &c.comment_only)),
-        Err(e) => Ok(Plan::everything(e)),
+        Err(e) => Ok(Plan::unknown_changes(e)),
     }
 }
 
+/// The files `precheck` looks at, and why: `--paths`, else the changes since the merge base
+/// with the base revision, else (no base to compare with) every file in git.
+fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), String> {
+    if let Some(paths) = &args.paths {
+        return Ok((paths.clone(), format!("{} given path(s)", paths.len())));
+    }
+    let base = args.base.clone().or_else(|| changes::default_base(root));
+    let why = match &base {
+        Some(base) => match changes::changes(root, base) {
+            Ok(c) => {
+                let n = c.paths.len();
+                return Ok((c.paths, format!("{n} file(s) changed since {base}")));
+            }
+            Err(e) => e,
+        },
+        None => "no base revision (origin/main or main) to compare with".into(),
+    };
+    let all = changes::git(root, &["ls-files"])?
+        .lines()
+        .map(|l| l.trim().replace('\\', "/"))
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok((all, format!("every file ({why})")))
+}
+
 /// The `$GITHUB_OUTPUT` lines for `plan`: which parts have anything to do, the OSes the queue
-/// checks (`os`), and the OSes besides Linux a pull request lints on (`other_os`, empty unless
-/// the change touches OS-specific code: PR CI otherwise runs on Linux only).
+/// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, empty unless
+/// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
+/// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
+/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
+/// whether the WebAssembly goldens run (`wasm_goldens`: `VELT_WASM_GOLDENS`). After a push to
+/// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
+/// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
-    let (os, other_os) = if plan.other_os.is_some() {
-        (
-            r#"["ubuntu-latest","windows-latest","macos-latest"]"#,
-            r#"["windows-latest","macos-latest"]"#,
-        )
+    let oses: &[&str] = if plan.other_os.is_some() {
+        os::QUEUE_OSES
     } else {
-        (r#"["ubuntu-latest"]"#, "[]")
+        &os::QUEUE_OSES[..1]
     };
-    format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\n",
+    let main_os = if plan.after_merge.is_some() {
+        r#"["ubuntu-latest","windows-latest","macos-latest"]"#
+    } else {
+        r#"["ubuntu-latest"]"#
+    };
+    let json = |list: &[&str]| {
+        let quoted: Vec<String> = list.iter().map(|os| format!("\"{os}\"")).collect();
+        format!("[{}]", quoted.join(","))
+    };
+    let (os, other_os) = (json(oses), json(&oses[1..]));
+    let golden_shards = os::golden_shards_json(oses);
+    let mut text = format!(
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n\
+         golden_shards={golden_shards}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build() || plan.difftest || plan.vscode),
         flag(plan.goldens != plan::Goldens::None),
-    )
+    );
+    let sweep = plan.sweep_env();
+    for (output, var) in [
+        ("robustness", "VELT_ROBUSTNESS"),
+        ("robustness_files", "VELT_ROBUSTNESS_FILES"),
+    ] {
+        let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
+        text.push_str(&format!("{output}={value}\n"));
+    }
+    let wasm = if plan.wasm { "" } else { "skip" };
+    text.push_str(&format!("wasm_goldens={wasm}\n"));
+    text
 }
 
 /// For CI: which parts have anything to do, and the plan as the job summary.
@@ -290,5 +401,84 @@ name = \"a\"
             text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
             "{text}"
         );
+        // The queue's golden shards follow the OSes.
+        assert!(
+            text.contains("\ngolden_shards={\"ubuntu-latest\":[\"1/"),
+            "{text}"
+        );
+        let shards = text.lines().find(|l| l.starts_with("golden_shards="));
+        assert!(shards.is_some_and(|l| !l.contains("windows")), "{text}");
+    }
+
+    #[test]
+    fn every_os_the_queue_checks_has_golden_shards() {
+        let mut linux_only = Plan::everything("test");
+        linux_only.other_os = None;
+        for plan in [Plan::everything("test"), linux_only] {
+            let text = github_output_text(&plan);
+            let line = |name: &str| {
+                let prefix = format!("{name}=");
+                text.lines()
+                    .find_map(|l| l.strip_prefix(prefix.as_str()))
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let (oses, shards) = (line("os"), line("golden_shards"));
+            for os in os::QUEUE_OSES.iter().filter(|os| oses.contains(*os)) {
+                assert!(shards.contains(&format!("\"{os}\":[\"1/")), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn main_checks_windows_and_macos_only_after_a_linux_only_queue_run() {
+        let mut plan = Plan::everything("test");
+        plan.after_merge = None;
+        let text = github_output_text(&plan);
+        assert!(text.contains("\nmain_os=[\"ubuntu-latest\"]\n"), "{text}");
+        plan.after_merge = Some("the merge queue checked Linux only".into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nmain_os=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_queue_learns_how_to_cut_the_goldens() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nrobustness=\nrobustness_files=\n"),
+            "{text}"
+        );
+        plan.sweep = plan::Sweep::Sampled(
+            ["tests/golden/a/x.vlt", "tests/golden/b.vlt"]
+                .map(String::from)
+                .into(),
+        );
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains(
+                "\nrobustness=\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n"
+            ),
+            "{text}"
+        );
+        plan.sweep = plan::Sweep::Full;
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nrobustness=full\nrobustness_files=\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_queue_learns_whether_the_webassembly_goldens_run() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(text.ends_with("\nwasm_goldens=\n"), "{text}");
+        plan.wasm = false;
+        let text = github_output_text(&plan);
+        assert!(text.ends_with("\nwasm_goldens=skip\n"), "{text}");
     }
 }

@@ -4,7 +4,6 @@
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
-use crate::lower::sequence::may_write;
 use crate::lower::{cint, ice, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -34,7 +33,7 @@ impl FnLower<'_, '_> {
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
-        let av = match args[1..].iter().any(may_write) {
+        let av = match args[1..].iter().any(|a| self.may_write(a)) {
             true => {
                 let outer = self.start_borrows();
                 let v = self.stable_borrow(&args[0], &args[1..]);
@@ -57,6 +56,10 @@ impl FnLower<'_, '_> {
                 let pa = self.elem_place_checked(&arr, aty, ia, ta);
                 let pb = self.elem_place_checked(&arr, aty, ib, tb);
                 let vt = self.cx.ty(elem);
+                if vt == Ty::Unit {
+                    // Zero-sized elements (a single literal type): nothing to exchange.
+                    return unit();
+                }
                 let t = self.copy_to_temp(Operand::Copy(pa.clone()), vt);
                 self.assign(pa, Rvalue::Use(Operand::Copy(pb.clone())));
                 self.assign(pb, Rvalue::Use(Operand::Copy(Place::local(t))));

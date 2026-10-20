@@ -8,12 +8,19 @@ impl<'a> Parser<'a> {
     /// `{ stmts }`. A missing `}` at end of file is reported and the partial block is returned.
     pub(super) fn parse_block(&mut self) -> PResult<Block> {
         let lo = self.cur_lo();
+        let fn_body = std::mem::take(&mut self.fn_body_next);
         self.expect(Tok::LBrace)?;
         // A function body in a `for` head (`for (f = () => { … }; …)`) has its own `in`.
-        self.allow_in(|p| p.parse_block_in(lo))
+        self.allow_in(|p| p.parse_block_in(lo, fn_body))
     }
 
-    fn parse_block_in(&mut self, lo: u32) -> PResult<Block> {
+    /// The body of a function: a block in which `var` may be declared (`var_stmt`).
+    pub(super) fn parse_fn_body(&mut self) -> PResult<Block> {
+        self.fn_body_next = true;
+        self.parse_block()
+    }
+
+    fn parse_block_in(&mut self, lo: u32, fn_body: bool) -> PResult<Block> {
         let mut stmts = Vec::new();
         loop {
             match self.peek() {
@@ -27,6 +34,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {}
             }
+            self.var_ok = fn_body;
             self.parse_stmt_recovering(&mut stmts);
         }
         Ok(Block {
@@ -91,6 +99,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt_kind(&mut self) -> PResult<StmtKind> {
+        let var_ok = std::mem::take(&mut self.var_ok);
+        if self.at_var_decl() {
+            return self.var_stmt(var_ok);
+        }
         if self.at_using_decl() {
             let var = self.parse_using_decl()?;
             self.expect_semi()?;
@@ -143,15 +155,10 @@ impl<'a> Parser<'a> {
     /// Declarations allowed inside blocks (functions, types, ...).
     fn at_nested_item(&mut self) -> bool {
         match self.cur_kw() {
-            Some(
-                Kw::Function
-                | Kw::Struct
-                | Kw::Class
-                | Kw::Interface
-                | Kw::Enum
-                | Kw::Import
-                | Kw::Export,
-            ) => true,
+            Some(Kw::Function | Kw::Struct | Kw::Class | Kw::Interface | Kw::Enum | Kw::Export) => {
+                true
+            }
+            Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(Kw::Async | Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
             _ => false,
@@ -265,12 +272,31 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `catch (e: unknown)` / `catch (e: any)`: TypeScript allows only these annotations on the
+    /// catch binding (else TS1196). They are dropped: the binding has the caught value's type.
+    fn catch_annotation(&mut self) -> PResult<()> {
+        if !self.eat(Tok::Colon) {
+            return Ok(());
+        }
+        let ty = self.parse_type()?;
+        let ok = matches!(&ty.kind, TypeExprKind::Named { path, args }
+            if args.is_empty() && path.len() == 1 && matches!(path[0].name.as_str(), "any" | "unknown"));
+        if !ok {
+            self.error(
+                "a catch clause variable's type annotation must be `any` or `unknown` if specified",
+                ty.span,
+            );
+        }
+        Ok(())
+    }
+
     fn parse_try(&mut self) -> PResult<StmtKind> {
         self.bump(); // try
         let body = self.parse_block()?;
         let catch = if self.eat_kw(Kw::Catch) {
             let binding = if self.eat(Tok::LParen) {
                 let p = self.parse_binding_pattern()?;
+                self.catch_annotation()?;
                 self.expect(Tok::RParen)?;
                 Some(p)
             } else {

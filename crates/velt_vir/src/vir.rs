@@ -79,6 +79,12 @@ pub enum Ty {
     Bool,
     /// 64-bit untyped pointer.
     Ptr,
+    /// 128-bit SIMD vector: 16 bytes whose lanes are given by each operation, not by the type
+    /// (as WebAssembly's `v128`). 8-byte aligned in memory, so backends load and store it
+    /// unaligned. Only moved, passed, returned, loaded and stored; every operation on it is a
+    /// call of a `velt_simd_*` extern that backends emit inline (rt_abi.md "SIMD"). Its only
+    /// constant is `Const::Int(0)`, all bits zero.
+    V128,
     /// Zero-sized. Only valid as a function return type or the type of a dummy call destination.
     Unit,
     /// Aggregate stored in memory with the given layout. Never in signatures.
@@ -108,8 +114,14 @@ impl Ty {
             Ty::I16 | Ty::U16 => 2,
             Ty::I32 | Ty::U32 | Ty::F32 => 4,
             Ty::I64 | Ty::U64 | Ty::F64 | Ty::Ptr => 8,
+            Ty::V128 => 16,
             Ty::Unit | Ty::Agg(_) => return None,
         })
+    }
+    /// Alignment in bytes of a scalar in memory: its size, except `V128` (8); `None` as for
+    /// [`Ty::scalar_size`].
+    pub fn scalar_align(self) -> Option<u32> {
+        self.scalar_size().map(|n| n.min(8))
     }
 }
 
@@ -176,10 +188,7 @@ impl Program {
                 (l.size, l.align)
             }
             Ty::Unit => (0, 1),
-            s => {
-                let n = s.scalar_size().unwrap();
-                (n, n)
-            }
+            s => (s.scalar_size().unwrap(), s.scalar_align().unwrap()),
         }
     }
 }
@@ -210,6 +219,11 @@ pub struct Function {
     /// (rt_abi_async.md §1): param 0 is its frame, which the caller hands over exclusively for
     /// the duration of the call. Set by lowering; `velt_opt` keeps it on clones.
     pub is_poll: bool,
+    /// A gated function (`__intrinsic_target`, rt_abi.md "SIMD"): it runs only where the CPU has
+    /// this extension (sema checks every call), so backends compile it with the extension's
+    /// whole feature set and its SHA operations as the bare instructions. `None` for every
+    /// other function. Inlining keeps a gated body out of callers with another target.
+    pub target: Option<crate::simd::Ext>,
 }
 
 /// What every caller guarantees about one `Ptr` param for the duration of the call
@@ -252,6 +266,7 @@ impl Function {
             locs: Vec::new(),
             param_attrs: Vec::new(),
             is_poll: false,
+            target: None,
         }
     }
 
@@ -503,6 +518,7 @@ impl fmt::Display for Ty {
             Ty::F64 => "f64",
             Ty::Bool => "bool",
             Ty::Ptr => "ptr",
+            Ty::V128 => "v128",
             Ty::Unit => "unit",
             Ty::Agg(a) => return write!(f, "agg#{}", a.0),
         };

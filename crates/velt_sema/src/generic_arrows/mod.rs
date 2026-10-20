@@ -6,11 +6,17 @@
 //! before collection, so every later pass sees an ordinary generic function. Generic arrows
 //! anywhere else are reported by `body::expr::closure` (a closure value has one type; Velt has
 //! no generic function values). Likewise a module-level `const g = function* (...) { ... };` is
-//! the generator function `function* g(...) { ... }`.
+//! the generator function `function* g(...) { ... }`, and a module-level arrow (or function
+//! expression) constant with a rest parameter and typed parameters, `const f = (...xs: T[]) =>
+//! body;`, the function `function f(...xs: T[]) { return body; }`: a function value cannot take
+//! rest arguments yet (#943), a function can. Local ones stay closures (a nested function
+//! cannot capture locals), which `body::expr::closure` reports. An arrow constant naming
+//! itself becomes a function too, at module level and in bodies ([`recursive`]).
 
 mod local;
+mod recursive;
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -22,9 +28,9 @@ pub(crate) struct Lifted {
     /// Every module, with its generic arrow constants rewritten.
     pub modules: Vec<SourceModule>,
     /// Name spans of the functions made from local (non-module-level) generic arrows.
-    pub local_fns: HashSet<Span>,
+    pub local_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included.
-    pub all_fns: HashSet<Span>,
+    pub all_fns: FxHashSet<Span>,
 }
 
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
@@ -71,7 +77,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
-    let local_fns: HashSet<Span> = locals.lifted.into_iter().collect();
+    let local_fns: FxHashSet<Span> = locals.lifted.into_iter().collect();
     let all_fns = local_fns.iter().copied().chain(module_fns).collect();
     Some(Lifted {
         modules,
@@ -86,7 +92,10 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;
     };
-    let f = generator_function(v).or_else(|| arrow_function(v))?;
+    let f = generator_function(v)
+        .or_else(|| arrow_function(v))
+        .or_else(|| lifted_arrow(v, true))
+        .or_else(|| recursive::recursive_arrow(v))?;
     Some(ast::Item {
         kind: ast::ItemKind::Function(f),
         exported: item.exported,
@@ -116,6 +125,14 @@ fn generator_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
 
 /// The function a generic arrow constant `v` declares, if it is one with typed parameters.
 fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
+    lifted_arrow(v, false)
+}
+
+/// The function an arrow (or function expression) constant `v` declares: with `rest`, a
+/// non-generic one with a rest parameter and typed parameters (`const f = (...xs: T[]) => …`,
+/// module level only, see the module docs), else a generic one with typed parameters and no
+/// rest parameter.
+fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
     let ast::PatternKind::Ident(name) = &v.pattern.kind else {
         return None;
     };
@@ -133,21 +150,34 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
     else {
         return None;
     };
-    if type_params.is_empty() {
+    let wanted = match rest {
+        true => type_params.is_empty() && params.iter().any(|p| p.rest),
+        false => !type_params.is_empty(),
+    };
+    if !wanted {
         return None;
     }
     let params = params
         .iter()
         .map(|p| {
-            let ty = p.ty.clone().filter(|_| !p.rest)?;
+            let ty = p.ty.clone().filter(|_| rest || !p.rest)?;
+            // As a declared rest parameter: no arguments left over is an empty array.
+            let default = match p.rest {
+                true => Some(ast::Expr {
+                    id: ast::NodeId(u32::MAX),
+                    kind: ast::ExprKind::Array(vec![]),
+                    span: Span::new(ty.span.file, ty.span.hi, ty.span.hi),
+                }),
+                false => p.default.clone().filter(|_| rest),
+            };
             Some(ast::Param {
                 span: p.name.span.to(ty.span),
                 name: p.name.clone(),
                 pattern: p.pattern.clone(),
                 ty,
-                default: None,
-                optional: false,
-                rest: false,
+                default,
+                optional: rest && p.optional,
+                rest: p.rest,
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -169,6 +199,7 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
         throws: throws.clone(),
         is_async: *is_async,
         is_generator: false,
+        this_param: None,
         span: v.span,
     };
     Some(ast::FnDecl {
@@ -218,6 +249,26 @@ mod tests {
             panic!("not lifted");
         };
         assert!(f.sig.ret.is_none());
+    }
+
+    #[test]
+    fn lifts_module_level_arrows_with_rest_parameters() {
+        let src = "const f = (s: string, ...xs: readonly number[]) => xs.length;";
+        let Some(ast::ItemKind::Function(f)) = lifted(src) else {
+            panic!("not lifted");
+        };
+        assert!(f.sig.generics.is_empty());
+        assert!(!f.sig.params[0].rest && f.sig.params[1].rest);
+        // No arguments left over: an empty array, as for a declared rest parameter.
+        assert!(matches!(
+            f.sig.params[1].default.as_ref().map(|d| &d.kind),
+            Some(ast::ExprKind::Array(xs)) if xs.is_empty()
+        ));
+        let src = "export const g = function (...xs: Nums) { return xs; };";
+        assert!(matches!(lifted(src), Some(ast::ItemKind::Function(_))));
+        // Untyped parameters, or a local one (it could capture locals), stay closures.
+        assert!(lifted("const f = (a, ...xs: number[]) => a;").is_none());
+        assert!(lifted("function f() { const g = (...xs: number[]) => xs; }").is_none());
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! type of each concrete HIR type, in terms of the layouts lowering builds for it (layout.rs),
 //! and the `LocalDebug` of each VIR local that holds a source variable.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 use velt_sema::hir::{self, AdtKind, FloatTy, FnDef, TyId, TyKind};
@@ -14,11 +14,11 @@ use crate::vir::{DebugField, DebugKind, DebugTy, DebugTyId, DebugVariant, LocalD
 #[derive(Default)]
 pub(super) struct DebugTypes {
     pub(super) types: Vec<DebugTy>,
-    memo: HashMap<TyId, DebugTyId>,
+    memo: FxHashMap<TyId, DebugTyId>,
     /// Source names by type, and the types being named (a structural type that contains
     /// itself, `interface Item { children: Item[] }`, is spelled once).
-    names: HashMap<TyId, String>,
-    naming: HashSet<TyId>,
+    names: FxHashMap<TyId, String>,
+    naming: FxHashSet<TyId>,
 }
 
 impl Cx<'_> {
@@ -190,6 +190,7 @@ impl Cx<'_> {
             TyKind::Float(FloatTy::F32) => "f32".into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Array(e) => {

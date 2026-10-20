@@ -223,7 +223,10 @@ impl FnCx<'_, '_> {
         let (t, e) = (args[0], args[1]);
         let gen_ty = match is_async {
             true => self.cx.async_generator_ty(t, e),
-            false => self.cx.generator_ty(t, e),
+            false => {
+                let n = self.cx.generator_next_ty(call.ty);
+                self.cx.generator_ty_next(t, e, n)
+            }
         };
         self.push_scope_until(span.hi);
         let names = Hidden::new(span);

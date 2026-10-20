@@ -1,0 +1,16 @@
+// check: no leaks
+// A dispose hook that calls a helper, which drops a value whose dispose hook reassigns the `let`.
+// The method on a module `let` runs code only through dispose hooks drops run: the receiver
+// stays alive for the method (#1188). Node does not dispose dropped values
+// (docs/reference/memory.md), so this output is Velt's.
+class State {
+  n: number = 1;
+  label: string = "lbl" + String(1);
+  f(): string { { const e = new E(); } return this.label + "#" + String(this.n); }
+}
+class D { [Symbol.dispose](): void { reset(); console.log("disposed"); } }
+let cur = new State();
+function reset(): void { cur = new State(); cur.label = "new" + String(cur.n); }
+class E { [Symbol.dispose](): void { helper(); } }
+function helper(): void { const x = new D(); }
+function main(): void { console.log(cur.f()); console.log(cur.label); }

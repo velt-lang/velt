@@ -1,0 +1,61 @@
+// check: no leaks
+// A method called through a typed proxy whose handler has a `get` trap (#823): JavaScript reads
+// the method through the trap first (`get(target, "bump", proxy)`), before the arguments, then
+// calls what the trap answered with `this` the proxy, so `this.n` inside runs the traps too.
+// The trap forwards with `Reflect.get`, with or without the receiver (sigx's `signal()`).
+class Counter {
+  n: number = 0;
+  bump(by: number): number {
+    this.n = this.n + by;
+    return this.n;
+  }
+  show(): string {
+    return `n=${this.n}`;
+  }
+}
+
+class Big extends Counter {
+  override show(): string {
+    return `big ${this.n}`;
+  }
+}
+
+function logged(t: any): any {
+  return new Proxy(t, {
+    get(o: any, key: string | symbol, receiver: any): any {
+      console.log("get", String(key));
+      return Reflect.get(o, key, receiver);
+    },
+    set(o: any, key: string | symbol, value: any, receiver: any): boolean {
+      console.log("set", String(key), value);
+      return Reflect.set(o, key, value, receiver);
+    },
+  });
+}
+
+function tracked(t: any): any {
+  return new Proxy(t, {
+    get(o: any, key: string | symbol, receiver: any): any {
+      console.log("track", String(key));
+      return Reflect.get(o, key);
+    },
+  });
+}
+
+function arg(x: number): number {
+  console.log("arg", x);
+  return x;
+}
+
+const c = logged(new Counter()) as Counter;
+console.log(c.bump(arg(2)));
+console.log(c.show());
+// A virtual call: the target's override runs, with `this` the proxy.
+const b: Counter = logged(new Big()) as Big;
+console.log(b.bump(3), b.show());
+const t = tracked(new Counter()) as Counter;
+console.log(t.bump(5), t.show());
+const plain = new Counter();
+console.log(plain.bump(1), plain.show());
+// A method read through `any` is a function value.
+console.log(typeof (c as any).bump);

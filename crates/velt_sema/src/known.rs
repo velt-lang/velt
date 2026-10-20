@@ -53,6 +53,14 @@ impl Ctx<'_> {
     }
 
     /// An ADT exported by the prelude under `name`.
+    /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
+    /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
+    /// keep their JSON form (written without it, as Node leaves out a `name` from the
+    /// prototype; decoded with its default).
+    pub(crate) fn plain_private(&self, private_to: Option<DefId>, name: &str) -> bool {
+        name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
+    }
+
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
@@ -190,7 +198,7 @@ impl Ctx<'_> {
     /// type parameter are looked into by the whole-program check of the values crossing
     /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
     pub fn holds_weak(&mut self, t: TyId) -> bool {
-        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, None, &mut rustc_hash::FxHashSet::default())
     }
 
     /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
@@ -198,16 +206,16 @@ impl Ctx<'_> {
     pub(crate) fn holds_weak_with(
         &mut self,
         t: TyId,
-        hiding: &std::collections::HashSet<DefId>,
+        hiding: &rustc_hash::FxHashSet<DefId>,
     ) -> bool {
-        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, Some(hiding), &mut rustc_hash::FxHashSet::default())
     }
 
     fn holds_weak_in(
         &mut self,
         t: TyId,
-        hiding: Option<&std::collections::HashSet<DefId>>,
-        seen: &mut std::collections::HashSet<TyId>,
+        hiding: Option<&rustc_hash::FxHashSet<DefId>>,
+        seen: &mut rustc_hash::FxHashSet<TyId>,
     ) -> bool {
         if !seen.insert(t) {
             return false;
@@ -242,10 +250,10 @@ impl Ctx<'_> {
     /// Does a value of type `t` hold a function value (in a field, element or payload)?
     /// Interface and `shared` values are not looked into.
     pub fn holds_fn(&mut self, t: TyId) -> bool {
-        self.holds_fn_in(t, &mut std::collections::HashSet::new())
+        self.holds_fn_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_fn_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_fn_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -273,10 +281,10 @@ impl Ctx<'_> {
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.
     pub fn holds_generator(&mut self, t: TyId) -> bool {
-        self.holds_generator_in(t, &mut std::collections::HashSet::new())
+        self.holds_generator_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn holds_generator_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn holds_generator_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -305,7 +313,7 @@ impl Ctx<'_> {
         let Some((d, mut args)) = self.generator_result(t) else {
             return t;
         };
-        if args.len() != 2 {
+        if args.len() < 2 {
             return t;
         }
         args[1] = e;
@@ -315,11 +323,43 @@ impl Ctx<'_> {
         }
     }
 
-    /// `Generator<t, e>`.
-    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+    /// `Generator<t, e, n>`: `n` is the type of `next(value)`'s argument (`never`: none).
+    pub fn generator_ty_next(&mut self, t: TyId, e: TyId, n: TyId) -> TyId {
         match self.generator_class() {
-            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e, n])),
             None => self.ty.error,
+        }
+    }
+
+    /// The type arguments of class `d` as diagnostics show them: a `Generator<T, E, never>` is
+    /// `Generator<T, E>`.
+    pub(crate) fn shown_args<'a>(&self, d: DefId, args: &'a [TyId]) -> &'a [TyId] {
+        match args {
+            [_, _, n] if Some(d) == self.generator_class() && *n == self.ty.never => &args[..2],
+            _ => args,
+        }
+    }
+
+    /// Are `a` and `b` `Generator<T, E, N>` types that differ only in `N`, one of them `never`?
+    pub(crate) fn generator_next_differs(&self, a: TyId, b: TyId) -> bool {
+        match (self.ty.kind(a), self.ty.kind(b)) {
+            (TyKind::Adt(da, x), TyKind::Adt(db, y))
+                if da == db && Some(*da) == self.generator_class() && x.len() == 3 =>
+            {
+                x[..2] == y[..2] && (x[2] == self.ty.never || y[2] == self.ty.never)
+            }
+            _ => false,
+        }
+    }
+
+    /// The `next(value)` type `N` of a `Generator<T, E, N>` value type (`never`: none, also
+    /// for any other type).
+    pub fn generator_next_ty(&self, t: TyId) -> TyId {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() && args.len() == 3 => {
+                args[2]
+            }
+            _ => self.ty.never,
         }
     }
 

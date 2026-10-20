@@ -14,7 +14,7 @@
 //! records (`Symbol.for`) are listed in a table the runtime's registry consults
 //! (`Intrinsic::SymbolRegistry`), so `Symbol.for(k)` at run time finds the same record.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -43,13 +43,13 @@ pub(crate) enum KnownSymbol {
 /// Key names given out so far: one per symbol, distinct for distinct symbols.
 #[derive(Default)]
 pub(crate) struct KeyNames {
-    names: HashMap<KnownSymbol, String>,
-    taken: HashMap<String, KnownSymbol>,
+    names: FxHashMap<KnownSymbol, String>,
+    taken: FxHashMap<String, KnownSymbol>,
     /// How the source first wrote each key name (`[VNODE]` for `[Symbol(sigx:vnode)]`), for
     /// diagnostics.
-    spelled: HashMap<String, String>,
+    spelled: FxHashMap<String, String>,
     /// The `SymbolStatic` ids of the registry's symbols, by key.
-    registered: HashMap<String, u128>,
+    registered: FxHashMap<String, u128>,
 }
 
 /// A string literal argument (`"d"`, or a template without substitutions).
@@ -205,6 +205,14 @@ impl Ctx<'_> {
             Some(inner) if is_computed_key(k) => inner,
             _ => return Ok(name.to_string()),
         };
+        // A key resolves where it is written: a member an asserted literal adds to a type of
+        // another module (`defined_props.rs`) keeps the literal's span.
+        let module = match self.modules.get(module) {
+            Some(m) if m.file != k.span.file && k.span != Span::DUMMY => (self.modules.iter())
+                .position(|m| m.file == k.span.file)
+                .unwrap_or(module),
+            _ => module,
+        };
         let d = match self.lookup_item(module, inner) {
             Some(Item::Def(d)) if matches!(self.info[d.0 as usize], DefInfo::Global(_)) => d,
             _ => return Err(inner.to_string()),
@@ -226,7 +234,7 @@ impl Ctx<'_> {
         }
     }
 
-    fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
+    pub(crate) fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
         self.error(
             Diagnostic::error(
                 format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string"),
@@ -405,7 +413,7 @@ fn is_private(name: &str) -> bool {
 /// method, a getter or a setter (key `set name`). Static methods are the class's, and a key
 /// never matches the table's internal spellings (`"set x"`) or a `#private` name.
 pub(crate) fn has_instance_method(
-    methods: &HashMap<String, crate::defs::MethodRef>,
+    methods: &FxHashMap<String, crate::defs::MethodRef>,
     name: &str,
 ) -> bool {
     !is_private(name)
@@ -418,7 +426,7 @@ pub(crate) fn has_instance_method(
 /// (`"name" in o`; [`has_instance_method`]), not counting base classes?
 pub(crate) fn has_instance_member(
     fields: &[crate::defs::FieldInfo],
-    methods: &HashMap<String, crate::defs::MethodRef>,
+    methods: &FxHashMap<String, crate::defs::MethodRef>,
     name: &str,
 ) -> bool {
     (!is_private(name) && fields.iter().any(|f| f.name == name))

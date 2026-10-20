@@ -53,8 +53,9 @@
 //! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
 //! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -84,14 +85,14 @@ impl Reach {
 
 /// The implicit calls of the program: the hooks of each class, its generator functions and the
 /// initializers that run code.
-pub(super) struct Implicit {
+pub(crate) struct Implicit {
     /// Each class with a hook, and the hooks of its family (bases and subclasses, which a value
     /// of it may be or inherit from): `[Symbol.dispose]()`, and the glue hooks.
-    hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
+    hooks: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
     /// Each class's subclasses (transitively).
-    family: HashMap<DefId, Vec<DefId>>,
+    family: FxHashMap<DefId, Vec<DefId>>,
     /// Every generator function (4).
-    pub(super) generators: Vec<DefId>,
+    pub(crate) generators: Vec<DefId>,
     /// The types of the values closures capture.
     captures: Vec<TyId>,
     /// Some closure captures a value whose type may reach a hook.
@@ -103,13 +104,13 @@ pub(super) struct Implicit {
     weak_entries: Vec<(Option<TyId>, TyId)>,
     /// [`Reach`] of each type seen without type arguments known (types mentioning type
     /// parameters keep them as [`Reach::param`]).
-    memo: RefCell<HashMap<TyId, std::rc::Rc<Reach>>>,
+    memo: RefCell<FxHashMap<TyId, std::rc::Rc<Reach>>>,
 }
 
 impl Implicit {
     /// `weak_entries`: [`weak_entries`] of the program.
-    pub(super) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
-        let mut own: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+    pub(crate) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
+        let mut own: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)> = FxHashMap::default();
         let mut bases: Vec<(DefId, DefId)> = Vec::new();
         for (i, info) in cx.info.iter().enumerate() {
             let DefInfo::Adt(a) = info else { continue };
@@ -125,12 +126,12 @@ impl Implicit {
             }
         }
         // Family: a class's bases and its subclasses, transitively.
-        let parent: HashMap<DefId, DefId> = bases.iter().copied().collect();
-        let mut children: HashMap<DefId, Vec<DefId>> = HashMap::new();
+        let parent: FxHashMap<DefId, DefId> = bases.iter().copied().collect();
+        let mut children: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
         for &(d, b) in &bases {
             children.entry(b).or_default().push(d);
         }
-        let family: HashMap<DefId, Vec<DefId>> = parent
+        let family: FxHashMap<DefId, Vec<DefId>> = parent
             .keys()
             .chain(children.keys())
             .map(|&d| {
@@ -155,7 +156,7 @@ impl Implicit {
                 (d, v)
             })
             .collect();
-        let mut hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+        let mut hooks: FxHashMap<DefId, (Vec<DefId>, Vec<DefId>)> = FxHashMap::default();
         for (&d, h) in &own {
             for &m in family.get(&d).map_or(&[d][..], |v| &v[..]) {
                 let e = hooks.entry(m).or_default();
@@ -187,7 +188,7 @@ impl Implicit {
             weak_map,
             weak_entries,
             captures_reach: false,
-            memo: RefCell::new(HashMap::new()),
+            memo: RefCell::new(FxHashMap::default()),
         };
         im.captures_reach = im.captures.iter().any(|&t| {
             let r = im.reach(cx, t);
@@ -234,6 +235,7 @@ impl Implicit {
             | TyKind::Never
             | TyKind::Error
             | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Literal(_) => {}
             TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {
                 Some(r) => out.add(r),
@@ -255,6 +257,13 @@ impl Implicit {
                 for &x in ts {
                     self.reach_in(cx, x, env, stack, out);
                 }
+            }
+            // A deferred type is made of its arguments, and may hold functions of them.
+            TyKind::Op(_, args) => {
+                for &x in args {
+                    self.reach_in(cx, x, env, stack, out);
+                }
+                out.fns = true;
             }
             TyKind::Adt(d, args) => {
                 let (d, args) = (*d, args.clone());
@@ -330,6 +339,28 @@ impl Implicit {
         }
     }
 
+    /// Every hook a value of type `t` may run when it is dropped, formatted, serialised or
+    /// copied, with no type arguments known: a type parameter may run any class's. A function
+    /// value's captures are left to the closure that captures them (module_state.rs counts what
+    /// a closure's body handles where the closure is made).
+    pub(crate) fn hooks_reached(&self, cx: &Ctx, t: TyId) -> Vec<DefId> {
+        let r = self.reach(cx, t);
+        if r.param {
+            let mut all: Vec<DefId> = self
+                .hooks
+                .values()
+                .flat_map(|(d, g)| d.iter().chain(g))
+                .copied()
+                .collect();
+            all.sort();
+            all.dedup();
+            return all;
+        }
+        let mut v = self.hooks_of(&r, true);
+        v.extend(self.hooks_of(&r, false));
+        v
+    }
+
     /// The `[Symbol.dispose]()` hooks (`dispose`) or glue hooks of the classes in `r`.
     pub(super) fn hooks_of(&self, r: &Reach, dispose: bool) -> Vec<DefId> {
         let pick = |h: &(Vec<DefId>, Vec<DefId>)| if dispose { h.0.clone() } else { h.1.clone() };
@@ -348,7 +379,7 @@ impl Implicit {
         cx: &mut Ctx,
         t: TyId,
         frame: &Option<Vec<TyId>>,
-        args: &HashSet<TyId>,
+        args: &FxHashSet<TyId>,
         open: &mut Option<Reach>,
     ) -> Reach {
         let t = match frame {
@@ -365,7 +396,7 @@ impl Implicit {
 
     /// What a type parameter or a function value may reach: what any type argument the program
     /// passes and any captured value reaches.
-    fn open(&self, cx: &Ctx, args: &HashSet<TyId>) -> Reach {
+    fn open(&self, cx: &Ctx, args: &FxHashSet<TyId>) -> Reach {
         let mut r = Reach::default();
         for &t in args.iter().chain(&self.captures) {
             r.add(&self.reach(cx, t));
@@ -379,7 +410,7 @@ impl Implicit {
 /// The key and value types of every `new WeakMap<K, V>()` in the program (8), also of a
 /// subclass (`new Cache()` with `class Cache extends WeakMap<K, V>`); a key `None` for one that
 /// mentions a type parameter.
-pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
+pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     struct Find<'a, 'm> {
         cx: &'a Ctx<'m>,
         map: DefId,
@@ -443,7 +474,7 @@ fn field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
 /// runs them)?
 pub(super) fn has_field_inits(cx: &Ctx, d: DefId) -> bool {
     matches!(cx.info.get(d.0 as usize), Some(DefInfo::Adt(a))
-        if a.fields.iter().any(|f| f.default.is_some()))
+        if a.fields.iter().any(|f| f.default.is_some()) || !a.redefined.is_empty())
 }
 
 /// The arguments of intrinsic `i` whose values glue may format, serialise or deep-copy, calling
@@ -469,10 +500,27 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MutexWith
         | I::PromiseAll
         | I::PromiseRace
-        | I::PromiseAny => true,
+        | I::PromiseAny
+        // A member access, call or write through `any` may run any getter, method or setter of
+        // the value held, and formats nothing itself; counted like a hook call on its arguments.
+        | I::AnyGet
+        | I::AnyIndex
+        | I::AnyCall
+        | I::AnyApply
+        | I::AnySet
+        | I::AnySetIndex
+        // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).
+        | I::AnyHas => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::AnyTo
+        | I::AnyTypeof
+        | I::AnyIsArray
+        | I::AnyKeys
+        | I::AnyTruthy
+        | I::AnyStrictEq
+        | I::AnyLooseEq
         | I::StrLen
         | I::Exit
         | I::Panic
@@ -487,7 +535,10 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArraySetLen
         | I::Hash
         | I::Eq
+        | I::KeyEq
+        | I::IncludesEq
         | I::Same
+        | I::SameValue
         | I::Share
         | I::FieldAbsent
         | I::FieldPresent
@@ -497,7 +548,12 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::HoldsNull
         | I::NullAs
         | I::Truthy
+        | I::IsNull
+        | I::IsNullish
+        | I::MayHoldPrimitive
         | I::FnCapturesNothing
+        | I::ClosureSibling(_)
+        | I::SimdShuffle(..)
         | I::Sqrt
         | I::Floor
         | I::Ceil
@@ -523,6 +579,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::GeneratorResume
         | I::GeneratorValue
         | I::GeneratorReturn
+        | I::GeneratorResumeWith
+        | I::GeneratorThrow
+        | I::YieldDelegate
         | I::GeneratorEmbed
         | I::AsyncGeneratorResume
         | I::AsyncGeneratorValue
@@ -543,11 +602,14 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
 }
 
 /// Does intrinsic `i` resume a generator (4)?
-pub(super) fn resumes(i: Intrinsic) -> bool {
+pub(crate) fn resumes(i: Intrinsic) -> bool {
     matches!(
         i,
         Intrinsic::GeneratorResume
             | Intrinsic::GeneratorReturn
+            | Intrinsic::GeneratorResumeWith
+            | Intrinsic::GeneratorThrow
+            | Intrinsic::YieldDelegate
             | Intrinsic::AsyncGeneratorResume
             | Intrinsic::AsyncGeneratorReturn
             | Intrinsic::AsyncGeneratorDispose

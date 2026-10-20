@@ -72,7 +72,7 @@ pub(crate) fn expr_result_args(
 /// generator `AsyncGenerator`, `AsyncIterator` or `AsyncIterable`).
 fn generator_args(cx: &Ctx, ret: TyId, is_async: bool) -> Option<Vec<TyId>> {
     let (_, args, async_) = cx.generator_result_kind(ret)?;
-    (args.len() == 2 && async_ == is_async).then_some(args)
+    (args.len() >= 2 && async_ == is_async).then_some(args)
 }
 
 /// Is the error type argument written (`Generator<T, E>`), rather than the default? Also when
@@ -83,7 +83,7 @@ fn written_error(sig: &ast::FnSig) -> bool {
     matches!(
         sig.ret.as_ref().map(|t| &t.kind),
         Some(ast::TypeExprKind::Named { args, .. })
-            if args.len() == 2 && !crate::ts_protocol::ts_spelling(args)
+            if (args.len() == 2 || args.len() == 3) && !crate::ts_protocol::ts_spelling(args)
     )
 }
 

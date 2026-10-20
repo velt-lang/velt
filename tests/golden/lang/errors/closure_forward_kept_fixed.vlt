@@ -1,7 +1,7 @@
 // A closure forwarding a borrowed callback to a parameter that may keep it (a generic `T`)
-// must own a copy of the callback (#167). Where the callback is a parameter with a fixed ABI
-// (an interface method's, a closure's), the closure cannot take it over: an error, not a
-// closure that outlives its frame.
+// must own a copy of the callback (#167). An interface method's callback parameter can be
+// kept (`Direct.register`); a closure's parameters may alias each other, so capturing `cb`
+// while `k` is borrowed by the same call is an error, not a closure that outlives its frame.
 interface Keeper<T> {
   keep(x: T): void;
 }

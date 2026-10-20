@@ -237,6 +237,11 @@ fn render((params, ret): &Sig) -> String {
 fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> Vec<String> {
     let mut out = vec![];
     for (name, (want, velt_path)) in velt_declarations() {
+        // The SIMD operations are emitted inline by the backends (rt_abi.md "SIMD"): no
+        // runtime defines them. `velt_vir`'s `simd` tests check their declarations.
+        if name.starts_with("velt_simd_") {
+            continue;
+        }
         let Some(found) = defs.get(&name) else {
             if required {
                 out.push(format!(

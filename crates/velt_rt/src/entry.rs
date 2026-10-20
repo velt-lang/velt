@@ -16,6 +16,7 @@
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
 pub fn init() {
+    crate::cpu::init();
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();
@@ -52,12 +53,19 @@ pub(crate) fn die_of_broken_pipe() -> ! {
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     init();
     let code = velt_main();
+    // A synchronous `main` is done with the module state: tasks may take it now.
+    crate::task::local::module_release_outside();
     // Servers and pending promises keep a program alive after `main` returns, but not after it
     // failed (an uncaught error, or an exit code): like Node, which exits on an uncaught
     // exception whatever is still listening.
     if code == 0 {
         crate::task::runtime::wait_for_keep_alive();
         crate::str::stats::settle(|| crate::task::runtime::alive_tasks() > 0);
+        // The leak counters see what module state holds as freed. Otherwise it is kept to the
+        // end, as in Node, where nothing runs at exit.
+        if crate::str::stats::counting() {
+            crate::task::local::module_drop_at_exit();
+        }
         // Nothing receives any more: drop the values still queued in channels. Not on a failing
         // exit: tasks may still be running then, and drop glue runs user code.
         let left = crate::task::channel::drop_abandoned_items();

@@ -106,12 +106,36 @@ impl FnCx<'_, '_> {
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        self.readonly_element_write(e);
         if let H::Global(d) = root_expr(e).kind {
-            let name = self
+            let (name, stored, mutable, module) = self
                 .cx
                 .global(d)
-                .map(|g| g.name.clone())
+                .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
+            if stored {
+                if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
+                    self.cx.err(
+                        format!("cannot assign to `{name}`, a module `const`"),
+                        e.span,
+                    );
+                    return false;
+                }
+                // An imported binding is read-only, as in ES modules: its contents are not.
+                if matches!(e.kind, H::Global(_)) && module != self.module && what == "assign to" {
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            format!("cannot assign to imported binding `{name}`"),
+                            e.span,
+                        )
+                        .with_note(
+                            "an imported `let` is read-only where it is imported, as in JavaScript: export a function that assigns it",
+                        ),
+                    );
+                    return false;
+                }
+                return true;
+            }
             self.cx.err(
                 format!("cannot {what} module-level constant `{name}`"),
                 e.span,
@@ -131,7 +155,7 @@ impl FnCx<'_, '_> {
     }
 }
 
-fn root_expr(e: &hir::Expr) -> &hir::Expr {
+pub(crate) fn root_expr(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         H::Field { base, .. }
         | H::Index { base, .. }

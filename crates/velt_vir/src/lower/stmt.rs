@@ -90,6 +90,13 @@ impl FnLower<'_, '_> {
     }
 
     fn let_stmt(&mut self, local: LocalId, init: Option<&hir::Expr>) {
+        if self.init_locals {
+            self.declare_init_local(local, init);
+        }
+        // A member only ever called: never made (frame_envs.rs).
+        if self.self_env.is_some() && self.direct_siblings.contains_key(&local) {
+            return;
+        }
         if let Some(
             e @ hir::Expr {
                 kind:
@@ -208,6 +215,36 @@ impl FnLower<'_, '_> {
                 (true, _) => self.block(then),
                 (false, Some(els)) => self.block(els),
                 (false, None) => {}
+            }
+            return;
+        }
+        if let Some(test) = self.ruled_out_guard(cond) {
+            // `g(x) && MayHoldPrimitive(x)` with `x` an object here (hir_encodings.md "Type
+            // predicates on a type parameter"): `g(x)` still runs, and only the `else` does.
+            self.push_scope(ScopeKind::Temps);
+            let c = self.expr(test);
+            self.pop_scope();
+            let fail = self.new_block();
+            let join = self.new_block();
+            self.branch(c, fail, join);
+            self.switch_to(fail);
+            let name = match &test.kind {
+                hir::ExprKind::Call {
+                    callee: hir::Callee::Def(d, _),
+                    ..
+                } => match self.cx.hir.def(*d) {
+                    hir::Def::Fn(f) => f.name.rsplit("::").next().unwrap_or("").to_string(),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            };
+            self.panic_msg(&format!(
+                "TypeError: the type predicate `{name}` returned true for an object, which its type rules out"
+            ));
+            self.goto(join);
+            self.switch_to(join);
+            if let Some(els) = els {
+                self.block(els);
             }
             return;
         }

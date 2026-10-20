@@ -1,13 +1,11 @@
-//! Enforces the file-size rule from CLAUDE.md "Coding standards" across the workspace.
-//!
+//! Enforces the file-size rule from CONTRIBUTING.md "Coding standards" across the workspace.
+//! The rule itself lives in crates/xtask/src/file_size.rs, which `cargo xtask precheck` also
+//! uses on the changed files.
 
 use std::path::{Path, PathBuf};
 
-const SRC_LIMIT: usize = 800;
-const TEST_LIMIT: usize = 1000;
-
-/// Files temporarily over the limit, with the milestone that must split them.
-const ALLOWED_OVERSIZE: &[(&str, &str)] = &[];
+#[path = "../../xtask/src/file_size.rs"]
+mod file_size;
 
 fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -41,17 +39,11 @@ fn source_files_stay_small() {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        if ALLOWED_OVERSIZE.iter().any(|(path, _)| *path == rel) {
+        if !file_size::applies(&rel) {
             continue;
         }
-        let is_test = rel.contains("/tests/");
-        let limit = if is_test { TEST_LIMIT } else { SRC_LIMIT };
-        let lines = std::fs::read_to_string(&file).unwrap().lines().count();
-        if lines > limit {
-            violations.push(format!(
-                "{rel}: {lines} lines (limit {limit}) — split it by concern"
-            ));
-        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        violations.extend(file_size::violation(&rel, &text));
     }
     assert!(violations.is_empty(), "\n{}\n", violations.join("\n"));
 }

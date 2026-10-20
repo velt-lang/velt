@@ -85,6 +85,17 @@ impl PB {
             anon_shapes: Default::default(),
             union_shapes: Default::default(),
             counted_objects: Vec::new(),
+            null_proto_records: false,
+            module_state: None,
+            type_ops: Default::default(),
+            any_impl: None,
+            dyn_members: None,
+            generator_throw: false,
+            object: None,
+            function: None,
+            unknown: None,
+            super_calls: Default::default(),
+            cpu_targets: Default::default(),
         }
     }
 }

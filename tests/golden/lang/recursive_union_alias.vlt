@@ -1,0 +1,59 @@
+// check: no leaks
+// A union alias that names itself behind an array or an index signature (JSON-like data).
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+
+type Tree = number | Tree[];
+
+function depth(t: Tree): number {
+  if (typeof t === "number") {
+    return 0;
+  }
+  let max = 0;
+  for (const k of t) {
+    max = Math.max(max, depth(k));
+  }
+  return max + 1;
+}
+
+type Entry = string | Entry[] | Map<string, Entry>;
+
+function show(e: Entry): string {
+  if (typeof e === "string") {
+    return e;
+  }
+  if (e instanceof Map) {
+    let out = "";
+    for (const [k, x] of e) {
+      out += k + "=" + show(x) + ";";
+    }
+    return "{" + out + "}";
+  }
+  return "[" + e.map(show).join(",") + "]";
+}
+
+const v: Json = [1, "x", { b: null, c: true }, [false]];
+console.log(JSON.stringify(v));
+const t: Tree = [1, [2, [3]], []];
+console.log(depth(t), JSON.stringify(t));
+const items: Json[] = ["s", 2, false, null];
+console.log(items.length, JSON.stringify(items));
+const m = new Map<string, Entry>();
+m.set("k", ["a", new Map<string, Entry>()]);
+console.log(show(["x", m]));
+
+type Node = { kind: "leaf"; v: number } | { kind: "node"; kids: Node[] };
+
+function sum(n: Node): number {
+  if (n.kind === "leaf") {
+    return n.v;
+  }
+  let s = 0;
+  for (const k of n.kids) {
+    s += sum(k);
+  }
+  return s;
+}
+
+const n: Node = { kind: "node", kids: [{ kind: "leaf", v: 1 }, { kind: "node", kids: [{ kind: "leaf", v: 2 }] }] };
+console.log(sum(n), JSON.stringify(n));
+console.log(n);

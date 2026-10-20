@@ -1,0 +1,34 @@
+// check: no leaks
+// `Object.getPrototypeOf`, `Object.hasOwn`, `hasOwnProperty.call` and
+// `Object.prototype.toString.call` of an `any` or `object` (#924, #1283) ask the value held.
+class Point {
+  x = 1;
+}
+
+class Point3 extends Point {
+  z = 3;
+}
+
+function isPlain(v: object): boolean {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function tag(v: any): string {
+  return Object.prototype.toString.call(v);
+}
+
+function main(): void {
+  const plain: any = { a: 1 };
+  const bare: Record<string, number> = Object.create(null);
+  console.log(isPlain(plain), isPlain(new Point()), isPlain([1]), isPlain(bare));
+  const p3: object = new Point3();
+  console.log(Object.getPrototypeOf(p3) === Point3.prototype);
+  console.log(Object.getPrototypeOf(plain) === Object.prototype);
+  console.log(Object.hasOwn(plain, "a"), Object.hasOwn(plain, "b"), Object.hasOwn(p3, "z"));
+  const list: any = [1, 2];
+  console.log(Object.prototype.hasOwnProperty.call(list, "length"));
+  console.log(Object.prototype.hasOwnProperty.call(list, "1"), Object.hasOwn(list, "2"));
+  console.log(tag(plain), tag(list), tag(new Point()), tag(1), tag("s"), tag(null), tag(undefined));
+  console.log(tag(new Map<string, number>()), tag(() => 1), tag(true));
+}

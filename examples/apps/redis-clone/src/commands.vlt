@@ -380,7 +380,7 @@ function list(db: Db, key: string, create: bool): Deque<u8[]> | null {
     }
     db.lists.set(key, new Deque<u8[]>());
   }
-  return db.lists.get(key);
+  return db.lists.get(key) ?? null;
 }
 
 function hash(db: Db, key: string, create: bool): Map<string, u8[]> | null {
@@ -390,7 +390,7 @@ function hash(db: Db, key: string, create: bool): Map<string, u8[]> | null {
     }
     db.hashes.set(key, new Map<string, u8[]>());
   }
-  return db.hashes.get(key);
+  return db.hashes.get(key) ?? null;
 }
 
 function setOf(db: Db, key: string, create: bool): MemberSet | null {
@@ -400,7 +400,7 @@ function setOf(db: Db, key: string, create: bool): MemberSet | null {
     }
     db.sets.set(key, new MemberSet());
   }
-  return db.sets.get(key);
+  return db.sets.get(key) ?? null;
 }
 
 function zset(db: Db, key: string, create: bool): ZSet | null {
@@ -410,7 +410,7 @@ function zset(db: Db, key: string, create: bool): ZSet | null {
     }
     db.zsets.set(key, new ZSet());
   }
-  return db.zsets.get(key);
+  return db.zsets.get(key) ?? null;
 }
 
 /// Drops an emptied container, as Redis does.
@@ -667,7 +667,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       out.array((args.length as i64) - 1);
       for (let i = 1; i < args.length; i++) {
         const key = text(args[i]);
-        const v = db.kind(key) === "string" ? db.strings.get(key) : null;
+        const v = db.kind(key) === "string" ? db.strings.get(key) : undefined;
         if (v == null) {
           out.nil();
         } else {
@@ -817,7 +817,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "lindex": {
       arity(name, args, 3);
       const l = list(db, text(args[1]), false);
-      const v = l == null ? null : l.at(parseInt64(args[2]));
+      const v = l == null ? undefined : l.at(parseInt64(args[2]));
       if (v == null) {
         out.nil();
       } else {
@@ -869,7 +869,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "hget": {
       arity(name, args, 3);
       const h = hash(db, text(args[1]), false);
-      const v = h == null ? null : h.get(text(args[2]));
+      const v = h == null ? undefined : h.get(text(args[2]));
       if (v == null) {
         out.nil();
       } else {
@@ -882,7 +882,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       const h = hash(db, text(args[1]), false);
       out.array((args.length as i64) - 2);
       for (let i = 2; i < args.length; i++) {
-        const v = h == null ? null : h.get(text(args[i]));
+        const v = h == null ? undefined : h.get(text(args[i]));
         if (v == null) {
           out.nil();
         } else {
@@ -1068,7 +1068,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "zscore": {
       arity(name, args, 3);
       const z = zset(db, text(args[1]), false);
-      const s = z == null ? null : z.scores.get(text(args[2]));
+      const s = z == null ? undefined : z.scores.get(text(args[2]));
       if (s == null) {
         out.nil();
       } else {

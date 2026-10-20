@@ -103,11 +103,11 @@ impl FnCx<'_, '_> {
     /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one
     /// or may hold one (a union with a `symbol` member, `string | symbol`).
     pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
-        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        let inner = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
         let symbol = |t: &TyId| {
             matches!(
-                self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)),
+                self.cx.ty.kind(self.cx.ty.core(*t).unwrap_or(*t)),
                 TyKind::Symbol
             )
         };
@@ -142,9 +142,26 @@ impl FnCx<'_, '_> {
             let obj = self.expr(rhs, None, Want::Borrow);
             return self.present_test(obj, name, true, span);
         }
+        if let Some(h) = self.dynamic_in(lhs, rhs, span) {
+            return h;
+        }
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };
+        // `"toString" in r` on a record that may have no prototype: tested at run time.
+        if let (true, InKey::Str(k)) = (self.cx.objects.null_proto_records, &key) {
+            let target = match super::in_keys::OBJECT_PROTOTYPE.contains(&k.as_str()) {
+                true => Some(self.trial_expr(rhs).ty),
+                false => None,
+            };
+            let str_ = self.cx.ty.str_;
+            if target
+                .and_then(|t| self.record_args(t))
+                .is_some_and(|(k, _)| k == str_)
+            {
+                return self.dynamic_key_in(lhs, rhs, span);
+            }
+        }
         let s = self.expr(rhs, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
@@ -293,9 +310,20 @@ impl FnCx<'_, '_> {
             let b = self.cx.ty.bool_;
             return self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], b, span);
         }
-        let payload = self.cx.ty.opt_payload(field.ty).unwrap_or(field.ty);
+        if self.cx.dynamic(field.ty).is_some() {
+            // `k?: any` left out holds the dynamic `undefined` (`object.rs`).
+            let b = self.cx.ty.bool_;
+            let undef = self.dynamic_nothing(hir::Nothing::Undefined, field.ty, span);
+            let eq = self.intrinsic(hir::Intrinsic::AnyStrictEq, vec![field, undef], b, span);
+            let not = H::Unary {
+                op: hir::UnOp::Not,
+                expr: Box::new(eq),
+            };
+            return self.mk(not, b, span);
+        }
+        let payload = self.cx.ty.core(field.ty).unwrap_or(field.ty);
         let wild = self.pat(P::Wildcard, payload, span);
-        let some = self.pat(P::Some(Box::new(wild)), field.ty, span);
+        let some = self.present_pat(wild, field.ty, span);
         self.bool_match(field, Some(some), span)
     }
 

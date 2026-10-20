@@ -1,0 +1,29 @@
+// `JSON.parse(text) as T` (the type from the context, as TypeScript writes it) rejects a JSON
+// `null` for an optional field whose type has no `null`, as it rejects a value of another type;
+// `JSON.parse<T>` leaves such a field absent (#930 phase 2).
+type T = { a?: string; b: number };
+
+function main() {
+  const ok = JSON.parse('{"b":1}') as T;
+  console.log(ok, ok.a, JSON.stringify(ok));
+  const lenient = JSON.parse<T>('{"a":null,"b":2}');
+  console.log(lenient, "a" in lenient);
+  try {
+    const bad = JSON.parse('{"a":3,"b":1}') as T;
+    console.log(bad);
+  } catch (e) {
+    console.log("wrong:", (e as Error).message);
+  }
+  try {
+    const t = JSON.parse('{"a":null,"b":1}') as T;
+    console.log(t);
+  } catch (e) {
+    console.log("null:", (e as Error).message);
+  }
+  try {
+    const u: T = JSON.parse('{"a":null,"b":1}');
+    console.log(u);
+  } catch (e) {
+    console.log("annotated:", (e as Error).message);
+  }
+}

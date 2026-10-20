@@ -291,7 +291,8 @@ impl FnCx<'_, '_> {
             .is_some_and(|r| self.is_getter(&r))
     }
 
-    /// `obj.name` where `name` is a getter: the getter's call; `Err` gives `obj` back otherwise.
+    /// `obj.name` where `name` is a getter (or a field of an interface value): the getter's call;
+    /// `Err` gives `obj` back otherwise.
     pub(crate) fn getter_read(
         &mut self,
         obj: hir::Expr,
@@ -299,7 +300,8 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
         if !self.has_getter(obj.ty, &prop.name) {
-            return Err(obj);
+            // A field read through an interface's getter slot (`iface_write`).
+            return self.iface_field(obj, prop, crate::body::Want::Borrow, span);
         }
         Ok(self.method_call_at(obj, prop, &[], &[], None, span, true))
     }
@@ -403,6 +405,10 @@ impl FnCx<'_, '_> {
         }
         let def = self.static_def_for(m.def, this_class);
         crate::body::defaults::param_defaults(self.cx, def);
+        // A generator with a dynamic default (`gen_value.rs`), named through the class.
+        if let Some(h) = self.generator_value(def, Some(this_class), exp, span) {
+            return Some(h);
+        }
         let ret = crate::body::returns::ret_of(self.cx, def, span);
         let f = self.cx.fn_info(def);
         let tys: Vec<TyId> = f.params.iter().map(|p| p.ty).chain([ret]).collect();

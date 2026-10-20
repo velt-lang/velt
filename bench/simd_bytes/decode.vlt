@@ -1,0 +1,49 @@
+// `TextDecoder.decode` on one kind of text (a case from `cases.sh`): `decode <kind> <length>
+// <calls>`. Kinds: `ascii`; `cyrillic`, words of five two-byte letters and a space; `comma`,
+// the same words separated by ", "; `latin`, ASCII with a two-byte letter in every six bytes.
+// Every call changes a byte first, so no call repeats the one before.
+import { args } from "velt:process";
+
+function fill(kind: string, n: usize): u8[] {
+  const d: u8[] = [];
+  let k: usize = 0;
+  while ((d.length as usize) + 4 <= n) {
+    k++;
+    if (kind == "ascii") {
+      d.push((97 + k % 26) as u8);
+    } else if (kind == "latin") {
+      if (k % 5 == 0) {
+        d.push(0xc3);
+        d.push((0xa0 + k % 30) as u8);
+      } else {
+        d.push((97 + k % 26) as u8);
+      }
+    } else if (k % 6 == 0) {
+      if (kind == "comma") {
+        d.push(44);
+      }
+      d.push(32);
+    } else {
+      d.push(0xd0);
+      d.push((0xb0 + k % 16) as u8);
+    }
+  }
+  while ((d.length as usize) < n) {
+    d.push(32);
+  }
+  return d;
+}
+
+function main() {
+  const a = args();
+  const n = parseInt(a[1]) as usize;
+  const calls = parseInt(a[2]) as usize;
+  const d = fill(a[0], n);
+  const decoder = new TextDecoder();
+  let total = 0;
+  for (let round: usize = 0; round < calls; round++) {
+    d[n - 1 - round % 2] = (32 + round % 2) as u8;
+    total += decoder.decode(d).length;
+  }
+  console.log(total);
+}

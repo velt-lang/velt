@@ -1,0 +1,2 @@
+Uncaught SyntaxError: Expected ',' or ']' after array element in JSON at position 5 (line 1 column 6) at 
+json_parse_uncaught_syntax.vlt:6:13

@@ -76,6 +76,12 @@ struct Emitter<'a> {
     wide_pointer_slots: bool,
     /// `Math.floor` & co. round through a conversion to `i64` (`Target::rounds_by_conversion`).
     rounds_by_conversion: bool,
+    /// What the SIMD helpers depend on of the target.
+    simd: crate::simd::Arch,
+    /// The program uses SIMD (it declares a `velt_simd_*` extern): on WebAssembly every
+    /// function then asks for the SIMD instructions, the ones without vectors too, because a
+    /// vector is passed differently with and without them.
+    uses_simd: bool,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
@@ -105,6 +111,11 @@ pub(crate) fn emit_function(
         dbg_suffix: String::new(),
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
+        simd: crate::simd::Arch::of(target),
+        uses_simd: program
+            .externs
+            .iter()
+            .any(|e| e.symbol.starts_with("velt_simd_")),
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;
@@ -121,13 +132,50 @@ pub(crate) fn emit_function(
             .terminator(&block.term)
             .map_err(|e| format!("bb{bi} terminator ({:?}): {e}", block.term))?;
     }
+    let ext_features;
+    let features = match (emitter.uses_simd, emitter.simd) {
+        (true, crate::simd::Arch::Wasm) => crate::simd::WASM_SIMD,
+        (_, arch) => match extension_features(program, function, arch) {
+            Some(f) => {
+                ext_features = format!(" \"target-features\"=\"{f}\"");
+                ext_features.as_str()
+            }
+            None => "",
+        },
+    };
     Ok(format!(
-        "{} {}({}) {FN_ATTRS}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {FN_ATTRS}{features}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
         emitter.body
     ))
+}
+
+/// The target features `function` gets for the CPU-extension operations of the program (#1330):
+/// a gated function's whole set; any other function, when the program uses an extension of this
+/// architecture, only the extension itself. LLVM uses `+sha2` / `+sha` for nothing but those
+/// operations (each behind the runtime check), so every function may have it, and an operation's
+/// helper, and the `u32x4` method around it, inline into any caller (as `+simd128` does for
+/// WebAssembly programs that use vectors).
+fn extension_features(
+    program: &vir::Program,
+    function: &vir::Function,
+    arch: crate::simd::Arch,
+) -> Option<&'static str> {
+    use velt_vir::simd::SimdCall;
+    if let Some(ext) = function.target {
+        return crate::simd::has_ext(arch, ext).then(|| ext.gated_features());
+    }
+    program
+        .externs
+        .iter()
+        .find_map(|e| match SimdCall::of_symbol(&e.symbol)? {
+            SimdCall::Sha(op) if crate::simd::has_ext(arch, op.ext()) => {
+                Some(op.ext().op_features())
+            }
+            _ => None,
+        })
 }
 
 fn check_shape(function: &vir::Function) -> CodegenResult<()> {

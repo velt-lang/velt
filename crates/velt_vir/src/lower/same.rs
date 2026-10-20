@@ -4,7 +4,8 @@
 //! one home (it has a single owner), so its identity is the address of the place holding it.
 //! An object type that is copied when shared (never changed in place) would lose its identity
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
-//! Interface and function values: see `ref_identity`.
+//! Interface and function values: see `ref_identity`. As `Map` and `Set` keys (`KeyEq`), a type
+//! declared with `struct` compares by content instead, field by field.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -15,6 +16,14 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
+        if self.cx.is_dynamic(ty) {
+            return self.any_same_places(a, b, self.key_mode);
+        }
+        // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
+        if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
+            return self.same_glue(a, b, ty);
+        }
         if self.cx.is_object(ty) {
             // Function and interface values keep their identity (a code / data pointer) when
             // copied: no fact (one would box them).
@@ -30,9 +39,49 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `Intrinsic::KeyEq` (JS SameValueZero, `Map` and `Set` keys): `same_values` with floats
+    /// compared so that `NaN` equals itself and `0` equals `-0` (Bool operand).
+    pub(super) fn key_same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.key_mode, true);
+        let r = self.same_values(a, b, ty);
+        self.key_mode = outer;
+        r
+    }
+
+    /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
+    /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
+    /// types compare their parts as `===` does (Bool operand).
+    pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let keyed = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
+            _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
+        };
+        if keyed {
+            self.key_same_values(a, b, ty)
+        } else {
+            self.same_values(a, b, ty)
+        }
+    }
+
+    /// `Object.is(a, b)` (`Intrinsic::SameValue`) for the values of concrete type `ty` at two
+    /// places: `same_values` with floats compared by SameValue (Bool operand).
+    pub(super) fn same_value_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.value_mode, true);
+        let r = self.same_values(a, b, ty);
+        self.value_mode = outer;
+        r
+    }
+
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-        self.call_glue(Glue::Same, ty, vec![pa, pb])
+        let g = if self.value_mode {
+            Glue::SameValue
+        } else if self.key_mode {
+            Glue::KeySame
+        } else {
+            Glue::Same
+        };
+        self.call_glue(g, ty, vec![pa, pb])
     }
 
     /// Identity of two objects of type `ty`.
@@ -77,6 +126,23 @@ impl FnLower<'_, '_> {
         self.same_mode = true;
         self.eq_body(pa, pb, ty);
     }
+
+    /// `Glue::KeySame`: `same_body` with floats compared by SameValueZero.
+    pub(super) fn key_same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
+        self.key_mode = true;
+        self.same_body(pa, pb, ty);
+    }
+
+    /// `Glue::SameValue`: `Glue::Same` with floats compared by SameValue.
+    pub(super) fn same_value_body(
+        &mut self,
+        pa: crate::vir::Local,
+        pb: crate::vir::Local,
+        ty: TyId,
+    ) {
+        self.value_mode = true;
+        self.same_body(pa, pb, ty);
+    }
 }
 
 impl super::Cx<'_> {
@@ -89,13 +155,38 @@ impl super::Cx<'_> {
         }
     }
 
+    /// Is `t` a type declared with `struct`, whose `Map` and `Set` keys compare and hash by
+    /// content (`hir::AdtDef::declared_struct`)?
+    pub(super) fn content_key(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Adt(d, _) => {
+                matches!(self.hir.def(*d), hir::Def::Adt(a) if a.declared_struct)
+            }
+            _ => false,
+        }
+    }
+
+    /// Is every value of `t` an object, never a primitive (a struct, class, object type,
+    /// array, tuple, map or function type)? `Intrinsic::MayHoldPrimitive` is its negation.
+    pub(super) fn object_only(&self, t: TyId) -> bool {
+        match self.types.kind(t) {
+            TyKind::Array(_)
+            | TyKind::Map(..)
+            | TyKind::Tuple(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
+            _ => false,
+        }
+    }
+
     /// Is `t` an object type whose values a share copies unless it is counted (an array or an
     /// object type, not a class, interface or function value)?
     pub(super) fn copied_object(&self, t: TyId) -> bool {
         self.is_object(t) && !self.is_class(t) && !self.is_fn_or_dyn(t)
     }
 
-    fn is_fn_or_dyn(&self, t: TyId) -> bool {
+    pub(super) fn is_fn_or_dyn(&self, t: TyId) -> bool {
         matches!(
             self.types.kind(t),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_)

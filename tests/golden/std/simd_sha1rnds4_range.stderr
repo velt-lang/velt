@@ -1,0 +1,1 @@
+RangeError: u32x4.sha1rnds4: func must be 0, 1, 2 or 3

@@ -1,4 +1,4 @@
-// An error escaping `main` reports `Uncaught <Type>: <message> at <throw location>` (exit 1).
+// A non-`Error` value escaping `main` reports `Uncaught <value as console.log prints it> at …`.
 class ParseError {
   message: string;
   constructor(message: string) {

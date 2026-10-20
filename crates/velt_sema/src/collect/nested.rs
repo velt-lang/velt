@@ -8,7 +8,7 @@
 //! a hint to use an arrow function. For that message, every nested definition records the names
 //! bound in its enclosing functions (`Ctx::nested_locals`).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -33,7 +33,7 @@ enum Found<'m> {
 }
 
 pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
-    let mut used = HashSet::new();
+    let mut used = FxHashSet::default();
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
@@ -73,7 +73,7 @@ fn item_bodies<'m>(
     outer: &[String],
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
     let mut bodies: Vec<(String, &'m [ast::Param], &'m ast::Block)> = vec![];
     match &item.kind {
@@ -130,7 +130,7 @@ fn fn_body<'m>(
     outer: &[String],
     class: Option<DefId>,
     defs: &mut Vec<DefId>,
-    used: &mut HashSet<String>,
+    used: &mut FxHashSet<String>,
 ) {
     let mut found = vec![];
     walk_block(body, &mut |f| found.push(f));
@@ -197,6 +197,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
     let what = match &item.kind {
         ast::ItemKind::Function(f) => return Some(&f.sig.name.name),
         ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => return Some(&t.name.name),
+        ast::ItemKind::Interface(i) if !i.call_sigs.is_empty() => "interfaces with call signatures",
         ast::ItemKind::Interface(i) => return Some(&i.name.name),
         ast::ItemKind::Enum(e) => return Some(&e.name.name),
         ast::ItemKind::TypeAlias(a) => return Some(&a.name.name),
@@ -204,6 +205,8 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
         ast::ItemKind::ExternFn(_) => "`declare function` declarations",
         ast::ItemKind::Extend(_) => "`extend` blocks",
         ast::ItemKind::Var(_) => "module constants",
+        ast::ItemKind::Augment(_) => "`declare global` and `declare module` blocks",
+        ast::ItemKind::Namespace(_) => "namespaces",
     };
     cx.err(format!("{what} must be at the module level"), item.span);
     None

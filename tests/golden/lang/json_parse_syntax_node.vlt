@@ -1,0 +1,52 @@
+// check: no leaks
+// Text that is not JSON fails with Node 22's `SyntaxError` message (#1265), checked over the
+// whole text before the value is decoded: `"{bad"` read as an array names the missing property
+// name, not the array the decoder wanted. Positions, lines and columns count UTF-16 units.
+// Expected output: Node's.
+type Point = { x: number; y: number };
+
+function tryNumbers(text: string) {
+  try {
+    const v = JSON.parse(text) as number[];
+    console.log("ok", v.length);
+  } catch (e) {
+    console.log(e.name, e instanceof SyntaxError, e.message);
+  }
+}
+
+function tryPoint(text: string) {
+  try {
+    const p: Point = JSON.parse(text);
+    console.log("ok", p.x + p.y);
+  } catch (e) {
+    console.log(e.name, e.message);
+  }
+}
+
+function main() {
+  tryNumbers("{bad");
+  tryNumbers("");
+  tryNumbers("[1, 2");
+  tryNumbers("[1, 2,]");
+  tryNumbers("[1 2]");
+  tryNumbers("[01]");
+  tryNumbers("[1.]");
+  tryNumbers("[-]");
+  tryNumbers("[1e+]");
+  tryNumbers("[1] x");
+  tryNumbers("NaN");
+  tryNumbers("[tru]");
+  tryNumbers('["é😀", nope]');
+  tryNumbers("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, x]");
+  tryNumbers("[\n  1,\n  2\n  3\n]");
+  tryNumbers("[1, 2, 3]");
+  tryPoint('{"x": 1, "y": 2}');
+  tryPoint('{"x": 1 "y": 2}');
+  tryPoint('{"x": 1, "y": 2,}');
+  tryPoint('{"x" 1}');
+  tryPoint("{'x': 1}");
+  tryPoint('{"x": "a\\q"}');
+  tryPoint('{"x": "\\u12"}');
+  tryPoint('{"x": "tab\there"}');
+  tryPoint('{"x": "open');
+}

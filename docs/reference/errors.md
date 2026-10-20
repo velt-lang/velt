@@ -10,6 +10,49 @@ compiler knows exactly what each function and each `try` block can throw.
 - `throw expr` throws a value of any type, usually a class extending the prelude `Error`, which
   has a `message` field. Calling a throwing function outside `try` makes the caller throw it
   too.
+- As in JavaScript, an error has a `name` (`"Error"` unless a subclass assigns its own:
+  `this.name = "AppError"` in the constructor), and `String(e)`, `` `${e}` `` and `e.toString()`
+  give `"<name>: <message>"` (only the name when the message is empty, only the message when the
+  name is). `name` is `Error`'s: a subclass may declare it again (`name: string;`), give it an
+  initializer (`name = "AppError"`, which runs after `super(...)` in its place among the class's
+  other initializers; a subclass's runs after its base class's) or redefine it with a getter
+  (`get name() { … }`), which `toString()` then reads. A union of error classes
+  (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
+  `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
+  concatenation (`null` for `null`, `undefined` for `undefined`); so is an error held by an `any`
+  or an `unknown` (`` `${e}` `` is `Error: boom`, or a subclass's own `toString()`). Arrays of errors are written as
+  JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
+  `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
+  `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
+  `Error` with their own names; throw, catch, test (`instanceof`) and extend them like any
+  error class:
+
+  ```ts
+  class AppError extends Error {
+    code: string;
+    constructor(message: string, code: string) {
+      super(message);
+      this.name = "AppError";
+      this.code = code;
+    }
+  }
+
+  function check(n: number): number {
+    if (n < 0) {
+      throw new RangeError(`${n} is negative`);
+    }
+    if (n > 100) {
+      throw new AppError("too large", "E1");
+    }
+    return n;
+  }
+
+  try {
+    check(500);
+  } catch (e) {
+    console.log(String(e), e instanceof RangeError); // AppError: too large false
+  }
+  ```
 - A function's **error type** is the union of everything it can throw. It is inferred over the
   whole program (also through recursion), or written as a **`throws` clause** after the return
   type: `function load(id: string): User throws NotFound | Forbidden`.
@@ -30,6 +73,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - In `catch (e)`, `e` has the **exact union** of what the `try` block can throw
   (`NotFound | Forbidden`; `never` when nothing can throw). Narrow it with `instanceof`,
   `typeof`, `==` or `switch` like any [union](types.md#union-types).
+- As in TypeScript, the binding may be annotated `unknown` or `any` (`catch (e: unknown)`); `e`
+  still has the union of what the block can throw. Any other annotation is TypeScript's error
+  TS1196.
 - An `if`/`else if` chain whose branches leave handles every member, so no code is needed after
   it.
 - `throw e;` rethrows; a narrowed `e` rethrows just that member.
@@ -72,12 +118,20 @@ nothing; `null` means success).
 
 ## Uncaught errors and panics
 
-- An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
-  exits with code 1. `<Class>` is the error's actual class (an `IoError` thrown through a
-  function declared `throws Error` prints `IoError`), and the location is where it was thrown;
+- An error escaping `main` prints `Uncaught <header> at file:line:col` to stderr and exits with
+  code 1. `<header>` is the first line of Node's report: `<name>: <message>` as `Error`'s
+  `toString()` writes it (`Uncaught AppError: boom`), with the error's actual class in front
+  when its `name` ends in `Error` but is not the class's name (`class E extends TypeError {}`
+  gives `E [TypeError]: boom`; `MyTypeError: boom` when the class's name contains the name).
+  The class is the dynamic one (an `IoError` thrown through a function declared `throws Error`
+  reports `IoError`), and the location is where it was thrown;
   for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
-  that `main` awaited.
+  that `main` awaited. A thrown value that is not an `Error` is written as Node writes it, the
+  way `console.log` prints it: `throw "too big"` reports `Uncaught too big`, `throw 42`
+  `Uncaught 42` (a number as `String(x)` writes it: `throw -0` reports `Uncaught 0`), and an
+  object `Uncaught { code: 503 }`. `JSON.parse`'s `JsonError` reports
+  `Uncaught SyntaxError: <message>`, as Node reports the error `JSON.parse` throws.
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
   101. They cannot be caught.
@@ -86,7 +140,9 @@ nothing; `null` means success).
 
 ## Inference limits
 
-A closure created inside a recursive function that it calls, and a `catch` or promise whose
+A closure created inside a recursive function that it calls throws what the function's body
+throws before the closure (`if (d > max) throw new RangeError(…)` at the top, then
+`xs.map((x) => walk(x, d + 1))`); when the function throws more after it, such a closure, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
 clause (``` the error type of this function is not known yet ```); when the recursion goes
 through an interface value, the `throws` clause goes on the interface method. Error types of

@@ -1,0 +1,1 @@
+TypeError: calling a method through a proxy whose handler has a `get` trap is not supported yet (#823)

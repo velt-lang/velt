@@ -28,6 +28,10 @@
 //! - A golden whose first lines contain `// check: heap blocks at most N` allocates at most N
 //!   heap blocks in its debug run (`blocks=A/F` of the same report, A <= N): for programs that
 //!   must not allocate per step (e.g. a callback per call).
+//! - A golden whose first lines contain `// check: also with NAME=VALUE` runs once more in each
+//!   mode with that environment variable set, and must print the same: for programs whose paths
+//!   an environment switch selects (`VELT_SIMD_DISABLE=sha`: `velt:simd`'s emulation and std's
+//!   portable code on a CPU that has the instructions, #1330).
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
 //! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
@@ -35,7 +39,7 @@
 //! `VELT_GOLDEN_TIMEOUT` seconds (default 120) is killed, with every process it started, and
 //! fails. Builds go to `target/golden-work` (or `VELT_GOLDEN_WORK`); each program's outputs are
 //! deleted after it runs. Programs are checked on `VELT_GOLDEN_JOBS` worker threads (default:
-//! half the cores, at most 8; `1` = sequential);
+//! one per core, at most 16; `1` = sequential);
 //! `VELT_GOLDEN_MODES=debug` (or `release`) checks one build mode only.
 //! The debug-mode run of each program uses the debug runtime's checking allocator
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
@@ -251,14 +255,23 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let want = norm(&std::fs::read_to_string(&out_file).unwrap());
-        // Debug (unoptimized) and release (velt_opt Speed + Cranelift speed) must agree.
-        for mode in modes() {
+        // Debug (unoptimized) and release (velt_opt Speed + Cranelift speed) must agree, and so
+        // must each with a `// check: also with` variable set.
+        let also = also_with_env(f);
+        let runs: Vec<(Option<&str>, Option<EnvVar>)> = modes()
+            .into_iter()
+            .flat_map(|m| std::iter::once((m, None)).chain(also.clone().map(|kv| (m, Some(kv)))))
+            .collect();
+        for (mode, env) in runs {
             // Separate output dirs per mode: on Windows a just-built exe can stay locked briefly
             // (Defender scan), so the release link must not overwrite the debug executable.
             let dir = work.join(if mode.is_some() { "release" } else { "debug" });
             std::fs::create_dir_all(&dir).unwrap();
             let mut cmd = crate::no_window::command(velt);
             cmd.arg("run").args(mode).arg(f).current_dir(&dir);
+            if let Some((name, value)) = &env {
+                cmd.env(name, value);
+            }
             // The debug run checks every allocation (use after free, double free, overflow)
             // unless the caller chose otherwise (`VELT_RT_DEBUG_ALLOC=0`).
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
@@ -300,12 +313,14 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             let code = o.status.code().unwrap_or(-1);
             if code != want_code || stdout != want {
                 failures.push(format!(
-                    "{rel} [{}]: exit {code} (want {want_code})
+                    "{rel} [{}{}]: exit {code} (want {want_code})
 --- want ---
 {want}--- got ---
 {stdout}--- stderr ---
 {}",
                     mode.unwrap_or("debug"),
+                    env.as_ref()
+                        .map_or(String::new(), |(n, v)| format!(", {n}={v}")),
                     String::from_utf8_lossy(&o.stderr)
                 ));
             }
@@ -314,6 +329,20 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
         failures.push(format!("{rel}: no .out or .err expectation file"));
     }
     failures
+}
+
+/// An environment variable a golden sets for a run: name and value.
+type EnvVar = (String, String);
+
+/// The variable of a `// check: also with NAME=VALUE` line among the golden's first lines.
+fn also_with_env(file: &Path) -> Option<EnvVar> {
+    let src = std::fs::read_to_string(file).ok()?;
+    let rest = src
+        .lines()
+        .take(10)
+        .find_map(|l| l.trim().strip_prefix("// check: also with "))?;
+    let (name, value) = rest.trim().split_once('=')?;
+    Some((name.to_string(), value.to_string()))
 }
 
 /// Does the golden ask for a leak check (`// check: no leaks` on one of its first lines)?
@@ -417,7 +446,9 @@ fn modes() -> Vec<Option<&'static str>> {
     }
 }
 
-/// Checks `files` on `VELT_GOLDEN_JOBS` worker threads (default: half the cores, at most 8),
+/// Checks `files` on `VELT_GOLDEN_JOBS` worker threads (default: one per core, at most 16: a
+/// program spends much of its time waiting for the linker and for process start-up, and on CI's
+/// 3- and 4-core runners half the cores took up to twice as long, #1135),
 /// each program in a work directory of its own (its current directory, so files programs write
 /// never collide; and no build ever overwrites an executable that has just run, which on Windows
 /// can stay locked for a moment, even when two programs share a name). Returns each file's
@@ -426,9 +457,7 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
     let jobs = std::env::var("VELT_GOLDEN_JOBS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 8))
-        })
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(16)))
         .max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let results = std::sync::Mutex::new(vec![Vec::new(); files.len()]);

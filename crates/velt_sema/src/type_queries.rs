@@ -33,6 +33,9 @@ pub(crate) struct SigQueries<'m> {
     /// Those being filled now, each with the name of the parameter (or function) whose type is
     /// being resolved: a query reaching one of them is a cycle (TS2502).
     pub filling_sigs: Vec<(DefId, String)>,
+    /// The name spans of the parameters declared with a read-only array type (`xs: readonly
+    /// string[]`): an argument for one may be a copy (`widen_fresh::readonly_array_arg`).
+    pub readonly_params: rustc_hash::FxHashSet<velt_common::Span>,
 }
 
 impl Ctx<'_> {
@@ -283,13 +286,15 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         match fields.into_iter().find(|f| f.name == seg.name) {
-            Some(f) if f.optional => self.ty.option(f.ty),
+            Some(f) if f.optional && self.dynamic(f.ty).is_none() => self.ty.option(f.ty),
             Some(f) => f.ty,
             None => {
-                self.err(
-                    format!("no field `{}` on type `{shown}`", seg.name),
-                    seg.span,
-                );
+                if !crate::collect::exports::member_maybe_dropped(self, ty, &seg.name) {
+                    self.err(
+                        format!("no field `{}` on type `{shown}`", seg.name),
+                        seg.span,
+                    );
+                }
                 self.ty.error
             }
         }
@@ -304,10 +309,63 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> TyId {
         let ty = self.resolve_type(inner, env);
+        let ty = self.subst(ty, &env.args);
         if ty == self.ty.error {
             return ty;
         }
+        if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
+        {
+            if !self.defer_param_form() {
+                // The parameter as written (`keyof T`), not its internal name.
+                let shown = match &inner.kind {
+                    ast::TypeExprKind::Named { path, args }
+                        if path.len() == 1 && args.is_empty() =>
+                    {
+                        path[0].name.clone()
+                    }
+                    _ => self.display(ty),
+                };
+                self.err(
+                    format!("`keyof {shown}` on a type parameter is not supported yet (#350)"),
+                    t.span,
+                );
+            }
+            return self.ty.error;
+        }
         let shown = self.display(ty);
+        // A union's keys are the keys every member has (TypeScript).
+        if let Some(members) = self.union_members(ty) {
+            let mut common: Option<Vec<TyId>> = None;
+            for m in members {
+                let Some(fs) = self.plain_fields(m).filter(|_| self.is_object_value(m)) else {
+                    self.err(
+                        format!("`keyof {shown}` is not supported yet (#936): `keyof` works on object types"),
+                        t.span,
+                    );
+                    return self.ty.error;
+                };
+                let TyKind::Adt(d, _) = *self.ty.kind(m) else {
+                    return self.ty.error;
+                };
+                let mut names = vec![];
+                for f in fs {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    names.push(k);
+                }
+                common = Some(match common {
+                    None => names,
+                    Some(c) => c.into_iter().filter(|n| names.contains(n)).collect(),
+                });
+            }
+            let keys: Vec<TyId> = common.unwrap_or_default();
+            return match keys.len() {
+                0 => self.ty.never,
+                1 => keys[0],
+                _ => self.union_of(&keys, false, t.span),
+            };
+        }
         match self.ty.kind(ty).clone() {
             TyKind::Adt(d, args) if Some(d) == self.prelude_adt("Record") => {
                 if args[0] != self.ty.str_ {
@@ -319,14 +377,20 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            TyKind::Adt(d, _) if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon) => {
+            TyKind::Adt(d, _)
+                if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon)
+                    || self.field_only_of.contains_key(&d) =>
+            {
                 let Some(fields) = self.object_fields("keyof", ty, None, t.span) else {
                     return self.ty.error;
                 };
-                let keys: Vec<TyId> = fields
-                    .into_iter()
-                    .map(|f| self.lit_type(crate::hir::LitValue::Str(f.name)))
-                    .collect();
+                let mut keys: Vec<TyId> = vec![];
+                for f in fields {
+                    let Ok(k) = self.key_literal(d, &f.name, t.span) else {
+                        return self.ty.error;
+                    };
+                    keys.push(k);
+                }
                 match keys.len() {
                     0 => self.ty.never,
                     1 => keys[0],
@@ -417,5 +481,14 @@ fn literal_init(e: &ast::Expr) -> Option<ast::SignedLit> {
         },
         ast::ExprKind::Paren(inner) => literal_init(inner),
         _ => None,
+    }
+}
+
+impl Ctx<'_> {
+    /// An anonymous object type or a field-only interface's (whose keys are its fields).
+    fn is_object_value(&self, t: TyId) -> bool {
+        matches!(self.ty.kind(t), TyKind::Adt(d, _)
+            if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Anon)
+                || self.field_only_of.contains_key(d))
     }
 }

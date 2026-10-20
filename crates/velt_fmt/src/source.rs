@@ -143,7 +143,19 @@ pub(crate) fn has_modifier(src: &str, lo: u32, name_lo: u32, word: &str) -> bool
 /// (the AST drops these names; they are kept for readability).
 pub(crate) fn fn_type_param_name(src: &str, type_lo: u32) -> Option<&str> {
     let before = src.get(..type_lo as usize)?.trim_end();
-    let before = before.strip_suffix(':')?.trim_end();
+    label_before(before.strip_suffix(':')?.trim_end())
+}
+
+/// The name of an optional parameter of a function type or an optional tuple element, `name?:`,
+/// before its type at `type_lo`.
+pub(crate) fn optional_label(src: &str, type_lo: u32) -> Option<&str> {
+    let before = src.get(..type_lo as usize)?.trim_end();
+    let before = before.strip_suffix(':')?.trim_end().strip_suffix('?')?;
+    label_before(before).filter(|l| !l.starts_with(['[', '{']))
+}
+
+/// The name (or destructuring pattern) that `before` ends with.
+fn label_before(before: &str) -> Option<&str> {
     if before.ends_with([']', '}']) {
         // A destructured parameter (`([a, b]: [A, B]) => R`): the balanced pattern.
         let mut depth = 0usize;

@@ -129,9 +129,16 @@ impl FnCx<'_, '_> {
 
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        if let Some(h) = exp.and_then(|t| self.nothing_in_member(Nothing::Null, t, span)) {
+            return h;
+        }
         match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => self.dynamic_nothing(Nothing::Null, t, span),
             Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
                 self.nothing_mismatch("null", t, span)
+            }
+            Some(t) if self.is_three_state(t) && !self.cx.ty.has_error(t) => {
+                self.nothing_value(Nothing::Null, t, span)
             }
             Some(t)
                 if self
@@ -142,7 +149,12 @@ impl FnCx<'_, '_> {
             {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) if t != self.cx.ty.error && !self.cx.ty.has_error(t) => {
+            // A type argument still to infer (`tag(null)`): `null` alone.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.null_alone();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) if !self.cx.ty.has_error(t) => {
                 let tn = self.cx.display(t);
                 self.cx.error(
                     Diagnostic::error("mismatched types", span)
@@ -166,20 +178,26 @@ impl FnCx<'_, '_> {
     fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
         self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
         match exp {
+            Some(t) if self.cx.dynamic(t).is_some() => {
+                self.dynamic_nothing(Nothing::Undefined, t, span)
+            }
+            // A type argument still to infer (`tag(undefined)`): `undefined` alone, as below.
+            Some(t) if t == self.cx.ty.error => {
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
             Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
             Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
                 self.mk(H::Lit(hir::Lit::Null), t, span)
             }
-            Some(t) => self.nothing_mismatch("undefined", t, span),
+            Some(t) => match self.nothing_in_member(Nothing::Undefined, t, span) {
+                Some(h) => h,
+                None => self.nothing_mismatch("undefined", t, span),
+            },
+            // With no type to take, its type is `undefined` alone.
             None => {
-                self.cx.error(
-                    Diagnostic::error(
-                        "`undefined` with no type to take here is not supported yet (its type would be `undefined` alone)",
-                        span,
-                    )
-                    .with_note("add a type annotation like `let x: T | undefined = undefined`"),
-                );
-                self.error_expr(span)
+                let t = self.cx.ty.undefined();
+                self.mk(H::Lit(hir::Lit::Null), t, span)
             }
         }
     }
@@ -224,17 +242,21 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An `undefined` (a literal, or a value that may be one) at `span`, given for an optional
-    /// parameter, a parameter with a default or an optional field: TypeScript accepts it, and
-    /// this phase of #930 cannot pass it on (`true`: reported). Such a parameter or field is
-    /// still a `T | null` whose `null` stands for "left out".
-    pub(crate) fn optional_slot_error(&mut self, span: Span) -> bool {
+    /// An `undefined` (a literal, or a value that may be one) at `span`, given for a parameter
+    /// with a default whose type does not allow `undefined`: JavaScript applies the default,
+    /// which calls do not do yet (`true`: reported, issue #930). An optional parameter or field
+    /// is a `T | undefined` and takes it as is. `maybe`: the value only may be `undefined`.
+    pub(crate) fn optional_slot_error(&mut self, span: Span, maybe: bool) -> bool {
         let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
             return false;
         };
         let (what, note) = match slot {
+            crate::body::OptionalSlot::Param if maybe => (
+                "a value that may be `undefined` passed for a parameter with a default",
+                "JavaScript applies the default where it is `undefined`; test it first, or pass `value ?? default`",
+            ),
             crate::body::OptionalSlot::Param => (
-                "`undefined` passed for an optional parameter or one with a default",
+                "`undefined` passed for a parameter with a default",
                 "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
             ),
             crate::body::OptionalSlot::Field => (
@@ -250,7 +272,7 @@ impl FnCx<'_, '_> {
 
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
-        if what == "undefined" && self.optional_slot_error(span) {
+        if what == "undefined" && self.optional_slot_error(span, false) {
             return self.error_expr(span);
         }
         if what == "undefined" && t == self.cx.ty.unit {
@@ -265,7 +287,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let tn = self.cx.display(t);
-        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.ty.core(t).unwrap_or(t);
         let core = self.cx.display(core);
         self.cx.error(
             Diagnostic::error(
@@ -317,12 +339,17 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
-    /// `String(x)` text when it is a number or boolean (or one of those or `null`), else `x`.
+    /// `String(x)` text when it is a number or boolean (or one of those or `null`), or an
+    /// object with a `toString()`, else `x`.
     pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
+        let t = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+        // An object with a `toString()` (an error, an error union): what it returns, as in JS.
+        if self.writes_by_to_string(t) {
+            return self.js_text(h, "a string concatenation");
+        }
         let ty = &self.cx.ty;
-        let t = ty.opt_payload(h.ty).unwrap_or(h.ty);
         if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
             return h;
         }
@@ -340,11 +367,16 @@ impl FnCx<'_, '_> {
         if depth > 16 {
             return true;
         }
+        if self.cx.dynamic(t).is_some() {
+            // Printed by the glue of the type it holds (hir_encodings.md "any and unknown").
+            return true;
+        }
         let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
             TyKind::FnPtr { .. }
             | TyKind::Closure(_)
             | TyKind::Dyn(..)
             | TyKind::Unit
+            | TyKind::Simd(_)
             | TyKind::Shared(_) => return false,
             // A promise prints its state and, once settled, its value (`void`: `undefined`).
             TyKind::Promise(v, e) => [v, e]
@@ -425,7 +457,7 @@ impl FnCx<'_, '_> {
                     parts.push(self.error_expr(h.span));
                     continue;
                 }
-                let part = self.js_text(h, "a template literal");
+                let part = self.implicit_any_text(h, "a template literal");
                 parts.push(self.implicit_text(part));
             }
         }
@@ -452,6 +484,11 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
+        let h = match self.nullable_text(h, what) {
+            Ok(text) => return text,
+            Err(h) => h,
+        };
+        let h = self.error_union_view(h).unwrap_or_else(|h| h);
         let h = self.own_to_string(h, "toString");
         let h = self.narrowed_for_print(h);
         let t = h.ty;
@@ -478,10 +515,13 @@ impl FnCx<'_, '_> {
     /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
     /// reports the shapes this cannot call).
     pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
-        let Some((d, _)) = self.adt_of(h.ty) else {
+        let Some((d, args)) = self.adt_of(h.ty) else {
             return h;
         };
-        let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
+        // Declared by the class or inherited from a base class (`Error.toString`), as in JS.
+        let Some(crate::collect::Found::Class { m, .. }) =
+            crate::collect::lookup_method(self.cx, d, &args, method)
+        else {
             return h;
         };
         crate::body::param_defaults(self.cx, m.def);

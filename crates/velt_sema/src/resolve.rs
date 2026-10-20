@@ -6,6 +6,7 @@
 //! `TyKind::Dyn`; `T | null` is `TyKind::Option`; other unions are compiler-generated enums (`crate::unions`); literal types are `TyKind::Literal`
 //! (`crate::literals`) and object types `{ a: T }` anonymous object types (`crate::anon`).
 
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::anon::ShapeField;
@@ -23,6 +24,17 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// Names a type binds, innermost last: a mapped type's key, what `infer X` found, the
+    /// member a distributive conditional type is at (`crate::type_level`).
+    pub locals: Vec<(String, TyId)>,
+    /// `infer X` names that found nothing (TypeScript's `unknown`).
+    pub unknowns: Vec<String>,
+    /// Inside a conditional or mapped type: `T[K]` of an optional field is `F | undefined`, as
+    /// TypeScript reads it.
+    pub ts_optional: bool,
+    /// In a class's instance method (its signature and body): the class type, which the
+    /// polymorphic `this` type resolves to (`m(): this`).
+    pub this_ty: Option<TyId>,
 }
 
 impl TyEnv {
@@ -31,6 +43,10 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            locals: vec![],
+            unknowns: vec![],
+            ts_optional: false,
+            this_ty: None,
         }
     }
 }
@@ -66,6 +82,26 @@ impl Ctx<'_> {
                 throws,
                 rest: false,
             } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
+            ast::TypeExprKind::TupleRest(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "variadic tuple types (`[A, ...T]`) are not supported yet (#943)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; write them out (`[A, B, C]`), or use an array (`A[]`)"),
+                );
+                self.ty.error
+            }
+            ast::TypeExprKind::TupleOptional(_) => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "optional tuple elements (`[A, B?]`) are not supported yet (#938)",
+                        t.span,
+                    )
+                    .with_note("a tuple has a fixed number of elements; make the element `B | null` and pass `null`, or declare one tuple type per length"),
+                );
+                self.ty.error
+            }
             ast::TypeExprKind::Function { rest: true, .. }
             | ast::TypeExprKind::GenericFunction { .. }
             | ast::TypeExprKind::Construct(_) => {
@@ -84,18 +120,33 @@ impl Ctx<'_> {
             ast::TypeExprKind::IndexSig {
                 fields, key, value, ..
             } => self.resolve_index_sig(fields, &key.ty, value, env),
+            ast::TypeExprKind::Callable { sigs, members } => {
+                let lowered = crate::call_sigs::lower(sigs, members, t.span);
+                self.resolve_type(&lowered, env)
+            }
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
-            ast::TypeExprKind::Null => {
-                self.err("`null` alone is not a type; write `T | null`", t.span);
-                self.ty.error
+            ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
+            ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
+            ast::TypeExprKind::TemplateLiteral { quasis, types } => {
+                self.resolve_template(t, quasis, types, env)
             }
+            ast::TypeExprKind::Infer(n) => {
+                match env.locals.iter().rev().find(|(l, _)| *l == n.name) {
+                    Some((_, b)) => *b,
+                    None => {
+                        self.err(
+                            "`infer` declarations are only permitted in the `extends` clause of a conditional type",
+                            t.span,
+                        );
+                        self.ty.error
+                    }
+                }
+            }
+            ast::TypeExprKind::Null => self.ty.null_alone(),
             ast::TypeExprKind::Undefined => {
-                self.err(
-                    "`undefined` alone as a type is not supported yet; write `T | undefined`",
-                    t.span,
-                );
-                self.ty.error
+                self.writes_undefined = true;
+                self.ty.undefined()
             }
         }
     }
@@ -138,8 +189,8 @@ impl Ctx<'_> {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            // The declared type: without the `| null` the parser adds for `name?: T`
-            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            // The declared type: without the `| undefined` the parser adds for `name?: T`
+            // (`velt_syntax` `or_undefined`), which the flag stands for.
             let written = if f.optional {
                 written_type(&f.ty)
             } else {
@@ -167,6 +218,10 @@ impl Ctx<'_> {
         }
         let t = self.anon_type_with(&out, env.module);
         self.declare_anon_fields(t, &spans);
+        let str_ = self.ty.str_;
+        for f in &out {
+            self.record_key_kind(t, &f.name, str_);
+        }
         t
     }
 
@@ -177,7 +232,8 @@ impl Ctx<'_> {
         for p in parts {
             let n = match p.kind {
                 ast::TypeExprKind::Null => Nothing::Null,
-                ast::TypeExprKind::Undefined => {
+                // `T | void` is `T | undefined` (`crate::unions`).
+                ast::TypeExprKind::Undefined | ast::TypeExprKind::Void => {
                     self.writes_undefined |= !self.scopes[env.module].is_std;
                     Nothing::Undefined
                 }
@@ -206,10 +262,57 @@ impl Ctx<'_> {
                 self.rec_item(last.span, Some(item));
                 return self.item_type(item, &name, args, t, env);
             }
-            self.err(format!("cannot find type `{name}` in this scope"), t.span);
+            // A member of a namespace import of a module the parser recovered may be a
+            // declaration it dropped (`Ctx::recovered`).
+            let recovered = self.scopes[env.module]
+                .namespaces
+                .get(&path[0].name)
+                .is_some_and(|&t| {
+                    let member = path.last().map_or("", |i| i.name.as_str());
+                    crate::collect::exports::maybe_dropped(self, t, member)
+                });
+            if recovered {
+                return self.ty.error;
+            }
+            // A namespace declaration's member that is missing or not exported (TS2694).
+            let (ns, member) = name.rsplit_once('.').unwrap_or_default();
+            let prefix = format!("{ns}.");
+            let is_namespace = !self.scopes[env.module].namespaces.contains_key(ns)
+                && self.scopes[env.module]
+                    .items
+                    .keys()
+                    .any(|k| k.starts_with(&prefix));
+            match is_namespace {
+                true => self.err(
+                    format!("namespace `{ns}` has no exported member `{member}`"),
+                    path.last().map_or(t.span, |i| i.span),
+                ),
+                false => self.err(format!("cannot find type `{name}` in this scope"), t.span),
+            }
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if let Some((_, b)) = env.locals.iter().rev().find(|(l, _)| l == name) {
+            if !args.is_empty() {
+                self.err(
+                    format!("type parameter `{name}` does not take type arguments"),
+                    t.span,
+                );
+            }
+            return *b;
+        }
+        if env.unknowns.iter().any(|u| u == name) {
+            self.err(
+                format!(
+                    "`{name}` is inferred as `unknown` here, which is not supported yet (#934)"
+                ),
+                t.span,
+            );
+            return self.ty.error;
+        }
+        if name == "this" {
+            return self.resolve_this_type(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -219,6 +322,10 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
+        // The SIMD type names (`u8x16`) are built in only for std: other modules import them
+        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        let simd_outside_std =
+            crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
         // program declares or imports shadows them, as TypeScript code may declare one (#1074).
         // A value of that name does not (a function `f64`). TypeScript's own (`number`,
@@ -227,7 +334,14 @@ impl Ctx<'_> {
             && self
                 .lookup_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
-        if let Some(p) = self.ty.primitive(name).filter(|_| !shadowed) {
+        // `bigint` has no values until `BigInt` exists (#1088): `never`, so `string | bigint` is
+        // `string` and `T extends bigint ? …` is never taken, as for every Velt value in TS.
+        let bigint = (name == "bigint").then(|| self.ty.bigint());
+        if let Some(p) = bigint.or_else(|| {
+            self.ty
+                .primitive(name)
+                .filter(|_| !simd_outside_std && !shadowed)
+        }) {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -250,7 +364,39 @@ impl Ctx<'_> {
                 args.iter().for_each(|a| {
                     self.resolve_type(a, env);
                 });
-                self.err(format!("cannot find type `{name}` in this scope"), t.span);
+                self.not_found(
+                    format!("cannot find type `{name}` in this scope"),
+                    name,
+                    t.span,
+                );
+                self.ty.error
+            }
+        }
+    }
+
+    /// The polymorphic `this` type: the class of the instance method it is written in. A call
+    /// of a method returning `this` gives the receiver's own (sub)class type
+    /// (`body::expr::this_type`).
+    fn resolve_this_type(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
+        if !args.is_empty() {
+            self.err("type `this` does not take type arguments", t.span);
+            return self.ty.error;
+        }
+        match env.this_ty {
+            Some(ty) => ty,
+            None => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "a 'this' type is available only in a non-static member of a class or interface",
+                        t.span,
+                    )
+                    .with_note("TypeScript's TS2526; in an interface, Velt doesn't support it yet: write the interface's name"),
+                );
                 self.ty.error
             }
         }
@@ -282,6 +428,19 @@ impl Ctx<'_> {
                 None => return self.ty.error,
             },
             None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
+        };
+        // Inside an alias expanded at known arguments, an alias used with the parameters gets
+        // the arguments themselves, so a conditional or mapped type in it can be evaluated
+        // (`type A<T> = B<T>`; `crate::type_level`).
+        let args = match item {
+            Item::Alias(_) if !env.args.is_empty() => {
+                let known: Vec<TyId> = args.iter().map(|a| self.subst(*a, &env.args)).collect();
+                match known.iter().any(|a| self.has_type_params(*a)) {
+                    true => args,
+                    false => known,
+                }
+            }
+            _ => args,
         };
         self.item_type_args(item, name, args, t)
     }
@@ -321,6 +480,8 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
+            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
+            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
             _ => return None,
         };
         let written = args;
@@ -434,11 +595,14 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         if info.expanding {
+            if let Some(own) = self.recursive_union_ref(a) {
+                return own;
+            }
             let d = velt_common::Diagnostic::error(
                 format!("type alias `{}` refers to itself", decl.name.name),
                 t.span,
             )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class");
+            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
             self.error(d);
             return self.ty.error;
         }
@@ -447,13 +611,48 @@ impl Ctx<'_> {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
         }
+        if let Some(own) = self.recursive_union(a, t.span) {
+            return own;
+        }
+        self.alias_body(a, args, t.span)
+    }
+
+    /// The body of alias `a` (with as many `args` as it has parameters) at `args`, used at
+    /// `span`. A conditional, mapped, indexed access or template literal type in it that needs
+    /// an argument that is still a type parameter makes it the deferred `TyKind::Op` (#934).
+    pub(crate) fn alias_body(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
+        let info = &self.aliases[a as usize];
+        let decl = info.decl;
+        let module = info.module;
         let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         self.aliases[a as usize].used = true;
         self.aliases[a as usize].expanding = true;
         let mut env = TyEnv::new(module, &names);
         env.args = args.clone();
+        let outermost = self.type_level.alias_site.is_none();
+        if outermost {
+            self.type_level.alias_site = Some(span);
+        }
+        let defer = !self.checking_unused_aliases && args.iter().any(|x| self.has_type_params(*x));
+        if defer {
+            self.type_level.deferring += 1;
+        }
+        let outer_stuck = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
         let body = self.resolve_type(&decl.ty, &env);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer_stuck);
+        if defer {
+            self.type_level.deferring -= 1;
+        }
+        if outermost {
+            self.type_level.alias_site = None;
+        }
         self.aliases[a as usize].expanding = false;
+        if stuck {
+            // Evaluated again, and reported, once the arguments are known.
+            self.diags.truncate(reported);
+            return self.deferred_alias(a, args, span);
+        }
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
             self.alias_names
@@ -462,12 +661,13 @@ impl Ctx<'_> {
         }
         if self.mixes_nothings(body, &args) {
             self.err(
-                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
-                t.span,
+                "this alias keeps a `P | null` of a type argument that allows `undefined`, whose `undefined` it could not tell from its own `null` yet (#930)",
+                span,
             );
             return self.ty.error;
         }
-        self.subst(body, &args)
+        let t = self.subst(body, &args);
+        self.reduce_known_intersection(t)
     }
 
     /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
@@ -478,7 +678,7 @@ impl Ctx<'_> {
             return false;
         }
         let mut stack = vec![body];
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
                 continue;
@@ -490,10 +690,19 @@ impl Ctx<'_> {
                     Some((_, members)) => members,
                     None => vec![*p],
                 };
+                let direct = members.len() == 1;
                 for m in members {
                     if let TyKind::Param(i) = self.ty.kind(m) {
                         let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
-                        if arg.is_some_and(|m| !m.within(*n)) {
+                        // `P | undefined` at `P = T | null` is `T | null | undefined`.
+                        let clash = |m: crate::hir::Nothing| {
+                            if direct {
+                                n.has_null() && m.has_undefined()
+                            } else {
+                                !m.within(*n)
+                            }
+                        };
+                        if arg.is_some_and(clash) {
                             return true;
                         }
                     }
@@ -545,15 +754,16 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
     cx.checking_unused_aliases = false;
 }
 
-/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
-/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
-/// that already admits `null` (`name?: T | null`) is kept as written.
+/// The type written for an optional field `name?: T`: `T`, without the `| undefined` the parser
+/// adds (`velt_syntax` `or_undefined`; the added `undefined` is the zero-width one at the end).
+/// A written type that already admits `undefined` (`name?: T | undefined`) is kept as written.
 pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     let ast::TypeExprKind::Union(ms) = &ty.kind else {
         return ty.clone();
     };
-    let added =
-        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    let added = |m: &ast::TypeExpr| {
+        matches!(m.kind, ast::TypeExprKind::Undefined) && m.span.lo == m.span.hi
+    };
     match ms.last() {
         Some(last) if added(last) => {
             let rest = &ms[..ms.len() - 1];

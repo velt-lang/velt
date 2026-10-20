@@ -5,7 +5,8 @@
 //! microtask). Dropped unfinished, a started promise keeps running and its task disposes of the
 //! result; `block_on` waits for started promises (see executor.rs).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
@@ -40,7 +41,8 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     }
     let (id, st) = adopt(f, result_drop);
     let w = executor::waker(id);
-    let _ = drive(f, &st, &mut Context::from_waker(&w));
+    // The creator goes on after this first run: its `await`s take their steps.
+    let _ = executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
 }
 
 /// The owner hands promise `f` to another task: its result is transferred with `transfer` as
@@ -110,7 +112,7 @@ pub(super) unsafe fn give_up(f: *mut VeltFut) {
     // An unfinished started promise stays allocated until its task finishes it.
     super::velt_rt_fut_drop(f);
     if let Some(id) = task {
-        executor::run_now(id, turn);
+        executor::sync_run(|| executor::run_now(id, turn));
     }
 }
 
@@ -154,7 +156,7 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
         return Poll::Ready(());
     }
     let t = trailer(f);
-    if ((*t).poll)(state(f), raw_cx(cx)) != READY {
+    if ((*t).poll)(state(f), raw_cx(cx).ptr()) != READY {
         return Poll::Pending;
     }
     (*t).live = 0;
@@ -167,7 +169,9 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
     };
     if detached {
         if let Some(d) = result_drop {
-            d(state(f));
+            if drop_unclaimed(f, d) {
+                return Poll::Ready(()); // freed once reported (`flush_unhandled`)
+            }
         }
         boxed::free(f);
     } else if let Some(w) = waiter {
@@ -236,16 +240,155 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
         return; // the driver finishes it and frees it
     }
     if let (false, Some(d)) = (delivered, result_drop) {
-        d(state(f));
+        if drop_unclaimed(f, d) {
+            return; // freed once reported (`flush_unhandled`)
+        }
     }
     boxed::free(f);
 }
+
+thread_local! {
+    /// The started promise whose result is being dropped right now (null: none).
+    static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
+    /// Rejected promises to report once the microtask queue is drained, with their drops.
+    static DEFERRED: RefCell<VecDeque<(*mut VeltFut, ResultDropFn)>> =
+        const { RefCell::new(VecDeque::new()) };
+}
+
+/// Drop the unclaimed result of finished promise `f` with `d`; true when it is an unhandled
+/// rejection kept to be reported once the microtask queue is drained, as in Node (velt_rt's
+/// task/local/unhandled.rs).
+unsafe fn drop_unclaimed(f: *mut VeltFut, d: ResultDropFn) -> bool {
+    if !executor::running() {
+        d(state(f));
+        return false;
+    }
+    DROPPING.with(|c| c.set(f));
+    d(state(f));
+    // Still set: `velt_rt_unhandled_defer` was not called (not a rejection).
+    if !DROPPING.with(|c| c.replace(std::ptr::null_mut())).is_null() {
+        return false;
+    }
+    DEFERRED.with(|q| q.borrow_mut().push_back((f, d)));
+    true
+}
+
+/// Called by a rejection's report before it reports: 1 when the runtime keeps the promise and
+/// reports it once the microtask queue is drained, 0 to report now.
+#[no_mangle]
+pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
+    DROPPING.with(|c| !c.replace(std::ptr::null_mut()).is_null()) as u8
+}
+
+/// The microtask queue is drained: report the rejections that waited for it (the first one
+/// ends the process).
+pub(super) fn flush_unhandled() {
+    while let Some((f, d)) = DEFERRED.with(|q| q.borrow_mut().pop_front()) {
+        // SAFETY: a finished promise kept with its unclaimed result (`drop_unclaimed`).
+        unsafe {
+            d(state(f));
+            boxed::free(f);
+        }
+    }
+}
+
+/// `velt_rt_task_gate`: one thread, so a timer's callback never runs during a task's poll and
+/// needs no gate (velt_rt's task/local/gate.rs).
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate() -> u64 {
+    0
+}
+
+/// `velt_rt_task_gate_wait`: ready at once (see [`velt_rt_task_gate`]).
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate_wait(_gate: u64) -> *mut VeltFut {
+    new_leaf(|_: &mut Context<'_>| Poll::Ready(()))
+}
+
+/// `velt_rt_task_gate_free`: nothing to release.
+#[no_mangle]
+pub extern "C" fn velt_rt_task_gate_free(_gate: u64) {}
 
 /// The task id `new Promise` compares (see velt_rt): one thread, so values never need copying
 /// between tasks and every task reports the same id.
 #[no_mangle]
 pub extern "C" fn velt_rt_task_id() -> u64 {
     1
+}
+
+/// What the compiler emits once per program with module state (velt_rt's
+/// task/local/module_state.rs).
+#[repr(C)]
+pub struct ModuleDesc {
+    pub size: u64,
+    pub align: u64,
+    pub init: unsafe extern "C" fn(*mut u8),
+    pub drop: unsafe extern "C" fn(*mut u8),
+    /// Each slot's name, NUL-terminated, in slot order.
+    pub names: *const u8,
+}
+
+thread_local! {
+    /// The program's module state: one thread, and every task reports the same id
+    /// (`velt_rt_task_id`), so the tasks share one block.
+    static MODULE_STATE: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
+    /// How many of its slots are initialized (`u64::MAX` once `init` returned).
+    static MODULE_READY: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The module state, allocated zeroed and initialized by `desc.init` on first access, to reach
+/// slot `slot` (one whose initializer has not run yet is a `ReferenceError`).
+///
+/// # Safety
+/// `desc` must point to the program's module descriptor.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
+    let mut p = MODULE_STATE.with(Cell::get);
+    if p.is_null() {
+        let d = &*desc;
+        let layout = std::alloc::Layout::from_size_align(
+            (d.size as usize).max(1),
+            (d.align as usize).max(1),
+        )
+        .expect("ICE: module state layout");
+        p = std::alloc::alloc_zeroed(layout);
+        if p.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        MODULE_STATE.with(|c| c.set(p));
+        (d.init)(p);
+        MODULE_READY.with(|c| c.set(u64::MAX));
+    }
+    if slot >= MODULE_READY.with(Cell::get) {
+        not_ready(desc, slot);
+    }
+    p
+}
+
+/// The initializers of the slots below `n` have run.
+#[no_mangle]
+pub extern "C" fn velt_rt_module_ready(_state: *mut u8, n: u64) {
+    MODULE_READY.with(|c| c.set(n));
+}
+
+/// A slot reached before its initializer ran: an uncaught `ReferenceError`, as in JavaScript.
+#[cold]
+unsafe fn not_ready(desc: *const ModuleDesc, slot: u64) -> ! {
+    let mut s = (*desc).names;
+    for _ in 0..slot {
+        while *s != 0 {
+            s = s.add(1);
+        }
+        s = s.add(1);
+    }
+    let name = std::ffi::CStr::from_ptr(s.cast()).to_string_lossy();
+    crate::io::flush_stdout();
+    let msg = format!(
+        "Uncaught ReferenceError: Cannot access '{name}' before initialization
+"
+    );
+    crate::platform::write(2, msg.as_bytes());
+    crate::platform::exit(1)
 }
 
 #[cfg(test)]

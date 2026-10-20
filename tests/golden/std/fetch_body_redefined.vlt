@@ -1,0 +1,12 @@
+// `body` is an `extend` getter of `Response` (std/fetch/streams.vlt): a subclass cannot redefine
+// it yet (#1133).
+class MyRes extends Response {
+  get body(): ReadableStream<Uint8Array> | null {
+    return null;
+  }
+}
+
+function main() {
+  const r: Response = new MyRes("x");
+  console.log(r.body == null);
+}

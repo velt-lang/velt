@@ -41,16 +41,12 @@ pub const RULES: &[&str] = &[
     "jsx-pragma-comment",
     "declare-fn",
     "int-division",
-    "strict-null-eq",
     "object-in-template",
-    "nullable-in-template",
     "default-sort",
     "json-map",
     "map-iter-as-array",
     "velt-global",
     "velt-member",
-    "null-into-optional",
-    "undefined-into-null",
     "catch-unknown",
 ];
 

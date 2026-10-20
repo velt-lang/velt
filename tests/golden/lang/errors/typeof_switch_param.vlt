@@ -1,0 +1,14 @@
+// `switch (typeof x)` on a type parameter: no run-time `typeof` of a `T` yet, so a case on it is
+// an error (TypeScript accepts it).
+function kt<T>(x: T): string {
+  switch (typeof x) {
+    case "string":
+      return "S";
+    default:
+      return "D";
+  }
+}
+
+function main(): void {
+  console.log(kt("s"));
+}

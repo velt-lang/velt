@@ -658,9 +658,6 @@ export const URL_VALUES: i8[] = [
   -1,
 ];
 
-/** Lowercase hex digits by value. */
-export const HEX_DIGITS: u8[] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102];
-
 /**
  * The value of every byte as a hex digit of either case, 255 (std/encoding's `INVALID`) for the
  * others.

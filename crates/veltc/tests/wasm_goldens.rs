@@ -20,8 +20,15 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`).
-const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server", "console_std_handles"];
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`), and a
+/// `resolve` called later resumes its waiters at the executor's next step instead of queueing
+/// them as microtasks (docs/reference/async.md).
+const UNSUPPORTED: &[&str] = &[
+    "tcp_echo",
+    "http_server",
+    "console_std_handles",
+    "await_order_resolve",
+];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
@@ -179,8 +186,25 @@ fn run_all(
 /// How many test functions share the wasm32-wasip1 goldens.
 const SHARDS: usize = 8;
 
-/// The wasm32-wasip1 goldens: every file with an `.out` in these directories.
+/// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
+/// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
+/// and the std code written with them.
+const WASI_STD: &[&str] = &[
+    "bytes_search",
+    "simd_floats",
+    "simd_generic",
+    "simd_ints",
+    "simd_lane_range",
+    "simd_load_range",
+    "simd_names",
+    "simd_positions",
+    "simd_sha",
+    "simd_shuffle",
+    "simd_store_range",
+    "simd_values",
+    "utf8_valid",
+];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a
 /// mix of directories and about the same number of files.
@@ -201,7 +225,14 @@ fn wasi_shard(shard: usize) {
     }
     let root = root();
     build_runtime(&root, "wasm32-wasip1");
-    let files = shard_of(&programs(&root, WASI_DIRS, UNSUPPORTED), shard);
+    let mut files = programs(&root, WASI_DIRS, UNSUPPORTED);
+    let std_files = programs(&root, &["std"], &[]);
+    files.extend(std_files.into_iter().filter(|p| {
+        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+        WASI_STD.contains(&stem.as_ref())
+    }));
+    files.sort();
+    let files = shard_of(&files, shard);
     // A directory of this process's own: shards run at the same time, and a path that a
     // crashed earlier run may still hold is never reused.
     let work = work_dir::work_dir(&root, "golden-work-wasi")

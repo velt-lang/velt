@@ -7,7 +7,7 @@
 //! concrete class in its first word (`SLOT_CLASS_ID`, glue/vtable.rs; 0 for other types), and
 //! `x instanceof C` is one load and a range check: O(1), no allocation.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -47,9 +47,15 @@ impl Cx<'_> {
         }
     }
 
+    /// Is `d` one of the prelude's proxy classes (`number_classes`)?
+    fn numbered_last(&self, d: DefId) -> bool {
+        use super::any_proxy::{PRELUDE_PROXY, PRELUDE_REFLECT};
+        matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_PROXY || a.name == PRELUDE_REFLECT)
+    }
+
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
-    fn number_classes(&self) -> HashMap<DefId, (u64, u64)> {
-        let mut children: HashMap<Option<DefId>, Vec<DefId>> = HashMap::new();
+    fn number_classes(&self) -> FxHashMap<DefId, (u64, u64)> {
+        let mut children: FxHashMap<Option<DefId>, Vec<DefId>> = FxHashMap::default();
         for i in 0..self.hir.defs.len() {
             let id = DefId(i as u32);
             if let hir::Def::Adt(a) = self.hir.def(id) {
@@ -62,12 +68,16 @@ impl Cx<'_> {
                 }
             }
         }
-        let mut out = HashMap::new();
+        let mut out = FxHashMap::default();
         let mut next = 1;
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).
         let mut stack: Vec<(DefId, bool)> = vec![];
-        for &root in children.get(&None).into_iter().flatten().rev() {
+        // The prelude's `Proxy` and `Reflect` (std/prelude/zz_proxy.vlt) are numbered last, so
+        // the classes of programs that don't use them keep their ids.
+        let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
+        roots.sort_by_key(|&d| self.numbered_last(d));
+        for &root in roots.iter().rev() {
             stack.push((root, false));
         }
         while let Some((d, done)) = stack.pop() {
@@ -91,7 +101,14 @@ impl FnLower<'_, '_> {
     /// `place` (a class object or an interface value of type `ty`) is an instance of `class`.
     pub(super) fn instance_test(&mut self, place: &Place, ty: TyId, class: DefId) -> Operand {
         let id = match self.cx.kind(ty) {
-            TyKind::Dyn(..) => self.dyn_class_id(place),
+            TyKind::Dyn(..) => self.dyn_class_id(place, self.cx.has_proxies()),
+            _ if self.cx.proxiable(ty) => {
+                let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+                self.proxy_class_id(&obj, |lw| {
+                    let vt = lw.obj_vtable(obj.clone(), ty);
+                    lw.vtable_class_id(vt)
+                })
+            }
             _ => {
                 let vt = self.obj_vtable(Operand::Copy(place.clone()), ty);
                 self.vtable_class_id(vt)
@@ -109,7 +126,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The class id word of the vtable at `vt`.
-    fn vtable_class_id(&mut self, vt: Operand) -> Operand {
+    pub(super) fn vtable_class_id(&mut self, vt: Operand) -> Operand {
         let vp = self.operand_place(vt, Ty::Ptr);
         let word = proj(&vp, Proj::Deref(Ty::U64));
         self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(word)))
@@ -117,8 +134,9 @@ impl FnLower<'_, '_> {
 
     /// The class id of the value of the interface value at `place`: its table's, or, when the
     /// table says `ASK_OBJECT` (a class whose objects have a vtable pointer, so the object may
-    /// be of a subclass), the object's own table's.
-    fn dyn_class_id(&mut self, place: &Place) -> Operand {
+    /// be of a subclass), the object's own table's. With `proxies`, the object may be a typed
+    /// proxy (its pointer tagged), whose class is its target's.
+    pub(super) fn dyn_class_id(&mut self, place: &Place, proxies: bool) -> Operand {
         let vt = Operand::Copy(proj(place, Proj::Field(1)));
         let first = self.vtable_class_id(vt);
         let id = self.temp(Ty::U64);
@@ -128,9 +146,21 @@ impl FnLower<'_, '_> {
         let (obj, join) = (self.new_block(), self.new_block());
         self.branch(is_obj, obj, join);
         self.switch_to(obj);
-        let data = self.operand_place(Operand::Copy(proj(place, Proj::Field(0))), Ty::Ptr);
-        let hdr = Operand::Copy(proj(&data, Proj::Deref(Ty::Ptr)));
-        let own = self.vtable_class_id(hdr);
+        let own = if proxies {
+            let data = self.rvalue_temp(
+                Ty::Ptr,
+                Rvalue::Use(Operand::Copy(proj(place, Proj::Field(0)))),
+            );
+            self.proxy_class_id(&data, |lw| {
+                let dp = lw.operand_place(data.clone(), Ty::Ptr);
+                let hdr = Operand::Copy(proj(&dp, Proj::Deref(Ty::Ptr)));
+                lw.vtable_class_id(hdr)
+            })
+        } else {
+            let data = self.operand_place(Operand::Copy(proj(place, Proj::Field(0))), Ty::Ptr);
+            let hdr = Operand::Copy(proj(&data, Proj::Deref(Ty::Ptr)));
+            self.vtable_class_id(hdr)
+        };
         self.assign(Place::local(id), Rvalue::Use(own));
         self.goto(join);
         self.switch_to(join);

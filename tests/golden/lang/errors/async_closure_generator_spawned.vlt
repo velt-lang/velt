@@ -1,0 +1,13 @@
+// An async closure that may run on another thread cannot capture a generator.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+async function main() {
+  const chunks = gen();
+  const t = spawn(async () => {
+    const r = await chunks.next();
+    return r.done ? "" : r.value;
+  });
+  console.log(await t);
+}

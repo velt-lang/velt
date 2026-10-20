@@ -30,7 +30,8 @@ A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees i
 Rendering rules:
 - Text and attribute values are escaped as react-dom escapes them (`&amp;` `&lt;` `&gt;`
   `&quot;` `&#x27;`; `escapeHtml` writes `'` as `&#39;`), so user data cannot inject markup. Numbers render like `${n}`; `true`, `false` and `null` children render nothing.
-- A `true` attribute renders as the bare name (`<input disabled>`); `false` and `null` omit it.
+- A `true` attribute renders as the bare name (`<input disabled>`); `false`, `null` and
+  `undefined` omit it (`title={props.title}` with `title?: string` left out renders no `title`).
 - `style` takes a string or an object, `style={{ fontSize: 14, color: c }}`, rendered with
   React's rules (react-dom 19's `style` serialization, checked on the cases in the
   `std/jsx_style` golden): camelCase names in kebab-case

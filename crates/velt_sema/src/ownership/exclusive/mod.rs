@@ -25,7 +25,7 @@ mod let_borrow;
 mod this_alias;
 mod uses;
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -78,11 +78,13 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             &mut errors,
         );
         let aliases = aliasing_params(cx, d, &f);
+        let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let mut checker = Checker {
             cx,
             locals: &f.body.locals,
             aliases,
             held: &held,
+            soft: &soft,
             errors: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
@@ -95,7 +97,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
 /// Closures and functions used as values: their non-Copy declared params may alias each other,
 /// so they all stand for the first one.
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
-    let mut out = Aliases::new();
+    let mut out = Aliases::default();
     let info = cx.fn_info(d);
     let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
     if !as_value {
@@ -118,7 +120,9 @@ struct Checker<'a, 'm> {
     locals: &'a [LocalDef],
     aliases: Aliases,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
-    held: &'a HashMap<LocalId, DefId>,
+    held: &'a FxHashMap<LocalId, DefId>,
+    /// The function's soft moves (`FnInfo::soft_moves`).
+    soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
 }
 
@@ -275,6 +279,7 @@ impl VisitMut for Checker<'_, '_> {
                     if !*consume {
                         let text = place_text(self.cx, self.locals, iter);
                         let col = self.collector();
+                        iteration::share_moved_iterated(&col, &p, self.soft, body);
                         let hit =
                             iteration::modified_while_iterating(&col, &p, &text, iter.span, body);
                         self.errors.extend(hit);

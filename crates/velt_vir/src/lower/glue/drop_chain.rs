@@ -20,7 +20,7 @@
 //! hold a subclass, whose drop goes through its vtable); so do self references through arrays,
 //! maps and other types.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -53,10 +53,10 @@ impl Cx<'_> {
     /// (only memory is freed, in whatever order)? Conservative: function values, interfaces,
     /// promises and `shared` values may hold anything.
     pub(super) fn drop_is_silent(&mut self, t: TyId) -> bool {
-        self.silent_in(t, &mut HashSet::new())
+        self.silent_in(t, &mut FxHashSet::default())
     }
 
-    fn silent_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    fn silent_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
         if !self.needs_drop(t) || !seen.insert(t) {
             // A type reached again through itself is decided where it was first reached.
             return true;
@@ -142,6 +142,7 @@ impl FnLower<'_, '_> {
         self.object_free(Operand::Copy(cur.clone()), ty);
         let nn = self.non_null(next.clone());
         self.when(nn, done);
+        self.proxy_chain_split(&next, ty, done);
         self.take(next.clone(), ty, done);
         self.assign(cur.clone(), Rvalue::Use(next));
         self.call_dispose(Operand::Copy(cur.clone()), ty);
@@ -160,6 +161,7 @@ impl FnLower<'_, '_> {
         let nn = self.non_null(c.clone());
         self.when(nn, next);
         let shared = self.new_block();
+        self.proxy_chain_split(&c, ty, shared);
         self.take(c.clone(), ty, shared);
         let cp = self.operand_place(c.clone(), Ty::Ptr);
         let ctail = self.field_place(&cp, ty, tail);
@@ -171,6 +173,17 @@ impl FnLower<'_, '_> {
         self.assign(fp, Rvalue::Use(cint(0, Ty::Ptr)));
         self.goto(next);
         self.switch_to(next);
+    }
+
+    /// For a proxiable `ty` (#823): a node pointer `p` that is a typed proxy is not a node. Its
+    /// `Proxy` object is released (one reference) and the walk goes to `next` as for a node
+    /// shared elsewhere; a plain node continues here.
+    fn proxy_chain_split(&mut self, p: &Operand, ty: TyId, next: vir::BlockId) {
+        if !self.cx.proxiable(ty) {
+            return;
+        }
+        let place = Place::local(self.copy_to_temp(p.clone(), Ty::Ptr));
+        self.proxy_drop_split(&place, next);
     }
 
     /// Take ownership of the non-null node `p` that a dropped node referred to: continue when

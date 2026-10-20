@@ -1,0 +1,7 @@
+import { value, inc } from "./_module_let_live/counter";
+import { fromA } from "./_module_let_live/order_a";
+
+console.log(value, fromA);
+inc();
+inc();
+console.log(value);

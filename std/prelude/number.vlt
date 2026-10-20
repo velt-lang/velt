@@ -8,6 +8,10 @@ declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 // `digits` < 0: omitted.
 declare function velt_rt_f64_to_exponential(x: f64, digits: i64): string;
 declare function velt_rt_f64_to_precision(x: f64, precision: i64): string;
+// `toString(radix)` for a radix in 2..36 other than 10; the f64 one for a finite `x`.
+declare function velt_rt_f64_to_radix(x: f64, radix: i64): string;
+declare function velt_rt_i64_to_radix(x: i64, radix: i64): string;
+declare function velt_rt_u64_to_radix(x: u64, radix: i64): string;
 
 /**
  * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
@@ -75,6 +79,47 @@ extend f64 {
     }
     return velt_rt_f64_to_precision(this, p);
   }
+}
+
+// The radix of `x.toString(radix)`: truncated as in JS (2.7 is 2, NaN is 0), 2 to 36.
+function toStringRadix(radix: f64): i64 {
+  const r = radix as i64;
+  if (r < 2 || r > 36) {
+    panic("RangeError: toString() radix argument must be between 2 and 36");
+  }
+  return r;
+}
+
+/**
+ * `x.toString(radix)` on a float: the compiler compiles a `toString` call with an argument to
+ * it. Digits as in JS (V8): `(255).toString(16)` is "ff", `(0.5).toString(2)` is "0.1",
+ * fractions are written until they tell `x` apart from its neighbours. `NaN` and ±Infinity are
+ * `String(x)`; a radix outside 2 to 36 is a RangeError.
+ */
+export function __f64ToString(x: f64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10 || !isFinite(x)) {
+    return `${x}`;
+  }
+  return velt_rt_f64_to_radix(x, r);
+}
+
+/** `x.toString(radix)` on a signed integer, exact over the whole `i64` range. */
+export function __i64ToString(x: i64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10) {
+    return `${x}`;
+  }
+  return velt_rt_i64_to_radix(x, r);
+}
+
+/** `x.toString(radix)` on an unsigned integer. */
+export function __u64ToString(x: u64, radix: f64): string {
+  const r = toStringRadix(radix);
+  if (r == 10) {
+    return `${x}`;
+  }
+  return velt_rt_u64_to_radix(x, r);
 }
 
 /**

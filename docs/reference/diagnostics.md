@@ -20,7 +20,7 @@ The wording below is stable: tests, editors and tools rely on it.
 | switch | ``` `"square"` is not a possible value of `s.kind` ``` + `possible values: …`, ``` `continue` cannot target a `switch` ``` |
 | exclusive access | ``cannot use `xs` here: this call may modify it through another argument`` |
 | threads | "this async closure modifies captured `n`, so it must stay on the task that created it" (+ where it reaches `spawn`, a handler, `shared` or a channel, and the `shared` hint); "this handler calls `i.onChange`, which changes `last`; requests run at the same time" (+ where, and the declaration rewritten with `shared(...)`); "`r` is still used after `spawn`, so the task would get a copy, but `T` owns a resource (`[Symbol.dispose]`) and has no `clone()`" (or "… after `send`, so the receiving task would get a copy, …" for a channel, "`this.conn` stays where it is held, …", "`Pair` holds a `Conn`, which …"; + the fixes) |
-| modules | ``` `x` is not exported ```, "mutable module-level state is not allowed", ``` `export default` is not supported: Velt has named exports only ```, ``` `T` is imported with `import type` and cannot be used as a value ```, ``` namespace `ns` has no exported member `x` ``` |
+| modules | ``` `x` is not exported ```, ``` cannot assign to imported binding `x` ```, ``` `export default` is not supported: Velt has named exports only ```, ``` `T` is imported with `import type` and cannot be used as a value ```, ``` namespace `ns` has no exported member `x` ``` |
 | overloads | ``no overload of `f` matches this call`` + a note per signature (TS2769), "this overload signature is not compatible with its implementation signature" (TS2394), ``function implementation is missing or not immediately following the declaration of `f` `` (TS2391), ``function implementation name must be `f` `` (TS2389), the TS2383, TS2387, TS2388 and TS2371 rules of signature declarations; at run time ``panic: overload `f` returned a `…` where its signature promises a `…` `` |
 | async | ``` `await` is only allowed inside async functions ```, `floating promise: this promise is neither awaited nor spawned` (+ the `await` / `spawn` fixes) |
 | errors | ``` `f` throws `E`, which its `throws` clause does not allow ```, ``` `C.m` throws `E`, but `I.m` does not allow it ```, "this function throws `E`, but the function type it is used as does not allow throwing", "the error type of this function is not known yet" |
@@ -31,7 +31,7 @@ At run time:
 | Situation | Output | Exit code |
 |---|---|---|
 | panic | `panic: <message> at file:line:col` | 101 |
-| uncaught error | `Uncaught <Type>: <message> at file:line:col` | 1 |
+| uncaught error | `Uncaught <Type>: <message> at file:line:col` (a thrown non-`Error` value: `Uncaught <value>`, as `console.log` prints it) | 1 |
 
 The language server turns many of these diagnostics into quick fixes: removing `mut`,
 converting a `+` chain to a template literal, and adding

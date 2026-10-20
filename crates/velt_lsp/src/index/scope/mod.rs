@@ -184,6 +184,8 @@ impl<'a> Walker<'a> {
         }
         match &item.kind {
             ast::ItemKind::Import(import) => self.import(import),
+            ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| self.item(i)),
+            ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| self.item(i)),
             ast::ItemKind::Function(f) => self.function(&f.sig, Some(&f.body)),
             ast::ItemKind::ExternFn(sig) => self.function(sig, None),
             ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
@@ -270,6 +272,7 @@ impl<'a> Walker<'a> {
             self.declared(&m.sig.name, kind);
             self.function(&m.sig, m.body.as_ref());
         }
+        i.call_sigs.iter().for_each(|s| self.function(&s.sig, None));
     }
 
     fn fields(&mut self, fields: &'a [ast::Field], owner: &str) {
@@ -328,9 +331,10 @@ impl<'a> Walker<'a> {
                 self.ty(ret);
                 throws.iter().for_each(|t| self.ty(t));
             }
-            ast::TypeExprKind::GenericFunction { ty, .. } | ast::TypeExprKind::Construct(ty) => {
-                self.ty(ty)
-            }
+            ast::TypeExprKind::GenericFunction { ty, .. }
+            | ast::TypeExprKind::Construct(ty)
+            | ast::TypeExprKind::TupleRest(ty)
+            | ast::TypeExprKind::TupleOptional(ty) => self.ty(ty),
             ast::TypeExprKind::Object(fields) => fields.iter().for_each(|f| self.ty(&f.ty)),
             ast::TypeExprKind::IndexSig {
                 fields, key, value, ..
@@ -339,7 +343,25 @@ impl<'a> Walker<'a> {
                 self.ty(&key.ty);
                 self.ty(value);
             }
+            ast::TypeExprKind::Callable { sigs, members } => {
+                sigs.iter().for_each(|s| self.function(&s.sig, None));
+                self.ty(members);
+            }
             ast::TypeExprKind::KeyOf(t) => self.ty(t),
+            ast::TypeExprKind::Conditional(c) => {
+                [&c.check, &c.extends, &c.then, &c.else_]
+                    .into_iter()
+                    .for_each(|t| self.ty(t));
+            }
+            ast::TypeExprKind::Mapped(m) => {
+                self.ty(&m.source);
+                m.name.iter().for_each(|t| self.ty(t));
+                self.ty(&m.value);
+            }
+            ast::TypeExprKind::TemplateLiteral { types, .. } => {
+                types.iter().for_each(|t| self.ty(t))
+            }
+            ast::TypeExprKind::Infer(_) => {}
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null

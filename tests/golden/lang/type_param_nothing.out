@@ -1,0 +1,10 @@
+undefined object undefined object
+true false false
+undefined null undefined
+true undefined true
+true true false
+false false
+true false true false
+true true false false
+number string undefined undefined
+undefined object number

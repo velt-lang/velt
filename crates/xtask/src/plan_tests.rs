@@ -75,7 +75,8 @@ fn a_pipeline_crate_runs_its_dependents_and_every_end_to_end_test() {
     assert_eq!(p.goldens, Goldens::All);
     assert_eq!(
         p.filterset().unwrap(),
-        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden)"
+        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden) \
+         - binary_id(veltc::wasm_goldens)"
     );
 }
 
@@ -197,7 +198,10 @@ fn the_standard_library_runs_every_test_but_no_clippy() {
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
-    assert_eq!(p.filterset().unwrap(), "all() - binary_id(veltc::golden)");
+    assert_eq!(
+        p.filterset().unwrap(),
+        "all() - binary_id(veltc::golden) - binary_id(veltc::wasm_goldens)"
+    );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
     assert!(p.vlt_fmt);
@@ -482,4 +486,211 @@ fn the_vscode_extension_runs_its_own_tests() {
     // Rust changes leave it alone; everything includes it.
     assert!(!plan(&["crates/velt_syntax/src/lexer.rs"]).vscode);
     assert!(plan(&["Cargo.lock"]).vscode);
+}
+
+#[test]
+fn the_parser_and_its_dependencies_sweep_every_golden_in_full() {
+    for path in [
+        "crates/velt_syntax/src/parser/expr.rs",
+        "crates/velt_syntax/tests/common/mod.rs",
+        "crates/velt_syntax/Cargo.toml",
+        "crates/velt_common/src/span.rs",
+    ] {
+        let p = plan(&[path, "tests/golden/lang/foo.vlt"]);
+        assert_eq!(p.sweep, Sweep::Full, "{path}");
+        assert_eq!(p.sweep_env(), [("VELT_ROBUSTNESS", "full".to_string())]);
+    }
+}
+
+#[test]
+fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "std/string.vlt",
+        "docs/reference/README.md",
+        ".github/workflows/ci.yml",
+    ] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Sampled(set(&[])), "{path}");
+        assert!(plan(&[path]).sweep_env().is_empty(), "{path}");
+    }
+    let p = plan(&[
+        "tests/golden/lang/foo.vlt",
+        "tests/golden/lang/foo.out",
+        "tests/golden/m1/errors/bar.vlt",
+        "examples/hello.vlt",
+        "crates/velt_sema/src/check.rs",
+    ]);
+    assert_eq!(
+        p.sweep,
+        Sweep::Sampled(set(&[
+            "tests/golden/lang/foo.vlt",
+            "tests/golden/m1/errors/bar.vlt"
+        ]))
+    );
+    assert_eq!(
+        p.sweep_env(),
+        [(
+            "VELT_ROBUSTNESS_FILES",
+            "tests/golden/lang/foo.vlt,tests/golden/m1/errors/bar.vlt".to_string()
+        )]
+    );
+    // A change that selects everything still says which goldens it touched.
+    let p = plan(&["Cargo.lock", "tests/golden/lang/foo.vlt"]);
+    assert!(p.full);
+    assert_eq!(p.sweep, Sweep::Sampled(set(&["tests/golden/lang/foo.vlt"])));
+}
+
+#[test]
+fn comment_only_parser_changes_and_many_goldens() {
+    let paths = vec!["crates/velt_syntax/src/lexer/mod.rs".to_string()];
+    let p = Plan::for_changes(
+        &graph(),
+        &paths,
+        &set(&["crates/velt_syntax/src/lexer/mod.rs"]),
+    );
+    assert_eq!(p.sweep, Sweep::Sampled(set(&[])));
+    let many: Vec<String> = (0..=MAX_SWEPT_GOLDENS)
+        .map(|i| format!("tests/golden/lang/g{i}.vlt"))
+        .collect();
+    assert_eq!(Plan::for_paths(&graph(), &many).sweep, Sweep::Full);
+    assert!(matches!(
+        Plan::for_paths(&graph(), &many[1..]).sweep,
+        Sweep::Sampled(files) if files.len() == MAX_SWEPT_GOLDENS
+    ));
+}
+
+#[test]
+fn the_toolchain_and_the_root_manifest_sweep_in_full() {
+    for path in ["rust-toolchain.toml", "Cargo.toml"] {
+        assert_eq!(plan(&[path]).sweep, Sweep::Full, "{path}");
+    }
+    // A crate's manifest other than the parser's keeps the sample.
+    assert_eq!(
+        plan(&["crates/velt_sema/Cargo.toml"]).sweep,
+        Sweep::Sampled(set(&[]))
+    );
+}
+
+#[test]
+fn unknown_changes_sweep_in_full_but_explicit_full_leaves_it_to_the_environment() {
+    let unknown = Plan::unknown_changes("no base revision");
+    assert!(unknown.full);
+    assert_eq!(unknown.sweep, Sweep::Full);
+    assert_eq!(
+        unknown.sweep_env(),
+        [("VELT_ROBUSTNESS", "full".to_string())]
+    );
+    let full = Plan::everything("--full");
+    assert_eq!(full.sweep, Sweep::Sampled(set(&[])));
+    assert!(full.sweep_env().is_empty());
+}
+
+#[test]
+fn the_webassembly_goldens_run_only_for_webassembly_code() {
+    let skipped = " - binary_id(veltc::wasm_goldens)";
+    for paths in [
+        &["crates/velt_sema/src/check.rs"][..],
+        &["crates/velt_rt/src/http.rs"],
+        &["std/json.vlt"],
+    ] {
+        let p = plan(paths);
+        assert!(!p.wasm, "{paths:?}");
+        assert!(p.filterset().unwrap().ends_with(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: no (nightly"));
+    }
+    for paths in [
+        &[
+            "crates/velt_sema/src/check.rs",
+            "crates/velt_rt_wasm/src/io.rs",
+        ][..],
+        &["crates/velt_link/src/wasm.rs"],
+        &["crates/veltc/tests/wasm_goldens.rs"],
+        &["crates/velt_codegen_llvm/src/target.rs"],
+        &["Cargo.lock"],
+    ] {
+        let p = plan(paths);
+        assert!(p.wasm, "{paths:?}");
+        assert!(!p.filterset().unwrap().contains(skipped), "{paths:?}");
+        assert!(p.describe().contains("WebAssembly goldens: yes"));
+    }
+    // A changed golden, or the WebAssembly runtime alone, names the binary.
+    for paths in [
+        &["tests/golden/lang/foo.vlt"][..],
+        &["crates/velt_rt_wasm/src/lib.rs"],
+    ] {
+        let filterset = plan(paths).filterset().unwrap();
+        assert!(filterset.contains("binary(wasm_goldens)"), "{filterset}");
+        assert!(!filterset.contains(skipped), "{filterset}");
+    }
+    assert!(Plan::everything("--full").wasm);
+}
+
+#[test]
+fn main_skips_the_windows_and_macos_gate_the_queue_already_ran() {
+    // The queue checked every OS: the push to main doesn't check them again.
+    for path in [
+        "crates/velt_rt/src/http.rs",
+        "crates/veltc/src/main.rs",
+        "std/fs.vlt",
+        "tests/golden/lang/foo.out",
+        ".github/workflows/ci.yml",
+        "scripts/check-all.sh",
+        "crates/xtask/src/plan.rs",
+        "Cargo.toml",
+    ] {
+        let p = plan(&[path]);
+        assert!(p.other_os.is_some(), "{path}");
+        assert_eq!(p.after_merge, None, "{path}");
+    }
+    let p = plan(&[
+        "crates/velt_sema/src/check.rs",
+        "crates/velt_rt/src/http.rs",
+    ]);
+    assert_eq!(p.after_merge, None);
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_after_a_linux_only_queue_run() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "crates/velt_lsp/src/hover.rs",
+        "docs/reference/types.md",
+        "CONTRIBUTING.md",
+    ] {
+        let p = plan(&[path]);
+        assert_eq!(p.other_os, None, "{path}");
+        assert!(p.after_merge.is_some(), "{path}");
+    }
+    // Comments only in OS-specific code: the queue checked Linux only.
+    let paths = vec!["crates/velt_rt/src/http/server.rs".to_string()];
+    let p = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
+    assert!(p.after_merge.is_some());
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_when_the_build_cache_changes() {
+    // Every OS in the queue, but only a push to main saves the caches the toolchain and the
+    // dependencies key.
+    for path in [
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+        ".github/actions/setup/action.yml",
+    ] {
+        let p = plan(&[path]);
+        assert!(p.other_os.is_some(), "{path}");
+        let reason = p.after_merge.unwrap_or_default();
+        assert!(reason.contains("build cache"), "{path}: {reason}");
+    }
+    let p = plan(&["crates/velt_rt/src/http.rs", "Cargo.lock"]);
+    assert!(p.after_merge.is_some());
+}
+
+#[test]
+fn main_runs_the_windows_and_macos_gate_when_the_change_is_unknown() {
+    // Nobody knows which OSes the queue checked.
+    assert!(Plan::unknown_changes("no base revision")
+        .after_merge
+        .is_some());
+    assert!(Plan::everything("--full").after_merge.is_some());
 }

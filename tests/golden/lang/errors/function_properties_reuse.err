@@ -1,0 +1,3 @@
+function_properties_reuse.vlt:13:28: error: a function given properties by `Object.assign` is used again after the call: not supported yet (#921)
+function_properties_reuse.vlt:21:24: error: `JSON.stringify` of a function with properties (Node returns `undefined`, not a string) is not supported yet
+function_properties_reuse.vlt:22:19: error: `JSON.parse` into a function with properties (#921) is not supported yet

@@ -13,7 +13,7 @@
 //! Callee modes: `Callee::Def` / `New` the function's, `Virtual` the vtable entry's (joined over
 //! overrides), `Dyn` / `ParamMethod` the interface method's (joined over implementations).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -31,8 +31,8 @@ use crate::visit;
 pub(super) fn patch_calls(
     cx: &mut Ctx,
     b: &mut Block,
-    borrowed: &HashSet<LocalId>,
-    reported: &mut HashSet<Span>,
+    borrowed: &FxHashSet<LocalId>,
+    reported: &mut FxHashSet<Span>,
 ) -> bool {
     let mut changed = false;
     let mut errors = vec![];
@@ -42,7 +42,16 @@ pub(super) fn patch_calls(
         let span = e.span;
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
-                if fixed_callee(cx, callee, args) {
+                // A closure literal passed to a parameter of a generic type may be kept as a
+                // `T` (`forward<T>(sink, t)` handing it to a method that stores it), so it
+                // escapes (`super::kept_fns`).
+                let generic = super::kept_fns::generic_param_args(cx, callee, args);
+                for (a, g) in args.iter().zip(&generic) {
+                    if let (E::Closure(def), true) = (&a.kind, *g) {
+                        changed |= super::fn_values::escape_closure(cx, *def);
+                    }
+                }
+                if super::kept_fns::may_keep_args(cx, callee, args) {
                     // A promise the call returns may run the callee after this frame is gone
                     // (unless it is awaited right here): it may keep every argument.
                     let keeps = match returns_promise && !awaited.contains(&span) {
@@ -99,7 +108,7 @@ pub(super) fn patch_calls(
 /// Is the callee reached through a function value or a dynamically dispatched method? Its
 /// parameter modes are fixed (borrowed), whatever it does with an argument: a generic `T` it
 /// keeps may be instantiated with a function type.
-fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+pub(super) fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
     match callee {
         Callee::Indirect(_) => true,
         Callee::Intrinsic(_) => false,
@@ -120,7 +129,7 @@ fn escape_literal_args(
     cx: &mut Ctx,
     args: &[Expr],
     keeps: &[bool],
-    borrowed: &HashSet<LocalId>,
+    borrowed: &FxHashSet<LocalId>,
 ) -> bool {
     let mut changed = false;
     for (k, a) in args.iter().enumerate() {
@@ -129,7 +138,10 @@ fn escape_literal_args(
                 Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
                 _ => false,
             };
-            if !forwards || keeps.get(k).copied().unwrap_or(false) {
+            // A program that keeps borrowed function values lets no closure stay in a frame
+            // where a callee with fixed modes may keep it (`super::kept_fns`).
+            let kept = cx.kept_fns.on || keeps.get(k).copied().unwrap_or(false);
+            if !forwards || kept {
                 changed |= super::fn_values::escape_closure(cx, def);
             }
         }
@@ -139,8 +151,8 @@ fn escape_literal_args(
 
 /// Spans of the calls in `b` that are awaited directly (`await f(...)`): their callee finishes
 /// before the caller's frame does.
-fn awaited_calls(b: &mut Block) -> HashSet<Span> {
-    let mut out = HashSet::new();
+fn awaited_calls(b: &mut Block) -> FxHashSet<Span> {
+    let mut out = FxHashSet::default();
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         if let E::Await(inner) = &e.kind {
             if matches!(inner.kind, E::Call { .. }) {
@@ -167,12 +179,12 @@ fn generic_params(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<bool> {
 }
 
 /// Where a call's callee modes come from, when known statically.
-enum Target {
+pub(super) enum Target {
     Fn(DefId),
     Iface(DefId, u32),
 }
 
-fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
+pub(super) fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
     match callee {
         Callee::Def(d, _) => Some(Target::Fn(*d)),
         Callee::Virtual { slot } => {
@@ -190,7 +202,7 @@ fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Target> {
 }
 
 /// The modes of a call's callee (`this` first for methods), when known statically.
-fn call_modes(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Vec<PassMode>> {
+fn call_modes(cx: &mut Ctx, callee: &Callee, args: &[Expr]) -> Option<Vec<PassMode>> {
     match call_target(cx, callee, args)? {
         Target::Fn(d) => Some(modes_of(cx, d)),
         Target::Iface(iface, slot) => iface_modes(cx, iface, slot),
@@ -227,8 +239,8 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
     modes
 }
 
-/// The parameter a runtime function writes through, for the ones that fill an array they are
-/// given. An extern's signature says nothing about it (its parameters are borrows), so without
+/// The parameter a runtime function (or a SIMD `store`) writes through, for the ones that fill
+/// an array they are given. An extern's signature says nothing about it (its parameters are borrows), so without
 /// this the std method that calls it would look like a reader: `K.fill(0)` on a module constant
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
@@ -238,12 +250,26 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
         | "velt_rt_bytes_fill"
         | "velt_rt_bytes_xor_mask" => 0,
         "velt_rt_regex_exec" => 3,
+        // `velt_simd_<type>_store(v, to, at)` (rt_abi.md "SIMD"): `v.store(K)` modifies `K`.
+        s if s.starts_with("velt_simd_") && s.ends_with("_store") => 1,
         _ => return None,
     })
 }
 
-fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
-    let m = cx.iface(iface)?.methods.get(slot as usize)?;
+fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
+    let i = cx.iface(iface)?;
+    if let Some(k) = (slot as usize).checked_sub(i.methods.len() + i.fields.len()) {
+        // A field setter (`crate::iface_writes`): it modifies the receiver and owns the value
+        // (copies it for Copy types), as `collect::getters::field_setter` declares it.
+        let f = *cx.writable_fields(iface).get(k)?;
+        let ty = i.fields[f].ty;
+        let v = match cx.is_copy(ty) {
+            true => PassMode::Copy,
+            false => PassMode::Owned,
+        };
+        return Some(vec![PassMode::BorrowMut, v]);
+    }
+    let m = i.methods.get(slot as usize)?;
     let this = match m.mut_this {
         true => PassMode::BorrowMut,
         false => PassMode::Borrow,
@@ -283,6 +309,14 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
+    if mutable_root(cx, target) {
+        // A module-level `let` may be modified in place: its slot is the place itself.
+        if matches!(target.kind, E::Global(_)) {
+            return false;
+        }
+        set_place_mode(target, UseMode::BorrowMut);
+        return true;
+    }
     if let Some(name) = global_root(cx, target) {
         errors.push(
             Diagnostic::error(
@@ -310,6 +344,19 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
         E::Downcast(ref x) => outer_mode(x),
         E::Global(_) => Some(UseMode::Borrow),
         _ => None,
+    }
+}
+
+/// Is place `e` rooted at a module-level `let`?
+fn mutable_root(cx: &Ctx, e: &Expr) -> bool {
+    match &e.kind {
+        E::Global(d) => cx.global(*d).is_some_and(|g| g.stored),
+        E::Field { base, .. }
+        | E::Index { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) => mutable_root(cx, base),
+        _ => false,
     }
 }
 

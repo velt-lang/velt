@@ -1,7 +1,8 @@
-// Velt writes an error in a template literal as `console.log` does; JavaScript calls its
-// `toString()`, which gives `Error: message`.
+// Velt writes a promise in a template literal as `console.log` does; JavaScript calls its
+// `toString()`, which gives `[object Promise]`.
 
-export function main() {
-  const e = new Error("boom");
-  console.log(`failed: ${e}`);
+export async function main() {
+  const p = Promise.resolve(42);
+  console.log(`got: ${p}`);
+  console.log(await p);
 }

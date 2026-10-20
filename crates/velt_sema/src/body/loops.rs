@@ -39,6 +39,8 @@ impl FnCx<'_, '_> {
             has_break: false,
             needs_label: false,
             synth_label: format!("<{kind}#{}>", self.f.loop_count),
+            depth: self.f.scopes.len(),
+            break_states: vec![],
         });
     }
 
@@ -86,18 +88,23 @@ impl FnCx<'_, '_> {
         self.unnarrow_assigned_in(s);
         match &s.kind {
             ast::StmtKind::While { cond, body } => {
-                let (when_true, _) = self.narrowing(cond);
+                let (when_true, when_false) = self.narrowing(cond);
                 let c = self.cond(cond);
                 self.enter_loop(label, false);
                 let b = self.block_narrowed(body, &when_true);
-                let label = self.exit_loop().hir_label();
+                let lp = self.exit_loop();
                 let w = S::While {
-                    label,
+                    label: lp.hir_label(),
                     cond: c,
                     body: b,
                     step: None,
                 };
                 Self::push(out, w, span);
+                // Without a `break`, the loop ends only where its condition is false
+                // (`while (y === null) { y = next(); }` narrows `y` after it, #1227).
+                if !lp.has_break {
+                    when_false.iter().for_each(|f| self.narrow(f));
+                }
             }
             ast::StmtKind::DoWhile { body, cond } => self.do_while(body, cond, label, span, out),
             ast::StmtKind::For {
@@ -270,6 +277,9 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
+        if !p.await_each && self.cx.dynamic(it.ty) == Some(crate::any::Dynamic::Any) {
+            return self.for_of_any(it, p, out);
+        }
         if self.is_iterable(it.ty) {
             return self.for_of_iterable(it, p, out);
         }

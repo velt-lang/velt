@@ -2,7 +2,7 @@
 //
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
-// throw `JsonError { message }` like "expected string at $.name". The stringify glue writes a
+// throw a `SyntaxError` `JsonError` ("expected string at $.name"). The stringify glue writes a
 // `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.#handle)`.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
@@ -65,8 +65,8 @@ struct JsonHandleSlot {
   handle: u64;
 }
 
-/** Invalid JSON, or JSON that does not match the type asked for. */
-export class JsonError extends Error {
+/** Invalid JSON, or JSON that does not match the type asked for: a `SyntaxError`, as in JS. */
+export class JsonError extends SyntaxError {
   /** An error with the given `message`, such as "expected string at $.name". */
   constructor(message: string) {
     super(message);
@@ -125,6 +125,21 @@ export class JSON {
     let flags: i64 = 0;
     if (options != null && options.unknownKeys == "reject") {
       flags = 1;
+    }
+    return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
+  }
+
+  /**
+   * `JSON.parse(text)` with its type from the context (`JSON.parse(text) as T`,
+   * `const t: T = JSON.parse(text)`, TypeScript's forms; the compiler calls this for them):
+   * `parse<T>`, except that a JSON `null` for an optional field whose type has no `null`
+   * (`a?: string`) fails the decode, as a value of another type does (JavaScript would give the
+   * field a `null` its type can't hold).
+   */
+  static __parseFromContext<T>(text: string, options: JsonParseOptions | null = null): T {
+    let flags: i64 = 2;
+    if (options != null && options.unknownKeys == "reject") {
+      flags = 3;
     }
     return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
   }

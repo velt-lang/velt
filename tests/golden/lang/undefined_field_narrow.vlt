@@ -1,0 +1,41 @@
+// check: no leaks
+// Narrowing a `T | null | undefined` field (issue #930), as TypeScript does for property reads.
+class C {
+  v: string | null | undefined = undefined;
+  loose(): number {
+    if (this.v != null) {
+      return this.v.length;
+    }
+    return -1;
+  }
+  truthy(): number {
+    if (this.v) {
+      return this.v.length;
+    }
+    return -1;
+  }
+  strict(): number {
+    if (this.v !== undefined && this.v !== null) {
+      return this.v.length;
+    }
+    return -1;
+  }
+  early(): string {
+    if (this.v === undefined) {
+      return "U";
+    }
+    if (this.v === null) {
+      return "N";
+    }
+    return this.v.toUpperCase();
+  }
+}
+
+function main(): void {
+  const c = new C();
+  const vs: (string | null | undefined)[] = [undefined, null, "abc"];
+  for (const v of vs) {
+    c.v = v;
+    console.log(c.loose(), c.truthy(), c.strict(), c.early());
+  }
+}

@@ -62,14 +62,16 @@ impl FnLower<'_, '_> {
         shown
             .iter()
             .zip(flags)
-            .map(|((_, _, t), opt)| opt && matches!(self.cx.kind(*t), TyKind::Option(..)))
+            .map(|((_, _, t), opt)| {
+                opt && (matches!(self.cx.kind(*t), TyKind::Option(..)) || self.cx.is_dynamic(*t))
+            })
             .collect()
     }
 
     /// The fields an object prints: (index, name, type). ES private fields (`#x`) are hidden, as
     /// Node hides them, and so are private zero-sized fields (a marker such as std's
     /// `runtime: RuntimeHandle`); other private fields show, as Node shows a TypeScript
-    /// `private` field.
+    /// `private` field. A hidden field (`FieldDef::hidden`, a non-enumerable property) is hidden.
     fn shown_fields(&mut self, ty: TyId) -> Vec<(u32, String, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
@@ -79,10 +81,11 @@ impl FnLower<'_, '_> {
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| (f.name.clone(), f.private))
+            .map(|f| (f.name.clone(), f.private, f.hidden))
             .zip(self.cx.adt_field_tys(ty))
             .enumerate()
-            .map(|(i, ((n, private), t))| (i as u32, n, t, private))
+            .filter(|(_, ((_, _, hidden), _))| !hidden)
+            .map(|(i, ((n, private, _), t))| (i as u32, n, t, private))
             .collect();
         let shown: Vec<(u32, String, TyId)> = all
             .into_iter()
@@ -192,7 +195,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Whether optional field `index` (at `fp`, of type `t`) of `ty` is present: its presence
-    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null`.
+    /// flag for `a?: T | null` (a present `null` shows), else whether it is not `null` (`undefined`
+    /// for an `a?: any`).
     fn field_present(&mut self, fp: &Place, ty: TyId, index: u32, t: TyId) -> Operand {
         match self.cx.presence_slot(ty, index) {
             Some(slot) => {
@@ -202,6 +206,8 @@ impl FnLower<'_, '_> {
                 }
                 Operand::Copy(f)
             }
+            // `a?: any`: present unless it holds `undefined`.
+            None if self.cx.is_dynamic(t) => self.any_defined(fp),
             None => self.option_is_some(fp, t),
         }
     }

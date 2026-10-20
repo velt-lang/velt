@@ -12,7 +12,7 @@
 //! twice for each recursive function being inferred around it (normally once), and only
 //! programs with such recursion pay for the second pass.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -25,7 +25,7 @@ use crate::written_types::written_param;
 #[derive(Default)]
 pub(crate) struct RecState {
     /// Functions used before their inferred return type was known, by function.
-    pending: HashMap<DefId, Pending>,
+    pending: FxHashMap<DefId, Pending>,
     /// Functions whose self-referring return type was reported.
     pub(super) reported: Vec<DefId>,
     /// Checking a `return` expression of a body whose return type is inferred.

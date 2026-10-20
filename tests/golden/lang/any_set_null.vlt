@@ -1,0 +1,10 @@
+// Writing a member of `null` / `undefined` held by an `any` stops with Node's `TypeError`, after
+// the value is evaluated (#924).
+function value(): number {
+  console.log("value");
+  return 1;
+}
+function main(): void {
+  const a: any = undefined;
+  a.f = value();
+}

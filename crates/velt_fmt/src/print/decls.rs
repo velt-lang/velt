@@ -3,8 +3,8 @@
 
 use crate::source::has_modifier;
 use velt_syntax::ast::{
-    CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
-    TypeDecl, TypeExpr, Variant,
+    CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod,
+    Method, TypeDecl, TypeExpr, Variant,
 };
 
 use super::Printer;
@@ -16,6 +16,7 @@ enum Member<'d> {
     Constructor(&'d FnDecl, CtorVisibility),
     Method(&'d Method),
     InterfaceMethod(&'d InterfaceMethod),
+    CallSig(&'d CallSig),
 }
 
 impl Member<'_> {
@@ -31,6 +32,7 @@ impl Member<'_> {
                 let hi = m.body.as_ref().map_or(m.sig.span.hi, |b| b.span.hi);
                 (m.sig.span.lo, hi)
             }
+            Member::CallSig(s) => (s.span.lo, s.span.hi),
         }
     }
 }
@@ -63,6 +65,7 @@ impl<'a> Printer<'a> {
     pub(super) fn interface(&mut self, decl: &InterfaceDecl) -> Doc {
         let mut members: Vec<Member> = decl.fields.iter().map(Member::Field).collect();
         members.extend(decl.methods.iter().map(Member::InterfaceMethod));
+        members.extend(decl.call_sigs.iter().map(Member::CallSig));
         let head = cat![
             "interface ",
             decl.name.name.clone(),
@@ -178,6 +181,7 @@ impl<'a> Printer<'a> {
                 }
                 self.fn_decl_with(&m.decl, "", &mods)
             }
+            Member::CallSig(s) => cat![self.call_sig(s), ";"],
             Member::InterfaceMethod(m) => {
                 let mut mods = String::new();
                 if m.is_getter {

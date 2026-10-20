@@ -18,6 +18,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(c) = self.proxy_class_name(class) {
+            return self.new_expr(&c, args, exp, span);
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
@@ -80,12 +83,15 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            constraints: names.constraints,
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: self.cx.adt_param_defaults(d),
         };
         self.collect_iterable_args = self.takes_iterable(d);
+        self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends
@@ -124,7 +130,8 @@ impl FnCx<'_, '_> {
             type_args: ck.type_args,
             args: ck.args,
         };
-        self.mk(kind, ck.ret, span)
+        let h = self.mk(kind, ck.ret, span);
+        self.proxy_new(d, h, span)
     }
 
     /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
@@ -156,6 +163,22 @@ impl FnCx<'_, '_> {
             _ => false,
         };
         let tn = self.cx.display(k);
+        match self.cx.dynamic(k) {
+            // `object` (issue #926): the types converted to it become weak-capable; a value
+            // that is not a counted object is checked where it is used (`TypeError`).
+            Some(crate::any::Dynamic::Object) => return true,
+            Some(crate::any::Dynamic::Function) => {
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("`{tn}` as {what} is not supported yet (#926)"),
+                        span,
+                    )
+                    .with_note("use `object`, or the class or object type of the values it holds"),
+                );
+                return false;
+            }
+            _ => {}
+        }
         let d = match primitive {
             true => Diagnostic::error(
                 format!("type `{tn}` does not satisfy the constraint `object`"),
@@ -233,8 +256,12 @@ impl FnCx<'_, '_> {
             .join(".");
         let item = self.lookup_type_path(path);
         let Some(Item::Def(d)) = item else {
-            self.cx
-                .err(format!("cannot find class `{name}` in this scope"), t.span);
+            let msg = format!("cannot find class `{name}` in this scope");
+            match item {
+                // Not reported when its import was not (`Ctx::poisoned`).
+                None => self.cx.not_found(msg, &name, t.span),
+                Some(_) => self.cx.err(msg, t.span),
+            }
             return None;
         };
         let Some(a) = self.cx.adt(d) else {

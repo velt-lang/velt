@@ -6,7 +6,6 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::later_each;
 use super::{ice, unit, FnLower, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -69,6 +68,14 @@ impl FnLower<'_, '_> {
             }
             _ => self.cx.func_for(def, targs.clone()),
         };
+        // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
+        let sup = std::mem::take(&mut self.super_call);
+        if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
+            let rty = self.sub(args[0].ty);
+            if self.cx.is_class(rty) && self.cx.proxiable(rty) {
+                self.proxy_recv = Some((def, targs.clone()));
+            }
+        }
         let mut argv = pre;
         argv.extend(self.lower_args(args, &modes, true));
         let ret = self.cx.subst(ret, &targs);
@@ -188,13 +195,26 @@ impl FnLower<'_, '_> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
         }
-        let mut argv = vec![];
-        let later = later_each(args);
+        let mut argv: Vec<Operand> = vec![];
+        let later = self.later_each(args);
         let outer = self.start_borrows();
+        let mut recv = self.proxy_recv.take();
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            if i == 1 {
+                if let (Some(r), Some(v)) = (recv.take(), argv.first()) {
+                    self.proxy_recv_lowered(r, &v.clone());
+                }
+            }
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
+                }
+                (Ty::Agg(_), PassMode::Borrow) if self.is_table(a) => {
+                    // A table to a param that only reads it: its read-only data (#1334).
+                    let place = self
+                        .table_read(a)
+                        .unwrap_or_else(|| ice("table without data"));
+                    argv.push(self.addr(place));
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
@@ -230,6 +250,9 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        if let (Some(r), Some(v)) = (recv, argv.first()) {
+            self.proxy_recv_lowered(r, &v.clone());
+        }
         self.finish_borrows(outer);
         argv
     }
@@ -249,12 +272,21 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
-        let later = later_each(args);
+        let later = self.later_each(args);
         let outer = self.start_borrows();
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
-            let v = if is_moved(a) {
+            // A table (a module constant of number literals, #1334) to a param that only reads it:
+            // its read-only data, not a new array (sema rejects every use that could write or
+            // keep a table, and an array with `cap == 0` owns no buffer to free).
+            let table = match (mode, transfer) {
+                (Some(PassMode::Borrow), false) if self.is_table(a) => self.table_read(a),
+                _ => None,
+            };
+            let v = if let Some(p) = table {
+                Operand::Copy(p)
+            } else if is_moved(a) {
                 let v = self.consume(a);
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)

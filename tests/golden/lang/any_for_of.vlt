@@ -1,0 +1,50 @@
+// check: no leaks
+// `for...of` over an `any` holding an array (#924): the elements are `any`s, and the length is
+// read before each step, as JavaScript's array iterator does.
+function names(children: any): string[] {
+  const out: string[] = [];
+  const items = Array.isArray(children) ? children : [children];
+  for (const child of items) {
+    out.push(typeof child === "string" ? child : `<${typeof child}>`);
+  }
+  return out;
+}
+
+function sum(xs: any): number {
+  let total = 0;
+  for (const x of xs) {
+    if (x === 3) {
+      continue;
+    }
+    if (x === 10) {
+      break;
+    }
+    total += x as number;
+  }
+  return total;
+}
+
+function main(): void {
+  const mixed: any[] = ["a", 1, "b"];
+  console.log(names(mixed).join(","), names("only").join(","), names(null).join(","));
+  console.log(sum([1, 2, 3, 4]), sum([5, 10, 20]), sum([]));
+  const arr: number[] = [1, 2];
+  const grow: any = arr;
+  let seen = 0;
+  for (const x of grow) {
+    seen++;
+    if (seen < 4) {
+      arr.push(x as number);
+    }
+  }
+  console.log(seen, grow.length, arr.length);
+  const pairs: any = [["a", "one"], ["b", "two"]];
+  outer: for (const p of pairs) {
+    for (const part of p) {
+      console.log(typeof part, part);
+      if (part === "one") {
+        continue outer;
+      }
+    }
+  }
+}

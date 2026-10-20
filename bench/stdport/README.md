@@ -52,8 +52,76 @@ Reading it:
 - The four number rows call the same crates as the Rust column, so their gap is the cost of
   getting there: a call into the runtime per value and a string result, where Rust formats into
   a buffer on the stack.
-- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt:crypto` is portable
-  code. The gap to portable Rust code is smaller than the table says.
+- `sha2` uses the CPU's SHA-2 instructions on this machine (2 GB/s); `velt:crypto` was portable
+  code then. It now uses them too (#1330, `velt:simd`). Linux arm64 (OrbStack on an M4), best of
+  5, ms and millions of instructions, Velt before → after, against Rust:
+
+  | benchmark | Velt ms | Rust ms | Velt M instr | Rust M instr | Velt / Rust (instr) |
+  |---|---:|---:|---:|---:|---:|
+  | sha256_large | 115 → 27 | 29 | 2,380 → 69 | 66 | 36.0 → 1.04 |
+  | sha256_small | 117 → 27 | 30 | 2,719 → 193 | 94 | 28.8 → 2.04 |
+
+  (The machine was heavily loaded for the times.) The hash loops are bound by the latency of
+  the SHA instructions, not by how many instructions run, so they are compared in cycles: the
+  `cycles elapsed` that `/usr/bin/time -l` reports for the process on macOS, which other
+  processes' load does not change, as the difference between two run lengths (natively on the
+  M4, data in cache, median of 3, lower is faster):
+
+  | | Velt | Rust |
+  |---|---:|---:|
+  | SHA-256, cycles per byte | 1.37–1.39 | 1.41–1.42 (`sha2`) |
+  | SHA-1, cycles per byte | 1.38–1.39 | 1.38–1.39 (`sha1`) |
+  | `sha256_small`'s hash + `set`, cycles per call | 121–125 | 125–127 |
+  | HMAC-SHA1, 64-byte key, 250-byte message, cycles per call | 690–707 | 738–749 |
+  | HMAC-SHA256, same, cycles per call | 668–687 | 718–727 |
+
+  Rust's HMAC is `hmac` with the digest left on the stack. SHA-1 is at the latency of SHA1C
+  for both. Velt's SHA-256 makes the next sixteen message words after each four groups of
+  rounds instead of between them, which keeps the schedule off the rounds' dependency chain.
+  `sha256_small` runs more instructions: the digest is a new 32-byte array per call where `sha2`
+  returns it on the stack, and padding is built in registers. `u8[].set` copies 16 to 64 bytes
+  without calling the runtime, as Rust's `copy_from_slice` is inline; the Velt program copies
+  the digest into the message with `set` as the Rust port does with `copy_from_slice` (it used
+  to copy it byte by byte).
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.
+
+## Hex
+
+`hex` is `velt:encoding`'s `hexEncode` and `hexDecode` against the `hex` crate. Instructions
+executed (cachegrind, Linux arm64, `VELT_THREADS=1`):
+
+| benchmark | Velt before | Velt | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|
+| hex | 9,179 M | 2,285 M | 17,420 M | 0.13 |
+
+The Velt code works on SIMD vectors (docs/std/simd.md), sixteen bytes per step when encoding
+and 32 digits when decoding; the crate goes digit by digit through a table.
+
+## Ported
+
+A runtime helper is replaced only where the Velt code is no slower on x86-64 Linux as well as
+arm64, in instructions and wall time (#1055). Instructions executed (cachegrind,
+`VELT_THREADS=1`) on an i9-12900HK (AVX2) with Ubuntu 24.04 in WSL, merge base against this
+code, from `bench/simd_bytes/cases.sh`:
+
+| benchmark | was | x86-64: before | now |
+|---|---|---:|---:|
+| bytes_search | `memchr` | 1,080.4 M | 957.3 M |
+| utf8_decode | Velt byte loop | 7,768.4 M | 7,768.4 M |
+| utf8_valid | `str::from_utf8` | 3,850.8 M | 3,850.8 M |
+
+`indexOf` and `includes` (`bytes_search`) are Velt code on `u8x16` when at most 208 bytes are
+left from the start position: the first vector is tested on its own (most searches end within a
+few bytes), then four vectors per step, and the last bytes are covered by one vector that ends
+at the array's end instead of a byte loop. Longer searches still go to the runtime's `memchr`,
+which takes 32 bytes per vector with AVX2 and is faster there (the Velt vectors executed 2.4 to 2.65 times as
+many instructions on 4 KiB and 1 MiB). `bench/simd_bytes/cases.sh` measures both sides of that
+length.
+
+`utf8_decode` (Cyrillic text with single spaces, and with ", ") is the row for text whose ASCII
+comes in short runs. `utf8DecodeLossy` keeps its byte loop: skipping ASCII 16 and 64 bytes at
+a time took 2.4 times fewer instructions on ASCII text but 4 to 16 % more on text with short
+ASCII runs, also with runs of up to four bytes stepped over one at a time. `xorMask` and `utf8Valid` keep
+their runtime helpers.

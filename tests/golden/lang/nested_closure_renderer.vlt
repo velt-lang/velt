@@ -1,0 +1,120 @@
+// check: no leaks
+// #1142: a renderer in the shape of sigx's createRenderer: mount, patch and unmount are nested
+// functions that call each other and use the renderer's options.
+
+interface VNode {
+  tag: string;
+  key: string;
+  text: string;
+  children: VNode[];
+  el: HostEl | null;
+}
+
+class HostEl {
+  tag: string;
+  text: string = "";
+  kids: HostEl[] = [];
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+}
+
+interface RendererOptions<E> {
+  createElement: (tag: string) => E;
+  insert: (child: E, parent: E) => void;
+  remove: (child: E, parent: E) => void;
+  setText: (el: E, text: string) => void;
+}
+
+function h(tag: string, key: string, text: string, children: VNode[] = []): VNode {
+  return { tag, key, text, children, el: null };
+}
+
+function createRenderer<E>(options: RendererOptions<E>) {
+  const { createElement: hostCreate, insert: hostInsert, remove: hostRemove } = options;
+  let mounts = 0;
+  let unmounts = 0;
+  const els = new Map<string, E>();
+
+  function mount(vnode: VNode, container: E): void {
+    const el = hostCreate(vnode.tag);
+    mounts++;
+    els.set(vnode.key, el);
+    options.setText(el, vnode.text);
+    vnode.children.forEach((c) => mount(c, el));
+    hostInsert(el, container);
+  }
+
+  function unmount(vnode: VNode, container: E): void {
+    const el = els.get(vnode.key);
+    if (el == null) return;
+    for (const c of vnode.children) unmount(c, el);
+    unmounts++;
+    els.delete(vnode.key);
+    hostRemove(el, container);
+  }
+
+  function patch(oldV: VNode | null, newV: VNode, container: E): void {
+    if (oldV === null) {
+      mount(newV, container);
+      return;
+    }
+    if (oldV.tag !== newV.tag) {
+      unmount(oldV, container);
+      mount(newV, container);
+      return;
+    }
+    const el = els.get(oldV.key);
+    if (el == null) return;
+    els.delete(oldV.key);
+    els.set(newV.key, el);
+    if (oldV.text !== newV.text) options.setText(el, newV.text);
+    patchChildren(oldV.children, newV.children, el);
+  }
+
+  function patchChildren(olds: VNode[], news: VNode[], el: E) {
+    const n = Math.min(olds.length, news.length);
+    for (let i = 0; i < n; i++) patch(olds[i], news[i], el);
+    for (let i = n; i < news.length; i++) patch(null, news[i], el);
+    for (let i = n; i < olds.length; i++) unmount(olds[i], el);
+  }
+
+  let current: VNode | null = null;
+  function render(vnode: VNode, container: E): void {
+    patch(current, vnode, container);
+    current = vnode;
+  }
+  function stats(): string {
+    return `mounts=${mounts} unmounts=${unmounts} live=${els.size}`;
+  }
+  return { render, stats };
+}
+
+function show(e: HostEl, depth: number = 0): string {
+  const own = "  ".repeat(depth) + e.tag + (e.text === "" ? "" : ` "${e.text}"`);
+  return [own, ...e.kids.map((k) => show(k, depth + 1))].join("\n");
+}
+
+const renderer = createRenderer<HostEl>({
+  createElement: (tag: string): HostEl => new HostEl(tag),
+  insert: (child: HostEl, parent: HostEl): void => {
+    parent.kids.push(child);
+  },
+  remove: (child: HostEl, parent: HostEl): void => {
+    const i = parent.kids.indexOf(child);
+    if (i >= 0) parent.kids.splice(i, 1);
+  },
+  setText: (el: HostEl, text: string): void => {
+    el.text = text;
+  },
+});
+const root = new HostEl("root");
+renderer.render(h("div", "a", "", [h("p", "b", "one"), h("p", "c", "two"), h("ul", "d", "", [h("li", "e", "x")])]), root);
+console.log(show(root));
+console.log(renderer.stats());
+renderer.render(h("div", "a2", "", [h("p", "b2", "uno"), h("span", "c2", "dos")]), root);
+console.log(show(root));
+console.log(renderer.stats());
+renderer.render(h("section", "z", "bye"), root);
+console.log(show(root));
+console.log(renderer.stats());

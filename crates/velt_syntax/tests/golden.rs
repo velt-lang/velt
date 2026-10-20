@@ -42,9 +42,18 @@ fn golden_m1_files_parse() {
                 | "overloads_declarations.vlt"
                 | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
+                | "ts_parse_leftovers_errors.vlt"
+                | "catch_types_errors.vlt"
                 | "type_operators_unsupported.vlt"
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"
+                | "dynamic_import.vlt"
+                | "namespace_values.vlt"
+                | "overload_signature_asi_no_body.vlt"
+                | "cast_union_number_literal.vlt"
+                | "function_expression_errors.vlt"
+                | "function_expression_this_errors.vlt"
+                | "string_escape_octal.vlt"
         ) {
             continue;
         }
@@ -94,7 +103,11 @@ fn golden_hello_shape() {
 }
 
 #[test]
-fn strings_golden_unknown_escape_kept() {
-    let e = expr(r#""esc: \"q\" \ \t|""#);
+fn strings_golden_escapes() {
+    // `strings.vlt` writes `\\` for its backslash; an unknown escape such as `\ ` is the
+    // character alone, as in JS.
+    let e = expr(r#""esc: \"q\" \\ \t|""#);
     assert_eq!(sx(&e), format!("{:?}", "esc: \"q\" \\ \t|"));
+    let e = expr(r#""esc: \ \d|""#);
+    assert_eq!(sx(&e), format!("{:?}", "esc:  d|"));
 }

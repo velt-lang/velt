@@ -1,0 +1,25 @@
+// check: no leaks
+// The receiver of an interface method call read from a Map while an argument deletes the entry
+// (`m.get(k)!.m(drop())`) or replaces the interface value inside it
+// (`boxes.get(k)!.inner.m(repl())`): the value read before the argument runs the method.
+interface N { val: string; m(s: string): string; }
+class Node1 implements N {
+  val: string;
+  constructor(v: string) { this.val = v; }
+  m(s: string): string { const was = this.val; this.val = s; return was + " -> " + this.val; }
+}
+const m = new Map<string, N>();
+m.set("k", new Node1("mapped"));
+function drop(): string { m.delete("k"); return "deleted"; }
+console.log(m.get("k")!.m(drop()));
+console.log(m.size, m.has("k"));
+class Box { inner: N; constructor(n: N) { this.inner = n; } }
+const boxes = new Map<string, Box>();
+boxes.set("b", new Box(new Node1("boxed")));
+function repl(): string {
+  boxes.get("b")!.inner = new Node1("new");
+  boxes.delete("b");
+  return "replaced";
+}
+console.log(boxes.get("b")!.inner.m(repl()));
+console.log(boxes.size);

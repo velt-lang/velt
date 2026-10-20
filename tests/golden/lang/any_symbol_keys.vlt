@@ -1,0 +1,61 @@
+// check: no leaks
+// Symbol keys on an `any` (#924, #823): a symbol constant names the member it keys in
+// `v[KEY]`, `v[KEY] = x` and `KEY in v`; a `string | symbol` key (a proxy trap's) holding a
+// string reads the member the string names.
+const BRAND = Symbol("brand");
+const MARK = Symbol("mark");
+
+interface Branded {
+  [BRAND]: boolean;
+  name: string;
+}
+
+function make(name: string): Branded {
+  return { [BRAND]: true, name };
+}
+
+function isBranded(v: any): boolean {
+  return v != null && typeof v === "object" && v[BRAND] === true;
+}
+
+function isBrandedObject(v: object): boolean {
+  return (v as any)[BRAND] === true;
+}
+
+function hasMark(v: unknown): boolean {
+  return v !== null && typeof v === "object" && MARK in v;
+}
+
+function hasBrand(v: any): boolean {
+  return BRAND in v;
+}
+
+function unbrand(v: any): void {
+  v[BRAND] = false;
+}
+
+function read(o: any, prop: string | symbol): any {
+  return o[prop];
+}
+
+function has(o: any, prop: string | symbol): boolean {
+  return prop in o;
+}
+
+function write(o: any, prop: string | symbol, v: any): void {
+  o[prop] = v;
+}
+
+function main(): void {
+  const b = make("x");
+  console.log(isBranded(b), isBranded({ name: "y" }), isBranded(null), isBranded(3));
+  console.log(isBrandedObject(b), isBrandedObject({ name: "z" }));
+  console.log(hasMark(b), hasMark({ [MARK]: 1 }), hasMark("s"));
+  console.log(hasBrand(b), hasBrand({ a: 1 }));
+  unbrand(b);
+  console.log(b[BRAND], isBranded(b));
+  const rec: Record<string, number> = { a: 1 };
+  console.log(read({ a: 1 }, "a"), read({ a: 1 }, "b"), has(rec, "a"), has(rec, "b"));
+  write(rec, "c", 3);
+  console.log(rec.c);
+}

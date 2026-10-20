@@ -1,0 +1,41 @@
+// check: no leaks
+// Arrays of a single literal type (`"a"[]`, zero-sized elements) are copied, iterated and
+// passed to read-only parameters (#1271), and `["a"] as const` keeps the literal type, as in
+// TypeScript (`readonly ["a"]`).
+function show(xs: readonly string[]): void {
+  console.log(xs.join(","), xs.length);
+}
+
+function main(): void {
+  const xs: "a"[] = ["a", "a"];
+  const ys = [...xs];
+  console.log(ys, ys.length, xs.slice());
+  for (const x of xs) console.log(x);
+  show(xs);
+
+  // An array in a variable a closure reassigns: the loop reads the variable's array each time.
+  let bs: "b"[] = ["b"];
+  const add = (): void => {
+    bs = [...bs, "b"];
+  };
+  add();
+  for (const b of bs) {
+    add();
+    console.log(b, bs.length);
+  }
+
+  // An array reached through a shared object.
+  const box = { items: ["c"] as "c"[] };
+  const other = box;
+  for (const c of box.items) console.log(c, other.items.length);
+
+  const cs = ["a"] as const;
+  const one: "a" = cs[0];
+  console.log(cs, cs.length, one, [...cs]);
+  show(cs);
+  const twice = ["d", "d"] as const;
+  for (const d of twice) console.log(d.toUpperCase());
+
+  const ns: 1[] = [1, 1, 1];
+  console.log([...ns].map((v) => v + 1));
+}

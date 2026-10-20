@@ -54,7 +54,7 @@ roots ─▶ walk tasks (N) ─▶ channel<FileJob> ─▶ search tasks (N) ─�
 | `src/options.vlt` | the `velt:cli` parser |
 | `src/main.vlt` | process glue: args, `NO_COLOR`, stdout/stderr, exit code |
 | `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test -p veltc --test golden` |
+| `demo.vlt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test --workspace --test golden` |
 
 ## Performance
 

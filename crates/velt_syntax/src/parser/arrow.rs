@@ -134,7 +134,8 @@ impl<'a> Parser<'a> {
         (matches!(
             first,
             Tok::RParen | Tok::DotDotDot | Tok::LBracket | Tok::LBrace
-        ) || Self::is_ident_like(first))
+        ) || Self::is_ident_like(first)
+            || first == Tok::Kw(Kw::This))
             && matches!(
                 self.after_matching_paren(off),
                 Some(Tok::FatArrow | Tok::Colon)
@@ -144,6 +145,12 @@ impl<'a> Parser<'a> {
     /// `( params ) [: Ret [throws E]] =>`
     fn parse_arrow_head(&mut self) -> PResult<ArrowHead> {
         let params = self.parse_arrow_params()?;
+        if let Some((span, _)) = self.this_param.take() {
+            self.param_error(
+                "an arrow function cannot have a 'this' parameter (TypeScript's TS2730)",
+                span,
+            );
+        }
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
@@ -158,6 +165,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_arrow_params(&mut self) -> PResult<Vec<ArrowParam>> {
         self.expect(Tok::LParen)?;
         let mut params: Vec<ArrowParam> = Vec::new();
+        self.parse_this_param()?;
         while !self.at(Tok::RParen) {
             let lo = self.cur_lo();
             let p = self.parse_arrow_param(params.len())?;
@@ -197,12 +205,8 @@ impl<'a> Parser<'a> {
             if let Some(d) = &default {
                 self.param_error("a rest parameter cannot have a default value", d.span);
             }
-            if let Some(t) = ty.as_ref().filter(|t| !rest_type(t)) {
-                self.param_error(
-                    "a rest parameter must have an array type (`...xs: T[]`)",
-                    t.span,
-                );
-            }
+            // Its type must be an array type, which the type checker tells (an alias of one, or
+            // `readonly T[]`, is one too).
         }
         let ty = match (optional, ty) {
             (true, ty) => {
@@ -215,8 +219,8 @@ impl<'a> Parser<'a> {
                 }
                 let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
                 let span = Span::new(self.file, at, at);
-                default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
-                ty.map(super::types::or_null)
+                default = Some(self.mk_expr(ExprKind::Lit(Lit::Undefined), span));
+                ty.map(super::types::optional_param)
             }
             (false, ty) => ty,
         };
@@ -239,7 +243,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> PResult<Expr> {
         let body = if self.at(Tok::LBrace) {
-            ArrowBody::Block(self.guarded(|p| p.parse_block())?)
+            ArrowBody::Block(self.guarded(|p| p.parse_fn_body())?)
         } else {
             ArrowBody::Expr(Box::new(self.guarded(|p| p.parse_assign())?))
         };
@@ -256,9 +260,4 @@ impl<'a> Parser<'a> {
             span,
         ))
     }
-}
-
-/// Can `t` type a rest parameter: an array.
-fn rest_type(t: &TypeExpr) -> bool {
-    matches!(t.kind, TypeExprKind::Array(_))
 }

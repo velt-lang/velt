@@ -1,0 +1,29 @@
+// check: no leaks
+// A function-typed field called on a typed proxy (#823): `s.$set(v)` reads `$set` through the
+// `get` trap before the argument, then calls the closure it answered (which takes `any`) with the
+// argument; its result is checked as the field's result type.
+type State = { count: number; label: string };
+type Signal = State & { $set(v: State): void; $get(): number };
+function signal(target: State): Signal {
+  return new Proxy(target, {
+    get(t: any, key: string | symbol, receiver: any): any {
+      if (key === "$set") {
+        return (v: any): void => {
+          console.log("$set", v.count);
+          Reflect.set(t, "count", v.count);
+          Reflect.set(t, "label", v.label);
+        };
+      }
+      if (key === "$get") return (): any => (t.count as number) * 2;
+      console.log("get", String(key));
+      return Reflect.get(t, key);
+    },
+  }) as Signal;
+}
+function arg(n: number): State {
+  console.log("arg");
+  return { count: n, label: "x" + n };
+}
+const s = signal({ count: 1, label: "a" });
+s.$set(arg(5));
+console.log(s.count, s.label, s.$get());

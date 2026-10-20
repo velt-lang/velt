@@ -1,0 +1,16 @@
+// A closure that reads its `const` while the initializer still runs stops with JavaScript's
+// `ReferenceError` (#750, the temporal dead zone).
+function make(f: () => number): number {
+  console.log("calling");
+  return f();
+}
+
+function run(): void {
+  const later: () => number = () => 1;
+  const x: number = make(() => {
+    console.log("in the closure");
+    return x + later();
+  });
+  console.log("never", x);
+}
+run();

@@ -250,25 +250,29 @@ pub(super) unsafe fn mark_started(
     (*f).drop = started_drop;
 }
 
-/// Poll the state of started node `f` with its own waker; true when it finished.
-pub(super) unsafe fn poll_state(f: *mut VeltFut) -> bool {
+/// Poll the state of started node `f` with its own waker and the task's await `word`; true when
+/// it finished.
+pub(super) unsafe fn poll_state(f: *mut VeltFut, word: *const u32) -> bool {
     let w =
         std::mem::ManuallyDrop::new(Waker::from_raw(RawWaker::new(f as *const (), &NODE_WAKER)));
     let mut cx = Context::from_waker(&w);
     let h = head(f);
-    (h.poll)(state(f), crate::task::raw_cx(&mut cx)) == READY
+    (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
 }
 
 /// The first poll of started node `f`, part of its creator's synchronous run (like calling an
 /// async function in JS): not limited by the task's cooperative budget, which the creator may
 /// have spent (a loop starting 100k timers must register them all now, not defer each one).
-pub(super) unsafe fn poll_first(f: *mut VeltFut) -> bool {
+/// `word` is the task's await word.
+pub(super) unsafe fn poll_first(f: *mut VeltFut, word: *const u32) -> bool {
     let w =
         std::mem::ManuallyDrop::new(Waker::from_raw(RawWaker::new(f as *const (), &NODE_WAKER)));
     let h = head(f);
-    let first = std::future::poll_fn(|cx| match (h.poll)(state(f), crate::task::raw_cx(cx)) {
-        READY => Poll::Ready(()),
-        _ => Poll::Pending,
+    let first = std::future::poll_fn(|cx| {
+        match (h.poll)(state(f), crate::task::raw_cx_with(cx, word).ptr()) {
+            READY => Poll::Ready(()),
+            _ => Poll::Pending,
+        }
     });
     let mut first = std::pin::pin!(tokio::task::unconstrained(first));
     first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
@@ -317,7 +321,19 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
+/// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
+/// microtasks (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
+    let d = head(f).result_drop.load(Ordering::Acquire);
+    if !d.is_null() {
+        // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
+        let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
+        super::unhandled::drop_result(f, d);
+    }
+}
+
+/// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
+pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -377,6 +393,16 @@ pub(super) unsafe fn running_in(f: *mut VeltFut, shared: &Arc<Shared>) -> bool {
 /// Is started node `f` in its set's ready queue?
 pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Acquire) & QUEUED != 0
+}
+
+/// The waker registered to resume started node `f`'s owner, taken.
+pub(super) unsafe fn take_awaiter(f: *mut VeltFut) -> Option<Waker> {
+    head(f).awaiter.take()
+}
+
+/// Is started node `f` driven by its owner right now (see [`started_poll`])?
+pub(super) unsafe fn is_adopted(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & ADOPTED != 0
 }
 
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?

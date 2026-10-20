@@ -25,6 +25,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "AsyncIterator",
     "Date",
     "Error",
+    "EvalError",
     "Generator",
     "Infinity",
     "Iterable",
@@ -38,10 +39,20 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "NaN",
     "Number",
     "Object",
+    // `new Proxy(target, handler)` is an `any` in Velt for now (#823); the operations on it
+    // run the handler's traps as in Node.
+    "Proxy",
+    "ProxyHandler",
+    "RangeError",
+    "ReferenceError",
+    "Reflect",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
     "StringIterator",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
     "WeakMap",
     "WeakRef",
     "WeakSet",
@@ -49,6 +60,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "isNaN",
     "parseFloat",
     "parseInt",
+    "queueMicrotask",
     // The DOM's timer functions (TypeScript's baseline has the DOM's lib); in shared code the
     // handle only goes back to `clearTimeout` / `clearInterval` (a number in the browser).
     "clearInterval",
@@ -57,6 +69,11 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "setTimeout",
     // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
     "structuredClone",
+    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
+    "any",
+    "unknown",
+    "object",
+    "Function",
     // Builtins.
     "console",
     "Promise",
@@ -88,6 +105,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "MemoryUsage",
         "keep process information out of code shared with TypeScript",
+    ),
+    (
+        "ObjectPrototype",
+        "compare prototypes with `===` without naming their type (`Object.getPrototypeOf(v) === Object.prototype`)",
     ),
     (
         "Mutex",
@@ -129,11 +150,23 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ),
     ("promiseAllSettled", "use `Promise.allSettled(…)`"),
     ("promiseAny", "use `Promise.any(…)`"),
+    ("promiseCatch", "use `p.catch(…)`"),
+    ("promiseCatchAsync", "use `p.catch(…)`"),
+    ("promiseFinally", "use `p.finally(…)`"),
+    ("promiseFinallyAsync", "use `p.finally(…)`"),
+    ("promiseFinallyAsyncThrows", "use `p.finally(…)`"),
+    ("promiseFinallyThrows", "use `p.finally(…)`"),
     ("promiseNew", "use `new Promise(…)`"),
     ("promiseNewResolveOnly", "use `new Promise(…)`"),
     ("promiseReject", "use `Promise.reject(…)`"),
     ("promiseResolve", "use `Promise.resolve(…)`"),
     ("promiseResolveVoid", "use `Promise.resolve()`"),
+    ("promiseThen", "use `p.then(…)`"),
+    ("promiseThenAsync", "use `p.then(…)`"),
+    ("promiseThenAsyncThrows", "use `p.then(…)`"),
+    ("promiseThenElse", "use `p.then(…)`"),
+    ("promiseThenElseAsync", "use `p.then(…)`"),
+    ("promiseThenThrows", "use `p.then(…)`"),
     (
         "promiseWithResolvers",
         "use `new Promise(…)` and keep its functions",
@@ -209,7 +242,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("AsyncGenerator", &["next", "return"]),
     ("AsyncIterator", &["next", "return"]),
-    ("Generator", &["next", "return"]),
+    ("Generator", &["next", "return", "throw"]),
     ("Iterator", &["next", "return"]),
     ("ArrayIterator", &["next"]),
     ("StringIterator", &["next"]),
@@ -264,7 +297,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "valueOf",
         ],
     ),
-    ("Error", &["message"]),
+    ("Error", &["message", "name", "toString"]),
     ("JSON", &["parse", "stringify"]),
     (
         "Map",
@@ -298,7 +331,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "parseInt",
         ],
     ),
-    ("Object", &["entries", "keys", "values"]),
+    ("Object", &["entries", "fromEntries", "keys", "values"]),
+    ("Reflect", &["get", "has", "set"]),
     ("String", &["fromCharCode"]),
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
@@ -365,6 +399,19 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
     (
         "Date",
         &[("compareTo", "compare `a.getTime()` with `b.getTime()`")],
+    ),
+    (
+        "ObjectPrototype",
+        &[
+            (
+                "toJSON",
+                "compare prototypes with `===`; don't serialize them",
+            ),
+            (
+                "toString",
+                "compare prototypes with `===`; don't convert them",
+            ),
+        ],
     ),
     (
         "JSON",

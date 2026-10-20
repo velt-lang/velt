@@ -60,7 +60,7 @@ async function main() {
     bump();
     i.onChange("x");
     hits.add(1);
-    return new Response(render(`${pool.pick(mine)}${r === null ? "" : r()}${w.name}`));
+    return new Response(render(`${pool.pick(mine)}${r === undefined ? "" : r()}${w.name}`));
   });
   for (let k = 0; k < 3; k++) {
     console.log(await (await fetch(`http://127.0.0.1:${a.port}/`)).text());

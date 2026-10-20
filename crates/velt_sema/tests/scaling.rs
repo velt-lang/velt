@@ -58,7 +58,7 @@ fn generic_chains(n: usize) -> String {
         };
         out += &format!(
             "function k{i}<K>(s: string): number {{\n  return {keys};\n}}\n\
-             function p{i}<T>(xs: T[]): T | null {{\n  return {first};\n}}\n"
+             function p{i}<T>(xs: T[]): T | undefined {{\n  return {first};\n}}\n"
         );
     }
     out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n}\n"
@@ -81,45 +81,82 @@ fn sema_cost(loaded: &Loaded) -> u64 {
     cost
 }
 
-/// Sema cost per unit (above an empty program's) must not grow by more than `slack`× from
-/// `sizes[0]` to each larger size. Sizes are measured interleaved, best of `ROUNDS` each, so
-/// what load still shows in CPU time (cache and frequency effects of other processes) hits every
-/// size alike instead of one of them.
+/// Sema cost per unit, measured as the slope between consecutive sizes, must not grow by more
+/// than `slack`× from the first slope (`sizes[0]` to `sizes[1]`) to each later one. A slope
+/// between two non-empty programs leaves out the cost every program pays (setting up, the
+/// prelude), which is most of a small program's and once made the per-unit cost at the smallest
+/// size mostly noise (#1339). Sizes are measured interleaved, best of `ROUNDS` each, so what load
+/// still shows in CPU time (cache and frequency effects of other processes) hits every size alike
+/// instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
-    const ROUNDS: usize = 7;
+    // A shared CI runner can slow one size's measurements enough to tilt a slope past the
+    // slack. A pass that really grows faster than linearly fails every attempt, so the test
+    // measures again, up to `ATTEMPTS` times, before it fails.
+    const ATTEMPTS: usize = 3;
+    assert!(
+        sizes.len() >= 3,
+        "ICE: assert_linear needs three sizes for two slopes"
+    );
     // Before loading: parsing the programs is work on the process's clock too.
     let _serial = serial();
-    let mut programs = vec![load_src("function main() {}")];
-    programs.extend(
-        sizes
-            .iter()
-            .map(|&n| load_src(&generated_program(n, chain(n)))),
-    );
+    let programs: Vec<Loaded> = sizes
+        .iter()
+        .map(|&n| load_src(&generated_program(n, chain(n))))
+        .collect();
+    let mut failure = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match linear_slopes(sizes, &chain, &programs, slack) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("attempt {attempt} of {ATTEMPTS}: {e}");
+                failure = e;
+            }
+        }
+    }
+    panic!("{failure}");
+}
+
+/// One measurement for [`assert_linear`]: each size's best sema cost of `ROUNDS`, then the
+/// slopes between consecutive sizes, each later one under `slack`× the first.
+fn linear_slopes(
+    sizes: &[usize],
+    chain: &impl Fn(usize) -> usize,
+    programs: &[Loaded],
+    slack: f64,
+) -> Result<(), String> {
+    const ROUNDS: usize = 7;
     let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
-        for (b, p) in best.iter_mut().zip(&programs) {
+        for (b, p) in best.iter_mut().zip(programs) {
             *b = (*b).min(sema_cost(p));
         }
     }
-    let empty = best[0] as f64;
-    eprintln!("empty program: cost {empty}");
-    let per_unit: Vec<f64> = sizes
-        .iter()
-        .zip(&best[1..])
-        .map(|(&n, &c)| {
-            eprintln!("N = {n:>5} (chains of {:>5}): cost {c:>12}", chain(n));
-            (c as f64 - empty).max(0.0) / n as f64
-        })
-        .collect();
-    for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
-        assert!(
-            *u < slack * per_unit[0],
-            "sema cost per unit grew from {:.0} (N = {}) to {:.0} (N = {n})",
-            per_unit[0],
-            sizes[0],
-            u,
-        );
+    for (&n, &c) in sizes.iter().zip(&best) {
+        eprintln!("N = {n:>5} (chains of {:>5}): cost {c:>12}", chain(n));
     }
+    let slopes: Vec<f64> = (1..sizes.len())
+        .map(|i| (best[i] as f64 - best[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
+        .collect();
+    if slopes[0] <= 0.0 {
+        return Err(format!(
+            "sema cost did not grow from N = {} to {}: the measurement is broken",
+            sizes[0], sizes[1],
+        ));
+    }
+    for (i, s) in slopes.iter().enumerate().skip(1) {
+        if *s >= slack * slopes[0] {
+            return Err(format!(
+                "sema cost per unit grew from {:.0} (N = {} to {}) to {:.0} (N = {} to {})",
+                slopes[0],
+                sizes[0],
+                sizes[1],
+                s,
+                sizes[i],
+                sizes[i + 1],
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The instantiation checks' work for one `check` of `loaded`.
@@ -172,18 +209,22 @@ fn instantiation_work_grows_linearly() {
 /// One test, so the timings don't compete with each other for the CPU.
 #[test]
 fn sema_time_grows_linearly() {
-    // 8× the units: quadratic growth would be 8× per unit; 4× leaves room for cache effects.
-    // At least 100 units: the empty program's cost, subtracted from each, varies by about the
-    // cost of 50 units between runs on a loaded machine.
-    assert_linear(&[100, 800], |_| 8, 4.0);
+    // The slope from 100 to 400 units against the one from 400 to 1600: purely quadratic growth
+    // makes the second about 4× the first, and less when the quadratic part is small next to
+    // linear work (an all-pairs loop over the prelude's functions as well as the program's). The
+    // first slope spans 300 units, so it is well above the noise of two measurements; 2× leaves
+    // room for cache effects.
+    assert_linear(&[100, 400, 1600], |_| 8, 2.0);
     // One chain through the whole program: modification inference must not take a round over
     // every body per call level.
-    assert_linear(&[100, 800], |n| n, 4.0);
+    assert_linear(&[100, 400, 1600], |n| n, 2.0);
 }
 
 #[test]
 #[ignore = "slow: generates programs of up to 5000 units (run with --release)"]
 fn sema_time_grows_linearly_large() {
+    // Slopes 100 to 1000 against 1000 to 5000: purely quadratic growth makes the second about
+    // 5.5×.
     assert_linear(&[100, 1000, 5000], |_| 8, 2.0);
     assert_linear(&[100, 1000, 5000], |n| n, 2.0);
     assert_linear_work(&[100, 1000, 5000], |n| generated_program(n, 8), 1.5);

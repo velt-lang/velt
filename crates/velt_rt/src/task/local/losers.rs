@@ -82,7 +82,7 @@ unsafe fn give_up_inner(f: *mut VeltFut, fresh: bool) {
     crate::task::velt_rt_fut_drop(f);
     // Dropping an adopted node queues it (its leaves held the owner's waker).
     if node::running_in(f, &(*set).shared) && (fresh || node::is_queued(f)) {
-        set::run_now(set, &*tcx.waker, f);
+        set::run_now(set, tcx, f);
     }
     node::release(f);
 }

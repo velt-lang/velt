@@ -71,7 +71,7 @@ fn definition_and_hover_on_namespaced_components_and_intrinsic_tags() {
     let hover = client.request("textDocument/hover", at(&doc, line, col));
     let text = hover["contents"]["value"].as_str().unwrap_or_default();
     assert!(
-        text.contains("div: { class: string | null; id: string | null }"),
+        text.contains("div: { class: string | undefined; id: string | undefined }"),
         "{text}"
     );
     client.shutdown();

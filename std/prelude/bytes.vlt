@@ -1,5 +1,7 @@
-// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`), backed by memchr,
-// memmove and memset in the runtime instead of byte-at-a-time loops.
+// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): short searches sixteen
+// bytes at a time with SIMD vectors, here in Velt so that they are compiled into their caller;
+// long searches by memchr, copying, filling and XOR masking by memmove, memset and word loops
+// in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
@@ -17,6 +19,100 @@ declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
+// The SIMD operations used below (`velt:simd`, std/simd/*.vlt, is the API; declared again
+// here so that the prelude does not load it). `load` does not check its range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+
+// Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
+// and the result is clamped to `0..=n`.
+function relative(i: i64, n: usize): usize {
+  if (i < 0) {
+    const fromEnd = (n as i64) + i;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return (i as usize) < n ? i as usize : n;
+}
+
+// The position of the first set lane of `m`, a mask of the 16 bytes at `at`.
+function hit(at: usize, m: mask8x16): i64 {
+  return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
+}
+
+// Up to this many bytes, the vectors below are faster than the runtime's memchr (32 bytes per
+// vector with AVX2 on x86-64) with its call; past it, memchr is.
+const SHORT_SEARCH: usize = 208;
+
+// First position at or after `start` holding `byte`, or -1. Up to `SHORT_SEARCH` bytes here:
+// one vector first (most searches end within a few bytes), then four per step with one test
+// for all of them, and the last bytes in a vector ending at the array's end, which may overlap
+// bytes already seen (none of them matched, so its first match is past them). Longer searches
+// in the runtime.
+function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
+  const n = d.length;
+  if (n - start > SHORT_SEARCH) {
+    return velt_rt_bytes_index_of(d, byte, start as i64);
+  }
+  const needle = velt_simd_u8x16_splat(byte);
+  let i = start;
+  if (n - i >= 16) {
+    const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+    if (velt_simd_mask8x16_any(m)) {
+      return hit(i, m);
+    }
+    i += 16;
+    while (i + 64 <= n) {
+      const m0 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      const m1 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 16) as u64), needle);
+      const m2 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 32) as u64), needle);
+      const m3 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 48) as u64), needle);
+      const any = velt_simd_mask8x16_or(
+        velt_simd_mask8x16_or(m0, m1),
+        velt_simd_mask8x16_or(m2, m3),
+      );
+      if (velt_simd_mask8x16_any(any)) {
+        if (velt_simd_mask8x16_any(m0)) {
+          return hit(i, m0);
+        }
+        if (velt_simd_mask8x16_any(m1)) {
+          return hit(i + 16, m1);
+        }
+        if (velt_simd_mask8x16_any(m2)) {
+          return hit(i + 32, m2);
+        }
+        return hit(i + 48, m3);
+      }
+      i += 64;
+    }
+    while (i + 16 <= n) {
+      const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      if (velt_simd_mask8x16_any(m)) {
+        return hit(i, m);
+      }
+      i += 16;
+    }
+    if (i < n) {
+      const last = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (n - 16) as u64), needle);
+      if (velt_simd_mask8x16_any(last)) {
+        return hit(n - 16, last);
+      }
+    }
+    return -1;
+  }
+  while (i < n) {
+    if (d[i] == byte) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
 declare function velt_rt_str_byte_length(s: string): u64;
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
@@ -63,9 +159,9 @@ export class Buffer {
 }
 
 extend Array<u8> {
-  /** Position of the first `byte` at or after `from`, or -1 (memchr). */
+  /** Position of the first `byte` at or after `from`, or -1. */
   indexOf(byte: u8, from: i64 = 0): i64 {
-    return velt_rt_bytes_index_of(this, byte, from);
+    return indexOfByte(this, byte, relative(from, this.length));
   }
 
   /** Position of the last `byte` at or before `from`, or -1. */
@@ -74,12 +170,12 @@ extend Array<u8> {
   }
 
   /**
-   * Determines whether an array includes a certain byte, returning true or false as appropriate
-   * (memchr).
+   * Determines whether an array includes a certain byte, returning true or false as appropriate.
    * @param byte - The byte to search for.
+   * @param from - The position to start the search at (negative: from the end).
    */
-  includes(byte: u8): bool {
-    return velt_rt_bytes_index_of(this, byte, 0) >= 0;
+  includes(byte: u8, from: i64 = 0): bool {
+    return indexOfByte(this, byte, relative(from, this.length)) >= 0;
   }
 
   /**
@@ -87,6 +183,30 @@ extend Array<u8> {
    * array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
    */
   set(src: u8[], offset: usize = 0) {
+    // 16 to 64 bytes (a digest, a key, a header): two or four 16-byte chunks, the last ones
+    // ending at `src`'s end (they overlap the first when `n` is not a multiple of 16), with no
+    // call into the runtime.
+    const n = src.length;
+    if (n >= 16 && n <= 64 && offset <= this.length && n <= this.length - offset) {
+      const at = offset as u64;
+      const last = (n - 16) as u64;
+      if (n <= 32) {
+        const a = velt_simd_u8x16_load(src, 0);
+        const b = velt_simd_u8x16_load(src, last);
+        velt_simd_u8x16_store(a, this, at);
+        velt_simd_u8x16_store(b, this, at + last);
+      } else {
+        const a = velt_simd_u8x16_load(src, 0);
+        const b = velt_simd_u8x16_load(src, 16);
+        const c = velt_simd_u8x16_load(src, last - 16);
+        const d = velt_simd_u8x16_load(src, last);
+        velt_simd_u8x16_store(a, this, at);
+        velt_simd_u8x16_store(b, this, at + 16);
+        velt_simd_u8x16_store(c, this, at + last - 16);
+        velt_simd_u8x16_store(d, this, at + last);
+      }
+      return;
+    }
     if (!velt_rt_bytes_set(this, src, offset as u64)) {
       panic("RangeError: offset is out of bounds");
     }

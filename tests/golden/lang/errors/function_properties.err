@@ -1,0 +1,3 @@
+function_properties.vlt:9:16: error: missing member `stop` of `Runner`
+function_properties.vlt:14:3: error: no field `label` on type `() => f64`
+function_properties.vlt:17:3: error: intersections of function types (overloads) are not supported

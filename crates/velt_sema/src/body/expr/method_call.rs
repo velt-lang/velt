@@ -22,6 +22,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let recv = match self.dynamic_method_call(recv, prop, args, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
         // `x.toFixed(2)`: a number's method (`literal_locals`).
@@ -69,6 +73,12 @@ impl FnCx<'_, '_> {
         if prop.name == crate::collect::DISPOSE && !getter {
             return self.explicit_dispose(recv, args, span);
         }
+        if !getter
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
+            && super::promise_then::is_promise_callback_method(&prop.name)
+        {
+            return self.promise_callback_call(recv, prop, args, span);
+        }
         let recv = match self.cx.has_overloads && !getter {
             true => match self.overloaded_method_call(recv, prop, type_args, args, exp, span) {
                 Ok(h) => return h,
@@ -76,13 +86,63 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
+        self.readonly_method_call(&recv, &prop.name, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
+            // `e.toString()` on an error union: `Error`'s method, dispatched to each class's.
+            if self.is_error_union(recv.ty) {
+                let recv = self.error_union_accessor(recv, &prop.name);
+                if !self.is_error_union(recv.ty) {
+                    return self.method_call_at(recv, prop, type_args, args, exp, span, getter);
+                }
+                return self.no_method(recv, prop, args, span);
+            }
+            if prop.name == "toString" && args.is_empty() && !getter {
+                return match self.union_to_string(recv, span) {
+                    Ok(h) => h,
+                    Err(recv) => self.no_method(recv, prop, args, span),
+                };
+            }
             return self.no_method(recv, prop, args, span);
         };
+        // `g.throw(e)` with `e: never` (from the `catch` of a `try` that cannot throw) cannot
+        // run: the call is its argument, so it adds no `any` to what the caller throws.
+        if prop.name == "throw" && args.len() == 1 && self.cx.generator_result(recv.ty).is_some() {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = self.trial_frames();
+            let never = self.expr(&args[0], None, Want::Move).ty == self.cx.ty.never;
+            mark.rollback(self.cx);
+            self.restore_trial_frames(frames);
+            if never {
+                let arg = self.expr(&args[0], None, Want::Move);
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(recv),
+                        span,
+                    }],
+                    value: Some(Box::new(arg)),
+                    span,
+                };
+                return self.mk(H::Block(block), self.cx.ty.never, span);
+            }
+        }
         if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {
+            // `next(value)` on a `Generator<T, E, N>`: the prelude's `nextWith(value)`.
+            let n = self.cx.generator_next_ty(recv.ty);
+            if args.len() == 1 && !self.cx.ty.is_bottom(n) {
+                if let Some(Resolved::Def {
+                    def,
+                    slots,
+                    recv_ty,
+                    ..
+                }) = self.resolve_method(recv.ty, "nextWith")
+                {
+                    return self
+                        .def_method_call(recv, def, slots, recv_ty, type_args, args, exp, span);
+                }
+            }
             self.cx.error(
                 Diagnostic::error("`next()` takes no argument", args[0].span).with_note(
-                    "TypeScript allows this (`next(value)` makes the paused `yield` evaluate to `value`); Velt doesn't because a generator's `yield` has no value; write `next()`, and pass values into the generator through its parameters or an object both sides share",
+                    "`next(value)` makes the paused `yield` evaluate to `value`, which needs the generator's type to say what it takes: declare it `Generator<T, void, N>` (`N`: the type of the values `next` passes), or write `next()`",
                 ),
             );
             self.check_args_loose(args);
@@ -91,7 +151,7 @@ impl FnCx<'_, '_> {
         if let Resolved::Def { def, .. } = &r {
             self.no_generator_send(recv.ty, *def, span);
         }
-        self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
+        self.check_extension_ambiguity(&r, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {
@@ -122,6 +182,7 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 let ck = self.check_call(&c, slots, args, exp, span);
+                let this_recv = self.this_recv(&recv);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
@@ -130,7 +191,8 @@ impl FnCx<'_, '_> {
                     callee: Callee::Virtual { slot },
                     args: all,
                 };
-                self.mk(kind, ck.ret, span)
+                let call = self.mk(kind, ck.ret, span);
+                self.this_result(call, def, this_recv)
             }
             Resolved::Iface {
                 on_param,
@@ -185,8 +247,10 @@ impl FnCx<'_, '_> {
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.weak_key_args = self.weak_method(def);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
+        let this_recv = self.this_recv(&recv);
         let recv = self.receiver(
             recv,
             Some(recv_ty),
@@ -200,7 +264,8 @@ impl FnCx<'_, '_> {
             callee: Callee::Def(def, ck.type_args),
             args: all,
         };
-        self.mk(kind, ck.ret, span)
+        let call = self.mk(kind, ck.ret, span);
+        self.this_result(call, def, this_recv)
     }
 
     /// The receiver argument: upcast to the declaring type, then used per the `this` mode
@@ -251,12 +316,36 @@ impl FnCx<'_, '_> {
                 }
                 return self.error_expr(span);
             }
-            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. }) {
+            // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
+            // call of the value it holds.
+            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
+                || self.cx.is_callable_object(fty)
+                || matches!(
+                    self.cx.dynamic(fty),
+                    Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
+                )
+            {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),
                 };
             }
+        }
+        // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot.
+        if let Some(f) = self.iface_field_of(recv.ty, &prop.name) {
+            if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. }) {
+                return match self.field_access(recv, prop, Want::Borrow, span) {
+                    Some(f) => self.call_value(f, args, span),
+                    None => self.error_expr(span),
+                };
+            }
+        }
+        if crate::collect::exports::member_maybe_dropped(self.cx, recv.ty, &prop.name) {
+            // The parser may have dropped its declaration (`Ctx::recovered`).
+            for a in args {
+                self.expr(a, None, Want::Move);
+            }
+            return self.error_expr(span);
         }
         let tn = self.cx.display(recv.ty);
         let mut d = Diagnostic::error(
@@ -268,20 +357,10 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
-        } else if prop.name == "throw" && self.cx.generator_result(recv.ty).is_some() {
-            d = d.with_note(
-                "TypeScript allows this (`throw(e)` throws `e` at the generator's paused `yield`); Velt doesn't because what a generator throws is checked from its body, and an error thrown in from outside could not be; write `return()` to close the generator (its `finally` blocks run), and throw the error where you call it",
-            );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
-        } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
-            && matches!(prop.name.as_str(), "then" | "catch" | "finally")
-        {
-            d = d.with_note(
-                "promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error",
-            );
         } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
                 "the value may be {}: use `?.{}(...)` or check `!= null` first",
@@ -342,5 +421,42 @@ impl FnCx<'_, '_> {
                 self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Is `def` a method of the prelude's `WeakMap` or `WeakSet` taking a key first (`set`,
+    /// `get`, `has`, `delete`, `add`)?
+    fn weak_method(&self, def: DefId) -> bool {
+        let Some(owner) = self.cx.fn_info(def).owner else {
+            return false;
+        };
+        let weak = ["WeakMap", "WeakSet"]
+            .iter()
+            .any(|n| self.cx.prelude_adt(n) == Some(owner));
+        let name = self.cx.fn_info(def).name.rsplit('.').next().unwrap_or("");
+        weak && matches!(name, "set" | "get" | "has" | "delete" | "add")
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `x.toString()` on a union (#1275): every member has it, and on each of them it gives
+    /// what `String(x)` does (a class's own `toString`, a primitive's text), so it is written
+    /// as `String(x)`. `Err` gives `recv` back for a type that is not such a union (an array
+    /// member is written as `String(x)` writes an array only outside a union).
+    fn union_to_string(&mut self, recv: hir::Expr, span: Span) -> Result<hir::Expr, hir::Expr> {
+        let Some(members) = self.cx.union_members(recv.ty) else {
+            return Err(recv);
+        };
+        let plain = members.iter().all(|&m| {
+            !matches!(self.cx.ty.kind(m), TyKind::Array(_))
+                && self.cx.ty.nothing_of(m).is_none()
+                && self.cx.dynamic(m).is_none()
+        });
+        if !plain {
+            return Err(recv);
+        }
+        let part = self.js_text(recv, "`x.toString()`");
+        Ok(self.concat_parts(vec![part], span))
     }
 }

@@ -1,0 +1,14 @@
+// `for...of` over an `any` that holds something other than an array (here an object, which
+// Node rejects as not iterable) stops with a `TypeError` (#924).
+function count(xs: any): number {
+  let n = 0;
+  for (const _x of xs) {
+    n++;
+  }
+  return n;
+}
+
+function main(): void {
+  console.log(count([1, 2]));
+  console.log(count({ a: 1 }));
+}

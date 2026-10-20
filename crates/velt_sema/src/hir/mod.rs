@@ -28,15 +28,21 @@
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
+mod fields;
 mod intrinsic;
 mod nothing;
+mod numeric;
+mod table;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
+pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
+pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
+pub use table::TyTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -50,44 +56,6 @@ pub struct LocalId(pub u32);
 pub struct TyId(pub u32);
 
 // ───────────────────────────── Types (M1) ─────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum IntTy {
-    I8,
-    I16,
-    I32,
-    I64,
-    ISize,
-    U8,
-    U16,
-    U32,
-    U64,
-    USize,
-}
-
-impl IntTy {
-    pub fn is_signed(self) -> bool {
-        matches!(
-            self,
-            IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::ISize
-        )
-    }
-    /// Width in bits, assuming a 64-bit target for isize/usize.
-    pub fn bits(self) -> u32 {
-        match self {
-            IntTy::I8 | IntTy::U8 => 8,
-            IntTy::I16 | IntTy::U16 => 16,
-            IntTy::I32 | IntTy::U32 => 32,
-            IntTy::I64 | IntTy::U64 | IntTy::ISize | IntTy::USize => 64,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FloatTy {
-    F32,
-    F64,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TyKind {
@@ -134,6 +102,25 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// A SIMD vector or mask: Copy, 16 bytes.
+    Simd(SimdTy),
+    /// A type operator that can't be evaluated yet because an argument it inspects is still a
+    /// type parameter (docs/internals/design/deferred-types.md, #934 phase 2). Only in generic
+    /// definitions: once its arguments are concrete, sema reduces it, and lowering replaces it by
+    /// its entry in `Program::type_ops`.
+    Op(TyOp, Vec<TyId>),
+}
+
+/// The operator of a [`TyKind::Op`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TyOp {
+    /// A generic type alias (sema's alias #n) whose body (a conditional, mapped, indexed access
+    /// or template literal type) needs its arguments, applied to the `Op`'s arguments.
+    Alias(u32),
+    /// `A & B & …` with a part that is a type parameter or another deferred type (`T & { $set:
+    /// (v: T) => void }`, #350): the `Op`'s arguments are the parts in written order, and it
+    /// reduces to the object type `crate::intersections` builds from them.
+    Intersect,
 }
 
 /// The value of a literal type.
@@ -144,52 +131,6 @@ pub enum LitValue {
     /// `f64::to_bits` of the value (converted to `FloatTy` when printed).
     Float(FloatTy, u64),
     Bool(bool),
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TyTable {
-    kinds: Vec<TyKind>,
-    map: std::collections::HashMap<TyKind, TyId>,
-}
-
-impl TyTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // An option of an option is the inner option, with the inner one's nothing (`T | null |
-        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
-        if let TyKind::Option(inner, _) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
-                return inner;
-            }
-        }
-        if let Some(&id) = self.map.get(&kind) {
-            return id;
-        }
-        let id = TyId(self.kinds.len() as u32);
-        self.kinds.push(kind.clone());
-        self.map.insert(kind, id);
-        id
-    }
-
-    pub fn kind(&self, id: TyId) -> &TyKind {
-        &self.kinds[id.0 as usize]
-    }
-
-    /// Lookup without inserting.
-    pub fn get(&self, kind: &TyKind) -> Option<TyId> {
-        self.map.get(kind).copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.kinds.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.kinds.is_empty()
-    }
 }
 
 // ─────────────────────────── Program & defs ───────────────────────────
@@ -214,6 +155,50 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The program calls `Object.create(null)`: a record may have no prototype (its map is
+    /// marked, std/prelude/map.vlt `__markNullProto`), which printing and cloning look at.
+    pub null_proto_records: bool,
+    /// The program's module state (module-level `let`s), `None` when it has none
+    /// (hir_encodings.md "Module state").
+    pub module_state: Option<ModuleState>,
+    /// Every deferred type (`TyKind::Op`) with concrete arguments that an instantiation of a
+    /// generic definition reaches, and the type it reduces to (no `Op` in it).
+    pub type_ops: HashMap<TyId, TyId>,
+    /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
+    pub any_impl: Option<u32>,
+    /// The prelude's `unknown` interface when `any_impl` is set: `Dyn(unknown, [])` is the
+    /// other dynamic type (`Dyn(impls[any_impl].iface, [])` is `any`).
+    pub unknown: Option<DefId>,
+    /// The prelude's `object` and `Function` interfaces when `any_impl` is set (issue #926):
+    /// `Dyn(object, [])` and `Dyn(Function, [])` are dynamic types too, with the same
+    /// representation and tables as `any`.
+    pub object: Option<DefId>,
+    pub function: Option<DefId>,
+    /// The spans of the `super.m(args)` calls (hir_encodings.md "Classes"): each is a
+    /// `Callee::Def` call of the base implementation with `this` as `args[0]`, which JavaScript
+    /// makes without reading `m` from `this` (so no proxy trap runs, typed proxies, #823).
+    pub super_calls: HashSet<Span>,
+    /// The methods and accessors of each struct / class / object type by name, own ones before
+    /// inherited ones, when the program reads or calls a member of an `any`
+    /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
+    /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
+    pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
+    /// The program may call a generator's `throw()` (hir_encodings.md "Generators"): a
+    /// generator's resume function then also handles an error thrown in at each `yield`;
+    /// otherwise it has no code for that.
+    pub generator_throw: bool,
+    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// (#1330): lowering gives the VIR function its target.
+    pub cpu_targets: HashMap<DefId, CpuTarget>,
+}
+
+/// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
+#[derive(Clone, Debug)]
+pub struct ModuleState {
+    /// The state tuple: element `i` is the type of slot `i`.
+    pub ty: TyId,
+    /// The global of each slot, in initialization order (Node's module evaluation order).
+    pub slots: Vec<DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -344,26 +329,6 @@ pub enum AdtKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct FieldDef {
-    pub name: String,
-    pub ty: TyId,
-    /// Default initializer (class field `= expr`, or `null` for optional fields).
-    pub default: Option<Expr>,
-    /// Declared optional (`x?: T`): it may be absent. JSON and printing leave an absent
-    /// (`null`) one out, as JavaScript leaves out a missing key, whereas a `T | null` field
-    /// holding `null` is written; a spread copies it only while present.
-    pub optional: bool,
-    /// Declared `private` (in this type or the base class that declares it), or an ES private
-    /// field (`#x`). Interface fields are never private.
-    pub private: bool,
-    /// An optional field whose declared type is nullable (`a?: T | null`) in a struct or object
-    /// type: it keeps "absent" apart from a present `null` with a presence flag, which lowering
-    /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
-    /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
-    pub presence: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct AdtDef {
     pub name: String,
     pub kind: AdtKind,
@@ -371,6 +336,11 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
+    /// Declared with `struct` (kind `Struct`, but not a field-only interface or a struct sema
+    /// made for an interface literal or a brand): a Velt value type, so its `Map` and `Set`
+    /// keys compare and hash by content, field by field (`Intrinsic::KeyEq`, `Intrinsic::Hash`),
+    /// while `===` still compares it by identity.
+    pub declared_struct: bool,
     /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
     /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
     /// and could forge the runtime handles std types keep in private fields.
@@ -386,6 +356,12 @@ pub struct AdtDef {
     pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
+    /// Classes: initializers this class and its base classes give fields they inherit, base
+    /// classes' first, each class's in declaration order (inherited ones with the base's type
+    /// arguments substituted, as `FieldDef::default`). The field's own `default` stays the
+    /// declaring class's; a constructor or `new` runs these where `at` says, as the
+    /// assignment `this.<field> = init` there would.
+    pub inherited_inits: Vec<FieldInit>,
     /// Classes: constructor `Def::Fn` (None: every field has a default).
     pub ctor: Option<DefId>,
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
@@ -456,9 +432,13 @@ pub struct GlobalDef {
     pub name: String,
     pub ty: TyId,
     /// Evaluated at each use (a constant expression, or pure calls and closures, sema
-    /// `body::pure_init`), except a table: an array literal that lowering stores once as data.
+    /// `body::pure_init`), except a table: an array literal that lowering stores once as data,
+    /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
     pub init: Expr,
     pub span: Span,
+    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
+    /// that is read, written and borrowed like a field.
+    pub slot: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -546,6 +526,21 @@ pub struct Expr {
     pub kind: ExprKind,
     pub ty: TyId,
     pub span: Span,
+}
+
+/// Whether an `AdtLit` converts an object to another object type (hir_encodings.md "Object
+/// conversions"): its fields are then each absent or a read of one source place, and a
+/// source holding a typed proxy gives that proxy instead of the literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Conversion {
+    /// An ordinary literal.
+    No,
+    /// A conversion: a plain source is copied.
+    Copy,
+    /// A conversion whose copy the program could tell from the original (a later write, `===`,
+    /// ...), allowed only because the program creates proxies: a plain source throws a
+    /// `TypeError` instead of being copied.
+    ProxyOnly,
 }
 
 /// How a place is used by the expression that reads it (sema's ownership analysis).
@@ -708,6 +703,9 @@ pub enum ExprKind {
         def: DefId,
         type_args: Vec<TyId>,
         fields: Vec<Expr>,
+        /// Whether the literal converts an object to another object type by copying its
+        /// fields (hir_encodings.md "Object conversions").
+        converted: Conversion,
     },
     Variant {
         def: DefId,

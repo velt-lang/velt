@@ -1,0 +1,56 @@
+// check: no leaks
+// `"b" in o` on an optional field answers whether the key is there, as in Node: a key that
+// holds `undefined` is there too (a shorthand, an assignment, a spread of a field that is not
+// optional, a generic helper, a call's result, another object's optional field written out),
+// an absent one is not (#930 phase 2; this was an error while an optional field was `T | null`).
+// Expected output from Node 22.
+type B = { kind: string; b?: string };
+type C = { kind: string; c?: string };
+type D = { kind: string; d?: number };
+type E = { kind: string; e?: number };
+
+function mk(b?: string): B {
+  return { kind: "k", b };
+}
+
+function mk2(b?: string): B {
+  const x: B = { kind: "k" };
+  x.b = b;
+  return x;
+}
+
+function widen(c?: string): C {
+  const s = { kind: "s", c };
+  return { ...s };
+}
+
+function box<T>(v: T): { kind: string; d?: T } {
+  return { kind: "g", d: v };
+}
+
+function first(xs: number[]): E {
+  return { kind: "e", e: xs.pop() ?? undefined };
+}
+
+type F = { kind: string; f?: string };
+type G = { kind: string; g?: string };
+
+function copyField(o: F): F {
+  return { kind: "f", f: o.f };
+}
+
+function assignField(o: G): G {
+  const x: G = { kind: "g" };
+  x.g = o.g;
+  return x;
+}
+
+function main() {
+  console.log("b" in mk(), "b" in mk("s"), "b" in mk2(), "b" in mk2("s"));
+  console.log("c" in widen());
+  const d: D = box(1);
+  console.log("d" in d);
+  console.log("e" in first([]));
+  console.log("f" in copyField({ kind: "f" }));
+  console.log("g" in assignField({ kind: "g" }));
+}

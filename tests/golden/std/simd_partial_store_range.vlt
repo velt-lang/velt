@@ -1,0 +1,10 @@
+// `storePartial` past the array's end is a RangeError (simd_partial_range: `loadPartial`).
+
+import { u8x16 } from "velt:simd";
+
+function main() {
+  const d: u8[] = [1, 2, 3];
+  const at: number = -1;
+  u8x16.splat(9).storePartial(d, at);
+  console.log("not reached", d[0]);
+}

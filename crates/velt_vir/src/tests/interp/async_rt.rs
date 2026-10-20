@@ -4,12 +4,13 @@
 //! to the earliest sleep deadline. Heap futures live in interpreter memory (header 16 bytes,
 //! result/state at +16) so leak checks cover them; their behavior is kept in `futs`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::{Interp, FUNC_BASE};
 
-/// Opaque `cx` passed to poll functions (never dereferenced).
-pub(super) const CX: u64 = 0xC0DE;
+/// `cx` passed to poll functions: the address of a pointer to the await word (rt_abi_async.md
+/// §1), which stays 0 (`Interp::new` lays them out in the reserved start of the heap).
+pub(super) const CX: u64 = 8;
 const MAX_ROUNDS: u32 = 1_000_000;
 
 /// What a heap future does when polled.
@@ -75,7 +76,7 @@ struct Task {
 
 #[derive(Default)]
 pub(super) struct Exec {
-    pub futs: HashMap<u64, Fut>,
+    pub futs: FxHashMap<u64, Fut>,
     tasks: Vec<Task>,
     /// Inside `block_on`: promises are started only while tasks run (local.rs).
     pub running: bool,

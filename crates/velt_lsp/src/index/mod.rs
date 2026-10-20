@@ -79,7 +79,10 @@ pub fn item_names(item: &ast::Item) -> Vec<&ast::Ident> {
         ast::ItemKind::Enum(e) => vec![&e.name],
         ast::ItemKind::TypeAlias(a) => vec![&a.name],
         ast::ItemKind::Var(v) => pattern_idents(&v.pattern),
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) => vec![],
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Augment(_)
+        | ast::ItemKind::Namespace(_) => vec![],
     }
 }
 

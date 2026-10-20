@@ -3,13 +3,13 @@
 //! inside it) is one scope: a name it declares anywhere, as a parameter or a local, is its own.
 //! Member names and object keys are not references.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::ast::*;
 
 /// The free names of `item`.
-pub(super) fn free_names(item: &Item) -> HashSet<String> {
-    let mut out = HashSet::new();
+pub(super) fn free_names(item: &Item) -> FxHashSet<String> {
+    let mut out = FxHashSet::default();
     match &item.kind {
         ItemKind::Function(f) => function(f, &mut out),
         ItemKind::Class(d) | ItemKind::Struct(d) => {
@@ -36,6 +36,8 @@ pub(super) fn free_names(item: &Item) -> HashSet<String> {
             n.finish(&mut out);
         }
         ItemKind::Import(_)
+        | ItemKind::Augment(_)
+        | ItemKind::Namespace(_)
         | ItemKind::Interface(_)
         | ItemKind::Enum(_)
         | ItemKind::TypeAlias(_)
@@ -63,7 +65,7 @@ fn query_heads(item: &Item) -> Vec<String> {
     heads.0
 }
 
-fn function(f: &FnDecl, out: &mut HashSet<String>) {
+fn function(f: &FnDecl, out: &mut FxHashSet<String>) {
     let mut n = Names::default();
     for p in &f.sig.params {
         n.decls.insert(p.name.name.clone());
@@ -77,12 +79,12 @@ fn function(f: &FnDecl, out: &mut HashSet<String>) {
 
 #[derive(Default)]
 struct Names {
-    uses: HashSet<String>,
-    decls: HashSet<String>,
+    uses: FxHashSet<String>,
+    decls: FxHashSet<String>,
 }
 
 impl Names {
-    fn finish(self, out: &mut HashSet<String>) {
+    fn finish(self, out: &mut FxHashSet<String>) {
         out.extend(self.uses.into_iter().filter(|u| !self.decls.contains(u)));
     }
 

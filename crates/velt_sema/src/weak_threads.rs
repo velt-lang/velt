@@ -22,7 +22,7 @@
 //! Plain interface use stays legal: only an interface that some weak-holding class is
 //! converted to is treated as holding one.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -30,6 +30,7 @@ use crate::body::GenCopy;
 use crate::ctx::Ctx;
 use crate::dispatch::{instantiate, Dispatch, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::inst_sites::carry_guard;
 use crate::types::collect_params;
 use crate::visit::{self, VisitMut};
 
@@ -55,7 +56,7 @@ struct Found<'a, 'm> {
     async_fns: Vec<DefId>,
     /// Spans of `this` upcast for a base constructor (`super(...)`): not a use of the subclass
     /// as its base.
-    super_receivers: HashSet<Span>,
+    super_receivers: FxHashSet<Span>,
 }
 
 impl VisitMut for Found<'_, '_> {
@@ -200,7 +201,7 @@ fn checked_where_written(what: &GenCopy) -> bool {
 pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
     // Each function's crossings and conversions.
     let sends = cx.channel_sends();
-    let mut own: HashMap<DefId, Vec<(TyId, Need)>> = HashMap::new();
+    let mut own: FxHashMap<DefId, Vec<(TyId, Need)>> = FxHashMap::default();
     for (d, t, what, at) in recorded {
         own.entry(d).or_default().push((t, Need::Cross(what, at)));
     }
@@ -218,7 +219,7 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
             task_fns: vec![],
             lock_fns: vec![],
             async_fns: vec![],
-            super_receivers: HashSet::new(),
+            super_receivers: FxHashSet::default(),
         };
         visit::block(&mut f.body.block, &mut found);
         lock_fns.extend(std::mem::take(&mut found.lock_fns));
@@ -277,8 +278,8 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
     }
     // The interfaces and classes whose values may hold a weak collection, and a class that
     // makes each one.
-    let mut hiding: HashSet<DefId> = HashSet::new();
-    let mut why: HashMap<DefId, TyId> = HashMap::new();
+    let mut hiding: FxHashSet<DefId> = FxHashSet::default();
+    let mut why: FxHashMap<DefId, TyId> = FxHashMap::default();
     loop {
         let mut grew = false;
         for &(d, t) in &sources {
@@ -293,7 +294,7 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         }
     }
     concrete.sort_by_key(|(s, ..)| (s.file, s.lo, s.hi));
-    let mut reported = HashSet::new();
+    let mut reported = FxHashSet::default();
     for (at, t, what, via) in concrete {
         let written = via.is_none() && checked_where_written(&what) && cx.holds_weak(t);
         if written || !cx.holds_weak_with(t, &hiding) || !reported.insert(at) {
@@ -320,7 +321,7 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
                 cx.display(t)
             ));
         }
-        if let Some(h) = hidden(cx, t, &hiding, &mut HashSet::new()) {
+        if let Some(h) = hidden(cx, t, &hiding, &mut FxHashSet::default()) {
             if let Some(src) = why.get(&h).copied() {
                 let (hn, kind) = match (cx.iface(h), cx.adt(h)) {
                     (Some(i), _) => (i.name.clone(), "an interface value"),
@@ -343,13 +344,13 @@ fn reachable(
     cx: &mut Ctx,
     concrete: &[(Span, TyId, GenCopy, Option<DefId>)],
     sources: &[(DefId, TyId)],
-) -> HashSet<DefId> {
-    let mut by_target: HashMap<DefId, Vec<TyId>> = HashMap::new();
+) -> FxHashSet<DefId> {
+    let mut by_target: FxHashMap<DefId, Vec<TyId>> = FxHashMap::default();
     for &(d, t) in sources {
         by_target.entry(d).or_default().push(t);
     }
-    let mut out = HashSet::new();
-    let mut seen = HashSet::new();
+    let mut out = FxHashSet::default();
+    let mut seen = FxHashSet::default();
     let mut todo: Vec<TyId> = concrete.iter().map(|c| c.1).collect();
     while let Some(t) = todo.pop() {
         if !seen.insert(t) {
@@ -384,8 +385,8 @@ fn reachable(
 fn hidden(
     cx: &mut Ctx,
     t: TyId,
-    hiding: &HashSet<DefId>,
-    seen: &mut HashSet<TyId>,
+    hiding: &FxHashSet<DefId>,
+    seen: &mut FxHashSet<TyId>,
 ) -> Option<DefId> {
     if !seen.insert(t) || cx.holds_weak(t) {
         return None;
@@ -417,7 +418,7 @@ type Req = ((TyId, Need), Option<(Span, DefId)>);
 /// the concrete ones are added to `concrete` (with the call) and `sources`.
 fn instantiations(
     cx: &mut Ctx,
-    own: &HashMap<DefId, Vec<(TyId, Need)>>,
+    own: &FxHashMap<DefId, Vec<(TyId, Need)>>,
     concrete: &mut Vec<(Span, TyId, GenCopy, Option<DefId>)>,
     sources: &mut Vec<(DefId, TyId)>,
 ) {
@@ -437,39 +438,45 @@ fn instantiations(
             .map(move |d| (i, d))
     });
     let mut rounds = Rounds::new(facts.len(), reads);
-    let mut needs: HashMap<DefId, Vec<(TyId, Need)>> = HashMap::new();
-    let mut found_at: HashSet<(Span, TyId, Need)> = HashSet::new();
+    let mut needs: FxHashMap<DefId, Vec<(TyId, Need, u64)>> = FxHashMap::default();
+    let mut found_at: FxHashSet<(Span, TyId, Need)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, fx) = &facts[i];
-        let mut reqs: Vec<Req> = own
+        // With guard bits (`inst_sites::carry_guard`).
+        let mut reqs: Vec<(Req, u64)> = own
             .get(f)
             .into_iter()
             .flatten()
-            .map(|n| (n.clone(), None))
+            .map(|n| ((n.clone(), None), 0))
             .collect();
-        for (d, targs, span) in &fx.calls {
-            for (t, n) in needs.get(d).into_iter().flatten() {
-                reqs.push(((cx.subst(*t, targs), n.clone()), Some((*span, *d))));
+        for ((d, targs, span), site) in fx.calls.iter().zip(&fx.guards) {
+            for (t, n, need) in needs.get(d).into_iter().flatten() {
+                if let Some(g) = carry_guard(cx, *need, targs, *site) {
+                    reqs.push((((cx.subst(*t, targs), n.clone()), Some((*span, *d))), g));
+                }
             }
         }
         for (m, args, span) in &fx.dyn_calls {
-            for (t, n) in needs.get(m).into_iter().flatten() {
+            for (t, n, need) in needs.get(m).into_iter().flatten() {
+                let Some(g) = carry_guard(cx, *need, args, 0) else {
+                    continue;
+                };
                 if let Some(t) = instantiate(cx, *t, args) {
-                    reqs.push(((t, n.clone()), Some((*span, *m))));
+                    reqs.push((((t, n.clone()), Some((*span, *m))), g));
                 }
             }
         }
         for c in &fx.closures {
-            for n in needs.get(c).into_iter().flatten() {
-                reqs.push((n.clone(), None));
+            for (t, n, need) in needs.get(c).into_iter().flatten() {
+                reqs.push((((*t, n.clone()), None), *need));
             }
         }
         let mut grew = false;
-        for ((t, n), at) in reqs {
+        for (((t, n), at), guard) in reqs {
             if is_generic(cx, t) {
                 let ns = needs.entry(*f).or_default();
-                if !ns.contains(&(t, n.clone())) {
-                    ns.push((t, n));
+                if !ns.contains(&(t, n.clone(), guard)) {
+                    ns.push((t, n, guard));
                     grew = true;
                 }
             } else if let Some((span, callee)) = at {

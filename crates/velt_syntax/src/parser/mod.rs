@@ -5,14 +5,21 @@
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
+mod ambient;
 mod arrow;
+mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
 mod members;
+mod namespaces;
+mod optional_types;
 mod param_patterns;
 mod param_props;
 mod paren_match;
@@ -25,11 +32,16 @@ mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod tuple_types;
 mod type_assertion;
 mod type_decls;
+mod type_level;
+mod type_members;
 mod types;
 mod undefined;
+mod var_decls;
 
+use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
@@ -87,6 +99,29 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Ambient declarations read so far, when the caller asked for them (`ambient`).
+    pub(crate) ambient: Option<Vec<crate::Ambient>>,
+    /// Build-time constants: the identifier expression (or shorthand property) starting at
+    /// one of these offsets is the literal (`crate::ParseOptions::defines`).
+    pub(crate) define_at: Option<&'a FxHashMap<u32, Lit>>,
+    /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
+    pub(crate) saw_module_syntax: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and `T`.
+    this_param: Option<(Span, TypeExpr)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (`velt fmt` refuses files with them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
+    /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
+    /// directly in it.
+    fn_body_next: bool,
+    /// The statement parsed next is directly in a function body or at the top level, where
+    /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
+    var_ok: bool,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -131,8 +166,17 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
+            fn_body_next: false,
+            var_ok: false,
             computed_keys: BTreeSet::new(),
             no_in: false,
+            ambient: None,
+            define_at: None,
+            saw_module_syntax: false,
+            import_meta: None,
         }
     }
 
@@ -268,6 +312,25 @@ impl<'a> Parser<'a> {
 
     fn expect_semi(&mut self) -> PResult<()> {
         self.expect(Tok::Semi)
+    }
+
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace)
+            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
     }
 
     /// The literal payload of a token.

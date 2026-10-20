@@ -26,7 +26,7 @@ async function main() {
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     const id = new URL(req.url).searchParams.get("id") ?? "";
     const user = users.get(id);
-    if (user === null) {
+    if (user === undefined) {
       return Response.json({ error: `no user ${id}` }, { status: 404 });
     }
     return Response.json(user);

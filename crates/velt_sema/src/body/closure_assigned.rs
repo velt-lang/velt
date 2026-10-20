@@ -10,9 +10,10 @@
 //! Null checks of field paths (`k.left !== null`) still narrow: their reads are checked again
 //! (`field_narrow`). `instanceof` on a `readonly` field path of such a variable does not.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Label, Span};
+use velt_syntax::ast;
 
 use super::narrow::Fact;
 use super::FnCx;
@@ -27,7 +28,7 @@ pub(crate) struct Refused {
 }
 
 /// The names `assigned_by_closures` found, owned (for `Frame::closure_assigned`).
-pub(crate) fn owned(names: super::assigned::Assigned) -> HashMap<String, Span> {
+pub(crate) fn owned(names: super::assigned::Assigned) -> FxHashMap<String, Span> {
     names.into_iter().map(|(n, s)| (n.to_string(), s)).collect()
 }
 
@@ -52,7 +53,7 @@ impl FnCx<'_, '_> {
     /// field path of one): then it is not assumed, and the reads in its scope are noted.
     pub(crate) fn refuse_fact(&mut self, fact: &Fact) -> bool {
         let (l, class) = match fact {
-            Fact::NonNull(l) | Fact::Members(l, _) => (*l, None),
+            Fact::NonNull(l) | Fact::Members(l, _) | Fact::Excludes(l, _) => (*l, None),
             Fact::Class(l, t) => (*l, Some(*t)),
         };
         let (root, path) = match self.token_path(l) {
@@ -64,6 +65,12 @@ impl FnCx<'_, '_> {
         let Some(at) = self.closure_assignment(root) else {
             return false;
         };
+        // A null check of the variable itself holds until the next assignment in this
+        // function, as in TypeScript; its reads check the value again (`checked_narrowed_read`)
+        // in case a closure it called set it in between.
+        if path.is_empty() && matches!(fact, Fact::NonNull(_) | Fact::Excludes(..)) {
+            return false;
+        }
         let name = self.f.locals[root.0 as usize].name.clone();
         let note = self.refusal_note(fact, &name, &format!("{name}{path}"));
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
@@ -73,16 +80,81 @@ impl FnCx<'_, '_> {
         true
     }
 
+    /// A read of local `l` (of nullable type `ty`, which a closure assigns) that a null check
+    /// narrowed: its value, checked again, because a call since the check may have run the
+    /// closure. JavaScript would go on with `null` and throw a `TypeError` where it is used
+    /// (`cleanupFn()`); Velt stops at the read with one.
+    pub(crate) fn checked_narrowed_read(
+        &mut self,
+        l: LocalId,
+        ty: crate::hir::TyId,
+        want: super::Want,
+        span: Span,
+    ) -> crate::hir::Expr {
+        let name = self.f.locals[l.0 as usize].name.clone();
+        let what = self.cx.ty.nothing_of(ty).map_or("null", |n| match n {
+            crate::hir::Nothing::Both => "null or undefined",
+            n => n.word(),
+        });
+        let msg = format!(
+            "TypeError: `{name}` was checked, but a closure set it to {what} before this use"
+        );
+        let mode = self.use_mode(ty, super::Want::Borrow);
+        let h = self.mk(crate::hir::ExprKind::Local(l, mode), ty, span);
+        self.checked_present(h, &msg, None, want != super::Want::Move, span)
+    }
+
+    /// `e` checked as the operand of a null or truthiness test: a variable that a closure
+    /// assigns is read as it is (the test is what checks it).
+    pub(crate) fn test_operand(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<crate::hir::TyId>,
+        want: super::Want,
+    ) -> crate::hir::Expr {
+        let mut inner = e;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        if matches!(inner.kind, ast::ExprKind::Ident(_)) {
+            self.raw_read = Some(inner.span);
+        }
+        let h = self.expr(e, exp, want);
+        self.raw_read = None;
+        h
+    }
+
+    /// Capture `inner` of a variable `name` that a closure assigns was not given the narrowing
+    /// `n` the variable has where the closure is created: errors at its reads get the note.
+    pub(crate) fn note_dropped_capture(
+        &mut self,
+        inner: LocalId,
+        name: &str,
+        n: (bool, Option<Vec<u32>>, Option<crate::hir::TyId>),
+    ) {
+        let fact = match n {
+            (_, _, Some(t)) => Fact::Class(inner, t),
+            (_, Some(vs), _) => Fact::Members(inner, vs),
+            (true, _, _) => Fact::NonNull(inner),
+            _ => return,
+        };
+        let Some(at) = self.closure_assignment(inner) else {
+            return;
+        };
+        let note = self.refusal_note(&fact, name, name);
+        self.f.scopes[0].refused.push((inner, Refused { note, at }));
+    }
+
     /// The note for errors at reads of `what` (`x`, `k.ro`), a variable `name` or a field path
     /// of it, that `fact` would have narrowed.
     fn refusal_note(&mut self, fact: &Fact, name: &str, what: &str) -> String {
         let target = match fact {
             Fact::Class(_, t) => Some(*t),
-            Fact::NonNull(l) => self.cx.ty.opt_payload(self.local_ty(*l)),
+            Fact::NonNull(l) | Fact::Excludes(l, _) => self.cx.ty.opt_payload(self.local_ty(*l)),
             Fact::Members(l, vs) => match vs.as_slice() {
                 [v] => {
                     let ty = self.local_ty(*l);
-                    let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+                    let u = self.cx.ty.core(ty).unwrap_or(ty);
                     self.cx
                         .union_members(u)
                         .and_then(|ms| ms.get(*v as usize).copied())
