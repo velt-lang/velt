@@ -93,10 +93,7 @@ impl FnCx<'_, '_> {
     /// (its nothing, or the payload's tag); other values as they are.
     pub(super) fn param_as_any(&mut self, s: hir::Expr) -> hir::Expr {
         let core = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
-        let Some(any) = self
-            .any_ty()
-            .filter(|_| self.instance_valued(core))
-        else {
+        let Some(any) = self.any_ty().filter(|_| self.instance_valued(core)) else {
             return s;
         };
         let s = self.share_if_place(s);

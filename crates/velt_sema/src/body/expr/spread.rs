@@ -555,7 +555,11 @@ impl FnCx<'_, '_> {
                 // `{ ...u, ...p }` with `u.n: F` and `p.n?: F`.
                 let target = expected.unwrap_or(prev.ty);
                 let keeps_undefined = self.cx.dynamic(target).is_some()
-                    || self.cx.ty.nothing_of(target).is_some_and(|n| n.has_undefined());
+                    || self
+                        .cx
+                        .ty
+                        .nothing_of(target)
+                        .is_some_and(|n| n.has_undefined());
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.
                     Some(p) if src.presence && keeps_undefined => {

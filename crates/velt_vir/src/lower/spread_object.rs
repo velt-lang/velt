@@ -149,11 +149,7 @@ impl FnLower<'_, '_> {
             };
             self.assign(Place::local(out), Rvalue::Use(v));
             if let Some(f) = flag {
-                let p = if same {
-                    present
-                } else {
-                    FnLower::ctrue()
-                };
+                let p = if same { present } else { FnLower::ctrue() };
                 self.assign(Place::local(f), Rvalue::Use(p));
             }
             self.goto(join);
