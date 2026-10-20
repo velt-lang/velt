@@ -63,6 +63,12 @@ impl Ctx<'_> {
         })
     }
 
+    /// How implementation `index` stores the writable fields of its interface (`None`: it
+    /// cannot be written through).
+    pub(crate) fn setter_sources(&self, index: u32) -> Option<&Vec<SetterSrc>> {
+        self.iface_writes.sources.get(&index)
+    }
+
     /// Does the program write a field through `iface`?
     pub(crate) fn iface_written(&self, iface: DefId) -> bool {
         self.iface_writes.written.contains(&iface)

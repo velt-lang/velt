@@ -56,6 +56,9 @@ impl Cx<'_> {
         if let Some(&s) = self.lay.vtables.get(&key) {
             return s;
         }
+        // The tables of the interfaces an implementation's values convert to (lower/upcast.rs),
+        // filled in once this table is registered: two interfaces may convert to each other.
+        let mut targets: Vec<(i128, VtableKey)> = vec![];
         let (entries, id) = match key {
             VtableKey::Class(cls) => {
                 self.note_vtable_type(cls);
@@ -64,13 +67,11 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) => {
                 self.note_vtable_type(ty);
                 let mut entries = self.impl_entries(index, ty);
-                // The tables of the interfaces its values convert to (lower/upcast.rs).
-                if let Some(targets) = self.hir.upcast_impls.get(&index).cloned() {
+                if let Some(js) = self.hir.upcast_impls.get(&index).cloned() {
                     let iface = self.hir.impls[index as usize].iface;
                     let n = self.upcast_base(iface);
-                    for (k, j) in targets.into_iter().enumerate() {
-                        let t = self.vtable(VtableKey::Impl(j, ty));
-                        entries.push((n + k as i128, Const::Static(t)));
+                    for (k, j) in js.into_iter().enumerate() {
+                        targets.push((n + k as i128, VtableKey::Impl(j, ty)));
                     }
                 }
                 let mut id = self.class_id_word(ty, true);
@@ -92,7 +93,11 @@ impl Cx<'_> {
             VtableKey::Impl(index, ty) if self.is_any_impl(index) => Some(self.any_tag(ty)),
             _ => None,
         };
-        let n = entries.iter().map(|e| e.0 + HIDDEN + 1).max().unwrap_or(0);
+        let slots = entries
+            .iter()
+            .map(|e| e.0)
+            .chain(targets.iter().map(|t| t.0));
+        let n = slots.map(|s| s + HIDDEN + 1).max().unwrap_or(0);
         let n = match tag {
             Some(_) => n.max(super::super::any::SLOT_TAG + HIDDEN + 1),
             None => n,
@@ -135,6 +140,13 @@ impl Cx<'_> {
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.vtables.insert(key, id);
+        for (slot, target) in targets {
+            let t = self.vtable(target);
+            let at = (8 * (slot + HIDDEN)) as u32;
+            self.statics[id.0 as usize]
+                .relocs
+                .push((at, Const::Static(t)));
+        }
         id
     }
 

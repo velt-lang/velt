@@ -342,12 +342,18 @@ impl Ctx<'_> {
                 Err(why) => {
                     let shown: Vec<String> =
                         operands.iter().map(|(o, _)| self.display(*o)).collect();
+                    let what = match operands.iter().any(|(o, _)| self.is_method_iface(*o)) {
+                        true => "members",
+                        false => "fields",
+                    };
                     self.error(
                         Diagnostic::error(
                             format!("no value has type `{}`: {why}", shown.join(" & ")),
                             span,
                         )
-                        .with_note("a value of an intersection has every part's fields at once"),
+                        .with_note(format!(
+                            "a value of an intersection has every part's {what} at once"
+                        )),
                     );
                     return self.ty.error;
                 }

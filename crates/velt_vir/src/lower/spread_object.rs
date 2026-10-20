@@ -102,8 +102,23 @@ impl FnLower<'_, '_> {
                 self.switch_to(then);
             }
             let sft = self.cx.member_ty(*sty, *k);
+            let mut shared = false;
             let value = if self.vty(sft) == vt {
                 Operand::Copy(fp)
+            } else if matches!(self.cx.kind(fty), TyKind::Option(p, _) if self.vty(p) == self.vty(sft))
+            {
+                // `a: F` under a later `a?: F`: the field holds `F | undefined`.
+                shared = true;
+                let v = self.share_value(Operand::Copy(fp), sft);
+                match vt {
+                    Ty::Agg(a) => {
+                        let t = self.temp(vt);
+                        let some = vec![FnLower::ctrue(), v];
+                        self.assign(Place::local(t), Rvalue::Aggregate(a, some));
+                        Operand::Copy(Place::local(t))
+                    }
+                    _ => v,
+                }
             } else {
                 // `a?: F` over a required `a: F`: a present `undefined` can't be kept.
                 let ok = self.option_is_some(&fp, sft);
@@ -117,7 +132,10 @@ impl FnLower<'_, '_> {
                 self.switch_to(good);
                 Operand::Copy(self.some_payload(&fp, sft))
             };
-            let v = self.share_value(value, fty);
+            let v = match shared {
+                true => value,
+                false => self.share_value(value, fty),
+            };
             self.assign(Place::local(out), Rvalue::Use(v));
             if let Some(f) = flag {
                 let p = if self.vty(sft) == vt {

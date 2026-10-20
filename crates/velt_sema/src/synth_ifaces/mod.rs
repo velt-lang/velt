@@ -19,19 +19,20 @@
 //! records the pair, and the value is an `Upcast` keeping the same object
 //! (hir_encodings.md "Interface upcasts").
 
+mod upcasts;
+
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashMap;
 
 use velt_common::{Diagnostic, Span};
 
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
 use crate::defs::{Bound, DefInfo, FieldInfo, Generics, IfaceInfo};
-use crate::hir::{DefId, ImplDef, Nothing, TyId, TyKind};
+use crate::hir::{DefId, Nothing, TyId, TyKind};
 
 /// What a synthesized interface is made of, over its own type parameters.
 #[derive(Clone, PartialEq, Eq, Hash)]
-enum Form {
+pub(super) enum Form {
     /// `I1 & I2 & { … }`: the interface parts and the merged object part.
     Meet {
         ifaces: Vec<TyId>,
@@ -50,6 +51,9 @@ enum Form {
 pub(crate) struct SynthIfaces {
     by_form: FxHashMap<Form, DefId>,
     forms: FxHashMap<DefId, (Form, Span)>,
+    /// The parts of an intersection made here as first written (its form has them sorted, so
+    /// `A & B` and `B & A` are one interface), for showing it.
+    written: FxHashMap<DefId, Vec<TyId>>,
     /// Made before interfaces were flattened: filled by [`Ctx::fill_synth_ifaces`].
     pending: Vec<DefId>,
     flattened: bool,
@@ -83,7 +87,12 @@ impl Ctx<'_> {
         }
         let mut ifaces: Vec<TyId> = vec![];
         let mut objects: Vec<TyId> = vec![];
+        let mut written: Vec<TyId> = vec![];
         for t in [a, b] {
+            match self.written_parts(t) {
+                Some(ps) => written.extend(ps),
+                None => written.push(t),
+            }
             if let Some((is, o)) = self.meet_parts(t) {
                 for i in is {
                     if !ifaces.contains(&i) {
@@ -128,17 +137,24 @@ impl Ctx<'_> {
                 }
             }
         }
-        if let Some(why) = self.method_clash(&ifaces) {
+        if let Some(why) = self.method_clash(&ifaces, object) {
             return Some(Err(why));
         }
         if object.is_none() && ifaces.len() == 1 {
             return Some(Ok(ifaces[0]));
         }
-        Some(Ok(self.synth_iface(
-            Form::Meet { ifaces, object },
-            module,
-            span,
-        )))
+        let form = Form::Meet { ifaces, object };
+        Some(Ok(self.synth_iface(form, Some(written), module, span)))
+    }
+
+    /// The parts of `t` as written when it is an intersection interface made here, with `t`'s
+    /// arguments.
+    fn written_parts(&mut self, t: TyId) -> Option<Vec<TyId>> {
+        let TyKind::Dyn(d, args) = self.ty.kind(t).clone() else {
+            return None;
+        };
+        let parts = self.synth_ifaces.written.get(&d)?.clone();
+        Some(parts.iter().map(|&p| self.subst(p, &args)).collect())
     }
 
     /// The parts of `t` when it is an intersection interface made here, with `t`'s arguments.
@@ -157,12 +173,30 @@ impl Ctx<'_> {
     /// For a value of an intersection interface made here where an object type is expected:
     /// why it does not convert.
     pub(crate) fn object_part_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
+        if let Some(note) = self.field_only_parent_note(expected, found) {
+            return Some(note);
+        }
         self.meet_parts(found)?;
         if !self.is_object_type(expected) {
             return None;
         }
         let e = self.display(expected);
         Some(format!("`{e}` is an object type: the interface value would be copied into another object; build one from its fields, or keep the interface type"))
+    }
+
+    /// For a value of an interface that extends a field-only interface, where that interface's
+    /// object type is expected: why it does not convert.
+    fn field_only_parent_note(&mut self, expected: TyId, found: TyId) -> Option<String> {
+        let (TyKind::Dyn(a, _), TyKind::Adt(o, _)) = (self.ty.kind(found), self.ty.kind(expected))
+        else {
+            return None;
+        };
+        let b = *self.field_only_of.get(o)?;
+        if !self.iface(*a)?.parents.iter().any(|p| p.iface == b) {
+            return None;
+        }
+        let (e, f) = (self.display(expected), self.display(found));
+        Some(format!("`{e}` has only fields, so it is an object type with a fixed layout, not an interface: the `{f}` value would be copied into a new object, where TypeScript keeps the same one; keep the type `{f}`, or give `{e}` a method"))
     }
 
     /// The fields of interface value type `t` (its arguments substituted): the flattened ones,
@@ -194,19 +228,31 @@ impl Ctx<'_> {
     ) -> TyId {
         keys.sort();
         keys.dedup();
-        self.synth_iface(
-            Form::Pick {
-                iface: t,
-                keys,
-                omit,
-            },
-            module,
-            span,
-        )
+        let form = Form::Pick {
+            iface: t,
+            keys,
+            omit,
+        };
+        self.synth_iface(form, None, module, span)
     }
 
-    /// The interface for `form` (written over the caller's type parameters), made once.
-    fn synth_iface(&mut self, form: Form, module: usize, span: Span) -> TyId {
+    /// The interface for `form` (written over the caller's type parameters, an intersection's
+    /// parts as `written`), made once.
+    fn synth_iface(
+        &mut self,
+        mut form: Form,
+        written: Option<Vec<TyId>>,
+        module: usize,
+        span: Span,
+    ) -> TyId {
+        // One interface whatever the order of the parts.
+        if let Form::Meet { ifaces, .. } = &mut form {
+            let key = |cx: &Self, t: TyId| match cx.ty.kind(t) {
+                TyKind::Dyn(d, _) => (d.0, t.0),
+                _ => (u32::MAX, t.0),
+            };
+            ifaces.sort_by_key(|&t| key(self, t));
+        }
         let mut params: Vec<u32> = vec![];
         let parts: Vec<TyId> = match &form {
             Form::Meet { ifaces, object } => ifaces.iter().chain(object).copied().collect(),
@@ -233,11 +279,16 @@ impl Ctx<'_> {
                 omit,
             },
         };
+        let written: Option<Vec<TyId>> =
+            written.map(|w| w.iter().map(|&t| renumber(self, t)).collect());
         let args: Vec<TyId> = params.iter().map(|&n| self.ty.param(n)).collect();
         if let Some(&d) = self.synth_ifaces.by_form.get(&generic) {
             return self.ty.intern(TyKind::Dyn(d, args));
         }
-        let name = self.form_name(&generic);
+        let name = match &written {
+            Some(w) => self.parts_name(w),
+            None => self.form_name(&generic),
+        };
         let mut generics = Generics::default();
         for i in 0..params.len() {
             generics.push(&format!("T{i}"));
@@ -258,6 +309,9 @@ impl Ctx<'_> {
         );
         self.synth_ifaces.by_form.insert(generic.clone(), d);
         self.synth_ifaces.forms.insert(d, (generic, span));
+        if let Some(w) = written {
+            self.synth_ifaces.written.insert(d, w);
+        }
         match self.synth_ifaces.flattened {
             true => self.fill_synth(d),
             false => self.synth_ifaces.pending.push(d),
@@ -276,6 +330,10 @@ impl Ctx<'_> {
         let (form, _) = self.synth_ifaces.forms.get(&d)?;
         let bound: Vec<String> = args.iter().map(|&t| self.display_in(t, names)).collect();
         let show = |t: TyId| self.display_in(t, &bound);
+        if let Some(w) = self.synth_ifaces.written.get(&d) {
+            let parts: Vec<String> = w.iter().map(|&t| show(t)).collect();
+            return Some(parts.join(" & "));
+        }
         Some(match form {
             Form::Meet { ifaces, object } => {
                 let parts: Vec<String> = ifaces.iter().chain(object).map(|&t| show(t)).collect();
@@ -292,6 +350,12 @@ impl Ctx<'_> {
     /// The name of synthesized interface `d`.
     fn synth_ifaces_name(&self, d: DefId) -> String {
         self.iface(d).map_or(String::new(), |i| i.name.clone())
+    }
+
+    /// How an intersection of `parts` is shown.
+    fn parts_name(&mut self, parts: &[TyId]) -> String {
+        let shown: Vec<String> = parts.iter().map(|&t| self.display(t)).collect();
+        shown.join(" & ")
     }
 
     /// How a form is shown (its parameters as `T0`, `T1`, …, which are its own).
@@ -321,9 +385,24 @@ impl Ctx<'_> {
         }
     }
 
-    /// Why interface parts `ifaces` don't combine: a member of one name with different types
-    /// in two of them (methods are overloads in TypeScript).
-    fn method_clash(&mut self, ifaces: &[TyId]) -> Option<String> {
+    /// Why interface parts `ifaces` and object part `object` don't combine: a member of one
+    /// name with different types in two interface parts (methods are overloads in
+    /// TypeScript), or a field of the object part that is a method of an interface part.
+    fn method_clash(&mut self, ifaces: &[TyId], object: Option<TyId>) -> Option<String> {
+        let fields = object.map_or(vec![], |o| self.public_fields(o));
+        for &i in ifaces {
+            let TyKind::Dyn(d, args) = self.ty.kind(i).clone() else {
+                continue;
+            };
+            for (name, m) in self.iface_members(d, &args) {
+                if matches!(m, Member::Method(..)) && fields.iter().any(|f| f.name == name) {
+                    let (o, i) = (self.display(object?), self.display(i));
+                    return Some(format!(
+                        "member `{name}` is a field in `{o}` and a method in `{i}`"
+                    ));
+                }
+            }
+        }
         for (k, &i) in ifaces.iter().enumerate() {
             let TyKind::Dyn(d, args) = self.ty.kind(i).clone() else {
                 continue;
@@ -352,7 +431,7 @@ impl Ctx<'_> {
         match form {
             Form::Meet { ifaces, object } => {
                 // Checked again now that the parts' methods are known.
-                if let Some(why) = self.method_clash(&ifaces) {
+                if let Some(why) = self.method_clash(&ifaces, object) {
                     self.error(
                         Diagnostic::error(
                             format!("no value has type `{}`: {why}", self.synth_ifaces_name(d)),
@@ -492,280 +571,6 @@ impl Ctx<'_> {
         }
         out
     }
-
-    /// May an interface value of `have<from>` be used as a `want<to>`: does it have every
-    /// member of `want`, with the same type (module docs)? Records the conversion.
-    pub(crate) fn iface_upcast(
-        &mut self,
-        (have, from): (DefId, &[TyId]),
-        (want, to): (DefId, &[TyId]),
-    ) -> bool {
-        if have == want {
-            return false;
-        }
-        // A conversion back (`A` to `B` and `B` to `A`) would make each table hold the other.
-        let known = self.synth_ifaces.upcasts.contains(&(have, want));
-        if !known && self.reaches_upcast(want, have) {
-            return false;
-        }
-        let ours = self.iface_members(have, from);
-        let theirs = self.iface_members(want, to);
-        let fits = theirs.iter().all(|(n, m)| {
-            ours.iter().any(|(o, x)| {
-                o == n
-                    && match (x, m) {
-                        (Member::Field(a, ra), Member::Field(b, rb)) => a == b && (*rb || !ra),
-                        (a, b) => a == b,
-                    }
-            })
-        });
-        if fits && !known {
-            self.synth_ifaces.upcasts.push((have, want));
-        }
-        fits
-    }
-
-    /// Does an interface value of `from` convert to `to`, directly or through others?
-    fn reaches_upcast(&self, from: DefId, to: DefId) -> bool {
-        let mut stack = vec![from];
-        let mut seen = FxHashSet::default();
-        while let Some(d) = stack.pop() {
-            if d == to {
-                return true;
-            }
-            if !seen.insert(d) {
-                continue;
-            }
-            for &(a, b) in &self.synth_ifaces.upcasts {
-                if a == d {
-                    stack.push(b);
-                }
-            }
-        }
-        false
-    }
-
-    /// An implementation of synthesized interface `iface` for `ty`, a class or struct that
-    /// implements each of its interface parts and has its object part's fields (or, for a
-    /// `Pick`, implements the picked interface): its slots are those implementations' methods
-    /// and the fields' getters, so the value is the same object.
-    pub(crate) fn synth_impl(&mut self, ty: TyId, iface: DefId) -> Option<(u32, Vec<TyId>, TyId)> {
-        let (form, _) = self.synth_ifaces.forms.get(&iface)?.clone();
-        let TyKind::Adt(d, targs) = self.ty.kind(ty).clone() else {
-            return None;
-        };
-        // Only a nominal type: an object literal implements the interface itself.
-        if !self.class_of(ty).is_some() && self.adt(d)?.kind != crate::hir::AdtKind::Struct {
-            return None;
-        }
-        if !targs.is_empty() || !self.synth_ifaces.tried.insert((ty, iface)) {
-            return None;
-        }
-        let parts: Vec<TyId> = match &form {
-            Form::Meet { ifaces, .. } => ifaces.clone(),
-            Form::Pick { iface, .. } => vec![*iface],
-        };
-        let n = self.iface(iface)?.generics.len();
-        let mut slots: Vec<Option<TyId>> = vec![None; n];
-        // Per part: the implementation for `ty`.
-        let mut impls: Vec<(DefId, u32)> = vec![];
-        for &p in &parts {
-            let TyKind::Dyn(pd, pargs) = self.ty.kind(p).clone() else {
-                return None;
-            };
-            let (index, iargs, imp_ty) = self.find_impl(ty, pd)?;
-            if imp_ty != ty {
-                return None;
-            }
-            for (&pa, &ia) in pargs.iter().zip(&iargs) {
-                if !self.match_ty(pa, ia, &mut slots) {
-                    return None;
-                }
-            }
-            impls.push((pd, index));
-        }
-        let args: Vec<TyId> = slots
-            .into_iter()
-            .map(|s| s.unwrap_or(self.ty.never))
-            .collect();
-        let (names, fields): (Vec<String>, Vec<(String, TyId)>) = {
-            let i = self.iface(iface)?;
-            (
-                i.methods.iter().map(|m| m.name.clone()).collect(),
-                i.fields.iter().map(|f| (f.name.clone(), f.ty)).collect(),
-            )
-        };
-        let mut methods = vec![];
-        for name in &names {
-            methods.push(self.part_slot(&impls, name, false)?);
-        }
-        let own = self.adt(d)?.fields.clone();
-        for (name, fty) in fields {
-            if let Some(m) = self.part_slot(&impls, &name, true) {
-                methods.push(m);
-                continue;
-            }
-            let k = own
-                .iter()
-                .position(|f| f.name == name && f.private_to.is_none())?;
-            let want = self.subst(fty, &args);
-            if own[k].ty != want {
-                return None;
-            }
-            methods.push(crate::collect::getters::field_getter(self, d, ty, k, want));
-        }
-        self.impls.push(ImplDef {
-            ty,
-            generics: 0,
-            iface,
-            iface_args: args.clone(),
-            methods,
-        });
-        let index = (self.impls.len() - 1) as u32;
-        Some((index, args, ty))
-    }
-
-    /// The method in the slot of member `name` (a field's getter when `field`) of the first of
-    /// `impls` (per interface, its implementation) whose interface has it.
-    fn part_slot(&self, impls: &[(DefId, u32)], name: &str, field: bool) -> Option<DefId> {
-        for &(p, index) in impls {
-            let i = self.iface(p)?;
-            let slot = match field {
-                false => i.methods.iter().position(|m| m.name == name),
-                true => i
-                    .fields
-                    .iter()
-                    .position(|f| f.name == name)
-                    .map(|k| i.methods.len() + k),
-            };
-            if let Some(s) = slot {
-                return self.impls[index as usize].methods.get(s).copied();
-            }
-        }
-        None
-    }
-
-    /// After every body is checked: per interface `A` converted to others, the targets in
-    /// table order, and per implementation of `A` the implementation of each target for the
-    /// same type, made from `A`'s (each target slot is the slot of the same member in `A`).
-    pub(crate) fn upcast_tables(&mut self) -> (HashMap<DefId, Vec<DefId>>, HashMap<u32, Vec<u32>>) {
-        let mut targets: HashMap<DefId, Vec<DefId>> = HashMap::new();
-        for &(a, b) in &self.synth_ifaces.upcasts {
-            targets.entry(a).or_default().push(b);
-        }
-        let mut impls_of: HashMap<u32, Vec<u32>> = HashMap::new();
-        // Implementations made here are visited too: a target converting further gets its own.
-        let mut i = 0;
-        while i < self.impls.len() {
-            let a = self.impls[i].iface;
-            if let Some(bs) = targets.get(&a).cloned() {
-                let mut v = vec![];
-                for b in bs {
-                    v.push(self.upcast_impl(i as u32, b));
-                }
-                impls_of.insert(i as u32, v);
-            }
-            i += 1;
-        }
-        (targets, impls_of)
-    }
-
-    /// The implementation of interface `b` for the type of implementation `index` (of an
-    /// interface whose values convert to `b`): an existing one, or one made of its slots.
-    fn upcast_impl(&mut self, index: u32, b: DefId) -> u32 {
-        let imp = self.impls[index as usize].clone();
-        if let Some(j) = self
-            .impls
-            .iter()
-            .position(|x| x.iface == b && x.ty == imp.ty && x.generics == imp.generics)
-        {
-            return j as u32;
-        }
-        let a = imp.iface;
-        let (ai, bi) = (
-            self.iface(a).expect("ICE: iface"),
-            self.iface(b).expect("ICE: iface"),
-        );
-        let slot_of = |name: &str, field: bool| -> usize {
-            let s = match field {
-                false => ai.methods.iter().position(|m| m.name == name),
-                true => ai
-                    .fields
-                    .iter()
-                    .position(|f| f.name == name)
-                    .map(|k| ai.methods.len() + k),
-            };
-            s.expect("ICE: an upcast target member the source lacks")
-        };
-        let mut slots: Vec<usize> = bi.methods.iter().map(|m| slot_of(&m.name, false)).collect();
-        slots.extend(bi.fields.iter().map(|f| slot_of(&f.name, true)));
-        if self.iface_written(b) {
-            let n = ai.methods.len() + ai.fields.len();
-            let writable = self.writable_fields(a);
-            for k in self.writable_fields(b) {
-                let name = &self.iface(b).expect("ICE: iface").fields[k].name;
-                let f = self
-                    .iface(a)
-                    .expect("ICE: iface")
-                    .fields
-                    .iter()
-                    .position(|f| &f.name == name);
-                let at = f.and_then(|f| writable.iter().position(|&w| w == f));
-                slots.push(n + at.expect("ICE: an upcast target setter the source lacks"));
-            }
-        }
-        // `b`'s arguments: from the interface types the conversion was checked with, the
-        // members agree, so `a`'s implementation arguments give `b`'s by matching its fields
-        // and methods; interfaces made here and parents name them directly.
-        let iface_args = self.upcast_args(a, &imp.iface_args, b);
-        let methods = slots
-            .into_iter()
-            .map(|s| *imp.methods.get(s).expect("ICE: upcast slot out of range"))
-            .collect();
-        self.impls.push(ImplDef {
-            ty: imp.ty,
-            generics: imp.generics,
-            iface: b,
-            iface_args,
-            methods,
-        });
-        (self.impls.len() - 1) as u32
-    }
-
-    /// The arguments of `b` for a value of `a<args>`: through `a`'s parents, else by matching
-    /// the members' types.
-    fn upcast_args(&mut self, a: DefId, args: &[TyId], b: DefId) -> Vec<TyId> {
-        let parents = self.iface(a).map(|i| i.parents.clone()).unwrap_or_default();
-        if let Some(p) = parents.iter().find(|p| p.iface == b) {
-            return p.args.iter().map(|&t| self.subst(t, args)).collect();
-        }
-        let n = self.iface(b).map_or(0, |i| i.generics.len());
-        let generic: Vec<TyId> = (0..n as u32).map(|i| self.ty.param(i)).collect();
-        let ours = self.iface_members(a, args);
-        let theirs = self.iface_members(b, &generic);
-        let mut slots: Vec<Option<TyId>> = vec![None; n];
-        for (name, m) in &theirs {
-            let Some((_, x)) = ours.iter().find(|(o, _)| o == name) else {
-                continue;
-            };
-            match (m, x) {
-                (Member::Field(p, _), Member::Field(t, _)) => {
-                    self.match_ty(*p, *t, &mut slots);
-                }
-                (Member::Method(ps, r, ..), Member::Method(ts, s, ..)) => {
-                    for (p, t) in ps.iter().zip(ts) {
-                        self.match_ty(*p, *t, &mut slots);
-                    }
-                    self.match_ty(*r, *s, &mut slots);
-                }
-                _ => {}
-            }
-        }
-        slots
-            .into_iter()
-            .map(|s| s.unwrap_or(self.ty.never))
-            .collect()
-    }
 }
 
 /// A placeholder parameter for an interface method's `Self` (and, after it, the method's own
@@ -774,7 +579,7 @@ const SELF_PLACEHOLDER: u32 = 100_000;
 
 /// An interface member, for comparing two interfaces.
 #[derive(PartialEq)]
-enum Member {
+pub(super) enum Member {
     /// A field: its read type and whether it is `readonly`.
     Field(TyId, bool),
     /// A method: parameter types, result, getter, own type parameter count.

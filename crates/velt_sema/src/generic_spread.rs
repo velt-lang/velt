@@ -20,7 +20,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::anon::ShapeField;
 use crate::ctx::Ctx;
-use crate::hir::{AdtKind, TyId, TyKind, TyOp};
+use crate::hir::{AdtKind, Nothing, TyId, TyKind, TyOp};
 
 /// What a deferred type that isn't an alias puts between its arguments when shown.
 pub(crate) fn op_sep(o: TyOp) -> &'static str {
@@ -36,7 +36,7 @@ impl Ctx<'_> {
     pub(crate) fn reduce_part_op(&mut self, o: TyOp, t: TyId, args: Vec<TyId>, span: Span) -> TyId {
         match o {
             TyOp::Spread => self.reduce_spread(t, args, span),
-            TyOp::Convert(_) => self.reduce_convert(args, span),
+            TyOp::Convert(c) => self.reduce_convert(c, args, span),
             _ => self.reduce_intersection(t, args, span),
         }
     }
@@ -49,22 +49,24 @@ impl Ctx<'_> {
         for part in args {
             let Some(fields) = self.spread_part_fields(part) else {
                 let tn = self.display(part);
-                self.error(
-                    Diagnostic::error(
-                        format!("cannot spread a value of type `{tn}` into an object"),
-                        span,
-                    )
-                    .with_note("in this generic function the spread's source is a type parameter; at this instantiation it is not an object type (object spread works on structs, classes and object types)"),
-                );
+                let mut d = Diagnostic::error(
+                    format!("cannot spread a value of type `{tn}` into an object"),
+                    span,
+                )
+                .with_note("in this generic function the spread's source is a type parameter; at this instantiation it is not an object type (object spread works on structs, classes and object types)");
+                if self.is_method_iface(part) {
+                    d = d.with_note(format!("`{tn}` is an interface with methods: a spread copies an object's own properties, which are its methods too for an object literal but not for a class instance, and an interface value can be either; spread a value of an object type, or build the object from the fields (`{{ a: x.a }}`)"));
+                }
+                self.error(d);
                 return self.ty.error;
             };
             for f in fields {
                 match out.iter_mut().find(|g| g.name == f.name) {
                     // An optional field overrides the earlier value only while present (a
-                    // present `undefined` too), so the field keeps the earlier one's type and
-                    // optionality; a present `undefined` over a required field is a `TypeError`
-                    // (lowering, `spread_object`). TypeScript's `number | string` for one of
-                    // another type is a union Velt doesn't build here.
+                    // present `undefined` too), so the field keeps the earlier one's
+                    // optionality, and a required one may hold `undefined` now, as for a
+                    // concrete spread (`spread_object`). TypeScript's `number | string` for one
+                    // of another type is a union Velt doesn't build here.
                     Some(g) if f.optional => {
                         if self.canon(g.ty) != self.canon(f.ty) {
                             let (gt, ft) = (self.display(g.ty), self.display(f.ty));
@@ -75,6 +77,11 @@ impl Ctx<'_> {
                             return self.ty.error;
                         }
                         g.readonly = false;
+                        if !g.optional
+                            && self.ty.nothing_of(g.ty).is_none_or(|n| !n.has_undefined())
+                        {
+                            g.ty = self.ty.option_of(g.ty, Nothing::Undefined);
+                        }
                     }
                     Some(g) => {
                         g.ty = f.ty;
@@ -89,6 +96,23 @@ impl Ctx<'_> {
             }
         }
         self.anon_type_with(&out, module)
+    }
+
+    /// Can a spread of object type `from` be built as object type `to`: the same field names,
+    /// each of `to`'s type, or of that type or `undefined` (a present `undefined` is a
+    /// `TypeError` then, as for a concrete spread with an expected type)?
+    fn spread_fits(&mut self, from: TyId, to: TyId) -> bool {
+        let (have, want) = (self.public_fields(from), self.public_fields(to));
+        if have.len() != want.len() || !self.is_object_type(to) {
+            return false;
+        }
+        want.iter().all(|w| {
+            have.iter().find(|h| h.name == w.name).is_some_and(|h| {
+                let (ht, wt) = (self.canon(h.ty), self.canon(w.ty));
+                let relaxed = self.ty.option_of(w.ty, Nothing::Undefined);
+                (ht == wt || ht == self.canon(relaxed)) && (w.optional || !h.optional)
+            })
+        })
     }
 
     /// The fields a spread copies out of a value of concrete type `t` (its public fields, not
@@ -112,14 +136,18 @@ impl Ctx<'_> {
         Some(fields)
     }
 
-    /// The requirement `TyOp::Convert` with known arguments `[from, to]`: `to` when a value of
-    /// `from` is a `to` without a copy, else `Error`, reported at `span`.
-    pub(crate) fn reduce_convert(&mut self, args: Vec<TyId>, span: Span) -> TyId {
+    /// The requirement `TyOp::Convert` number `c` with known arguments `[from, to]`: `to` when
+    /// a value of `from` is a `to` without a copy (or, for a spread built as `to`, has its
+    /// fields), else `Error`, reported at `span`.
+    pub(crate) fn reduce_convert(&mut self, c: u32, args: Vec<TyId>, span: Span) -> TyId {
         let [from, to] = args[..] else {
             return self.ty.error;
         };
         let (a, b) = (self.canon(from), self.canon(to));
         if a == b || self.same_layout(a, b) {
+            return to;
+        }
+        if self.type_level.spread_into.contains(&c) && self.spread_fits(a, b) {
             return to;
         }
         let (fa, tb) = (self.display(a), self.display(b));

@@ -126,6 +126,10 @@ fn convert_site(
             callee: crate::hir::Callee::Intrinsic(Intrinsic::KeyRead | Intrinsic::KeyWrite),
             args,
         } => Some((args[0].ty, args[1].ty, e.span)),
+        H::Call {
+            callee: crate::hir::Callee::Intrinsic(Intrinsic::SpreadObject),
+            ..
+        } => Some((e.ty, e.ty, e.span)),
         _ => None,
     };
     if let Some(key) = key {

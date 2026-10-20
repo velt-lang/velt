@@ -168,6 +168,15 @@ impl FnCx<'_, '_> {
             .entry(op)
             .or_insert(self.module);
         let span = h.span;
+        // A spread used as its target type (`return { ...x, ...patch }` as a `T`) is built as
+        // that type, as a concrete spread with an expected type is: a present `undefined` over
+        // a field that can't hold one is a `TypeError` there.
+        let mut h = h;
+        if let Some(at) = retarget_spread(&mut h, exp) {
+            self.cx.type_level.spread_into.insert(site);
+            self.cx.type_level.converts.insert((exp, exp, at), op);
+            return Ok(h);
+        }
         self.cx.type_level.converts.insert((h.ty, exp, span), op);
         Ok(self.mk(H::Upcast(Box::new(h)), exp, span))
     }
@@ -204,4 +213,19 @@ impl FnCx<'_, '_> {
                 })
         })
     }
+}
+
+/// `h`, an `Intrinsic::SpreadObject` (in the blocks binding its parts), typed `exp` instead:
+/// the span of the spread, or `None` when `h` is no spread.
+fn retarget_spread(h: &mut hir::Expr, exp: TyId) -> Option<velt_common::Span> {
+    let at = match &mut h.kind {
+        H::Block(b) => retarget_spread(b.value.as_mut()?, exp)?,
+        H::Call {
+            callee: hir::Callee::Intrinsic(Intrinsic::SpreadObject),
+            ..
+        } => h.span,
+        _ => return None,
+    };
+    h.ty = exp;
+    Some(at)
 }

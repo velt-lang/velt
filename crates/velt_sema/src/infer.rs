@@ -430,7 +430,7 @@ impl Ctx<'_> {
     }
 
     /// `(impl index, interface args, t)` if impl `i` is for type `t`.
-    fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
+    pub(crate) fn try_impl(&mut self, i: u32, t: TyId) -> Option<(u32, Vec<TyId>, TyId)> {
         let imp = &self.impls[i as usize];
         let (pat, n, iargs) = (imp.ty, imp.generics as usize, imp.iface_args.clone());
         let mut slots = vec![None; n];

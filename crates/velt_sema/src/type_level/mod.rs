@@ -75,6 +75,8 @@ pub(crate) struct State {
     /// Each conversion's requirement (`TyOp::Convert`) by (from, to, where it is)
     /// (`crate::generic_spread`).
     pub(crate) converts: rustc_hash::FxHashMap<(TyId, TyId, Span), TyId>,
+    /// The conversions (`TyOp::Convert` numbers) of a spread built as its target type.
+    pub(crate) spread_into: rustc_hash::FxHashSet<u32>,
     /// Each deferred type with concrete arguments, reduced (`hir::Program::type_ops`).
     pub(crate) reduced: rustc_hash::FxHashMap<TyId, TyId>,
     /// The deferred forms written outside aliases (`TyOp::Inline`).
