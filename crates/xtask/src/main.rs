@@ -11,6 +11,8 @@
 //!
 //! Run `cargo xtask help` for every option.
 
+#[cfg(all(test, unix))]
+mod cache_key_tests;
 mod changes;
 mod check;
 mod comments;
