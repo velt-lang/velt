@@ -1,1 +1,1 @@
-panic: a field checked for null (by a narrowing test or `!`) was set to null before this use
+panic: the right-hand side of this assignment set the tuple it writes into to null

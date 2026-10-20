@@ -1,0 +1,12 @@
+// A compound write into a tuple behind `as` whose right-hand side sets the field to null
+// (#1352): the old element is read first, then the program stops and names what happened,
+// where Node writes into the array the field held before.
+const ht: { t: [number, string] | null } = { t: [1, "h"] };
+(ht.t as [number, string])[0] += 1;
+console.log(ht.t);
+(ht.t as [number, string])[0] += (() => {
+  console.log("old", ht.t![0]);
+  ht.t = null;
+  return 5;
+})();
+console.log(ht.t);

@@ -3,7 +3,7 @@
 use velt_syntax::ast;
 
 use crate::body::places::is_place;
-use crate::body::Want;
+use crate::body::{LocalKind, Want};
 use crate::hir::{self, ExprKind as H, TyKind};
 
 /// `x`, `this.a`, `x.a.b`: re-reading it has no side effects.
@@ -105,12 +105,58 @@ impl crate::body::FnCx<'_, '_> {
                     kind: hir::StmtKind::Expr(check),
                     span,
                 });
+                self.held_recheck = Some(p.clone());
                 let h = H::UnwrapSome(Box::new(p), hir::UseMode::Borrow);
                 return self.mk(h, payload, object.span);
             }
         }
         self.cx.diags.truncate(mark);
         self.expr(object, None, Want::Borrow)
+    }
+
+    /// `f` checking an assignment: the target's hidden statements (`assign_receiver`) are
+    /// returned to run before it, and a tuple place to check again stays within it.
+    pub(super) fn target_scope<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> (R, Vec<hir::Stmt>) {
+        let outer = std::mem::take(&mut self.call_temps);
+        let recheck = self.held_recheck.take();
+        let r = f(self);
+        self.held_recheck = recheck;
+        (r, std::mem::replace(&mut self.call_temps, outer))
+    }
+
+    /// The value `v` written into a tuple behind `p!` / `p as T` (`assign_receiver`), then a
+    /// check that `v` left `p` present: a right-hand side that sets `p` to null
+    /// (`ht.t![0] = (() => { ht.t = null; return 5; })()`) stops the program with a message
+    /// naming that, where Node writes into the tuple `p` held before (#1352).
+    pub(super) fn held_rechecked(&mut self, v: hir::Expr) -> hir::Expr {
+        let Some(p) = self.held_recheck.take() else {
+            return v;
+        };
+        if !crate::effects::may_change_memory(&v) {
+            return v;
+        }
+        let (ty, span) = (v.ty, v.span);
+        let tmp = self.new_local("<value>", ty, false, span, LocalKind::Temp);
+        let msg = "the right-hand side of this assignment set the tuple it writes into to null";
+        let check = self.checked_present(p, msg, None, true, span);
+        let stmts = vec![
+            hir::Stmt {
+                kind: hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(v),
+                },
+                span,
+            },
+            hir::Stmt {
+                kind: hir::StmtKind::Expr(check),
+                span,
+            },
+        ];
+        let value = self.mk(H::Local(tmp, hir::UseMode::Move), ty, span);
+        self.with_temps_value(stmts, value)
     }
 
     /// `e` (a [`held_shape`]) with each index that has an effect bound to a hidden temporary,

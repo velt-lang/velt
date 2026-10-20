@@ -307,9 +307,8 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> (hir::Expr, bool) {
         // The target's hidden statements (`assign_receiver`) run before the assignment.
-        let outer = std::mem::take(&mut self.call_temps);
-        let (h, valued) = self.assign_as_here(op, target, value, as_value, span);
-        let temps = std::mem::replace(&mut self.call_temps, outer);
+        let ((h, valued), temps) =
+            self.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span));
         (self.with_lets(temps, h), valued)
     }
 
@@ -440,7 +439,7 @@ impl FnCx<'_, '_> {
             }
             let kind = H::Assign {
                 place: Box::new(place),
-                value: Box::new(v),
+                value: Box::new(self.held_rechecked(v)),
             };
             return self.mk(kind, unit, span);
         };
@@ -459,6 +458,7 @@ impl FnCx<'_, '_> {
                 Err(v) => self.concat_operand(v),
             };
             let v = self.coerce(v, lty);
+            let v = self.held_rechecked(v);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=
@@ -489,7 +489,7 @@ impl FnCx<'_, '_> {
                 let value = self.js_bitwise_assign(op, cur, v, span);
                 let kind = H::Assign {
                     place: Box::new(place),
-                    value: Box::new(value),
+                    value: Box::new(self.held_rechecked(value)),
                 };
                 let assign = self.mk(kind, unit, span);
                 return self.with_temps(stmts, assign);
@@ -509,7 +509,7 @@ impl FnCx<'_, '_> {
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),
-            value: Box::new(v),
+            value: Box::new(self.held_rechecked(v)),
         };
         let assign = self.mk(kind, unit, span);
         self.with_temps(stmts, assign)
@@ -524,9 +524,7 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let outer = std::mem::take(&mut self.call_temps);
-        let h = self.update_here(op, prefix, target, as_value, span);
-        let temps = std::mem::replace(&mut self.call_temps, outer);
+        let (h, temps) = self.target_scope(|cx| cx.update_here(op, prefix, target, as_value, span));
         self.with_lets(temps, h)
     }
 

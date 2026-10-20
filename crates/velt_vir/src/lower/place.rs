@@ -193,9 +193,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Sema unwraps a narrowed local directly (nothing can change it unseen) and a narrowed
-    /// field path (`node.left` after `node.left !== null`, or the tuple a `ht.t![0] = v` writes)
-    /// through this check: a call since the test may have set the field to null, which panics
-    /// here instead of reading `null`.
+    /// field path (`node.left` after `node.left !== null`) through this check: a call since
+    /// the test may have set the field to null, which panics here instead of reading `null`.
     fn check_narrowed_field(&mut self, inner: &hir::Expr, p: &Place, oty: TyId) {
         if matches!(inner.kind, hir::ExprKind::Local(..)) || self.dead() {
             return;
@@ -205,7 +204,7 @@ impl FnLower<'_, '_> {
         self.branch(some, ok, null);
         self.switch_to(null);
         let msg = format!(
-            "a field checked for null (by a narrowing test or `!`) was set to null before this use{}",
+            "a narrowed field was set to null before this read{}",
             self.panic_suffix()
         );
         let msg = self.str_lit(&msg);
