@@ -89,7 +89,10 @@ fn sema_cost(loaded: &Loaded) -> u64 {
 /// still shows in CPU time (cache and frequency effects of other processes) hits every size alike
 /// instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
-    const ROUNDS: usize = 7;
+    // A shared CI runner can slow one size's measurements enough to tilt a slope past the
+    // slack. A pass that really grows faster than linearly fails every attempt, so the test
+    // measures again, up to `ATTEMPTS` times, before it fails.
+    const ATTEMPTS: usize = 3;
     assert!(
         sizes.len() >= 3,
         "ICE: assert_linear needs three sizes for two slopes"
@@ -100,9 +103,31 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
         .iter()
         .map(|&n| load_src(&generated_program(n, chain(n))))
         .collect();
+    let mut failure = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match linear_slopes(sizes, &chain, &programs, slack) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("attempt {attempt} of {ATTEMPTS}: {e}");
+                failure = e;
+            }
+        }
+    }
+    panic!("{failure}");
+}
+
+/// One measurement for [`assert_linear`]: each size's best sema cost of `ROUNDS`, then the
+/// slopes between consecutive sizes, each later one under `slack`× the first.
+fn linear_slopes(
+    sizes: &[usize],
+    chain: &impl Fn(usize) -> usize,
+    programs: &[Loaded],
+    slack: f64,
+) -> Result<(), String> {
+    const ROUNDS: usize = 7;
     let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
-        for (b, p) in best.iter_mut().zip(&programs) {
+        for (b, p) in best.iter_mut().zip(programs) {
             *b = (*b).min(sema_cost(p));
         }
     }
@@ -112,24 +137,26 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
     let slopes: Vec<f64> = (1..sizes.len())
         .map(|i| (best[i] as f64 - best[i - 1] as f64).max(0.0) / (sizes[i] - sizes[i - 1]) as f64)
         .collect();
-    assert!(
-        slopes[0] > 0.0,
-        "sema cost did not grow from N = {} to {}: the measurement is broken",
-        sizes[0],
-        sizes[1],
-    );
-    for (i, s) in slopes.iter().enumerate().skip(1) {
-        assert!(
-            *s < slack * slopes[0],
-            "sema cost per unit grew from {:.0} (N = {} to {}) to {:.0} (N = {} to {})",
-            slopes[0],
-            sizes[0],
-            sizes[1],
-            s,
-            sizes[i],
-            sizes[i + 1],
-        );
+    if slopes[0] <= 0.0 {
+        return Err(format!(
+            "sema cost did not grow from N = {} to {}: the measurement is broken",
+            sizes[0], sizes[1],
+        ));
     }
+    for (i, s) in slopes.iter().enumerate().skip(1) {
+        if *s >= slack * slopes[0] {
+            return Err(format!(
+                "sema cost per unit grew from {:.0} (N = {} to {}) to {:.0} (N = {} to {})",
+                slopes[0],
+                sizes[0],
+                sizes[1],
+                s,
+                sizes[i],
+                sizes[i + 1],
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The instantiation checks' work for one `check` of `loaded`.
