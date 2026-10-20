@@ -36,7 +36,7 @@ mod callbacks;
 mod graph;
 mod types;
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -53,8 +53,8 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
-    let mut seen = HashSet::new();
-    let mut fns: HashMap<TyId, Why> = HashMap::new();
+    let mut seen = FxHashSet::default();
+    let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     loop {
         p.run(cx, &g);
@@ -215,8 +215,8 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
 /// A value read from the heap stands for every stored sync closure of its type. Only these are
 /// checked as sync handlers: a sync closure an async handler reaches otherwise (through an
 /// object or a collection the handler captured) is not a compile-time error, as on main.
-fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> HashMap<DefId, Option<Why>> {
-    let mut out = HashMap::new();
+fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> FxHashMap<DefId, Option<Why>> {
+    let mut out = FxHashMap::default();
     let mut work = vec![];
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
@@ -226,7 +226,7 @@ fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> HashMap<DefId, Option<
             }
         }
     }
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut heap_tys = vec![];
     while let Some((i, why)) = work.pop() {
         if !seen.insert(i) {

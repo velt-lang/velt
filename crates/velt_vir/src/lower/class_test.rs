@@ -7,7 +7,7 @@
 //! concrete class in its first word (`SLOT_CLASS_ID`, glue/vtable.rs; 0 for other types), and
 //! `x instanceof C` is one load and a range check: O(1), no allocation.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -54,8 +54,8 @@ impl Cx<'_> {
     }
 
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
-    fn number_classes(&self) -> HashMap<DefId, (u64, u64)> {
-        let mut children: HashMap<Option<DefId>, Vec<DefId>> = HashMap::new();
+    fn number_classes(&self) -> FxHashMap<DefId, (u64, u64)> {
+        let mut children: FxHashMap<Option<DefId>, Vec<DefId>> = FxHashMap::default();
         for i in 0..self.hir.defs.len() {
             let id = DefId(i as u32);
             if let hir::Def::Adt(a) = self.hir.def(id) {
@@ -68,7 +68,7 @@ impl Cx<'_> {
                 }
             }
         }
-        let mut out = HashMap::new();
+        let mut out = FxHashMap::default();
         let mut next = 1;
         // Explicit stack (deep hierarchies must not overflow the compiler's stack): (class,
         // whether its subclasses are numbered already).

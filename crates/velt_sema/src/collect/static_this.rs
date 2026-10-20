@@ -8,7 +8,7 @@
 //! every class below the declaring one: a copy is needed wherever a subclass's static runs an
 //! inherited one, through `B.f()` or a chain of `super.f()` calls.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_syntax::ast;
 use velt_syntax::visit::{walk_fn, Visit};
@@ -23,7 +23,7 @@ pub(crate) fn copy_statics(cx: &mut Ctx) {
         .filter(|&d| cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
         .collect();
     // The statics using `this` or `super`, per declaring class.
-    let mut users: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    let mut users: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
     for &c in &classes {
         let mut own: Vec<DefId> = cx
             .adt(c)

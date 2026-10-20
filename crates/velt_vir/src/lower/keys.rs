@@ -7,7 +7,7 @@
 //! The spelling is injective for the types lowering sees: ADTs, interfaces and closures are named
 //! by their fully qualified HIR names (unique per definition), everything else structurally.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_sema::hir::{DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
@@ -220,7 +220,7 @@ impl Cx<'_> {
 /// keeps symbols unique (as backends need) regardless, and `velt dev` treats such keys as
 /// ambiguous.
 pub(super) fn disambiguate(funcs: &mut [Function]) {
-    let mut seen: HashMap<String, u32> = HashMap::new();
+    let mut seen: FxHashMap<String, u32> = FxHashMap::default();
     for f in funcs {
         let n = seen.entry(f.symbol.clone()).or_insert(0);
         *n += 1;

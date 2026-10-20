@@ -77,7 +77,7 @@ pub(crate) mod switch;
 mod untyped_let;
 mod using;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -149,7 +149,7 @@ impl LoopCx {
 
 #[derive(Default, Clone)]
 pub(crate) struct Scope {
-    pub names: HashMap<String, LocalId>,
+    pub names: FxHashMap<String, LocalId>,
     /// Option locals narrowed to their payload inside this scope.
     pub narrowed: Vec<LocalId>,
     /// `T | null | undefined` locals known not to hold this nothing inside this scope.
@@ -239,20 +239,20 @@ pub(crate) struct Frame {
     pub finally_loops: Option<usize>,
     /// Spans (`lo`, `hi`) of the `yield`s about to be checked whose value is unused: those
     /// that are, or end, an expression statement (`generators.rs`, `stmt_yields`).
-    pub stmt_yields: std::collections::HashSet<(u32, u32)>,
+    pub stmt_yields: rustc_hash::FxHashSet<(u32, u32)>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
     /// `using` variables passed to an async call (receiver or argument), not yet soft moves:
     /// only a directly awaited call may share one (`expr::tasks`, `using_share`).
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
-    pub await_using: std::collections::HashSet<LocalId>,
+    pub await_using: rustc_hash::FxHashSet<LocalId>,
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
-    pub readonly_arrays: std::collections::HashSet<LocalId>,
+    pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
-    pub closure_consts: std::collections::HashMap<LocalId, DefId>,
+    pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
     /// The property writes after the declaration being checked, which a cast of a function to
     /// a callable object type there takes as members (`expr::callables`, #921).
     pub callable_writes: Option<expr::PendingWrites>,
@@ -261,7 +261,7 @@ pub(crate) struct Frame {
     pub assign_targets: Vec<(LocalId, Span)>,
     /// Locals declared with a method read as a value (`const f = o.m`): a call that passes
     /// them another `this` is not supported yet (`call_apply`).
-    pub method_values: std::collections::HashSet<LocalId>,
+    pub method_values: rustc_hash::FxHashSet<LocalId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
@@ -283,17 +283,17 @@ pub(crate) struct Frame {
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
-    pub const_refs: std::collections::HashSet<LocalId>,
+    pub const_refs: rustc_hash::FxHashSet<LocalId>,
     /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
     /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
     pub mutable_tests: Vec<LocalId>,
     pub unnarrowed_reads: Vec<Span>,
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
-    pub closure_assigned: HashMap<String, Span>,
+    pub closure_assigned: FxHashMap<String, Span>,
     /// Where this function's own code last assigns each variable (`assign_ends`): closures
     /// created before that do not see the variable's narrowing.
-    pub assign_ends: HashMap<String, u32>,
+    pub assign_ends: FxHashMap<String, u32>,
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
@@ -302,21 +302,21 @@ pub(crate) struct Frame {
     pub truthy_returns: bool,
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
-    pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    pub const_lits: FxHashMap<LocalId, velt_syntax::ast::SignedLit>,
     /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
     /// capturing groups and the flags of the regex each such local holds (`regex_args`).
-    pub regex_consts: HashMap<LocalId, (usize, String)>,
+    pub regex_consts: FxHashMap<LocalId, (usize, String)>,
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
-    pub untyped_lets: HashMap<LocalId, Span>,
+    pub untyped_lets: FxHashMap<LocalId, Span>,
     /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
     /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
     /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
-    pub destructured_discriminants: HashMap<LocalId, Vec<(bool, LocalId)>>,
+    pub destructured_discriminants: FxHashMap<LocalId, Vec<(bool, LocalId)>>,
     /// Calls of type predicates (`isFoo(x)`) whose conditions narrow a local: by the call's
     /// span (`lo`, `hi`), the local and the facts it establishes when the call returns `true`
     /// and `false`. The call checks them at run time (`predicates::predicate_checked`).
-    pub checked_predicates: HashMap<(u32, u32), predicates::CheckedPredicate>,
+    pub checked_predicates: FxHashMap<(u32, u32), predicates::CheckedPredicate>,
     /// Recursive closure groups declared in this frame, or the one whose member it checks
     /// (`closure_group`).
     pub groups: closure_group::GroupFrame,
@@ -369,15 +369,15 @@ impl Frame {
             const_refs: Default::default(),
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
-            closure_assigned: HashMap::new(),
-            assign_ends: HashMap::new(),
+            closure_assigned: FxHashMap::default(),
+            assign_ends: FxHashMap::default(),
             int_returns_number: false,
-            checked_predicates: HashMap::new(),
+            checked_predicates: FxHashMap::default(),
             truthy_returns: false,
-            const_lits: HashMap::new(),
-            regex_consts: HashMap::new(),
-            untyped_lets: HashMap::new(),
-            destructured_discriminants: HashMap::new(),
+            const_lits: FxHashMap::default(),
+            regex_consts: FxHashMap::default(),
+            untyped_lets: FxHashMap::default(),
+            destructured_discriminants: FxHashMap::default(),
             groups: Default::default(),
             late: Default::default(),
         }
@@ -451,7 +451,7 @@ pub(crate) struct FnCx<'a, 'm> {
     pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types it could see (`expr/closure.rs`).
-    pub member_choices: HashMap<(Span, Vec<TyId>, u64), TyId>,
+    pub member_choices: FxHashMap<(Span, Vec<TyId>, u64), TyId>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -484,7 +484,7 @@ pub(crate) struct FnCx<'a, 'm> {
     pub jsx_list_trial: bool,
     /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
     /// result is `this` itself, which such a method may return.
-    pub this_calls: std::collections::HashSet<Span>,
+    pub this_calls: rustc_hash::FxHashSet<Span>,
     /// The member of a recursive closure group whose arrow is about to be checked: group,
     /// member and its definition.
     pub pending_member: Option<(usize, usize, DefId)>,
@@ -521,7 +521,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             thread_callback: None,
             await_body: None,
             thread_adapter: None,
-            member_choices: HashMap::new(),
+            member_choices: FxHashMap::default(),
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,

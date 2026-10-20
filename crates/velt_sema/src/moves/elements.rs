@@ -4,7 +4,7 @@
 //! cell, which gets its own copy of the element each time the binding binds, so the closure
 //! never writes into the array (#799). One that cannot live in a cell is an error.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 
@@ -19,7 +19,7 @@ use crate::hir::{Def, DefId, LocalId, Pat, PatKind, UseMode};
 pub(super) fn box_element_writes(
     cx: &mut Ctx,
     (shared, copy): (&[Vec<bool>], &[Vec<bool>]),
-    async_captured: &HashSet<(DefId, LocalId)>,
+    async_captured: &FxHashSet<(DefId, LocalId)>,
     out: &mut Outcome,
     all: &mut Vec<Diagnostic>,
 ) {
@@ -62,7 +62,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
     use crate::visit::VisitMut;
     struct ByRef<'a> {
         kinds: &'a [LocalKind],
-        found: HashSet<LocalId>,
+        found: FxHashSet<LocalId>,
         closures: Vec<DefId>,
     }
     impl VisitMut for ByRef<'_> {
@@ -80,7 +80,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
             }
         }
     }
-    let (mut memo, mut direct) = (HashMap::new(), HashMap::new());
+    let (mut memo, mut direct) = (FxHashMap::default(), FxHashMap::default());
     let mut out = vec![];
     for i in 0..cx.defs.len() {
         let p = DefId(i as u32);
@@ -91,7 +91,7 @@ fn element_writes(cx: &mut Ctx) -> Vec<(DefId, LocalId, DefId, LocalId)> {
         };
         let mut v = ByRef {
             kinds: &kinds,
-            found: HashSet::new(),
+            found: FxHashSet::default(),
             closures: vec![],
         };
         crate::visit::block(&mut f.body.block, &mut v);

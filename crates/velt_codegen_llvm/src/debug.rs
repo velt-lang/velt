@@ -8,7 +8,7 @@
 //! `velt_opt`) are scoped in a `DILexicalBlockFile` of that file. The module flags select
 //! CodeView on Windows (turned into a PDB by `link /DEBUG`) and DWARF 4 elsewhere.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt::Write;
 
 use velt_vir::vir::{self, Linkage, SrcLoc};
@@ -31,8 +31,8 @@ pub(crate) struct FnDebug {
     subprogram: u32,
     file: u32,
     /// Scope for statements of another file, per file index.
-    file_scopes: HashMap<u32, u32>,
-    locations: HashMap<(u32, u32, u32), u32>,
+    file_scopes: FxHashMap<u32, u32>,
+    locations: FxHashMap<(u32, u32, u32), u32>,
 }
 
 impl DebugInfo {
@@ -100,8 +100,8 @@ impl DebugInfo {
         FnDebug {
             subprogram,
             file: file_index as u32,
-            file_scopes: HashMap::new(),
-            locations: HashMap::new(),
+            file_scopes: FxHashMap::default(),
+            locations: FxHashMap::default(),
         }
     }
 

@@ -19,6 +19,9 @@ pub(crate) const NO_MSVC_LINKER: &str = "could not find the MSVC linker";
 pub(crate) struct Platform {
     pub(crate) runtime_lib_name: &'static str,
     native_libs: &'static [&'static str],
+    /// The native libraries a link against the shared runtime needs: the program's own objects
+    /// call the runtime and the C library only; the shared runtime brings its own dependencies.
+    shared_native_libs: &'static [&'static str],
     /// Always-on linker arguments.
     base_args: &'static [&'static str],
     debug_args: &'static [&'static str],
@@ -42,6 +45,7 @@ const WINDOWS: Platform = Platform {
         "secur32.lib",
         "msvcrt.lib",
     ],
+    shared_native_libs: &["kernel32.lib", "msvcrt.lib"],
     base_args: &["/NOLOGO", "/SUBSYSTEM:CONSOLE", "/INCREMENTAL:NO"],
     debug_args: &["/DEBUG"],
     release_args: &["/OPT:REF", "/OPT:ICF"],
@@ -58,6 +62,7 @@ const LINUX: Platform = Platform {
         "-ldl",
         "-lc",
     ],
+    shared_native_libs: &["-lm", "-lc"],
     base_args: &["-pie"],
     debug_args: &[],
     release_args: &["-Wl,--gc-sections", "-s"],
@@ -76,10 +81,25 @@ const MACOS: Platform = Platform {
         "-lc",
         "-lm",
     ],
+    // `cc` links libSystem, which has the C library.
+    shared_native_libs: &[],
     base_args: &[],
     debug_args: &[],
     release_args: &["-Wl,-dead_strip"],
 };
+
+impl Platform {
+    /// The native libraries a link of `req` needs: fewer against the shared runtime, which
+    /// brings its own (each is a library the linker reads: on macOS the frameworks' stubs took
+    /// about 15 ms of a 70 ms debug link, #1135).
+    fn libs_for(&self, req: &LinkRequest, os: TargetOs) -> &'static [&'static str] {
+        if shared::is_shared(req.runtime_lib, os) {
+            self.shared_native_libs
+        } else {
+            self.native_libs
+        }
+    }
+}
 
 pub(crate) fn platform(os: TargetOs) -> &'static Platform {
     match os {
@@ -127,7 +147,11 @@ pub(crate) fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
     args.extend(req.objects.iter().map(OsString::from));
     args.extend(native::msvc_args(req.native)?);
     args.push(req.runtime_lib.into());
-    args.extend(p.native_libs.iter().map(OsString::from));
+    args.extend(
+        p.libs_for(req, TargetOs::Windows)
+            .iter()
+            .map(OsString::from),
+    );
     Ok(args)
 }
 
@@ -154,7 +178,7 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
         args.push(req.runtime_lib.into());
     }
     args.extend(native::unix_shared_args(req.native));
-    args.extend(p.native_libs.iter().map(OsString::from));
+    args.extend(p.libs_for(req, os).iter().map(OsString::from));
     args.push("-o".into());
     args.push(req.output.into());
     args
@@ -350,5 +374,48 @@ mod tests {
             .collect();
         assert_eq!(&a[a.len() - 2..], &["-o".to_string(), "out".to_string()]);
         assert!(a.contains(&"-lpthread".to_string()) && a.contains(&"-s".to_string()));
+    }
+
+    #[test]
+    fn a_link_against_the_shared_runtime_names_only_the_c_library() {
+        let objs = [PathBuf::from("main.o")];
+        let args = |target: &str, rt: &str| -> Vec<String> {
+            let req = LinkRequest {
+                target,
+                objects: &objs,
+                runtime_lib: Path::new(rt),
+                output: Path::new("out"),
+                release: false,
+                native: &[],
+            };
+            let os = TargetOs::from_triple(target).unwrap();
+            let a = match os {
+                TargetOs::Windows => msvc_args(&req).unwrap(),
+                _ => unix_args(&req, os),
+            };
+            a.iter().map(|s| s.to_string_lossy().into_owned()).collect()
+        };
+        let mac = args("aarch64-apple-darwin", "/t/libvelt_rt_shared.dylib");
+        assert!(mac.contains(&"-lvelt_rt_shared".to_string()));
+        assert!(
+            !mac.iter().any(|a| a == "-framework" || a == "-liconv"),
+            "{mac:?}"
+        );
+        let mac = args("aarch64-apple-darwin", "/t/libvelt_rt.a");
+        assert!(mac.contains(&"SystemConfiguration".to_string()), "{mac:?}");
+
+        let linux = args("x86_64-unknown-linux-gnu", "/t/libvelt_rt_shared.so");
+        assert!(linux.contains(&"-lm".to_string()) && linux.contains(&"-lc".to_string()));
+        assert!(!linux.contains(&"-lpthread".to_string()), "{linux:?}");
+        let linux = args("x86_64-unknown-linux-gnu", "/t/libvelt_rt.a");
+        assert!(linux.contains(&"-lpthread".to_string()), "{linux:?}");
+
+        let win = args("x86_64-pc-windows-msvc", "C:/t/velt_rt_shared.dll.lib");
+        assert!(
+            win.contains(&"msvcrt.lib".to_string()) && win.contains(&"kernel32.lib".to_string())
+        );
+        assert!(!win.contains(&"ws2_32.lib".to_string()), "{win:?}");
+        let win = args("x86_64-pc-windows-msvc", "C:/t/velt_rt.lib");
+        assert!(win.contains(&"ws2_32.lib".to_string()), "{win:?}");
     }
 }

@@ -1,7 +1,7 @@
 //! Sema-side information about every definition (signatures, members, source AST, analysis
 //! state). The final `hir::Def`s are built from these at the end of `check`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -341,17 +341,17 @@ pub(crate) struct AdtInfo<'m> {
     /// initializers, in declaration order (hir `AdtDef::inherited_inits`).
     pub redefined: Vec<Redefined>,
     pub base: Option<TyId>,
-    pub methods: HashMap<String, MethodRef>,
+    pub methods: FxHashMap<String, MethodRef>,
     /// Constructor: own, or inherited from the nearest base class that has one.
     pub ctor: Option<DefId>,
     pub own_ctor: Option<DefId>,
     pub vtable: Vec<DefId>,
-    pub vslots: HashMap<String, u32>,
+    pub vslots: FxHashMap<String, u32>,
     pub implements: Vec<Bound>,
     /// Declares a `[Symbol.dispose]()` drop hook (such types are never Copy).
     pub has_dispose: bool,
     /// `static readonly` fields: one `Def::Global` each.
-    pub statics: HashMap<String, DefId>,
+    pub statics: FxHashMap<String, DefId>,
     pub decl: Option<&'m ast::TypeDecl>,
 }
 
@@ -465,7 +465,7 @@ pub(crate) struct Extension {
     pub generics: Generics,
     /// Target type pattern (uses `Param(0..generics)`).
     pub target: TyId,
-    pub methods: HashMap<String, MethodRef>,
+    pub methods: FxHashMap<String, MethodRef>,
 }
 
 /// The member name of method-table key `key` (`set #v` names `#v`).

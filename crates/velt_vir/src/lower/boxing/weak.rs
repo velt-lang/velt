@@ -9,7 +9,7 @@
 //! is null), so nothing is reached through it. A program without `WeakMap`, `WeakSet` or
 //! `WeakRef` notes no seeds and has no weak-capable types: it compiles exactly as before.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -86,7 +86,7 @@ impl Cx<'_> {
     /// them (`b`: the counted types; `None`: this pass's).
     pub(in crate::lower) fn weak_refs_inline(&mut self, b: Option<&Boxing>, t: TyId) -> Vec<TyId> {
         let mut out = vec![];
-        self.refs_inline(b, t, &mut out, &mut HashSet::new());
+        self.refs_inline(b, t, &mut out, &mut FxHashSet::default());
         out
     }
 
@@ -95,7 +95,7 @@ impl Cx<'_> {
         b: Option<&Boxing>,
         t: TyId,
         out: &mut Vec<TyId>,
-        seen: &mut HashSet<TyId>,
+        seen: &mut FxHashSet<TyId>,
     ) {
         let counted = match b {
             Some(b) => self.counted_in(b, t),
@@ -156,7 +156,7 @@ impl Cx<'_> {
             return vec![];
         }
         let mut out = vec![];
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let parts = match self.kind(t) {
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             TyKind::Array(e) => vec![e],
@@ -218,7 +218,7 @@ impl Cx<'_> {
         }
         // Only the weak sets change below; the counted types are fixed.
         let snapshot = next.clone();
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         while let Some(t) = work.pop() {
             if !seen.insert(t) {
                 continue;

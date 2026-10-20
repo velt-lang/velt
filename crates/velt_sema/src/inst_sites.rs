@@ -11,7 +11,7 @@
 //!   (`s.area<string>(…)`, `s: S`, `S extends Sh`): which method runs is only known once `S`
 //!   is ([`ParamCall`]).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -66,7 +66,7 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
-        let mut seen: HashSet<TyId> = HashSet::new();
+        let mut seen: FxHashSet<TyId> = FxHashSet::default();
         let guards = guards_of(&cx.ty, &mut f.body.block);
         if signature {
             let span = f.body.block.span;
@@ -88,7 +88,7 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
         });
         out.push((DefId(i as u32), u, news));
     }
-    let mut inits: HashMap<DefId, (Uses, News, HashSet<TyId>)> = HashMap::new();
+    let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     for_each_init(cx, &mut |d, e| {
         let (u, news, seen) = inits.entry(d).or_default();
         add_site(u, news, seen, e, 0);
@@ -115,9 +115,9 @@ pub(crate) fn collect(cx: &mut Ctx, signature: bool) -> Vec<(DefId, Uses)> {
 /// mentions, so each instantiation reduces it.
 fn convert_site(
     u: &mut Uses,
-    seen: &mut HashSet<TyId>,
+    seen: &mut FxHashSet<TyId>,
     e: &Expr,
-    converts: &HashMap<(TyId, TyId), TyId>,
+    converts: &FxHashMap<(TyId, TyId), TyId>,
 ) {
     use crate::hir::{ExprKind as H, Intrinsic};
     let key = match &e.kind {
@@ -142,7 +142,7 @@ fn convert_site(
 fn add_site(
     u: &mut Uses,
     news: &mut Vec<(DefId, Vec<TyId>, Span, u64)>,
-    seen: &mut HashSet<TyId>,
+    seen: &mut FxHashSet<TyId>,
     e: &Expr,
     guard: u64,
 ) {
@@ -349,7 +349,7 @@ pub(crate) fn resolve_param_calls(
     method: &mut MethodReqs,
 ) -> Vec<ParamCall> {
     let mut generic = vec![];
-    let mut done: HashSet<ParamCall> = HashSet::new();
+    let mut done: FxHashSet<ParamCall> = FxHashSet::default();
     let mut stack = pending;
     while let Some(p) = stack.pop() {
         if done.len() >= RESOLVE_LIMIT || !done.insert(p.clone()) {
@@ -394,7 +394,7 @@ pub(crate) fn carry_guard(cx: &Ctx, need: u64, targs: &[TyId], site: u64) -> Opt
 pub(crate) fn guards_of(
     ty: &crate::types::Types,
     b: &mut crate::hir::Block,
-) -> HashMap<*const Expr, u64> {
+) -> FxHashMap<*const Expr, u64> {
     let param_of = |t: TyId| match ty.kind(t) {
         crate::hir::TyKind::Param(p) => Some(*p),
         _ => None,

@@ -2,7 +2,7 @@
 //! ([`super::imports`]) and collect the prelude's exports (visible in every module without an
 //! import).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -231,17 +231,17 @@ fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo
         own_fields_start: 0,
         redefined: vec![],
         base: None,
-        methods: HashMap::new(),
+        methods: FxHashMap::default(),
         ctor: None,
         own_ctor: None,
         vtable: vec![],
-        vslots: HashMap::new(),
+        vslots: FxHashMap::default(),
         implements: vec![],
         has_dispose: t
             .methods
             .iter()
             .any(|m| !m.is_static && m.decl.sig.name.name == DISPOSE),
-        statics: HashMap::new(),
+        statics: FxHashMap::default(),
         decl: Some(t),
     }))
 }

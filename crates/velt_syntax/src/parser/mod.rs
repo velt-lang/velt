@@ -41,7 +41,8 @@ mod types;
 mod undefined;
 mod var_decls;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
 use crate::lexer::{Kw, Lexer, Payload, Tok, Token};
@@ -102,7 +103,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) ambient: Option<Vec<crate::Ambient>>,
     /// Build-time constants: the identifier expression (or shorthand property) starting at
     /// one of these offsets is the literal (`crate::ParseOptions::defines`).
-    pub(crate) define_at: Option<&'a HashMap<u32, Lit>>,
+    pub(crate) define_at: Option<&'a FxHashMap<u32, Lit>>,
     /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
     pub(crate) saw_module_syntax: bool,
     /// Where the module first mentions `import.meta` (`import_meta`).

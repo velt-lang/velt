@@ -5,7 +5,7 @@
 //! known, as a generic alias's body is (`Ctx::alias_body`). Two forms written alike in one
 //! definition are one type, so `{} as { [K in keyof M]: V }` is the declared return type.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -31,9 +31,9 @@ pub(crate) struct Form {
 #[derive(Default)]
 pub(crate) struct Forms {
     pub(crate) forms: Vec<Form>,
-    ids: HashMap<(usize, Vec<String>, String), u32>,
+    ids: FxHashMap<(usize, Vec<String>, String), u32>,
     /// The requirement of each read `x[k]`, by the types of `x` and `k` (`crate::inst_sites`).
-    pub(crate) reads: HashMap<(TyId, TyId), TyId>,
+    pub(crate) reads: FxHashMap<(TyId, TyId), TyId>,
 }
 
 impl Ctx<'_> {

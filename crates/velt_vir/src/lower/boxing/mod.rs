@@ -12,7 +12,8 @@ mod kinds;
 mod transfers;
 mod weak;
 
-use std::collections::{BTreeSet, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeSet;
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
@@ -24,16 +25,16 @@ pub(super) use kinds::ShareKind;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Boxing {
     /// Class hierarchies (by root class) whose objects carry a count in front of them.
-    pub(super) roots: HashSet<DefId>,
+    pub(super) roots: FxHashSet<DefId>,
     /// Arrays and object types whose values are counted boxes (`Ptr` to the inline value with
     /// the count in front) instead of inline values.
-    pub(super) boxes: HashSet<TyId>,
+    pub(super) boxes: FxHashSet<TyId>,
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
-    interior: HashSet<TyId>,
+    interior: FxHashSet<TyId>,
     /// Interface types whose values are compared by identity: an object type converted to one
     /// is counted, so the interface value points at the object itself (`make_dyn`).
-    identity_dyns: HashSet<TyId>,
+    identity_dyns: FxHashSet<TyId>,
     /// The program compares `any` values that may both be objects, or keys collections by
     /// them (any_eq.rs): every dynamic type holds objects by identity (#1256).
     any_identity: bool,
@@ -54,27 +55,27 @@ pub(super) struct Boxing {
     pub(super) any_json: bool,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
-    recursive: HashSet<DefId>,
+    recursive: FxHashSet<DefId>,
     /// Counted types a transfer to another thread can copy (transfers.rs).
-    transferred: HashSet<TyId>,
+    transferred: FxHashSet<TyId>,
     /// Weak-capable class hierarchies (by root class) and other counted types: their release
     /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
-    weak_roots: HashSet<DefId>,
-    weak: HashSet<TyId>,
+    weak_roots: FxHashSet<DefId>,
+    weak: FxHashSet<TyId>,
     /// `object` is a weak key or `WeakRef` target (issue #926): the concrete types that reach
     /// `object` (`dyn_types`) are counted and weak-capable, the `any` tables have the weak slot,
     /// and the trace glue looks into dynamic values (weak_object.rs). False in every other
     /// program, which compiles as before.
     pub(super) weak_object: bool,
-    pub(super) dyn_types: HashSet<TyId>,
+    pub(super) dyn_types: FxHashSet<TyId>,
     /// Interfaces whose values are converted to `any` / `unknown`: their tables hold the
     /// `any` table of their concrete type (`Cx::vtable`, `make_dyn`).
-    pub(super) dyn_to_any: HashSet<DefId>,
+    pub(super) dyn_to_any: FxHashSet<DefId>,
     /// Typed proxies (#823, proxy_typed.rs): class hierarchies (by root class) and object types
     /// whose values may hold a tagged pointer to the prelude's `Proxy` object. Empty in a
     /// program that creates no proxy.
-    pub(super) proxy_roots: HashSet<DefId>,
-    pub(super) proxy_types: HashSet<TyId>,
+    pub(super) proxy_roots: FxHashSet<DefId>,
+    pub(super) proxy_types: FxHashSet<TyId>,
     /// The prelude's `Proxy` class, once the program creates a proxy.
     pub(super) proxy_class: Option<DefId>,
     /// The types a `Proxy` object's target is traced as by weak maps (glue/trace.rs): the
@@ -97,7 +98,7 @@ impl Boxing {
 /// Object types (anonymous ones, which field-only interfaces are by now) that reach themselves
 /// through fields stored inline: nested object types, nullable values, tuples and union
 /// payloads, not arrays, classes or other pointers.
-fn recursive_objects(hir: &hir::Program) -> HashSet<DefId> {
+fn recursive_objects(hir: &hir::Program) -> FxHashSet<DefId> {
     let objects: Vec<DefId> = (0..hir.defs.len() as u32)
         .map(DefId)
         .filter(|d| matches!(hir.def(*d), hir::Def::Adt(a) if a.kind == AdtKind::Anon))
@@ -105,7 +106,7 @@ fn recursive_objects(hir: &hir::Program) -> HashSet<DefId> {
     objects
         .into_iter()
         .filter(|&d| {
-            let mut seen = HashSet::new();
+            let mut seen = FxHashSet::default();
             fields_of(hir, d)
                 .into_iter()
                 .any(|t| reaches(hir, t, d, &mut seen))
@@ -122,7 +123,7 @@ fn fields_of(hir: &hir::Program, d: DefId) -> Vec<TyId> {
 }
 
 /// Does a value of type `t` hold a `target` inline?
-fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>) -> bool {
+fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut FxHashSet<TyId>) -> bool {
     if !seen.insert(t) {
         return false;
     }
@@ -146,21 +147,21 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>)
 #[derive(Debug, Default)]
 pub(super) struct Facts {
     /// Types of shared values.
-    shares: HashSet<TyId>,
+    shares: FxHashSet<TyId>,
     /// `(container, value)`: a borrowed place of type `value` reached through a `container`.
-    projections: HashSet<(TyId, TyId)>,
+    projections: FxHashSet<(TyId, TyId)>,
     /// Object types compared by identity (`==`, same.rs).
-    identity: HashSet<TyId>,
+    identity: FxHashSet<TyId>,
     /// `any` values compared by identity (`Boxing::any_identity`).
     any_identity: bool,
     /// Interface upcasts made, `(from, to)` (upcast.rs): `from` values are compared by
     /// identity when `to` values are.
-    upcasts: HashSet<(TyId, TyId)>,
+    upcasts: FxHashSet<(TyId, TyId)>,
     /// Value types a callee may change in place while it borrows them out of an array other
     /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
-    identity_borrows: HashSet<TyId>,
+    identity_borrows: FxHashSet<TyId>,
     /// Types of values transferred to another thread as a whole (transfers.rs).
-    transfers: HashSet<TyId>,
+    transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
     /// A member is written through `any`.
@@ -172,29 +173,29 @@ pub(super) struct Facts {
     /// A dynamic value is written as JSON.
     any_json: bool,
     /// Capture types of the closure environments built (transfers.rs).
-    captures: HashSet<TyId>,
+    captures: FxHashSet<TyId>,
     /// Concrete types a vtable was built for: interface implementors and classes in a
     /// hierarchy (transfers.rs).
-    vtable_types: HashSet<TyId>,
+    vtable_types: FxHashSet<TyId>,
     /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
-    weak_seeds: HashSet<TyId>,
+    weak_seeds: FxHashSet<TyId>,
     /// `object` is a weak key or a `WeakRef` target.
     pub(super) weak_object: bool,
     /// Concrete types an `any` table was built for: the types dynamic values hold.
-    pub(super) dyn_types: HashSet<TyId>,
+    pub(super) dyn_types: FxHashSet<TyId>,
     /// Concrete types converted to `object` straight from a typed value.
-    pub(super) object_types: HashSet<TyId>,
+    pub(super) object_types: FxHashSet<TyId>,
     /// An `any`, `unknown` or interface value is converted to `object`: it may hold any type
     /// dynamic values hold.
     pub(super) object_from_dyn: bool,
     /// Interfaces whose values are converted to `any` / `unknown`.
-    dyn_to_any: HashSet<DefId>,
+    dyn_to_any: FxHashSet<DefId>,
     /// The program creates a `Proxy` (proxy_typed.rs).
     pub(super) proxy_new: bool,
     /// Concrete targets of `AnyTo` in the program's own code (proxy_typed.rs).
-    pub(super) proxy_targets: HashSet<TyId>,
+    pub(super) proxy_targets: FxHashSet<TyId>,
     /// `(from, to)` of the `Upcast`s lowered: a proxiable `from` makes `to` proxiable.
-    pub(super) proxy_casts: HashSet<(TyId, TyId)>,
+    pub(super) proxy_casts: FxHashSet<(TyId, TyId)>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -365,7 +366,7 @@ impl Cx<'_> {
             next.dyn_types.extend(reach.iter().copied());
             work.extend(next.dyn_types.iter().copied());
         }
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         loop {
             while let Some(t) = work.pop() {
                 if seen.insert(t) {

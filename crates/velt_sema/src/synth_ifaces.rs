@@ -19,7 +19,8 @@
 //! records the pair, and the value is an `Upcast` keeping the same object
 //! (hir_encodings.md "Interface upcasts").
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -47,8 +48,8 @@ enum Form {
 /// The interfaces made here.
 #[derive(Default)]
 pub(crate) struct SynthIfaces {
-    by_form: HashMap<Form, DefId>,
-    forms: HashMap<DefId, (Form, Span)>,
+    by_form: FxHashMap<Form, DefId>,
+    forms: FxHashMap<DefId, (Form, Span)>,
     /// Made before interfaces were flattened: filled by [`Ctx::fill_synth_ifaces`].
     pending: Vec<DefId>,
     flattened: bool,
@@ -57,7 +58,7 @@ pub(crate) struct SynthIfaces {
     /// Where the intersection being made is written (for its errors).
     pub span: Span,
     /// (type, interface) pairs [`Ctx::synth_impl`] tried.
-    tried: HashSet<(TyId, DefId)>,
+    tried: FxHashSet<(TyId, DefId)>,
 }
 
 impl Ctx<'_> {
@@ -527,7 +528,7 @@ impl Ctx<'_> {
     /// Does an interface value of `from` convert to `to`, directly or through others?
     fn reaches_upcast(&self, from: DefId, to: DefId) -> bool {
         let mut stack = vec![from];
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         while let Some(d) = stack.pop() {
             if d == to {
                 return true;

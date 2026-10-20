@@ -13,7 +13,7 @@
 //! (docs/internals/design/semantics-stage2.md §3.3), so whatever the new owner does with it
 //! (push, clear, drop) cannot free the buffer or element the loop is looking at.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_common::{Diagnostic, Span};
 
@@ -39,12 +39,12 @@ pub(super) fn contains(outer: &Place, inner: &Place) -> bool {
 pub(super) fn share_moved_iterated(
     col: &Collector,
     iter: &Place,
-    soft: &HashSet<Span>,
+    soft: &FxHashSet<Span>,
     body: &mut Block,
 ) {
     let mut uses = vec![];
     col.nested_block(body, &mut uses);
-    let spans: HashSet<Span> = uses
+    let spans: FxHashSet<Span> = uses
         .into_iter()
         .filter(|u| {
             u.access == Access::Move

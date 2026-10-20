@@ -5,7 +5,7 @@
 //! passed to an owned parameter of an async function (every non-Copy param of an async
 //! function is owned, so the future never borrows from its caller).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
 
@@ -70,13 +70,13 @@ pub(super) fn is_moved_place(e: &Expr) -> bool {
 /// Share the soft moves whose place the move dataflow saw used again; for a closure, the
 /// captures of the variables used again (its other captures stay moves, so they live exactly
 /// as long as the closure).
-pub(crate) fn clone_reused(cx: &mut Ctx, reused: &HashMap<DefId, HashSet<(Span, LocalId)>>) {
+pub(crate) fn clone_reused(cx: &mut Ctx, reused: &FxHashMap<DefId, FxHashSet<(Span, LocalId)>>) {
     let mut closures: Vec<(DefId, Vec<LocalId>)> = vec![];
     for (d, sites) in reused {
         let Some(Def::Fn(f)) = &mut cx.defs[d.0 as usize] else {
             continue;
         };
-        let spans: HashSet<Span> = sites.iter().map(|(span, _)| *span).collect();
+        let spans: FxHashSet<Span> = sites.iter().map(|(span, _)| *span).collect();
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
             E::Closure(c) if spans.contains(&e.span) => {
                 let used = sites.iter().filter(|(s, _)| *s == e.span);
