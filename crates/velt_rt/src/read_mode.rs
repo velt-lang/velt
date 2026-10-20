@@ -43,7 +43,9 @@ pub(crate) fn enter_exclusive() {
 #[inline]
 pub(crate) fn enter_exclusive_in(r: &crate::hazard::Reader) {
     let d = r.read_depth.get();
-    let was = d != 0;
+    // In read mode, not merely inside a read: a section nested in another that interrupted a
+    // read must not restore read mode when it ends, while the outer one still runs.
+    let was = d != 0 && d & EXCLUSIVE == 0;
     r.saved.set(r.saved.get() << 1 | u64::from(was));
     if was {
         r.read_depth.set(d | EXCLUSIVE);
@@ -101,5 +103,22 @@ mod tests {
         assert_eq!(in_read() as u8, 0);
         let mut store = 1u64;
         unsafe { velt_rt_lk_write(&mut store) };
+    }
+
+    #[test]
+    fn nested_exclusive_sections_stay_out_of_read_mode() {
+        // `read(() => write(() => with(…)))`: leaving the `with` keeps the `write` exclusive.
+        READER.with(|r| r.push());
+        enter_exclusive();
+        enter_exclusive();
+        assert_eq!(velt_rt_lk_mode(), 0);
+        leave_exclusive();
+        assert_eq!(velt_rt_lk_mode(), 0);
+        let mut store = 1u64;
+        unsafe { velt_rt_lk_write(&mut store) };
+        leave_exclusive();
+        assert_eq!(velt_rt_lk_mode(), 1);
+        READER.with(|r| r.pop());
+        assert_eq!(in_read() as u8, 0);
     }
 }

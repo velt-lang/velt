@@ -255,6 +255,7 @@ fn views_of_a_shared_typed_array_are_errors() {
         assert!(r.contains("would share its buffer"), "{src}: {r}");
     }
     ok_src("function main() { const u = shared(new Uint8Array(3)); const c = u.slice(0, 2); c[0] = 1; console.log(c[0], u[0]); }");
+}
 
 #[test]
 fn rwlock_read_callbacks_cannot_modify_the_value() {

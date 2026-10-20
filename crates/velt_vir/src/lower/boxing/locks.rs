@@ -6,7 +6,7 @@
 //! hierarchy, a weak-capable or proxiable type, a promise) is *exclusive*: `read` takes the lock
 //! exclusively, as `write` does.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{DefId, TyId, TyKind};
 
@@ -26,8 +26,8 @@ impl Cx<'_> {
             .extend(self.facts.lock_values.iter().copied());
         let values: Vec<TyId> = next.lock_values.iter().copied().collect();
         for v in values {
-            let mut roots = HashSet::new();
-            let mut boxes = HashSet::new();
+            let mut roots = FxHashSet::default();
+            let mut boxes = FxHashSet::default();
             if self.lock_reach(next, v, &mut roots, &mut boxes) {
                 next.lock_roots.extend(roots);
                 next.lock_boxes.extend(boxes);
@@ -43,10 +43,10 @@ impl Cx<'_> {
         &mut self,
         b: &Boxing,
         v: TyId,
-        roots: &mut HashSet<DefId>,
-        boxes: &mut HashSet<TyId>,
+        roots: &mut FxHashSet<DefId>,
+        boxes: &mut FxHashSet<TyId>,
     ) -> bool {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut work = vec![v];
         while let Some(t) = work.pop() {
             if !seen.insert(t) {

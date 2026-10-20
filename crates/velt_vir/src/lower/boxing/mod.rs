@@ -87,10 +87,10 @@ pub(super) struct Boxing {
     pub(super) proxy_traced: BTreeSet<TyId>,
     /// The value types of the program's `RwLock`s, the lock set they reach (class hierarchies
     /// by root, other counted types), and those whose `read` is exclusive (locks.rs).
-    pub(super) lock_values: HashSet<TyId>,
-    pub(super) lock_roots: HashSet<DefId>,
-    pub(super) lock_boxes: HashSet<TyId>,
-    pub(super) lock_exclusive: HashSet<TyId>,
+    pub(super) lock_values: FxHashSet<TyId>,
+    pub(super) lock_roots: FxHashSet<DefId>,
+    pub(super) lock_boxes: FxHashSet<TyId>,
+    pub(super) lock_exclusive: FxHashSet<TyId>,
 }
 
 impl Boxing {
@@ -212,7 +212,7 @@ pub(super) struct Facts {
     /// of this pass must not be used.
     pub(super) unmet: bool,
     /// Value types of the `RwLock`s made or locked (locks.rs).
-    pub(super) lock_values: HashSet<TyId>,
+    pub(super) lock_values: FxHashSet<TyId>,
 }
 
 impl Cx<'_> {

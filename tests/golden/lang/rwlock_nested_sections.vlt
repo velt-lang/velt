@@ -1,0 +1,50 @@
+// check: no leaks
+// A `write` inside a `read` callback, with a `with` inside it: when the `with` ends, the
+// `write` still holds its lock alone, so changing its value after that is allowed, also by code
+// that asks the thread whether it is in read mode (a function called through a function value):
+// the thread is back in read mode only when the `write` ends (velt_rt read_mode.rs).
+class Kid {
+  n: number = 0;
+}
+
+class Box {
+  kids: Kid[] = [];
+  spare: Kid[] = [];
+}
+
+function bump(b: Box) {
+  b.kids[0].n += 1;
+}
+
+function apply(b: Box, f: (b: Box) => void) {
+  f(b);
+}
+
+function filled(): Box {
+  const b = new Box();
+  const k = new Kid();
+  b.kids.push(k);
+  b.spare.push(k);
+  return b;
+}
+
+function main() {
+  const a = shared(new RwLock<Box>(filled()));
+  const b = shared(new RwLock<Box>(filled()));
+  const m = shared(new Mutex<Box>(filled()));
+  const seen = a.read((x) => {
+    b.write((y) => {
+      m.with((z) => {
+        bump(z);
+      });
+      apply(y, bump);
+    });
+    return x.kids.length;
+  });
+  console.log(
+    seen,
+    b.read((y) => y.kids[0].n),
+    b.read((y) => y.spare[0].n),
+    m.with((z) => z.kids[0].n),
+  );
+}
