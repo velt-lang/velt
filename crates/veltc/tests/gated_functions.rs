@@ -288,53 +288,135 @@ fn call_and_apply_are_direct_calls() {
     );
 }
 
-#[test]
-fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
-    // In a function gated on `sha-arm`, the check of `sha-arm` in an inlined method is `1`, so
-    // the emulation behind it is dead; the guarded call into it stays a call.
-    let probe = r#"
+/// Each SHA method of an extension twice in a function gated on it, and once in ordinary code.
+const SHA_PROBE: &str = r#"
 import { u32x4 } from "velt:simd";
 
-export function rounds(a: u32x4, n: i64): u32x4 {
+export function roundsArm(a: u32x4, n: i64): u32x4 {
   __intrinsic_target("sha-arm");
   let x = a;
   for (let i = 0; i < n; i++) {
-    x = x.sha256h(a, x);
+    x = x.sha256h(a, x).sha256h(x, a).sha256h2(a, x).sha256h2(x, a);
+    x = x.sha256su0(a).sha256su0(x).sha256su1(a, x).sha256su1(x, a);
+    x = x.sha1c(1, a).sha1c(2, x).sha1p(3, a).sha1p(4, x).sha1m(5, a).sha1m(6, x);
+    x = x.sha1su0(a, x).sha1su0(x, a).sha1su1(a).sha1su1(x);
   }
   return x;
 }
+
+export function roundsX86(a: u32x4, n: i64): u32x4 {
+  __intrinsic_target("sha-x86");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.sha256rnds2(a, x).sha256rnds2(x, a).sha256msg1(a).sha256msg1(x);
+    x = x.sha256msg2(a).sha256msg2(x).sha1rnds4(a, 0).sha1rnds4(x, 3);
+    x = x.sha1nexte(a).sha1nexte(x).sha1msg1(a).sha1msg1(x).sha1msg2(a).sha1msg2(x);
+  }
+  return x;
+}
+
+export function plain(a: u32x4): u32x4 {
+  let x = a.sha256h(a, a).sha256h2(a, a).sha256su0(a).sha256su1(a, a);
+  x = x.sha1c(1, a).sha1p(2, a).sha1m(3, a).sha1su0(a, a).sha1su1(a);
+  x = x.sha256rnds2(a, a).sha256msg1(a).sha256msg2(a).sha1rnds4(a, 1);
+  return x.sha1nexte(a).sha1msg1(a).sha1msg2(a);
+}
 "#;
-    let main = "import { rounds } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  if (u32x4.hasShaArm()) {\n    console.log(rounds(u32x4.splat(1), 3).lane(0));\n  }\n}\n";
+
+const SHA_MAIN: &str = "import { roundsArm, roundsX86, plain } from \"velt:zz_gated\";\nimport { u32x4 } from \"velt:simd\";\n\nfunction main() {\n  const a = u32x4.splat(1);\n  if (u32x4.hasShaArm()) {\n    console.log(roundsArm(a, 3).lane(0));\n  }\n  if (u32x4.hasShaX86()) {\n    console.log(roundsX86(a, 3).lane(0));\n  }\n  console.log(plain(a).lane(0));\n}\n";
+
+/// The LLVM functions of `ir` by name: `define … @name(…) … { body }`.
+fn llvm_functions(ir: &str) -> Vec<(String, &str)> {
+    ir.split("\ndefine ")
+        .skip(1)
+        .filter_map(|f| Some((callees_in(f.lines().next()?).into_iter().next()?, f)))
+        .collect()
+}
+
+/// The `@name`s and `@"name"`s `text` refers to (without the quotes).
+fn callees_in(text: &str) -> Vec<String> {
+    text.split('@')
+        .skip(1)
+        .map(|rest| match rest.strip_prefix('"') {
+            Some(quoted) => quoted.split('"').next().unwrap_or_default().to_string(),
+            None => rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || "$._-".contains(*c))
+                .collect(),
+        })
+        .collect()
+}
+
+/// `name` and every function it calls, transitively, in `functions`.
+fn reachable<'a>(functions: &'a [(String, &'a str)], name: &str) -> Vec<(&'a str, &'a str)> {
+    let mut seen: Vec<(&str, &str)> = Vec::new();
+    let mut pending = vec![name.to_string()];
+    while let Some(n) = pending.pop() {
+        let Some((n, body)) = functions.iter().find(|(f, _)| *f == n) else {
+            continue;
+        };
+        if seen.iter().any(|(s, _)| s == n) {
+            continue;
+        }
+        seen.push((n, body));
+        pending.extend(body.lines().skip(1).flat_map(callees_in));
+    }
+    seen
+}
+
+#[test]
+fn a_gated_function_knows_its_extension_and_stays_out_of_line() {
+    // In a function gated on an extension, its check is true in every SHA method it calls,
+    // however often each is called and whether ordinary code calls it too: neither the gated
+    // function nor anything it calls tests the CPU flag or keeps the emulation. Ordinary code
+    // keeps the check, and its guarded call into the gated function stays a call.
     let dir = test_dir::TestDir::new();
-    let args = [
-        "build",
-        "--release",
-        "--emit",
-        "llvm",
-        "--target",
-        "aarch64-unknown-linux-gnu",
-    ];
-    let out = velt(&dir, probe, main, &args);
-    let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let gated = ir
-        .split("\ndefine ")
-        .find(|f| f.contains("zz__gatedN6rounds") && f.contains("\"target-features\"=\"+sha2\" {"))
-        .expect("the gated function");
-    assert!(!gated.contains("@velt.simd.has_sha_arm()"), "{gated}");
-    assert!(gated.contains("store i8 1,"), "{gated}");
-    let caller = ir
-        .split("\ndefine ")
-        .find(|f| f.contains("velt_main") && f.contains("zz__gatedN6rounds"))
-        .expect("the caller");
-    assert!(
-        caller
-            .lines()
-            .any(|l| l.contains("zz__gatedN6rounds") && l.ends_with(" noinline")),
-        "{caller}"
-    );
+    for (triple, gated, ext) in [
+        ("aarch64-unknown-linux-gnu", "N9roundsArm", "arm"),
+        ("x86_64-unknown-linux-gnu", "N9roundsX86", "x86"),
+    ] {
+        let args = ["build", "--release", "--emit", "llvm", "--target", triple];
+        let out = velt(&dir, SHA_PROBE, SHA_MAIN, &args);
+        let ir = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{triple}: {stderr}");
+        let functions = llvm_functions(&ir);
+        let name = |part: &str| {
+            functions
+                .iter()
+                .find(|(f, _)| f.contains("zz__gated") && f.contains(part))
+                .map(|(f, _)| f.clone())
+                .unwrap_or_else(|| panic!("{triple}: no {part}"))
+        };
+        let check = format!("@velt.simd.has_sha_{ext}()");
+        let gated = name(gated);
+        assert!(
+            functions
+                .iter()
+                .any(|(f, body)| *f == gated && body.contains("\"target-features\"")),
+            "{triple}: {gated} has its extension's features"
+        );
+        for (f, body) in reachable(&functions, &gated) {
+            assert!(
+                !body.contains(&check) && !body.contains("velt_cpu_sha"),
+                "{triple}: {f}, reached from {gated}, tests the CPU flag:\n{body}"
+            );
+        }
+        let plain = reachable(&functions, &name("N5plain"));
+        assert!(
+            plain.iter().any(|(_, body)| body.contains(&check)),
+            "{triple}: ordinary code keeps the check"
+        );
+        let caller = functions
+            .iter()
+            .find(|(f, _)| f.contains("velt_main"))
+            .map(|(_, body)| *body)
+            .expect("the caller");
+        assert!(
+            caller
+                .lines()
+                .any(|l| callees_in(l).contains(&gated) && l.ends_with(" noinline")),
+            "{triple}: {caller}"
+        );
+    }
 }
