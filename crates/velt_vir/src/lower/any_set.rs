@@ -17,7 +17,7 @@
 //! What each concrete type takes: fields of class instances and object types (not `readonly`
 //! ones, nor optional fields that keep a present `null` apart), setters, keys of a
 //! `Record<string, V>` (added when missing, as in Node), and elements of an array inside its
-//! length.
+//! length or just past it (the array grows by one), and an array's `length` made shorter.
 
 use velt_sema::hir::{DynMemberKind, TyId, TyKind};
 
@@ -79,6 +79,12 @@ impl FnLower<'_, '_> {
         }
         if let Some((k, val)) = self.prelude_record(ty) {
             return self.any_set_record(data, key, v, ty, (k, val));
+        }
+        if let TyKind::Array(elem) = self.cx.kind(ty) {
+            let next = self.on_key(key, "length");
+            self.any_set_array_length(data, v, ty, elem);
+            self.switch_to(next);
+            return self.any_set_refuse(v, ST_UNSUPPORTED);
         }
         let Some((d, _)) = self.plain_adt(ty) else {
             return self.any_set_refuse(v, ST_UNSUPPORTED);
@@ -221,6 +227,34 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
+    /// `a.length = v` on an array: a shorter length drops the elements past it, as in Node; an
+    /// invalid length is Node's `RangeError`; a longer one (holes) is not supported yet.
+    fn any_set_array_length(&mut self, data: vir::Local, v: vir::Local, ty: TyId, elem: TyId) {
+        let f64_ = self.cx.intern(TyKind::Float(velt_sema::hir::FloatTy::F64));
+        let n = self.any_set_value(v, f64_);
+        let n = self.rvalue_temp(Ty::F64, Rvalue::Use(n));
+        let vp = self.any_value_place(data, ty);
+        let arr = self.content(&vp, ty);
+        let idx = self.rvalue_temp(Ty::U64, Rvalue::Cast(n.clone(), Ty::U64));
+        let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(idx.clone(), Ty::F64));
+        let whole = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, n));
+        let (ok, bad) = (self.new_block(), self.new_block());
+        self.branch(whole, ok, bad);
+        self.switch_to(bad);
+        self.panic_msg("RangeError: Invalid array length");
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(ok);
+        let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+        let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, idx.clone(), len));
+        let (cut, grow) = (self.new_block(), self.new_block());
+        self.branch(fits, cut, grow);
+        self.switch_to(cut);
+        self.truncate(&arr, elem, idx);
+        self.ret_status(ST_OK);
+        self.switch_to(grow);
+        self.ret_status(ST_UNSUPPORTED);
+    }
+
     fn any_set_index_body(&mut self, data: vir::Local, i: vir::Local, v: vir::Local, ty: TyId) {
         if self.is_proxy(ty) {
             return self.proxy_set_body(data, ProxyKey::Num(i), v, ty);
@@ -244,19 +278,33 @@ impl FnLower<'_, '_> {
         let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(idx.clone(), Ty::F64));
         let whole = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, iv));
         let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+        let len2 = len.clone();
         let inside = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, idx.clone(), len));
         let (w, yes, no) = (self.new_block(), self.new_block(), self.new_block());
+        let w_end = self.new_block();
         self.branch(whole, w, no);
         self.switch_to(w);
-        self.branch(inside, yes, no);
+        self.branch(inside, yes, w_end);
         self.switch_to(yes);
         let val = self.any_set_value(v, elem);
-        let ep = self.elem_place(&arr, idx, elem);
+        let ep = self.elem_place(&arr, idx.clone(), elem);
         self.any_replace(ep, val, elem);
+        self.ret_status(ST_OK);
+        // At the end: the array grows by one, as in Node (`Array.prototype.push` through a
+        // proxy writes there).
+        self.switch_to(w_end);
+        let at_end = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, idx, len2));
+        let (push, no2) = (self.new_block(), self.new_block());
+        self.branch(at_end, push, no2);
+        self.switch_to(push);
+        let val = self.any_set_value(v, elem);
+        self.push_value(&arr, elem, val);
         self.ret_status(ST_OK);
         // Past the end (Node grows the array, with holes) or not an index (Node adds a
         // property): later.
         self.switch_to(no);
+        self.any_set_refuse(v, ST_UNSUPPORTED);
+        self.switch_to(no2);
         self.any_set_refuse(v, ST_UNSUPPORTED);
     }
 }

@@ -318,7 +318,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop elements `n..len` and set `len = n` (when `n < len`).
-    fn truncate(&mut self, arr: &Place, elem: TyId, n: Operand) {
+    pub(in crate::lower) fn truncate(&mut self, arr: &Place, elem: TyId, n: Operand) {
         let len = self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(arr, 1)));
         let shorter = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, n.clone(), len.clone()));
         let (cut_bb, join) = (self.new_block(), self.new_block());

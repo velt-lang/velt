@@ -2110,13 +2110,17 @@ with a `string`, `number` or `any` key. The value is converted to the member's t
 same check as above (a value of another type stops with its `TypeError`, and the member keeps
 its old value) and stored in the object itself, so every other reference to it sees the write;
 a setter is called with it. A `Record<string, V>` takes any key, adding the ones it lacks, as
-in Node; an array takes its elements inside its length. The other values have a fixed shape:
+in Node; an array takes its elements inside its length, an element at its length (it grows by
+one, as `a[a.length] = v` does in Node) and a shorter `length`, which drops the elements past it
+(a length that is not a whole number from 0 up is Node's `RangeError: Invalid array length`). The
+other values have a fixed shape:
 adding a property stops with `TypeError: Cannot add property k: an object of a fixed shape gets
 no new properties through `any` (#924)` (Node adds it), writing a getter that has no setter with
 Node's `TypeError: Cannot set property k of #<C> which has only a getter` (what strict code
 gets; in sloppy code Node ignores the write), and a `null` or `undefined` receiver with Node's
 `TypeError: Cannot set properties of undefined (setting 'k')`, after the value is evaluated.
-Writing a `readonly` field, a method, an element past the end of an array or a member of a
+Writing a `readonly` field, a method, an element further past the end of an array or a longer
+`length` (Node leaves holes, which Velt's arrays don't have), or a member of a
 string, number or function stops with a `TypeError` naming #924. Compound assignments
 (`x.n += 1`, `x.n ??= v`) and `x.n++` are compile errors until the operators of `any` come.
 
