@@ -64,6 +64,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             frozen: FxHashSet::default(),
             frozen_args: false,
             proj_hold: None,
+            changed: None,
+            known_fns: FxHashMap::default(),
             frozen_binds: false,
             scope_ends: FxHashMap::default(),
             asyncx: None,
@@ -94,9 +96,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn build(cx: &'c mut Cx<'h>, work: &Work) -> Function {
         match work {
-            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0),
-            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0),
-            Work::Frozen(def, targs, mask, at) => Self::lower_fn(cx, *def, targs, *at, *mask),
+            Work::Fn(def, targs) => Self::lower_fn(cx, *def, targs, None, 0, &[]),
+            Work::Tracked(def, targs, at) => Self::lower_fn(cx, *def, targs, Some(*at), 0, &[]),
+            Work::Frozen(def, targs, mask, at, fns) => {
+                Self::lower_fn(cx, *def, targs, *at, *mask, fns)
+            }
             Work::Glue(g, t) => Self::build_glue(cx, *g, *t),
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
@@ -159,6 +163,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         targs: &[TyId],
         caller: Option<SrcLoc>,
         frozen: u64,
+        fns: &[super::frozen::KnownFn],
     ) -> Function {
         let hir_prog = cx.hir;
         let hir::Def::Fn(f) = hir_prog.def(def) else {
@@ -199,6 +204,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 None => f.params[i].local,
             })
             .collect();
+        lw.known_fns = fns
+            .iter()
+            .filter_map(|k| Some((f.params.get(k.param as usize)?.local, k.clone())))
+            .collect();
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
             for p in &f.params {
@@ -216,6 +225,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if frozen != 0 {
             // `_Z` follows no mangled name, list or `_L` suffix either.
             symbol.push_str(&format!("_Z{frozen:x}"));
+        }
+        for k in fns {
+            // `_K` neither: the param, the closure and its instance.
+            let c = lw.cx.instance_symbol("", &k.targs);
+            symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
         }
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;

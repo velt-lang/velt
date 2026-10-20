@@ -240,8 +240,9 @@ enum Work {
     Tracked(DefId, Vec<TyId>, SrcLoc),
     /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
     /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
-    /// the call site when it is given.
-    Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>),
+    /// the call site when it is given, and given closure literals for some function params:
+    /// it calls their code directly (frozen.rs `KnownFn`).
+    Frozen(DefId, Vec<TyId>, u64, Option<SrcLoc>, Vec<frozen::KnownFn>),
     /// `(arr: ptr, stride: u64, align: u64)`: grow an array's buffer (amortized doubling).
     ArrayGrow,
     /// The exported `velt_main() -> i32` entry (entry.rs).
@@ -501,6 +502,11 @@ struct FnLower<'c, 'h> {
     /// The `BoxHold` the projection being lowered hands to the projection site lowered next
     /// (async_fn/sync.rs `projection_base`), which takes it.
     proj_hold: Option<async_fn::BoxHold>,
+    /// The locals this function's code may change (frozen.rs `changed_locals`), once asked.
+    changed: Option<FxHashSet<LocalId>>,
+    /// Function params of a `Work::Frozen` instance given closure literals: their code
+    /// (frozen.rs `KnownFn`).
+    known_fns: FxHashMap<LocalId, frozen::KnownFn>,
     /// While binding a pattern into a frozen value: bindings take no shares (frozen.rs).
     frozen_binds: bool,
     /// With debug info: where the block declaring a local ends (debug_vars.rs).

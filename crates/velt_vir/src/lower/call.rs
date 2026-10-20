@@ -68,7 +68,11 @@ impl FnLower<'_, '_> {
         let fid = match (frozen, at) {
             (0, Some(at)) => self.cx.func(Work::Tracked(def, targs.clone(), at)),
             (0, None) => self.cx.func_for(def, targs.clone()),
-            (mask, at) => self.cx.func(Work::Frozen(def, targs.clone(), mask, at)),
+            (mask, at) => {
+                let fns = self.known_fns_of(&modes, args, pre.len());
+                self.cx
+                    .func(Work::Frozen(def, targs.clone(), mask, at, fns))
+            }
         };
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);

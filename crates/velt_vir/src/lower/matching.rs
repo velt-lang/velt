@@ -153,6 +153,9 @@ impl FnLower<'_, '_> {
 
     /// `let <pattern> = init;` (irrefutable): the value is owned by a hidden local.
     pub(super) fn let_pat(&mut self, pat: &Pat, init: &hir::Expr) {
+        if self.frozen_map_entry(pat, init) {
+            return;
+        }
         let ty = self.sub(init.ty);
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
@@ -210,7 +213,7 @@ impl FnLower<'_, '_> {
 impl FnLower<'_, '_> {
     /// Bind `pat` (not registering moved bindings) to the value at `place`; `frozen`: a frozen
     /// value, whose bindings take no shares (frozen.rs).
-    fn bind_frozen(&mut self, frozen: bool, pat: &Pat, place: &Place, ty: TyId) {
+    pub(super) fn bind_frozen(&mut self, frozen: bool, pat: &Pat, place: &Place, ty: TyId) {
         let outer = self.frozen_binds;
         self.frozen_binds |= frozen;
         self.bind_pat(pat, place, ty, false);

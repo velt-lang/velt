@@ -22,7 +22,8 @@ impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
     /// `later`: the arguments evaluated after it, before the call.
     pub(super) fn stable_borrow(&mut self, a: &hir::Expr, later: &[hir::Expr]) -> Operand {
-        // A frozen value (frozen.rs): nothing replaces or frees it, and its counts must not
+        // A frozen value (frozen.rs): nothing changes it, its box is retained where something
+        // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
         // change.
         if self.frozen_root(a) {
             return self.frozen_borrow(a);
