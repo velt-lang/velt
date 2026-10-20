@@ -2360,16 +2360,34 @@ entries); a spread `{ ...p }` does the same, key by key. `Object.hasOwn(p, k)` a
 `delete p[k]` run the `deleteProperty` trap, and a trap that returns `false` throws Node's
 `TypeError: 'deleteProperty' on proxy: trap returned falsish for property 'k'`. A trap the
 handler leaves out forwards to the target: its keys are what `Object.keys` lists, each a data
-property (writable, enumerable and configurable). `Reflect.ownKeys(t)`,
+property (writable, enumerable and configurable; an array's `length` is not enumerable and
+not configurable). `Reflect.ownKeys(t)`,
 `Reflect.deleteProperty(t, k)`, `Reflect.getOwnPropertyDescriptor(t, k)` and
 `Reflect.defineProperty(t, k, attributes)` are those operations as functions (a
 `PropertyDescriptor` is `{ value?, writable?, get?, set?, enumerable?, configurable? }`), and a
 target that is not an object stops with Node's `TypeError: Reflect.ownKeys called on
-non-object`. The checks Node makes on what these traps answer apply: an `ownKeys` answer must be
-an array of strings and symbols without duplicates, and since a Velt object's properties are
-all configurable, a `getOwnPropertyDescriptor` answer must say `configurable: true` (Node's
-`TypeError` otherwise). The handler's `defineProperty` trap runs for `Reflect.defineProperty(p,
-k, attributes)`.
+non-object`. The checks Node makes on what these traps answer apply, with Node's `TypeError`s:
+an `ownKeys` answer must be an array of strings and symbols without duplicates that lists the
+target's keys that are not configurable, and a `getOwnPropertyDescriptor`, `deleteProperty` or
+`defineProperty` answer must agree with the target's own property (a property may be reported
+non-configurable only when the target's is). When the target is itself a proxy, the target's
+traps run for these checks, in Node's order. A descriptor the `getOwnPropertyDescriptor` trap
+answers is completed: an accessor (`get` / `set`) or a data property, an attribute left out
+`false`. The handler's `defineProperty` trap runs for `Reflect.defineProperty(p, k,
+attributes)`, and `Reflect.set(t, k, v, p)` with a proxy `p` as the receiver runs `p`'s
+`getOwnPropertyDescriptor` and `defineProperty` traps, as Node does. `Reflect.defineProperty`
+of a plain value writes the value of an existing property; a new property, whose attributes
+left out are `false`, is a `TypeError` naming #823.
+
+A trap sees a symbol key as the symbol (`p[KEY]`, `KEY in p`, `delete p[KEY]`,
+`Object.hasOwn(p, KEY)` with a symbol constant `KEY`), and `Reflect.get(t, KEY)` /
+`Reflect.set` / `Reflect.has` of a plain value reach the member the symbol names. A handler
+typed `any` (`new Proxy(t, handler as any)`) works too: its traps are called through `any`.
+`JSON.stringify` of a proxy reads it through its traps in Node's order (`toJSON`, then the
+keys, whether each is enumerable and their values; an array target's `length` and elements).
+`Object.keys(s)` and `for (k in s)` of a typed proxy `s` run its `ownKeys` and
+`getOwnPropertyDescriptor` traps, as in Node. `const hasOwn = Object.prototype.hasOwnProperty`
+reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
 TypeScript (`target: any`, `p: string | symbol`, `receiver: any`). `new Proxy(target, handler)`
@@ -2434,8 +2452,11 @@ function main(): void {
 }
 ```
 
-**Planned** (#823): symbol keys through a proxy (a symbol constant reaches a trap as the name of
-the member it keys); `Object.keys` and spreads of a typed proxy (they list the type's fields);
+**Planned** (#823): a symbol known only at run time as the key of `o[k]` on an `any` (a trap
+answering one through `Reflect` works); a spread of a typed proxy (a `TypeError`); a completed
+descriptor's `value: undefined` (an optional `any` field cannot hold a present `undefined`,
+#930); array methods (`push`, `splice`, ...) and `length` writes through a proxy of an array;
+an interface value as a `WeakMap` key;
 an `ownKeys` trap answering an array-like object that is not an array; deleting a key through
 `any` from a value that is not a proxy, and `Reflect.defineProperty` of a plain value with
 accessors or attributes other than `true`; proxies typed

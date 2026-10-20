@@ -172,8 +172,10 @@ impl FnCx<'_, '_> {
                 self.dynamic_write_error(span);
                 return Ok(self.error_expr(span));
             }
+            // A proxy's `get` trap sees the symbol itself (`__anyGetSym`).
             let key = self.key_lit(&name, index.span);
-            return Ok(self.intrinsic(Intrinsic::AnyGet, vec![obj, key], any, span));
+            let sym = self.expr(index, None, Want::Borrow);
+            return Ok(self.prelude_hir_call("__anyGetSym", vec![obj, key, sym], any, span));
         }
         let k = self.expr(index, None, Want::Borrow);
         let Some(any) = any else {

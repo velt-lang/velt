@@ -1,0 +1,26 @@
+// check: no leaks
+// A handler typed `any` (#823): its traps are called through `any`, as in Node; so is a
+// function whose parameter is a `string | symbol`.
+class Handler {
+  get(t: any, k: string | symbol, r: any): any {
+    return `class ${String(k)}`;
+  }
+}
+
+function main(): void {
+  const handler = {
+    get(t: any, k: string | symbol): any {
+      return 7;
+    },
+    has(t: any, k: string | symbol): boolean {
+      return k === "a";
+    },
+  };
+  const rec: Record<string, number> = { a: 1 };
+  const p: any = new Proxy(rec, handler as any);
+  console.log(p.a, p.b, "a" in p, "b" in p);
+  const q: any = new Proxy(rec, new Handler() as any);
+  console.log(q.zz);
+  const f: any = (k: string | symbol): string => typeof k;
+  console.log(f("x"), f(Symbol("s")));
+}

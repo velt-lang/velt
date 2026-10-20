@@ -265,8 +265,72 @@ impl super::Cx<'_> {
     /// Can glue convert an `any` to a value of `t` (`any_unbox`)? Unions, literal and enum
     /// types (which sema converts member by member) and interface values are not reached yet.
     pub(super) fn any_unboxable(&self, t: TyId) -> bool {
-        let union = matches!(self.types.kind(t), TyKind::Adt(d, _)
-            if matches!(self.hir.def(*d), velt_sema::hir::Def::Enum(_)));
-        !union && !matches!(self.types.kind(t), TyKind::Unit) && self.any_boxable(t)
+        !matches!(self.types.kind(t), TyKind::Unit) && self.any_boxable(t)
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The value of the union type `ty` (`string | symbol`, boxable member by member,
+    /// `Cx::any_boxable`) the `any` at `p` (owned, consumed here) holds: the member whose type
+    /// the value has, else a `TypeError` naming the union.
+    pub(super) fn any_unbox_union(&mut self, p: &Place, from: TyId, ty: TyId) -> Operand {
+        let vt = self.cx.ty(ty);
+        let out = Place::local(self.temp(vt));
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let done = self.new_block();
+        let n = match self.cx.kind(ty) {
+            TyKind::Adt(d, _) => self.cx.enum_def(d).variants.len() as u32,
+            _ => 0,
+        };
+        for v in 0..n {
+            let [pt] = self.cx.variant_tys(ty, v)[..] else {
+                continue;
+            };
+            let ok = match self.cx.kind(pt) {
+                TyKind::Adt(class, args) if self.cx.is_class(pt) && args.is_empty() => {
+                    let tag = self.any_tag_of(desc.clone());
+                    let obj = super::cint(super::any::TAG_OBJECT as i128, Ty::U64);
+                    let is_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, obj));
+                    let r = Place::local(self.temp(Ty::Bool));
+                    let (test, no, join) = (self.new_block(), self.new_block(), self.new_block());
+                    self.branch(is_obj, test, no);
+                    self.switch_to(test);
+                    let t = self.instance_test(p, from, class);
+                    self.assign(r.clone(), Rvalue::Use(t));
+                    self.goto(join);
+                    self.switch_to(no);
+                    self.assign(
+                        r.clone(),
+                        Rvalue::Use(Operand::Const(vir::Const::Bool(false), Ty::Bool)),
+                    );
+                    self.goto(join);
+                    self.switch_to(join);
+                    Operand::Copy(r)
+                }
+                _ => {
+                    let imp = self.cx.hir.any_impl.unwrap_or(0);
+                    let want = self.vtable_addr(super::glue::VtableKey::Impl(imp, pt));
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want))
+                }
+            };
+            let (yes, next) = (self.new_block(), self.new_block());
+            self.branch(ok, yes, next);
+            self.switch_to(yes);
+            let val = self.any_unbox(p, from, pt);
+            let view = self.cx.view(ty, v);
+            let vp = proj(&out, Proj::Cast(view));
+            self.assign(
+                proj(&vp, Proj::Field(0)),
+                Rvalue::Use(super::cint(v as i128, Ty::U32)),
+            );
+            if !self.cx.is_unit(pt) {
+                self.assign(proj(&vp, Proj::Field(1)), Rvalue::Use(val));
+            }
+            self.goto(done);
+            self.switch_to(next);
+        }
+        self.any_type_error(desc, ty);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 }

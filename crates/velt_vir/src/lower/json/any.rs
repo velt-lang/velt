@@ -153,10 +153,23 @@ impl FnLower<'_, '_> {
     }
 
     fn any_json_body(&mut self, data: vir::Local, buf: vir::Local, ty: TyId) {
-        if self.is_proxy(ty) || !self.json_dyn_ok(ty, &mut FxHashSet::default()) {
+        let b = Operand::Copy(Place::local(buf));
+        if self.is_proxy(ty) {
+            // What Node serializes in its place, read through its traps (`Proxy.__json`).
+            let any = self.cx.any_ty();
+            let avt = self.cx.ty(any);
+            let res = Place::local(self.temp(avt));
+            let r = self.proxy_receiver(data, ty);
+            if !self.proxy_invoke("__json", data, ty, vec![(r, any)], &res) {
+                return self.ret_status(ST_UNSUPPORTED);
+            }
+            self.json_write_any(&b, &res);
+            self.drop_glue(res, any);
+            return self.ret_status(ST_OK);
+        }
+        if !self.json_dyn_ok(ty, &mut FxHashSet::default()) {
             return self.ret_status(ST_UNSUPPORTED);
         }
-        let b = Operand::Copy(Place::local(buf));
         if matches!(self.cx.kind(ty), TyKind::Option(..) | TyKind::Unit) {
             // The dynamic `null`.
             self.push_text(&b, "null");

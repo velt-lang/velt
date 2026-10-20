@@ -1,0 +1,10 @@
+true
+true
+false
+{ a: 5, b: 6 } define a {"value":5}
+define b {"value":6,"writable":true,"enumerable":true,"configurable":true}
+define frozen {"value":7}
+true
+true { a: 9, b: 6, c: 8 }
+false
+{ value: 3, writable: true, enumerable: false, configurable: false }

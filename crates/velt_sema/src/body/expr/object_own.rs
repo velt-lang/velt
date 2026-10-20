@@ -99,14 +99,16 @@ impl FnCx<'_, '_> {
         if !keyed {
             return None;
         }
-        // A symbol constant names the member it keys, as in `KEY in o`.
-        let k = match self.symbol_key_of(k) {
-            Some(name) => synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span),
-            None => k.clone(),
-        };
         // The keys are listed through the value's descriptor (a record's by its methods).
         self.note_dyn_members();
-        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k], span))
+        // A symbol constant names the member it keys, as in `KEY in o`; a proxy's trap sees the
+        // symbol itself.
+        if let Some(name) = self.symbol_key_of(k) {
+            let name = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span);
+            let args = vec![o.clone(), name, k.clone()];
+            return Some(self.prelude_fn_call("__anyHasOwnSym", args, span));
+        }
+        Some(self.prelude_fn_call("__anyHasOwn", vec![o.clone(), k.clone()], span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).

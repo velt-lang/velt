@@ -21,6 +21,9 @@ impl FnCx<'_, '_> {
         if let Some(c) = self.proxy_class_name(class) {
             return self.new_expr(&c, args, exp, span);
         }
+        if let Some(h) = self.proxy_new_any(class, args, span) {
+            return h;
+        }
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }

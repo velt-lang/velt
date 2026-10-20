@@ -464,6 +464,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
     /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
     pub weak_key_args: bool,
+    /// Checking the `Object.keys(x)` inside `__proxyKeys(x) ?? Object.keys(x)` (`proxy.rs`).
+    pub proxy_keys_inner: bool,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
@@ -526,6 +528,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             immediate_hint: None,
             collect_iterable_args: false,
             weak_key_args: false,
+            proxy_keys_inner: false,
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,

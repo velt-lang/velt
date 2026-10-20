@@ -1,0 +1,11 @@
+// An `ownKeys` trap answering an object among the keys: Node's `TypeError`, also when
+// `Object.keys` asks (#823).
+function main(): void {
+  const p: any = new Proxy({} as any, {
+    ownKeys(t) {
+      const keys: any[] = [{}];
+      return keys;
+    },
+  });
+  console.log(Object.keys(p));
+}

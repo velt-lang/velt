@@ -206,6 +206,14 @@ impl FnCx<'_, '_> {
         }
         let seen = crate::object_copies::Seen::Spread;
         self.cx.object_copies.observe(h.ty, e.span, seen);
+        if super::object_keys::reevaluable(e) && self.may_be_typed_proxy(h.ty) {
+            // A typed proxy's keys are what its traps list (`__proxySpreadCheck`).
+            let check = self.prelude_fn_call("__proxySpreadCheck", vec![e.clone()], e.span);
+            lets.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(check),
+                span: e.span,
+            });
+        }
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let tn = self.cx.display(h.ty);

@@ -198,7 +198,16 @@ impl FnLower<'_, '_> {
         let f = self.cx.fn_def(r.def);
         let std_result = f.name.starts_with("std/");
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
-        let fid = self.cx.func_for(r.def, r.targs.clone());
+        // Glue has no source location: a standard-library method it calls (a proxy's `__keys`)
+        // reports none either, rather than its own line in the prelude.
+        let fid = match self.panic_loc() {
+            None if self.cx.tracks_caller(r.def) => self.cx.func(super::Work::Tracked(
+                r.def,
+                r.targs.clone(),
+                super::srcloc::UNKNOWN_LOC,
+            )),
+            _ => self.cx.func_for(r.def, r.targs.clone()),
+        };
         let mut argv = vec![this];
         let mut after = vec![];
         for ((p, t), mode) in args.into_iter().zip(modes.into_iter().skip(1)) {

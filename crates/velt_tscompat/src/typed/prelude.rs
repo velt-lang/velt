@@ -334,6 +334,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Object", &["entries", "fromEntries", "keys", "values"]),
+    // `Object.prototype.hasOwnProperty` read as a value: its `call` is `Function.call`.
+    ("__HasOwnProperty", &["call"]),
     (
         "Reflect",
         &[

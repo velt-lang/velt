@@ -47,6 +47,39 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// `new Proxy(target, handler)` with a handler typed `any` (`handler as any`): the prelude's
+    /// `__proxyNewAny(target, handler)`, which reads the traps the handler has through `any`.
+    /// `None` for another `new`.
+    pub(crate) fn proxy_new_any(
+        &mut self,
+        class: &ast::TypeExpr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::TypeExprKind::Named { path, .. } = &class.kind else {
+            return None;
+        };
+        let [_, handler] = args else {
+            return None;
+        };
+        let d = self.cx.prelude_adt("Proxy")?;
+        if path.len() != 1 || path[0].name != "Proxy" || !self.user_proxy(d) {
+            return None;
+        }
+        match self.lookup_type_path(path) {
+            Some(crate::ctx::Item::Def(x)) if x == d => {}
+            _ => return None,
+        }
+        let t = self.trial_type(handler)?;
+        if self.cx.dynamic(t) != Some(crate::any::Dynamic::Any) {
+            return None;
+        }
+        self.cx.any_impl();
+        self.cx.note_dyn_members();
+        self.cx.object_copies.proxies = true;
+        Some(self.prelude_fn_call("__proxyNewAny", args.to_vec(), span))
+    }
+
     /// The `Proxy` object `h` (`new Proxy(...)` of class `d`) as an `any`; `h` itself for
     /// another class.
     pub(crate) fn proxy_new(&mut self, d: DefId, h: hir::Expr, span: Span) -> hir::Expr {
@@ -84,6 +117,108 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Does the program's own code construct a `Proxy` anywhere (`new Proxy(...)`)? Then a
+    /// value of a class or object type may be a typed proxy, whose keys its traps list.
+    pub(crate) fn program_makes_proxies(&mut self) -> bool {
+        if let Some(b) = self.cx.object_copies.makes_proxies {
+            return b;
+        }
+        struct Find(bool);
+        impl<'a> velt_syntax::visit::Visit<'a> for Find {
+            fn expr(&mut self, e: &'a ast::Expr) {
+                if let ast::ExprKind::New { class, .. } = &e.kind {
+                    if let ast::TypeExprKind::Named { path, .. } = &class.kind {
+                        self.0 |= path.len() == 1 && path[0].name == "Proxy";
+                    }
+                }
+            }
+        }
+        let mut f = Find(false);
+        for m in self.cx.modules.iter().filter(|m| !m.is_std) {
+            velt_syntax::visit::walk_module(&m.ast, &mut f);
+        }
+        self.cx.object_copies.makes_proxies = Some(f.0);
+        f.0
+    }
+
+    /// Can a value of type `t` be a typed proxy (a class instance or an object, not a record)
+    /// in a program that makes proxies?
+    pub(crate) fn may_be_typed_proxy(&mut self, t: hir::TyId) -> bool {
+        let object = match self.cx.ty.kind(t) {
+            hir::TyKind::Adt(d, _) => {
+                let d = *d;
+                self.record_args(t).is_none()
+                    && self
+                        .cx
+                        .adt(d)
+                        .is_some_and(|a| matches!(a.kind, hir::AdtKind::Class | hir::AdtKind::Anon))
+            }
+            _ => false,
+        };
+        object && self.program_makes_proxies()
+    }
+
+    /// `Object.keys(x)` / `for (k in x)` of a class instance or an object `x` that may be a
+    /// typed proxy: `__proxyKeys(x) ?? Object.keys(x)`, so a proxy's `ownKeys` and
+    /// `getOwnPropertyDescriptor` traps list its keys. `None` otherwise.
+    pub(crate) fn proxy_keys(&mut self, call: ast::Expr, arg: &ast::Expr) -> Option<hir::Expr> {
+        if self.proxy_keys_inner {
+            return None;
+        }
+        let t = self.trial_type(arg)?;
+        if !self.may_be_typed_proxy(t) {
+            return None;
+        }
+        let span = call.span;
+        let callee = super::setters::synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: "__proxyKeys".to_string(),
+                span,
+            }),
+            span,
+        );
+        let lhs = super::setters::synth(
+            ast::ExprKind::Call {
+                callee: Box::new(callee),
+                type_args: vec![],
+                args: vec![arg.clone()],
+                optional: false,
+            },
+            span,
+        );
+        let e = super::setters::synth(
+            ast::ExprKind::Binary {
+                op: ast::BinaryOp::Nullish,
+                lhs: Box::new(lhs),
+                rhs: Box::new(call),
+            },
+            span,
+        );
+        self.proxy_keys_inner = true;
+        let h = self.expr(&e, None, crate::body::Want::Move);
+        self.proxy_keys_inner = false;
+        Some(h)
+    }
+
+    /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
+    pub(crate) fn prelude_hir_call(
+        &mut self,
+        name: &str,
+        args: Vec<hir::Expr>,
+        ret: hir::TyId,
+        span: Span,
+    ) -> hir::Expr {
+        let d = self
+            .cx
+            .prelude_fn(name)
+            .unwrap_or_else(|| panic!("ICE: the prelude without `{name}`"));
+        let kind = H::Call {
+            callee: hir::Callee::Def(d, vec![]),
+            args,
+        };
+        self.mk(kind, ret, span)
+    }
+
     /// `delete obj.k` / `delete obj[k]` where `obj` is an `any` or `object`: the prelude's
     /// `__anyDelete(obj, key)` (a proxy runs its `deleteProperty` trap). `None` when `obj` is not
     /// dynamic.
@@ -99,20 +234,21 @@ impl FnCx<'_, '_> {
             self.unknown_use_error(object.span);
             return Some(self.error_expr(span));
         }
-        let k = match key {
-            super::record::RecordKey::Name(p) => {
-                super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(p.name.clone())), p.span)
-            }
-            super::record::RecordKey::Index(e) | super::record::RecordKey::Computed(e) => {
-                match self.symbol_key_of(e) {
-                    Some(name) => {
-                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), e.span)
-                    }
-                    None => (*e).clone(),
-                }
-            }
+        let lit = |name: String, span| {
+            super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span)
         };
         self.note_dyn_members();
+        let k = match key {
+            super::record::RecordKey::Name(p) => lit(p.name.clone(), p.span),
+            super::record::RecordKey::Index(e) | super::record::RecordKey::Computed(e) => {
+                // A symbol constant names the member it keys; a proxy's trap sees the symbol.
+                if let Some(name) = self.symbol_key_of(e) {
+                    let args = vec![object.clone(), lit(name, e.span), (*e).clone()];
+                    return Some(self.prelude_fn_call("__anyDeleteSym", args, span));
+                }
+                (*e).clone()
+            }
+        };
         Some(self.prelude_fn_call("__anyDelete", vec![object.clone(), k], span))
     }
 
@@ -126,7 +262,16 @@ impl FnCx<'_, '_> {
     ) -> Option<hir::Expr> {
         let t = self.trial_expr(rhs).ty;
         let dynamic = self.cx.dynamic(t)?;
-        // A symbol constant (`KEY in o`) names the member it keys.
+        // A symbol constant (`KEY in o`) names the member it keys; a proxy's `has` trap sees the
+        // symbol itself.
+        if dynamic == crate::any::Dynamic::Any {
+            if let Some(name) = self.symbol_key_of(lhs) {
+                self.note_dyn_members();
+                let name = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), lhs.span);
+                let args = vec![rhs.clone(), name, lhs.clone()];
+                return Some(self.prelude_fn_call("__anyHasSym", args, span));
+            }
+        }
         let k = match self.symbol_key_of(lhs) {
             Some(name) => self.str_lit(&name, lhs.span),
             None => self.expr(lhs, None, crate::body::Want::Borrow),

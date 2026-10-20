@@ -580,6 +580,9 @@ impl FnLower<'_, '_> {
             // The payload of an `any | null`: the value itself.
             return Operand::Copy(p.clone());
         }
+        if self.cx.is_union(ty) {
+            return self.any_unbox_union(p, from, ty);
+        }
         let vt = self.cx.ty(ty);
         let out = Place::local(self.temp(vt));
         let data = Operand::Copy(proj(p, Proj::Field(0)));
