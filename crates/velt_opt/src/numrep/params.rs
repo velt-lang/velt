@@ -4,14 +4,14 @@
 //! When every call passes a constant there (`run(50000000, false)`), the parameter's fact is
 //! the join of those constants, and a loop bounded by it (`i < iterations`) narrows.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_vir::vir::{Callee, Const, Function, Linkage, Operand, StaticData, Terminator};
 
 use super::fact::Fact;
 
 /// Per function symbol: the facts of its parameters (`None`: any value).
-pub(super) type ParamFacts = HashMap<String, Vec<Option<Fact>>>;
+pub(super) type ParamFacts = FxHashMap<String, Vec<Option<Fact>>>;
 
 /// The parameter facts of `funcs`' internal functions whose every call passes constants.
 pub(super) fn of(funcs: &[Function], statics: &[StaticData]) -> ParamFacts {
@@ -62,7 +62,7 @@ pub(super) fn of(funcs: &[Function], statics: &[StaticData]) -> ParamFacts {
             }
         }
     }
-    let mut out = ParamFacts::new();
+    let mut out = ParamFacts::default();
     for (i, f) in funcs.iter().enumerate() {
         let internal = matches!(f.linkage, Linkage::Internal);
         if let (true, false, Some(facts)) = (internal, taken[i], calls[i].take()) {

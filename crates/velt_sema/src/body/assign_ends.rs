@@ -6,7 +6,7 @@
 //! Closures' own assignments are not counted: such variables are never narrowed in closures
 //! (`closure_assigned`).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use velt_syntax::ast;
 
@@ -14,9 +14,9 @@ use velt_syntax::ast;
 pub(crate) fn assignment_ends<'a>(
     stmts: &'a [ast::Stmt],
     exprs: impl IntoIterator<Item = &'a ast::Expr>,
-) -> HashMap<String, u32> {
+) -> FxHashMap<String, u32> {
     let mut w = Walk {
-        out: HashMap::new(),
+        out: FxHashMap::default(),
         loop_hi: None,
     };
     exprs.into_iter().for_each(|e| w.expr(e));
@@ -25,7 +25,7 @@ pub(crate) fn assignment_ends<'a>(
 }
 
 struct Walk {
-    out: HashMap<String, u32>,
+    out: FxHashMap<String, u32>,
     /// The end of the outermost loop being walked.
     loop_hi: Option<u32>,
 }

@@ -5,7 +5,7 @@ use super::{Nothing, TyId, TyKind};
 #[derive(Clone, Debug, Default)]
 pub struct TyTable {
     kinds: Vec<TyKind>,
-    map: std::collections::HashMap<TyKind, TyId>,
+    map: rustc_hash::FxHashMap<TyKind, TyId>,
 }
 
 impl TyTable {

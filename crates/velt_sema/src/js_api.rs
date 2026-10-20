@@ -1,7 +1,7 @@
 //! The JS API the standard library provides (`body::expr::numbers::is_js_api`): user code sees
 //! its integer results as `number`, like TypeScript.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 
@@ -24,11 +24,11 @@ impl<'m> Ctx<'m> {
         local.contains('.') || names.contains(local)
     }
 
-    fn js_api_modules(&self) -> &HashMap<usize, Option<HashSet<String>>> {
+    fn js_api_modules(&self) -> &FxHashMap<usize, Option<FxHashSet<String>>> {
         let modules = self.modules;
         self.js_api_modules.get_or_init(|| {
             // For each module path a global re-exports from: the names it re-exports.
-            let mut reexported: HashMap<&str, HashSet<String>> = HashMap::new();
+            let mut reexported: FxHashMap<&str, FxHashSet<String>> = FxHashMap::default();
             for g in modules
                 .iter()
                 .filter(|g| g.is_std && g.path.starts_with("std/prelude/global/"))
@@ -45,7 +45,7 @@ impl<'m> Ctx<'m> {
                     names.extend(imp.names.iter().map(|n| n.name.name.clone()));
                 }
             }
-            let mut out = HashMap::new();
+            let mut out = FxHashMap::default();
             for (i, m) in modules.iter().enumerate() {
                 if !m.is_std {
                     continue;
@@ -54,7 +54,7 @@ impl<'m> Ctx<'m> {
                     out.insert(i, None);
                     continue;
                 }
-                let names: HashSet<String> = reexported
+                let names: FxHashSet<String> = reexported
                     .iter()
                     .filter(|(g, _)| m.path == **g || m.path.starts_with(&format!("{g}/")))
                     .flat_map(|(_, n)| n.iter().cloned())

@@ -21,7 +21,7 @@
 //! Declarations that capture nothing, generic ones, overloaded ones and ones using `this` stay
 //! nested functions (`collect::nested`).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, ExprKind as E, ItemKind as I, StmtKind as S};
@@ -39,7 +39,7 @@ pub(crate) struct Rewritten {
     pub modules: Vec<SourceModule>,
     pub diags: Vec<Diagnostic>,
     /// Name spans of the capturing nested functions left as declarations (reported here).
-    pub kept: HashSet<Span>,
+    pub kept: FxHashSet<Span>,
     /// The recursive closure groups made.
     pub groups: Vec<ClosureGroup>,
 }
@@ -81,7 +81,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
         .map(|m| {
             let mut items = m.ast.items.clone();
             for i in &mut items {
-                rw.item(i, &HashSet::new());
+                rw.item(i, &FxHashSet::default());
             }
             SourceModule {
                 path: m.path.clone(),
@@ -108,7 +108,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
 #[derive(Default)]
 struct Rw {
     diags: Vec<Diagnostic>,
-    kept: HashSet<Span>,
+    kept: FxHashSet<Span>,
     groups: Vec<ClosureGroup>,
 }
 
@@ -118,12 +118,12 @@ struct Cand {
     at: usize,
     name: ast::Ident,
     /// The names it uses that it does not bind itself.
-    free: HashSet<String>,
+    free: FxHashSet<String>,
 }
 
 impl Rw {
     /// Every function body in `item`; `outer`: the locals of the functions around it.
-    fn item(&mut self, item: &mut ast::Item, outer: &HashSet<String>) {
+    fn item(&mut self, item: &mut ast::Item, outer: &FxHashSet<String>) {
         match &mut item.kind {
             I::Function(f) => self.func(f, outer),
             I::Struct(t) | I::Class(t) => {
@@ -158,7 +158,7 @@ impl Rw {
         }
     }
 
-    fn func(&mut self, f: &mut ast::FnDecl, outer: &HashSet<String>) {
+    fn func(&mut self, f: &mut ast::FnDecl, outer: &FxHashSet<String>) {
         let params = f.sig.params.clone();
         for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
             self.expr(e, outer);
@@ -168,7 +168,7 @@ impl Rw {
 
     /// A function body: its locals (parameters and every variable bound inside, at any
     /// depth) join `outer` for the nested functions in it.
-    fn body(&mut self, params: &[ast::Param], b: &mut ast::Block, outer: &HashSet<String>) {
+    fn body(&mut self, params: &[ast::Param], b: &mut ast::Block, outer: &FxHashSet<String>) {
         let mut s = Scan::default();
         s.params(params);
         s.block(b);
@@ -182,7 +182,7 @@ impl Rw {
 
     /// The statements of a block: its capturing nested functions become closure constants,
     /// placed as described in the module docs; then everything inside is rewritten.
-    fn block(&mut self, stmts: &mut Vec<ast::Stmt>, locals: &HashSet<String>) {
+    fn block(&mut self, stmts: &mut Vec<ast::Stmt>, locals: &FxHashSet<String>) {
         let mut locals = std::borrow::Cow::Borrowed(locals);
         let groups_before = self.groups.len();
         if stmts
@@ -219,7 +219,7 @@ impl Rw {
     }
 
     /// Rewrite the capturing nested functions of `stmts`; the names of those rewritten.
-    fn convert(&mut self, stmts: &mut Vec<ast::Stmt>, locals: &HashSet<String>) -> Vec<String> {
+    fn convert(&mut self, stmts: &mut Vec<ast::Stmt>, locals: &FxHashSet<String>) -> Vec<String> {
         let mut cands: Vec<Cand> = vec![];
         for (at, s) in stmts.iter().enumerate() {
             let S::Item(item) = &s.kind else { continue };
@@ -248,7 +248,7 @@ impl Rw {
             .map(|c| c.free.iter().any(|n| locals.contains(n)))
             .collect();
         loop {
-            let names: HashSet<&str> = cands
+            let names: FxHashSet<&str> = cands
                 .iter()
                 .zip(&conv)
                 .filter(|(_, &v)| v)
@@ -276,12 +276,12 @@ impl Rw {
                 .filter(|&b| cands[a].free.contains(&cands[b].name.name))
                 .collect()
         };
-        let edges: HashMap<usize, Vec<usize>> = idx.iter().map(|&a| (a, uses_of(a))).collect();
+        let edges: FxHashMap<usize, Vec<usize>> = idx.iter().map(|&a| (a, uses_of(a))).collect();
         // Recursion through closures: each set of functions calling each other becomes a
         // recursive closure group (`ClosureGroup`); the shapes it does not cover stay
         // declarations, reported.
-        let mut keep = HashSet::new();
-        let mut group_of: HashMap<usize, usize> = HashMap::new();
+        let mut keep = FxHashSet::default();
+        let mut group_of: FxHashMap<usize, usize> = FxHashMap::default();
         let mut recursive: Vec<Vec<usize>> = vec![];
         for g in sccs(&idx, &edges) {
             let cyclic = g.len() > 1 || edges[&g[0]].contains(&g[0]);
@@ -312,7 +312,7 @@ impl Rw {
             }
         };
         let nodes: Vec<usize> = idx.iter().copied().filter(|&a| node(a) == a).collect();
-        let node_edges: HashMap<usize, Vec<usize>> = nodes
+        let node_edges: FxHashMap<usize, Vec<usize>> = nodes
             .iter()
             .map(|&n| {
                 let mut out: Vec<usize> = vec![];
@@ -330,15 +330,15 @@ impl Rw {
         // Where each one goes: before the first statement using it, at most where it is
         // declared, after the block's locals it captures.
         let n = stmts.len();
-        let cand_at: HashSet<usize> = idx.iter().map(|&a| cands[a].at).collect();
-        let stmt_refs: Vec<Option<HashSet<String>>> = stmts
+        let cand_at: FxHashSet<usize> = idx.iter().map(|&a| cands[a].at).collect();
+        let stmt_refs: Vec<Option<FxHashSet<String>>> = stmts
             .iter()
             .enumerate()
             .map(|(j, s)| {
                 (!cand_at.contains(&j) && !matches!(s.kind, S::Item(_))).then(|| scan_stmt(s).refs)
             })
             .collect();
-        let mut declared: HashMap<String, usize> = HashMap::new();
+        let mut declared: FxHashMap<String, usize> = FxHashMap::default();
         for (j, s) in stmts.iter().enumerate() {
             if let S::Var(v) = &s.kind {
                 let mut sc = Scan::default();
@@ -350,8 +350,8 @@ impl Rw {
         }
         // Users first, so a closure's position bounds those it uses.
         let order = topo(&nodes, &node_edges);
-        let mut pos: HashMap<usize, usize> = HashMap::new();
-        let mut bad = HashSet::new();
+        let mut pos: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut bad = FxHashSet::default();
         for &a in &order {
             let ms = members(a);
             let first_use = stmt_refs
@@ -398,12 +398,12 @@ impl Rw {
         }
         // The recursive groups left: what each captures (the locals and closure constants its
         // members use), in one order for all members.
-        let converted: HashSet<&str> = idx.iter().map(|&a| cands[a].name.name.as_str()).collect();
+        let converted: FxHashSet<&str> = idx.iter().map(|&a| cands[a].name.name.as_str()).collect();
         for ms in recursive
             .iter()
             .filter(|ms| !ms.iter().any(|a| bad.contains(a)))
         {
-            let own: HashSet<&str> = ms.iter().map(|&m| cands[m].name.name.as_str()).collect();
+            let own: FxHashSet<&str> = ms.iter().map(|&m| cands[m].name.name.as_str()).collect();
             let captures: std::collections::BTreeSet<String> = ms
                 .iter()
                 .flat_map(|&m| cands[m].free.iter())
@@ -426,7 +426,7 @@ impl Rw {
         }
         // Emit: at each position, the closures used by others first (a group's members in
         // source order).
-        let mut at_pos: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut at_pos: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
         for &a in order.iter().rev() {
             if idx.contains(&a) {
                 let mut ms = members(a);
@@ -434,9 +434,9 @@ impl Rw {
                 at_pos.entry(pos[&a]).or_default().extend(ms);
             }
         }
-        let moved: HashMap<usize, usize> = idx.iter().map(|&a| (cands[a].at, a)).collect();
+        let moved: FxHashMap<usize, usize> = idx.iter().map(|&a| (cands[a].at, a)).collect();
         let mut old: Vec<Option<ast::Stmt>> = std::mem::take(stmts).into_iter().map(Some).collect();
-        let mut made: HashMap<usize, ast::Stmt> = HashMap::new();
+        let mut made: FxHashMap<usize, ast::Stmt> = FxHashMap::default();
         for (&at, &a) in &moved {
             let s = old[at].take().expect("ICE: statement taken twice");
             made.insert(a, closure_const(s, group_of.contains_key(&a)));
@@ -496,7 +496,7 @@ impl Rw {
         );
     }
 
-    fn stmt(&mut self, s: &mut ast::Stmt, locals: &HashSet<String>) {
+    fn stmt(&mut self, s: &mut ast::Stmt, locals: &FxHashSet<String>) {
         match &mut s.kind {
             S::Var(v) => {
                 if let Some(e) = &mut v.init {
@@ -565,7 +565,7 @@ impl Rw {
         }
     }
 
-    fn expr(&mut self, e: &mut ast::Expr, locals: &HashSet<String>) {
+    fn expr(&mut self, e: &mut ast::Expr, locals: &FxHashSet<String>) {
         match &mut e.kind {
             E::Arrow {
                 params,

@@ -1,7 +1,7 @@
 //! Terminators: jumps, branches, switches, returns, calls (direct, extern, indirect) and
 //! `unreachable` (VIR only places it after noreturn calls and on paths lowering proved dead).
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
@@ -67,7 +67,7 @@ impl Emitter<'_> {
         let t = format!("i{}", int_bits(int_ty));
         // Case values are compared at the value's width: (possibly negative) keys are
         // reduced to their bit pattern, and must stay distinct after that.
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut arms = String::new();
         for (k, target) in cases {
             let key = int_literal(int_ty, *k);

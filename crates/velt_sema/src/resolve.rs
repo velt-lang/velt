@@ -674,7 +674,7 @@ impl Ctx<'_> {
             return false;
         }
         let mut stack = vec![body];
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
                 continue;

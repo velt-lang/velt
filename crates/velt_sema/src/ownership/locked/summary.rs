@@ -13,7 +13,8 @@
 //! intrinsic) may store any argument into any argument it may modify, and a function value it
 //! calls may keep its arguments. Copy values and strings never flow.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
 
 use velt_common::Span;
 
@@ -38,9 +39,9 @@ pub(super) struct Summary {
 
 /// The summaries of the program's functions (not of closures, which are called as values).
 pub(super) struct Summaries {
-    sums: HashMap<DefId, Summary>,
+    sums: FxHashMap<DefId, Summary>,
     /// The variables each closure of the program captures (in the body making it).
-    captures: HashMap<DefId, Vec<LocalId>>,
+    captures: FxHashMap<DefId, Vec<LocalId>>,
 }
 
 impl Summaries {
@@ -64,18 +65,18 @@ impl Summaries {
             })
             .collect();
         let mut s = Summaries {
-            sums: HashMap::new(),
+            sums: FxHashMap::default(),
             captures,
         };
         // A body's summary depends only on the summaries of the functions it calls by name
         // (`Walk::callees`). A pass summarizes a function again only when one of those changed
         // after its last summary (otherwise the result is the one it already has), so each pass
         // after the first walks only the callers of what the previous one changed.
-        let mut callees: HashMap<DefId, HashSet<DefId>> = HashMap::new();
+        let mut callees: FxHashMap<DefId, FxHashSet<DefId>> = FxHashMap::default();
         // The run (a counter over every `summarize`) that last summarized a function, and the
         // run that last changed its summary.
-        let mut last_run: HashMap<DefId, u64> = HashMap::new();
-        let mut changed_at: HashMap<DefId, u64> = HashMap::new();
+        let mut last_run: FxHashMap<DefId, u64> = FxHashMap::default();
+        let mut changed_at: FxHashMap<DefId, u64> = FxHashMap::default();
         let mut run = 0u64;
         // Passes repeat until one changes no summary. A summary is bounded by the parameter pairs
         // and bits, and grows with its callees' summaries; it is not monotone across passes,
@@ -131,15 +132,15 @@ fn bits_of(b: u64) -> impl Iterator<Item = usize> {
 
 /// Summary of body `f` given its callees' current summaries, and the functions whose
 /// summaries it read (the callees it calls by name).
-fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, HashSet<DefId>) {
+fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, FxHashSet<DefId>) {
     let mut w = Walk {
         cx,
         s,
-        bits: HashMap::new(),
+        bits: FxHashMap::default(),
         out: Summary::default(),
         changed: false,
-        spawned: HashSet::new(),
-        callees: HashSet::new(),
+        spawned: FxHashSet::default(),
+        callees: FxHashSet::default(),
     };
     for (i, p) in f.params.iter().enumerate() {
         w.bits.insert(p.local, bit(i));
@@ -157,13 +158,13 @@ struct Walk<'a, 's, 'm> {
     cx: &'a mut Ctx<'m>,
     s: &'s Summaries,
     /// The parameters each local may reach.
-    bits: HashMap<LocalId, u64>,
+    bits: FxHashMap<LocalId, u64>,
     out: Summary,
     changed: bool,
     /// Spans of the calls `spawn` takes.
-    spawned: HashSet<Span>,
+    spawned: FxHashSet<Span>,
     /// The functions called by name, whose summaries this one depends on.
-    callees: HashSet<DefId>,
+    callees: FxHashSet<DefId>,
 }
 
 impl Walk<'_, '_, '_> {

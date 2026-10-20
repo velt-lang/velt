@@ -38,7 +38,7 @@
 //!   closure is replaced only by an assignment in the right-hand side itself. A right-hand side
 //!   that only reads, computes and builds values compiles.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 
 use velt_common::Span;
@@ -118,11 +118,11 @@ enum Frame {
 #[derive(Default)]
 struct Effects {
     /// Types of the places it assigns whole values to.
-    assigns: HashSet<TyId>,
+    assigns: FxHashSet<TyId>,
     /// The fields among them, of an object type without type parameters.
-    fields: HashSet<FieldKey>,
+    fields: FxHashSet<FieldKey>,
     /// The others (of a generic object type, with a field type without).
-    loose: HashSet<LooseKey>,
+    loose: FxHashSet<LooseKey>,
     /// Types of the fields it assigns whose type mentions a type parameter.
     generic: Vec<TyId>,
     /// Functions it calls directly (`new` calls the constructor, an interface call each
@@ -150,21 +150,21 @@ struct Effects {
     type_args: Vec<TyId>,
     /// Types of the values it hands glue that may format, serialise or deep-copy them, calling
     /// class hooks (`implicit` 1 and 2).
-    glue: HashSet<TyId>,
+    glue: FxHashSet<TyId>,
     /// Types of the values it may drop, running `[Symbol.dispose]()` hooks (`implicit` 3).
-    drops: HashSet<TyId>,
+    drops: FxHashSet<TyId>,
     /// It resumes a generator: any generator body may run (`implicit` 4).
     resumes: bool,
     /// Its own variables it assigns whole values to.
-    locals: HashSet<LocalId>,
+    locals: FxHashSet<LocalId>,
 }
 
 /// The function values a body can name: its own parameters taking one (never reassigned) and
 /// its constants holding a closure or a function.
 #[derive(Default)]
 struct Scope {
-    params: HashSet<LocalId>,
-    known: HashMap<LocalId, (DefId, Frame)>,
+    params: FxHashSet<LocalId>,
+    known: FxHashMap<LocalId, (DefId, Frame)>,
 }
 
 /// What a function value expression holds.
@@ -315,7 +315,7 @@ struct Scan<'a, 'm> {
     names: &'a [String],
     locals: &'a [LocalDef],
     /// The function's parameters (`this` too).
-    params: &'a HashSet<LocalId>,
+    params: &'a FxHashSet<LocalId>,
     scope: Scope,
     fx: Effects,
     shared: &'a mut Vec<TyId>,
@@ -442,7 +442,7 @@ pub(crate) fn check(cx: &mut Ctx) {
                 shared.push(l.ty);
             }
         }
-        let mut params: HashSet<LocalId> = HashSet::new();
+        let mut params: FxHashSet<LocalId> = FxHashSet::default();
         if slots[i].is_some() {
             params = f
                 .params
@@ -466,7 +466,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             });
         }
         let locals = std::mem::take(&mut f.body.locals);
-        let own_params: HashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
+        let own_params: FxHashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
         let first = candidates.len();
         let mut scan = Scan {
             cx,
@@ -477,7 +477,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             params: &own_params,
             scope: Scope {
                 params,
-                known: HashMap::new(),
+                known: FxHashMap::default(),
             },
             fx: Effects::default(),
             shared: &mut shared,
@@ -497,7 +497,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             .any(|c| c.path.iter().any(|l| l.local.is_some()))
         {
             // A variable a closure captures may be assigned by it.
-            let mut captured: HashSet<LocalId> = HashSet::new();
+            let mut captured: FxHashSet<LocalId> = FxHashSet::default();
             visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
                 if let E::Closure(d) = e.kind {
                     if let Some(Some(Def::Fn(c))) = cx.defs.get(d.0 as usize) {
@@ -626,7 +626,7 @@ fn candidate(scan: &mut Scan<'_, '_>, span: Span, place: &Expr, value: &Expr) ->
         im: scan.im,
         locals: scan.locals,
         scope: Scope {
-            params: HashSet::new(),
+            params: FxHashSet::default(),
             known: std::mem::take(&mut scan.scope.known),
         },
         fx: Effects::default(),
@@ -721,7 +721,7 @@ fn is_class(cx: &Ctx, t: TyId) -> bool {
 
 /// Does the object type `d` reach itself through values stored inline (always a counted box)?
 fn contains_itself(cx: &Ctx, d: DefId) -> bool {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut work: Vec<TyId> = field_types(cx, d);
     while let Some(t) = work.pop() {
         if !seen.insert(t) {
