@@ -314,6 +314,7 @@ fn check_on_current_thread(
         any,
         gen_throw,
         super_calls,
+        cpu_targets,
         ..
     } = cx;
     let defs = defs
@@ -341,6 +342,7 @@ fn check_on_current_thread(
         super_calls: super_calls.into_iter().collect(),
         upcasts,
         upcast_impls,
+        cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)
 }

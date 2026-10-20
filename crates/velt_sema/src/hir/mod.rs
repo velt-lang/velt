@@ -42,7 +42,7 @@ use velt_common::Span;
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
-pub use numeric::{FloatTy, IntTy, SimdTy};
+pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use table::TyTable;
 pub use ty_op::TyOp;
 
@@ -184,6 +184,9 @@ pub struct Program {
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
     pub upcast_impls: HashMap<u32, Vec<u32>>,
+    /// Gated functions (`__intrinsic_target`) and the CPU extension each is compiled for
+    /// (#1330): lowering gives the VIR function its target.
+    pub cpu_targets: HashMap<DefId, CpuTarget>,
 }
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").

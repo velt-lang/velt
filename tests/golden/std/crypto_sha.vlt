@@ -1,0 +1,40 @@
+// check: also with VELT_SIMD_DISABLE=sha
+// SHA-1, SHA-256 and HMAC against Node 22's output (#1330): every padding boundary, 1 MiB, HMAC keys
+// shorter than, equal to and longer than the block, non-ASCII strings. With the CPU's SHA
+// instructions (arm64 and x86-64 release builds) and with the portable rounds (debug, wasm,
+// VELT_SIMD_DISABLE=sha) alike. Lone surrogates in strings wait for #377.
+
+import { sha256, sha1, sha256Hex, sha1Hex, hmacSha256, hmacSha1 } from "velt:crypto";
+import { hexEncode } from "velt:encoding";
+
+function bytes(n: usize, seed: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i * 31 + seed) & 0xff) as u8);
+  }
+  return out;
+}
+
+function main() {
+  const lens: usize[] = [0, 1, 2, 3, 55, 56, 57, 63, 64, 65, 111, 112, 119, 120, 127, 128, 129, 1000, 1048576];
+  for (const n of lens) {
+    const d = bytes(n, 7);
+    console.log(`sha1 ${n} ${hexEncode(sha1(d))}`);
+    console.log(`sha256 ${n} ${hexEncode(sha256(d))}`);
+  }
+  const keys: usize[] = [0, 1, 20, 32, 63, 64, 65, 131, 200];
+  const dls: usize[] = [0, 1, 55, 64, 100];
+  for (const k of keys) {
+    for (const dl of dls) {
+      const key = bytes(k, 3);
+      const d = bytes(dl, 11);
+      console.log(`hmac1 ${k} ${dl} ${hexEncode(hmacSha1(key, d))}`);
+      console.log(`hmac256 ${k} ${dl} ${hexEncode(hmacSha256(key, d))}`);
+    }
+  }
+  const strs: string[] = ["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "héllo wörld", "日本語", "😀 emoji"];
+  for (const s of strs) {
+    console.log(`s1 ${s.length} ${sha1Hex(s)}`);
+    console.log(`s256 ${s.length} ${sha256Hex(s)}`);
+  }
+}
