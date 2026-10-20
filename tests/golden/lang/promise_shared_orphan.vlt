@@ -15,7 +15,7 @@ async function main() {
   const q = p;
   q.then((v) => console.log("q", v));
   p.then((v) => console.log("p", v));
-  const r = val(40);
+  const r = val(400);
   const a = waiter("a", r);
   const b = waiter("b", r);
   console.log("main done");
