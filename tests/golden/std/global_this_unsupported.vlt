@@ -14,3 +14,7 @@ Object.defineProperty(globalThis, "__W__", { value: 2, configurable: true });
 
 const host = globalThis as { __R__?: number };
 const same = Object.defineProperty(host, "__R__", { value: 1, writable: true });
+
+console.log((globalThis as { __A__?: number }).__A__);
+Object.defineProperty(globalThis, "__A__", { value: 1, writable: true });
+Object.defineProperty(globalThis, "__A__", { value: 2, configurable: true });

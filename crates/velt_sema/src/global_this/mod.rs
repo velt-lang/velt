@@ -53,6 +53,9 @@ pub(crate) struct GlobalProps {
     pub slots: FxHashMap<String, DefId>,
     /// The module each property's variable is declared in.
     homes: FxHashMap<String, usize>,
+    /// The `writable` and `configurable` the first `defineProperty` of each key gives, and
+    /// where (`body::expr::object_define`).
+    pub defined: FxHashMap<String, (bool, bool, Span)>,
 }
 
 impl GlobalProps {

@@ -2023,8 +2023,11 @@ console.log((globalThis as Seam).__HOOK__?.events); // [ 'kept' ]
 
 Not supported yet: `globalThis` as a value of its own (`console.log(globalThis)`,
 `Object.keys(globalThis)`), symbol keys, keys known only at run time, `defineProperty` on it
-without a `value`, neither writable nor configurable, or without `writable: true` on a property
-the program also assigns (Node throws there), and using the result of `defineProperty` on it.
+without a `value`, neither writable nor configurable, without `writable: true` on a property
+the program also assigns (Node throws there), or with other `writable` and `configurable` than
+another call with the same key (an attribute a call leaves out is `false` on the property it
+makes, so whether Node throws depends on which runs first), and using the result of
+`defineProperty` on it.
 `enumerable` changes nothing Velt shows, since the keys of `globalThis` are not listed.
 
 ### The `in` operator

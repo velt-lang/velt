@@ -44,6 +44,12 @@ installScope({ name: "first", keepAlive: (n) => console.log("keep", n) });
 console.log(scope()?.name);
 (globalThis as Seam).__SCOPE__?.keepAlive?.(2);
 installScope({ name: "second" });
+// Defined again with the same attributes: writable, so the value may change (not configurable,
+// as an omitted attribute of a new property is `false`).
+for (const v of [1, 2]) {
+  Object.defineProperty(globalThis, "__VERSION__", { value: v, writable: true });
+}
+console.log((globalThis as { __VERSION__?: number }).__VERSION__);
 console.log(scope()?.name, scope()?.keepAlive === undefined);
 
 bump();

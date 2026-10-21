@@ -255,8 +255,24 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
+        // A new property's omitted attributes are `false`, an existing one's stay.
         let writable = d.writable == Some(true);
-        if !writable && d.configurable != Some(true) {
+        let configurable = d.configurable == Some(true);
+        let first = *(self.cx.global_props.defined)
+            .entry(key.to_string())
+            .or_insert((writable, configurable, desc.span));
+        if (first.0, first.1) != (writable, configurable) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`Object.defineProperty` of `globalThis.{key}` with different attributes at different calls is not supported yet"),
+                    desc.span,
+                )
+                .with_label(first.2, "defined with other attributes here")
+                .with_note("whether Node throws depends on which call runs first (the property's omitted attributes are `false` when a call makes it): give every call with this key the same `writable` and `configurable`"),
+            );
+            return self.error_expr(span);
+        }
+        if !writable && !configurable {
             self.not_yet(
                 &format!("`Object.defineProperty` of `globalThis.{key}` neither writable nor configurable is not supported yet"),
                 desc.span,

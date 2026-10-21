@@ -3,4 +3,5 @@ the result of `Object.defineProperty` on `globalThis` is not supported yet
 `globalThis` as a value is not supported yet
 `Object.defineProperty` of `globalThis.__RO__` neither writable nor configurable is not supported yet
 `Object.defineProperty` of `globalThis.__W__` without `writable: true`, which the program also assigns, is not supported yet
+`Object.defineProperty` of `globalThis.__A__` with different attributes at different calls is not supported yet
 `globalThis.__N__` is `string | undefined` here, but `f64 | undefined` where it is first asserted

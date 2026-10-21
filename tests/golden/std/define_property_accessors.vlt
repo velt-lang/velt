@@ -91,3 +91,25 @@ try {
 type Value = Cell<string>["value"];
 const v: Value = "typed";
 console.log(v);
+
+// Without `configurable`, a definition keeps the property's: the literal's accessor is
+// configurable, so defining it again, twice or in a loop, doesn't throw.
+function twice(): number {
+  let n = 1;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  Object.defineProperty(c, "n", { get: () => n + 10 });
+  Object.defineProperty(c, "n", { get: () => n + 20 });
+  for (let i = 0; i < 3; i++) {
+    Object.defineProperty(c, "n", { get: () => n + 100 * i });
+  }
+  return c.n;
+}
+
+console.log(twice());
