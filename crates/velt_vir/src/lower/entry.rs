@@ -239,6 +239,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.write_text(&stream, "Uncaught ");
         if let Some(root) = self.error_root(err) {
             self.write_error_header(&stream, ep, err, root);
+        } else if self.cx.is_dynamic(err) {
+            self.write_dynamic_thrown(&stream, ep, err);
         } else {
             self.write_thrown_value(&stream, ep, err);
         }
@@ -248,6 +250,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
             vec![stream, cint(b'\n' as i128, Ty::U8)],
             None,
         );
+    }
+
+    /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
+    /// (`RangeError: outer`), else the value as [`write_thrown_value`](Self::write_thrown_value)
+    /// writes it.
+    fn write_dynamic_thrown(&mut self, stream: &Operand, ep: &Place, err: TyId) {
+        let Some(root) = self.cx.prelude_error() else {
+            return self.write_thrown_value(stream, ep, err);
+        };
+        let is_error = self.instance_test(ep, err, root);
+        let (error_bb, value_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_error, error_bb, value_bb);
+        self.switch_to(error_bb);
+        let obj = self.downcast_place(ep.clone(), err);
+        let error = self.cx.intern(TyKind::Adt(root, vec![]));
+        self.write_error_header(stream, &obj, error, root);
+        self.goto(done);
+        self.switch_to(value_bb);
+        self.write_thrown_value(stream, ep, err);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// A thrown value that is not an `Error` as Node reports it: as `console.log` prints it
