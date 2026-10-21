@@ -478,13 +478,16 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   result that is a part of it (`s.get(k)` of a `shared<Map<string, Item>>`), and a call
   through a function value. Such a copy is another object: `s.get("k") === s.items[2]` and
   `s.items.find((x) => x.v == 2) === s.items[2]` are `false`, where JavaScript compares the
-  shared object with itself. Nothing derived from the value can be changed: a variable bound
-  or assigned to a part, the elements of a `for…of` loop over it (or over what a method of it
-  returns, such as `s.values()`), and what these reach through a conditional, an array or
-  object literal, a constructor that keeps its argument, a method returning a part, a closure
-  at any depth, or a function changing such a value; `subarray()` and `buffer` of a shared
-  typed array are refused too: in JavaScript all of them reach the shared value itself.
-  Copying out is explicit: change a copy (`s.ports.slice()`, `structuredClone`) instead.
+  shared object with itself. A change to a part is refused where the compiler follows how it
+  got there: through a variable bound or assigned to it, a `for…of` loop over the value (or
+  over what a method of it returns, such as `s.values()`), a conditional, what a method or
+  getter of it returns (`s.m.get(k)!.v = 1`), a closure at any depth, a function changing it,
+  and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field; the
+  container's own slots may change). `subarray()` and `buffer` of a shared typed array are
+  refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
+  change lands on a copy, #1405): a part returned by an ordinary function, through a
+  generator, an `await`, `any` or a container filled with `push` / `set`. Change a copy
+  (`.clone()`, `s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this

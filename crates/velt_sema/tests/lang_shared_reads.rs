@@ -401,3 +401,36 @@ fn a_lock_behind_a_type_parameter_is_not_read_without_it() {
          function main() { show(new C()); show(3); }",
     );
 }
+
+#[test]
+fn new_containers_hold_parts_and_writes_through_results_are_refused() {
+    let defs = "class Item { v: number = 3; name: string = \"a\"; tags: string[] = []; }
+        class B { it: Item = new Item(); n: number = 0; }
+        class Store { m: Map<string, Item> = new Map<string, Item>(); nums: Map<string, number> = new Map<string, number>();
+          items: Item[] = [new Item()]; get head(): Item { return this.items[0]; } }";
+    // A new container or literal holds parts: its own slots may change.
+    ok_src(&format!(
+        "{defs} function f(st: Store): number {{ const m = new Map<string, Item>(st.m); m.set(\"z\", new Item()); m.delete(\"a\"); return m.size; }}
+         function top(m: Map<string, number>): number {{ const es = m.entries(); es.sort((a, b) => b[1] - a[1]); return es.length; }}
+         function main() {{ const s = shared(new Store()); console.log(f(s), top(s.nums));
+           const c = {{ ...s.items[0] }}; c.v = 50;
+           const x = s.items[0]; const o = {{ name: x.name, tags: x.tags, n: 0 }}; o.n = 5;
+           const pair: [Item, number] = [s.items[0], 1]; pair[1] = 2;
+           const b = new B(); b.it = s.items[0]; b.n = 1; }}"
+    ));
+    // A change through it, or through what a method or getter returns, is refused.
+    for body in [
+        "s.m.get(\"k0\")!.v = 50;",
+        "s.m.get(\"k0\")!.tags.push(\"x\");",
+        "s.head.v = 50;",
+        "s.head.tags.push(\"x\");",
+        "const c = s.items.slice(); c[0].v = 50;",
+        "const a: Item[] = [s.items[0]]; a[0].v = 50;",
+        "const b = new B(); b.it = s.items[0]; b.it.tags.push(\"x\");",
+    ] {
+        let r = err_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+        assert!(r.contains("read out of a `shared`"), "{body}: {r}");
+    }
+}

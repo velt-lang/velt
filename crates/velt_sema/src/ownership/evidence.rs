@@ -79,28 +79,26 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
         return ev;
     }
     let mut edges = super::derived::edges(cx, f);
-    // Std's containers never change the values they store (`Map.set`'s value goes into an
-    // array the map then changes): what they hold is not followed in their own bodies.
+    // Std's own bodies change only what they write directly: its containers never change
+    // what they hold or walk (`Map.set`'s value goes into an array the map then changes, an
+    // iterator steps over its source).
     if cx.modules[cx.fn_info(d).module].is_std {
-        edges.retain(|(_, r)| !r.held);
+        edges.clear();
     }
     let mut changed: FxHashSet<LocalId> = ev.mutated.iter().copied().collect();
     changed.extend(ev.modified.iter().copied());
     changed.extend(ev.weak.iter().copied());
     let mut deep: FxHashSet<LocalId> = ev.deep.iter().copied().collect();
-    deep.extend(ev.modified.iter().copied());
     // Bounded: each round adds a local.
     for _ in 0..=f.body.locals.len() {
         let mut grew = false;
-        for (l, r) in &edges {
-            let through = match r.held {
-                true => deep.contains(l),
-                false => changed.contains(l),
+        for e in &edges {
+            let Some(x) = e.src else { continue };
+            let through = match e.held {
+                true => deep.contains(&e.bound),
+                false => changed.contains(&e.bound),
             };
-            if !through {
-                continue;
-            }
-            for &x in &r.locals {
+            if through {
                 ev.modified.insert(x);
                 grew |= changed.insert(x);
                 grew |= deep.insert(x);
@@ -111,7 +109,6 @@ pub(super) fn collect_in(cx: &mut Ctx, d: crate::hir::DefId, f: &mut FnDef) -> E
         }
         ev.modified = through_aliases(&ev.modified, &aliases, false);
         changed.extend(ev.modified.iter().copied());
-        deep.extend(ev.modified.iter().copied());
     }
     ev
 }
@@ -253,9 +250,15 @@ impl VisitMut for Collector<'_, '_> {
                 } else if self.cx.frozen_reads {
                     // `i.v = 1` on any local (an owned one too), `st.m.get(k)!.v = 1` through
                     // what a method of `st` returned.
-                    self.ev
-                        .modified
-                        .extend(super::derived::roots(self.cx, place).locals);
+                    // Through a part (`o.f.x = 1`, not `o.f = 1`): a change of what `o` holds.
+                    let r = super::derived::roots(self.cx, place).locals;
+                    let own_slot = matches!(&place.kind, E::Field { base, .. } | E::Index { base, .. } if matches!(base.kind, E::Local(..)));
+                    if !own_slot {
+                        self.ev.deep.extend(r.iter().copied());
+                    }
+                    self.ev.modified.extend(r);
+                    // The place's own node is assigned, not changed in place.
+                    self.skip.insert(&**place as *const Expr);
                 }
             }
             E::Field {
@@ -269,9 +272,11 @@ impl VisitMut for Collector<'_, '_> {
             | E::UnwrapSome(_, UseMode::BorrowMut)
                 if self.cx.frozen_reads =>
             {
-                self.ev
-                    .modified
-                    .extend(super::derived::roots(self.cx, e).locals);
+                // The object at the place changes in place (`o.tags.push(x)`): a change
+                // through `o`, of what it holds.
+                let r = super::derived::roots(self.cx, e).locals;
+                self.ev.deep.extend(r.iter().copied());
+                self.ev.modified.extend(r);
             }
             E::Local(l, UseMode::BorrowMut) => {
                 self.ev.mutated.insert(*l);
@@ -323,13 +328,17 @@ impl VisitMut for Collector<'_, '_> {
                 args,
             } if self.cx.frozen_reads => {
                 let bits = self.cx.fn_info(*d).modified_params;
+                let std = self.cx.modules[self.cx.fn_info(*d).module].is_std;
                 for (i, a) in args.iter().enumerate().take(64) {
                     if bits & (1 << i) != 0 && !self.cx.is_copy(a.ty) {
-                        self.ev.deep.extend(place_root(a));
+                        if !std {
+                            self.ev.deep.extend(place_root(a));
+                        }
                         self.ev.modified.extend(place_root(a));
                     }
-                    if let E::Local(l, UseMode::BorrowMut) = a.kind {
-                        self.ev.deep.insert(l);
+                    // Std's containers change their own slots, never what they hold.
+                    if let (E::Local(l, UseMode::BorrowMut), false) = (&a.kind, std) {
+                        self.ev.deep.insert(*l);
                     }
                 }
             }

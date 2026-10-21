@@ -121,50 +121,52 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
         cx.frozen_elems.contains(&l.span) || cx.loop_roots.contains_key(&l.span)
     };
     let mut binds: FxHashMap<LocalId, bool> = FxHashMap::default();
+    // Locals only holding a part (`o.f = s.items[0]`, `[s.items[0]]`): only a change through
+    // them changes the part.
+    let mut held: rustc_hash::FxHashSet<LocalId> = rustc_hash::FxHashSet::default();
     for (i, l) in f.body.locals.iter().enumerate() {
         if cx.frozen_elems.contains(&l.span) {
             binds.insert(LocalId(i as u32), true);
         }
     }
-    // A local holding a part (`obj.f = s.items[0]`) counts only for changes through it.
-    let mut held: rustc_hash::FxHashSet<LocalId> = rustc_hash::FxHashSet::default();
-    for (l, r) in &edges {
-        if r.frozen && !binds.contains_key(l) {
-            binds.insert(*l, elem(&f.body.locals[l.0 as usize]));
-            if r.held {
-                held.insert(*l);
-            }
-        }
-    }
-    // Bounded: each round adds a local.
-    for _ in 0..=f.body.locals.len() {
-        let before = binds.len();
-        for (l, r) in &edges {
-            if !binds.contains_key(l) && r.locals.iter().any(|x| binds.contains_key(x)) {
-                binds.insert(*l, elem(&f.body.locals[l.0 as usize]));
-                if r.held {
-                    held.insert(*l);
+    // Bounded: each round adds a local, or makes a held one a part.
+    for _ in 0..=2 * f.body.locals.len() + 1 {
+        let mut grew = false;
+        for e in &edges {
+            let from = match e.src {
+                None => Some(false),
+                Some(x) => binds.contains_key(&x).then(|| held.contains(&x)),
+            };
+            let Some(from_held) = from else { continue };
+            let as_held = e.held || from_held;
+            match binds.contains_key(&e.bound) {
+                false => {
+                    binds.insert(e.bound, elem(&f.body.locals[e.bound.0 as usize]));
+                    if as_held {
+                        held.insert(e.bound);
+                    }
+                    grew = true;
                 }
+                true if !as_held && held.remove(&e.bound) => grew = true,
+                true => {}
             }
         }
-        if binds.len() == before {
+        if !grew {
             break;
         }
     }
-    if binds.is_empty() {
-        return;
-    }
     let ev = evidence::collect(cx, &mut f.body.block);
+    let mut errors = direct_writes(cx, f);
     let mut binds: Vec<(LocalId, bool)> = binds.into_iter().collect();
     binds.sort();
     for (l, elem) in binds {
         let local = &f.body.locals[l.0 as usize];
         let changed = match held.contains(&l) {
-            true => ev.deep.contains(&l) || ev.modified.contains(&l) && !ev.mutated.contains(&l),
+            true => ev.deep.contains(&l),
             false => ev.mutated.contains(&l) || ev.modified.contains(&l) || ev.weak.contains(&l),
         };
-        // Hidden locals of desugared loops (`<map@N>`) hold the source; the body can't name them.
-        if local.name.starts_with('<') || !changed || cx.is_copy(local.ty) {
+        // A map loop's hidden local holds the source; the body can't name it.
+        if local.name.starts_with("<map@") || !changed || cx.is_copy(local.ty) {
             continue;
         }
         let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
@@ -172,15 +174,95 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
             true => "the loop changes",
             false => "this changes",
         };
-        cx.error(
+        // A hidden local (`<nullish@N>` of `x!`, `<chain@N>` of `?.`) has no name to give.
+        let name = match name.starts_with('<') {
+            true => String::new(),
+            false => format!("`{name}`, "),
+        };
+        errors.push(
             Diagnostic::error(
-                format!("{what} `{name}`, a `{tn}` read out of a `shared` value"),
+                format!("{what} {name}a `{tn}` read out of a `shared` value"),
                 span,
             )
             .with_note(
                 "a shared value is read-only, since other tasks read it at the same time: \
-                 change a copy (`.slice()`, `structuredClone`), or share a `Mutex`",
+                 change a copy (`.clone()`, `.slice()`), or share a `Mutex`",
             ),
         );
+    }
+    report(cx, errors);
+}
+
+/// Writes through what a method or getter of a value read out of a `shared` returns, in the
+/// function reading it (`s.m.get(k)!.v = 1`, `s.head.tags.push(x)`): no local is to blame, so
+/// `frozen_bindings` would not see them.
+fn direct_writes(cx: &mut Ctx, f: &mut FnDef) -> Vec<Diagnostic> {
+    let mut found = vec![];
+    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        let place = match &e.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => &**place,
+            E::Field {
+                mode: crate::hir::UseMode::BorrowMut,
+                ..
+            }
+            | E::Index {
+                mode: crate::hir::UseMode::BorrowMut,
+                ..
+            } => &*e,
+            _ => return,
+        };
+        if !matches!(place.kind, E::Local(..)) && through_call(place) {
+            let r = super::derived::roots(cx, place);
+            if r.frozen {
+                found.push((place.span, place.ty));
+            }
+        }
+    });
+    found.sort_by_key(|(s, _)| (s.lo, s.hi));
+    found.dedup_by_key(|(s, _)| (s.lo, s.hi));
+    let mut out = vec![];
+    for (span, ty) in found {
+        let tn = cx.display(ty);
+        out.push(
+            Diagnostic::error(
+                format!("this changes a `{tn}`, a part of a value read out of a `shared`"),
+                span,
+            )
+            .with_note(
+                "a shared value is read-only, since other tasks read it at the same time: change \
+                 a copy (`.clone()`), or share a `Mutex`",
+            ),
+        );
+    }
+    out
+}
+
+/// Report `errors`, one per place: a write through a hidden local of `x!` is found both as a
+/// write and as a change of the local.
+fn report(cx: &mut Ctx, mut errors: Vec<Diagnostic>) {
+    let at = |d: &Diagnostic| d.labels.first().map(|l| (l.span.file, l.span.lo));
+    errors.sort_by_key(|d| at(d));
+    errors.dedup_by_key(|d| at(d));
+    for d in errors {
+        cx.error(d);
+    }
+}
+
+/// Does place `e` go through a call (a method's or getter's result) on the way to its root?
+/// Places rooted directly in a read are checked where they are written (`require_mutable`).
+fn through_call(e: &Expr) -> bool {
+    match &e.kind {
+        E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::SharedRead),
+            ..
+        } => false,
+        E::Call { .. } | E::Match { .. } => true,
+        E::Field { base, .. }
+        | E::Index { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base)
+        | E::Upcast(base) => through_call(base),
+        _ => false,
     }
 }
