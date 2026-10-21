@@ -127,6 +127,7 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
         if crate::body::is_readonly_array(&p.ty) {
             cx.sigq.readonly_params.insert(p.name.span);
         }
+        cx.note_written_type(p.name.span, p.ty.span);
         out.push(ParamSig {
             name: p.name.name.clone(),
             span: p.name.span,

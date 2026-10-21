@@ -1,0 +1,100 @@
+// check: no leaks
+// Async methods of object literals implementing an interface method that returns a promise
+// (#1154): their promises reject with what their bodies throw, as a class's async method's
+// do, also when the interface's other implementations reject with other errors or not at all.
+class NotFound extends Error {}
+class Gone extends Error {}
+
+interface Loader {
+  load(s: string): Promise<string>;
+  name(): string;
+}
+
+const plain: Loader = {
+  async load(s) {
+    return s + "!";
+  },
+  name() {
+    return "plain";
+  },
+};
+const failing: Loader = {
+  async load(s) {
+    if (s === "") {
+      throw new NotFound("empty");
+    }
+    return s.toUpperCase();
+  },
+  name: () => "failing",
+};
+const gone: Loader = {
+  async load(s) {
+    throw new Gone(`gone ${s}`);
+  },
+  name() {
+    return "gone";
+  },
+};
+const sync: Loader = {
+  load: (s) => Promise.resolve(s + "?"),
+  name() {
+    return "sync";
+  },
+};
+
+async function use(l: Loader, s: string) {
+  try {
+    console.log(l.name(), await l.load(s));
+  } catch (e) {
+    console.log(l.name(), "caught", (e as Error).message, e instanceof NotFound, e instanceof Gone);
+  }
+}
+
+interface Source {
+  read(k: string): Promise<number>;
+}
+
+class Remote implements Source {
+  async read(k: string): Promise<number> {
+    if (k === "x") {
+      throw new Gone("remote " + k);
+    }
+    return k.length;
+  }
+}
+
+const local: Source = { read: (k) => Promise.resolve(k.length * 10) };
+const lazy: Source = {
+  async read(k) {
+    return k.length * 100;
+  },
+};
+
+async function total(srcs: Source[], k: string): Promise<number> {
+  let n = 0;
+  for (const s of srcs) {
+    try {
+      n += await s.read(k);
+    } catch (e) {
+      console.log("skip", (e as Error).message);
+    }
+  }
+  return n;
+}
+
+async function run() {
+  await use(plain, "a");
+  await use(failing, "b");
+  await use(failing, "");
+  await use(gone, "g");
+  await use(sync, "c");
+  const all: Loader[] = [plain, failing, gone, sync];
+  for (const l of all) {
+    await use(l, "");
+  }
+  const srcs: Source[] = [new Remote(), local, lazy];
+  console.log(await total(srcs, "ab"));
+  console.log(await total(srcs, "x"));
+}
+
+await run();

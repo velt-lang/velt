@@ -339,13 +339,32 @@ declare async function velt_rt_microtask(): Promise<void>;
  * `queueMicrotask(f)`: runs `f` after the code that is running now and the callbacks queued
  * before it, before timers and I/O.
  */
-export function queueMicrotask(f: () => void) {
+export function queueMicrotask<E>(f: () => void throws E) {
   const p = runMicrotask(f);
 }
 
-async function runMicrotask(f: () => void): Promise<void> {
+// An error `f` throws is uncaught, as in Node: it ends the process at the throw.
+async function runMicrotask<E>(f: () => void throws E): Promise<void> {
   await velt_rt_microtask();
-  f();
+  try {
+    f();
+  } catch (e) {
+    uncaught(e);
+  }
+}
+
+declare function velt_rt_uncaught_now();
+
+// Reports `e` as uncaught and exits 1 at once, as Node does for an error a callback throws: the
+// rejection of a promise nothing awaits, reported when it is dropped (velt_rt_uncaught_now).
+function uncaught<E>(e: E) {
+  velt_rt_uncaught_now();
+  const p = rethrow(e);
+}
+
+// Rejects with `e`.
+async function rethrow<E>(e: E): Promise<void, E> {
+  throw e;
 }
 
 // How `p` settled, moved out (one step of the task: no tick of its own).

@@ -1414,8 +1414,12 @@ const s: Settings = { host: "example.org", port: 443 };
 console.log(show(parse("a=1")), read(s, "port")); // a -> 1 443
 ```
 
-Not supported yet (each is an error): `typeof` of a generic, `async` or generator function
-(function types have no type parameters), of a class or enum itself (TypeScript's constructor
+A function generic only over the errors its callbacks throw (`setTimeout<E>(task: () =>
+Promise<void, E>, ms: i64)`) has the function type without them (`typeof setTimeout` takes a
+callback that does not throw), as TypeScript declares such functions without type parameters.
+
+Not supported yet (each is an error): `typeof` of another generic function, of an `async` or
+generator function (function types have no type parameters), of a class or enum itself (TypeScript's constructor
 and enum object types; the type of a class's instances is its name), of `this` and of a local
 function value; `typeof import("./m")`; type arguments after the name (`typeof f<string>`);
 `typeof` of a function or a constant without a type annotation in classes and interfaces (their

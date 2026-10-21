@@ -8,8 +8,8 @@
 // when created). The callback runs on the task that created the timer, as a promise of that
 // task (never at the same time as its other code), so it shares what it captures with the code
 // around it, as in Node; it runs once the code that created it and the callbacks that code
-// queued are done. An error it throws is uncaught (the process exits like on an unhandled
-// rejection), so catch inside it.
+// queued are done. An error it throws is uncaught: it ends the process at the throw, as in Node,
+// so catch inside it.
 // A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle);
 // `unref()` lets the process exit without it. Spawned tasks and promises are not handles: what
 // keeps them going is what they wait for.
@@ -184,9 +184,10 @@ function newState(timer: u64): shared<Mutex<TimerState>> {
 
 /**
  * Calls `task` after at least `ms` milliseconds (at least 1, like Node: `setTimeout(f, 0)` is
- * `setTimeout(f, 1)`) unless the returned timer is cleared first.
+ * `setTimeout(f, 1)`) unless the returned timer is cleared first. An error it throws is uncaught,
+ * as in Node.
  */
-export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
+export function setTimeout<E>(task: () => Promise<void, E>, ms: i64): Timer {
   return schedule(task, ms < 1 ? 1 : ms);
 }
 
@@ -194,7 +195,7 @@ export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
  * Calls `task` once the code that is running and the callbacks it queued are done, before the
  * timers created after it (like Node's `setImmediate`).
  */
-export function setImmediate(task: () => Promise<void>): Timer {
+export function setImmediate<E>(task: () => Promise<void, E>): Timer {
   return schedule(task, 0);
 }
 
@@ -205,7 +206,7 @@ export function clearImmediate(t: Timer) {
 
 // A timeout due `ms` from now: its place in the order of timers is taken now (velt_rt_timer_new).
 // It runs as a promise of the current task, which goes on running it after `main` returns.
-function schedule(task: () => Promise<void>, ms: i64): Timer {
+function schedule<E>(task: () => Promise<void, E>, ms: i64): Timer {
   const timer = velt_rt_timer_new(ms);
   const state = newState(timer);
   const run = fireOnce(timer, task, state.clone());
@@ -222,7 +223,7 @@ export function clearTimeout(t: Timer) {
  * Node: on a fixed schedule, also while an earlier run's promise is still pending. Runs that
  * overlap interleave at their `await`s on the timer's task; they never run in parallel.
  */
-export function setInterval(task: () => Promise<void>, ms: i64): Timer {
+export function setInterval<E>(task: () => Promise<void, E>, ms: i64): Timer {
   const every = ms < 1 ? 1 : ms;
   const timer = velt_rt_timer_new(every);
   const state = newState(timer);
@@ -237,9 +238,9 @@ export function clearInterval(t: Timer) {
 
 // `timer`: its place in the order of timers (released here). Once due, the callback waits for
 // its turn: until the timers due before it ran their callbacks and the microtasks those queued.
-async function fireOnce(
+async function fireOnce<E>(
   timer: u64,
-  task: () => Promise<void>,
+  task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   await velt_rt_timer_turn(timer, 0);
@@ -250,14 +251,18 @@ async function fireOnce(
   if (!go) {
     return;
   }
-  await task();
+  try {
+    await task();
+  } catch (e) {
+    uncaught(e);
+  }
   state.with((s) => s.end(true));
 }
 
-async function fireEvery(
+async function fireEvery<E>(
   timer: u64,
   ms: i64,
-  task: () => Promise<void>,
+  task: () => Promise<void, E>,
   state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   while (true) {
@@ -292,8 +297,32 @@ async function fireEvery(
   }
 }
 
-// One run of an interval: ends it in the state when its promise settles.
-async function runOnce(task: () => Promise<void>, state: shared<Mutex<TimerState>>): Promise<void> {
-  await task();
+// One run of an interval: ends it in the state when its promise settles. An error is uncaught,
+// as in Node: it ends the process.
+async function runOnce<E>(
+  task: () => Promise<void, E>,
+  state: shared<Mutex<TimerState>>,
+): Promise<void> {
+  try {
+    await task();
+  } catch (e) {
+    uncaught(e);
+  }
   state.with((s) => s.end(false));
+}
+
+declare function velt_rt_uncaught_now();
+
+// Reports `e` as uncaught and exits 1 at once, as Node does for an error a timer's callback
+// throws (an uncaught exception): the rejection of a promise nothing awaits, reported when it is
+// dropped (velt_rt_uncaught_now). An async callback's rejection ends the process at once too,
+// where Node first empties the microtask queue (an unhandled rejection).
+function uncaught<E>(e: E) {
+  velt_rt_uncaught_now();
+  const p = rethrow(e);
+}
+
+// Rejects with `e`.
+async function rethrow<E>(e: E): Promise<void, E> {
+  throw e;
 }

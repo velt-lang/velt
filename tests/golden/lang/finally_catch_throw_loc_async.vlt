@@ -1,0 +1,14 @@
+// The async form of finally_catch_throw_loc (#1404): the `finally` runs, then the outer
+// error is reported where it was thrown and the process exits with 1.
+async function g(): Promise<void> {
+  try {
+    throw new RangeError("outer");
+  } finally {
+    try {
+      throw new Error("in finally");
+    } catch (e) {
+      console.log("swallowed");
+    }
+  }
+}
+await g();

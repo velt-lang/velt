@@ -252,8 +252,10 @@ returned promise, one after it settles). The new promise rejects with what `p` r
 it is handled) and with what the callback throws; a callback may throw a different error type
 only when `p` cannot reject (**Planned**: both, as a union). A `then` chain kept as a statement
 (`p.then(f);`) is not a floating promise: it runs to completion, and a rejection nobody handles
-is reported as uncaught, like a dropped promise, once the callbacks queued before it have run
-(as in Node). `queueMicrotask(f)` runs `f` the same way. Both need async code around them:
+is reported as uncaught, like a dropped promise, once the microtask queue is empty (as in
+Node). `queueMicrotask(f)` runs `f` as such a callback, but an error `f` throws ends the
+process at the throw, as in Node, like one a timer's callback throws
+([timers](../std/timers.md)). Both need async code around them:
 in synchronous code (a synchronous `main`, or top-level code without an `await`) the chain
 starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
 statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).

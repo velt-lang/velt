@@ -159,9 +159,17 @@ pub(crate) struct Ctx<'m> {
     >,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Function types written without `throws` and what is stored into them (`throws::fn_types`).
+    pub fn_sites: crate::throws::FnSites,
+    /// The number of definitions collected from declarations, before any body was checked.
+    pub collected_defs: usize,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) with an
     /// inferred error type, which must be `never` (the interface's is fixed; throws/checks.rs).
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
+    /// Slot methods of object literals returning the promise of a function value that never
+    /// rejects, and that type: made async when their dispatch group's promises may reject
+    /// (`collect::forwarders::await_forwarded`).
+    pub promise_forwarders: Vec<(crate::hir::DefId, TyId)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
@@ -355,7 +363,10 @@ impl<'m> Ctx<'m> {
             provisional_slots: vec![],
             iface_adapters: FxHashMap::default(),
             throw_checks: vec![],
+            fn_sites: Default::default(),
+            collected_defs: 0,
             iface_generators: vec![],
+            promise_forwarders: vec![],
             nested: vec![],
             nested_locals: FxHashMap::default(),
             enclosing_class: FxHashMap::default(),
@@ -647,7 +658,10 @@ impl<'m> Ctx<'m> {
             }
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
-            TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
+            // A variable is shown as written: nothing (`throws::vars`).
+            TyKind::Promise(t, e) if *e == self.ty.never || self.is_err_var(*e) => {
+                with_args(self, "Promise", &[*t])
+            }
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
             TyKind::Shared(t) => with_args(self, "shared", &[*t]),
             TyKind::FnPtr {
@@ -660,6 +674,18 @@ impl<'m> Ctx<'m> {
                     params.iter().map(|p| self.display_in(*p, names)).collect();
                 if let (true, Some(last)) = (*rest, ps.last_mut()) {
                     last.insert_str(0, "...");
+                }
+                // A function type written without `throws`, as written (`throws::fn_types`).
+                let promise_var =
+                    matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));
+                if self.ty.inferred_fns.contains(&t) || self.is_err_var(*throws) || promise_var {
+                    let ret = match self.ty.kind(*ret) {
+                        TyKind::Promise(v, _) => {
+                            format!("Promise<{}>", self.display_in(*v, names))
+                        }
+                        _ => self.display_in(*ret, names),
+                    };
+                    return format!("({}) => {ret}", ps.join(", "));
                 }
                 let th = if *throws == self.ty.never {
                     String::new()

@@ -10,7 +10,7 @@ by `.` or a negated class yet (#377 phase 5), and an empty match steps over a wh
 pair (JavaScript without the `u` flag stops between its halves; #401).
 
 - `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d u v` are accepted and change
-  nothing). Throws `RegExpError` for an invalid pattern, or an unknown or repeated flag.
+  nothing). Throws `RegExpError` (a `SyntaxError`, as in JS) for an invalid pattern, or an unknown or repeated flag.
   Fields: `source`, `flags`, `global`, `sticky`, `groupCount`, `lastIndex` (a `number`, as in
   JS).
 - `test(s, from?)`, `exec(s, from?): RegExpMatch | null`.

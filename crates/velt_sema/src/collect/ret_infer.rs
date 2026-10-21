@@ -76,7 +76,7 @@ pub(super) fn override_ret(
         });
         return true;
     }
-    have == want
+    cx.same_ty(have, want)
 }
 
 /// The result of method `def` implementing an interface method whose result is `want` (in
@@ -91,7 +91,8 @@ pub(super) fn impl_ret(
 ) -> bool {
     if !is_pending(cx, def) {
         let have = cx.fn_info(def).ret;
-        return cx.subst(have, owner_args) == want;
+        let have = cx.subst(have, owner_args);
+        return cx.same_ty(have, want);
     }
     let identity = owner_args
         .iter()

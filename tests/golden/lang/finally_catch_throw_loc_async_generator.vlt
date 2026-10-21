@@ -1,0 +1,13 @@
+// An async generator's `finally` that throws and catches keeps the location of the error
+// passing through it (#1404).
+async function* gen(): AsyncGenerator<number> {
+  yield 1;
+  try {
+    throw new RangeError("outer");
+  } finally {
+    try { throw new Error("in finally"); } catch (e) { console.log("swallowed"); }
+  }
+}
+for await (const x of gen()) {
+  console.log(x);
+}
