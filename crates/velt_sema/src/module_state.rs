@@ -104,42 +104,123 @@ pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
     keepable
 }
 
-/// Once every use is checked: a top-level constant evaluated at each use whose initializer reads
-/// a constant [`keep`] kept, directly or through the functions it calls, would see the changes
-/// the program makes to it, where Node evaluated it once before them. It is kept in the module
-/// state too (evaluated once, in Node's order).
+/// Once every use is checked: a top-level constant whose initializer reads a constant [`keep`]
+/// kept, directly or through the functions it calls, would see the changes the program makes
+/// to it if it were evaluated at each use, where Node evaluated it once before them. It is kept
+/// in the module state too (evaluated once, in Node's order), and counts as changing for the
+/// constants that read it in turn (`const C = getK()` may be `K` itself), until nothing changes.
 pub(crate) fn keep_readers(cx: &mut Ctx) {
-    if cx.kept_consts.is_empty() {
-        return;
-    }
-    // Purity was decided while constants were still being kept.
-    cx.pure_fns.clear();
     let consts: Vec<DefId> = (0..cx.info.len())
         .map(|i| DefId(i as u32))
         .filter(|&d| {
             cx.global(d).is_some_and(|g| {
-                !g.stored
-                    && g.init.is_some()
+                g.init.is_some()
+                    && !g.mutable
                     && g.src.owner.is_none()
                     && g.ty != cx.ty.error
                     && !cx.modules[g.module].is_std
             })
         })
         .collect();
-    for d in consts {
-        let Some(g) = cx.global(d) else { continue };
-        let (name, ty, init) = (g.name.clone(), g.ty, g.init.clone().expect("ICE: init"));
-        let mut kept = false;
-        reads(&init, &mut |r, _| kept |= cx.kept_consts.contains(&r));
-        if !kept && crate::body::pure_init::has_call(&init) {
-            let mut own = vec![];
-            crate::body::pure_init::check_init(cx, &name, &init, ty, &mut own);
-            kept = !own.is_empty();
-        }
-        if kept {
-            set_stored(cx, d, true);
+    // A constant first checked inside a check that was rolled back keeps what that check's
+    // `keep` did: an initializer that takes another constant over (`const B = { a: A }`).
+    for &d in &consts {
+        let Some(init) = cx.global(d).and_then(|g| g.init.clone()) else {
+            continue;
+        };
+        for a in shared_globals(&init) {
+            keep(cx, a);
         }
     }
+    loop {
+        let mut changed = false;
+        for &d in &consts {
+            if cx.kept_consts.contains(&d) {
+                continue;
+            }
+            let Some(init) = cx.global(d).and_then(|g| g.init.clone()) else {
+                continue;
+            };
+            if reaches_kept(cx, &init) {
+                set_stored(cx, d, true);
+                cx.kept_consts.push(d);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
+}
+
+/// Does evaluating `init` read a constant in `Ctx::kept_consts`: in the expression, or in a
+/// function it calls or a closure it creates, however deep?
+fn reaches_kept(cx: &Ctx, init: &hir::Expr) -> bool {
+    let mut seen: FxHashSet<DefId> = FxHashSet::default();
+    let mut work: Vec<hir::Expr> = vec![init.clone()];
+    while let Some(mut e) = work.pop() {
+        struct V {
+            globals: Vec<DefId>,
+            fns: Vec<DefId>,
+        }
+        impl crate::visit::VisitMut for V {
+            fn expr(&mut self, e: &mut hir::Expr) {
+                match &e.kind {
+                    E::Global(d) => self.globals.push(*d),
+                    E::Closure(c) | E::FnRef(c, _) => self.fns.push(*c),
+                    E::Call {
+                        callee: hir::Callee::Def(g, _),
+                        ..
+                    } => self.fns.push(*g),
+                    _ => {}
+                }
+            }
+        }
+        let mut v = V {
+            globals: vec![],
+            fns: vec![],
+        };
+        crate::visit::expr(&mut e, &mut v);
+        if v.globals.iter().any(|g| cx.kept_consts.contains(g)) {
+            return true;
+        }
+        for f in v.fns {
+            if !seen.insert(f) {
+                continue;
+            }
+            if let Some(hir::Def::Fn(def)) = cx.defs[f.0 as usize].as_ref() {
+                let body = hir::Expr {
+                    kind: E::Block(def.body.block.clone()),
+                    ty: cx.ty.unit,
+                    span: def.body.block.span,
+                };
+                work.push(body);
+            }
+        }
+    }
+    false
+}
+
+/// The constants `e` takes over (`Share` of a constant, as `global_read` makes them).
+fn shared_globals(e: &hir::Expr) -> Vec<DefId> {
+    let mut e = e.clone();
+    struct V(Vec<DefId>);
+    impl crate::visit::VisitMut for V {
+        fn expr(&mut self, e: &mut hir::Expr) {
+            if let E::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+                args,
+            } = &e.kind
+            {
+                if let Some(E::Global(d)) = args.first().map(|a| &a.kind) {
+                    self.0.push(*d);
+                }
+            }
+        }
+    }
+    let mut v = V(vec![]);
+    crate::visit::expr(&mut e, &mut v);
+    v.0
 }
 
 /// Undo [`keep`] for `kept` (the constants a rolled-back check kept).

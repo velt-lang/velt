@@ -151,7 +151,10 @@ what it holds (`K.n = 1`, `K.push(1)`, passing it to a function that modifies it
 it by identity (`K === x`). Every use then refers to that object, and a change through one name
 shows through the others. A constant that is only read is evaluated where it is used instead
 (a [table](#tables)'s elements are read from read-only data), which costs nothing at startup.
-A `static readonly` field is not kept this way: taking it over or modifying it is an error.
+A `static readonly` field is not kept this way: modifying it is an error, and so is taking
+over one that is a table. **Known difference:** taking over a `static readonly` object
+(`const v = Geo.ORIGIN`) gives a copy, so a change through `v` does not show in the field, and
+a `static readonly` field initialized from a kept constant is evaluated at each use.
 
 ```ts
 type Hit = { hit: boolean; value: number };

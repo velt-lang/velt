@@ -1,6 +1,7 @@
 // A closure argument that captures a variable another argument of the same call borrows shares
-// it only when it never changes it (#1383): one that modifies it, directly or through the
-// elements of a loop over it, could change it while the call reads it, and stays an error.
+// it only when it never changes it (#1383): one that modifies it, directly, through another
+// name for it or through the elements of a loop over it, could change it while the call reads
+// it, and stays an error.
 
 type Pt = { x: number };
 
@@ -27,6 +28,24 @@ function pushes(r: Registry) {
   });
 }
 
+function alias(r: Registry) {
+  const names = ["a"];
+  r.add(names, () => {
+    const other = names;
+    other.push("x");
+    return names.length;
+  });
+}
+
+function row(r: Registry) {
+  const grid = [["a"]];
+  r.add(grid[0], () => {
+    const first = grid[0];
+    first.push("y");
+    return grid.length;
+  });
+}
+
 function elements(r: Registry) {
   const ps: Pt[] = [{ x: 1 }];
   r.addPts(ps, () => {
@@ -40,6 +59,8 @@ function elements(r: Registry) {
 function main() {
   const r = new Registry();
   pushes(r);
+  alias(r);
+  row(r);
   elements(r);
   console.log(r.names);
 }

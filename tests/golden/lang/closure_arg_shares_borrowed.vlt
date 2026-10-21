@@ -69,6 +69,14 @@ class Registry {
 function register(r: Registry) {
   const xs = ["a", "b"];
   r.add(xs, () => xs.length);
+  // Another name for it that only reads it.
+  const ys = ["c", "dd"];
+  r.add(ys, () => {
+    const other = ys;
+    let n = 0;
+    for (const s of other) n += s.length;
+    return n;
+  });
 }
 
 function main() {
@@ -85,5 +93,5 @@ function main() {
   console.log(k.f(), names.length, k.xs === names);
   const r = new Registry();
   register(r);
-  console.log(r.names, r.fs[0]());
+  console.log(r.names, r.fs[0](), r.fs[1]());
 }
