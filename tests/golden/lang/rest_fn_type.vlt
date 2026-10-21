@@ -33,6 +33,12 @@ function main() {
   console.log(emit("x"), emit("y", 1, "two", true));
   const make: Factory<[string, number], string> = (name, n) => name.repeat(n);
   console.log(make("ab", 3));
+  const o = {
+    sum(label: string, ...xs: number[]): string {
+      return label + sum(...xs);
+    },
+  };
+  console.log(o.sum("s="), o.sum("s=", 4, 5));
   type P = Parameters<(a: string, b: number) => void>;
   const p: P = ["q", 2];
   console.log(p[0], p[1]);

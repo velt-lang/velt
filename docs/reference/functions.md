@@ -53,7 +53,8 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (TS2370). A rest parameter typed by a type parameter (`...args: A` with
   `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
   supported yet (#943).
-  An arrow function or function expression may have one too, typed the same ways: a
+  An arrow function, a function expression or an object-literal method may have one too,
+  typed the same ways: a
   module-level constant `const total = (...xs: Nums) => …` is the function
   `function total(...xs: Nums)` (its parameters must be typed), and any other is a closure whose
   function type ends in the rest parameter (see Function types below).
