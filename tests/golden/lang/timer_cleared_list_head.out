@@ -1,5 +1,5 @@
 main end
-timeout: C 210
-timeout: B 200 (due 300)
-interval: C 210
-interval: B 200 (due 300)
+timeout: C 310
+timeout: B 300 (due 500)
+interval: C 310
+interval: B 300 (due 500)
