@@ -568,54 +568,6 @@ impl<'m> Ctx<'m> {
         b
     }
 
-    /// Ownership: can values of this type be duplicated bitwise?
-    pub fn is_copy(&mut self, t: TyId) -> bool {
-        self.is_copy_depth(t, 0)
-    }
-
-    fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        if let Some(base) = self.brand_base(t) {
-            return self.is_copy_depth(base, depth + 1);
-        }
-        match self.ty.kind(t).clone() {
-            TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Bool
-            | TyKind::Symbol
-            | TyKind::Simd(_)
-            | TyKind::Literal(_)
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error => true,
-            TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t, _) => self.is_copy_depth(t, depth + 1),
-            TyKind::Result(a, b) => {
-                self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
-            }
-            // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
-            TyKind::Adt(d, args) => {
-                // Objects (structs included, semantics stage 2) are references: never Copy.
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => return false,
-                };
-                tys.into_iter().all(|f| {
-                    let f = self.subst(f, &args);
-                    self.is_copy_depth(f, depth + 1)
-                })
-            }
-            _ => false,
-        }
-    }
-
     /// Human-readable type for diagnostics.
     pub fn display(&self, t: TyId) -> String {
         self.display_in(t, &self.display_params)
