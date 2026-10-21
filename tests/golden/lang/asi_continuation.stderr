@@ -1,0 +1,5 @@
+asi_continuation.vlt:14:3: warning: this line continues the expression on the line before; add `;` at the end of that line if it is a new statement
+asi_continuation.vlt:19:3: warning: this line continues the expression on the line before; add `;` at the end of that line if it is a new statement
+asi_continuation.vlt:22:3: warning: this line continues the expression on the line before; add `;` at the end of that line if it is a new statement
+asi_continuation.vlt:24:3: warning: this line continues the expression on the line before; add `;` at the end of that line if it is a new statement
+asi_continuation.vlt:26:3: warning: this line continues the expression on the line before; add `;` at the end of that line if it is a new statement

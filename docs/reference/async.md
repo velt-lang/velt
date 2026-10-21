@@ -18,7 +18,10 @@ last.
 
 `await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
-`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`. A promise that may be
+missing keeps its nothing: `await r["k"]` of a `Record<string, Promise<number>>` (or
+`await m.get(k)`) is a `number | undefined`, and so is `await x` with
+`x: number | Promise<void>`.
 
 An async function that returns a promise (`return Promise.resolve(x)`, `return load()`) or a value
 that may be one (`return fn()` with `fn: () => T | Promise<T>`) adopts it, as in JS: its own
@@ -93,11 +96,15 @@ Promises behave like JavaScript's, at Rust's cost:
   in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
   already due when it is first waited for (`sleep(0)`, or a `sleep` awaited after its delay
   passed) also waits for its turn: the code after it never runs before the synchronous code
-  that started it, nor before timers due earlier. Timers of different tasks have no order
-  between them, since the tasks run in parallel.
+  that started it, nor before timers due earlier. `sleep`s of different tasks have no order
+  between them, since the tasks run in parallel; `setTimeout`, `setInterval` and `setImmediate`
+  callbacks do, whichever task created them: they run in Node's order, one list per delay
+  ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
-  waits for pending work. A promise created outside async code (for example in a synchronous
+  waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
+  on a task like an `async main`, so they run as in Node: up to their first `await` when
+  created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
 - After `main` returns, the process also waits for *handles*, as in Node: a listening
   [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
@@ -233,7 +240,10 @@ like any stored promise:
   `p.then(null, g)` and `p.then(undefined, g)` are `p.catch(g)`, and `p.then(f, null)` is
   `p.then(f)`, as in JS.
 - `p.catch(g)`: `g(reason)` when `p` rejects; a value passes through, so `g` gives the
-  promise's value type (**Planned**: a `catch` that changes the value type, `T | U`).
+  promise's value type, or nothing: `p.catch(() => {})` (or an `async` handler) is a
+  `Promise<T | undefined>`, TypeScript's `Promise<T | void>`, which gives `p`'s value or
+  `undefined` once `g` handled a rejection (**Planned**: a `catch` that changes the value
+  type otherwise, `T | U`).
 - `p.finally(h)`: `h()` either way, then the value or the reason passes through.
 
 A callback that returns a promise is awaited (flattened): `p.then((id) => load(id))` is a
@@ -455,6 +465,60 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
+  Any other `shared<T>` (one that holds no `Mutex`) never changes, so every task reads it at
+  once, without a lock, like the `T` it holds: `s[i]` and `s.length` on a string, array or
+  typed array, `for (const x of s)` (also over a `Map`, `Set` or typed array), a field or getter (`s.name`, `s.size` of a `Map`), `T`'s methods
+  (`s.includes(x)`, `s.startsWith("a")`), and `s` passed where a `T` is expected (`count(s)`
+  for `count(xs: u8[])`). An index, a length or a field reads the value in place. Passed on as
+  a whole or in part, and as the receiver of a method, the value is borrowed too when nothing
+  in it is reference counted (numbers, strings, and arrays and objects of those, unless the
+  program shares such arrays or objects between variables elsewhere); otherwise what is passed
+  on is a copy (of `s[i]` alone for `f(s[i])`, of the whole value for a method of it, such as
+  `get` on a `shared<Map<string, Item>>`: `.clone()` such a value once per task for many
+  lookups). What keeps the value or a
+  part of it gets a copy too: a parameter that keeps its argument (an `async` function's, a
+  stored one), and a variable bound to a part (`const ps = s.ports`). Such a variable cannot
+  be changed, and neither can the elements of a `for…of` loop over the value (or over what a
+  method of it returns, such as `s.values()`); `subarray()` and `buffer` of a shared typed
+  array are refused: in JavaScript all of them reach the shared value itself. Change a copy
+  (`s.ports.slice()`) instead.
+  `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
+  as well. A value of
+  `T` that holds a class with subclasses or with a `clone()` of its own is not read like this
+  (copying it would run that method on objects other threads read): `.clone()` the `shared`
+  and pass it on as a `shared<T>`. While the value or a part of it is read while code runs (a
+  call it is passed to, a loop over it, a method it is the receiver of, a later argument),
+  giving the variable that holds the handle another one is refused where it would be for an
+  array (the loop's body, a closure passed to the same call); where it is allowed (a closure
+  kept in a variable, a module `let` another function reassigns, a field or element holding
+  the handle), the read keeps the box it started with alive, as JavaScript keeps the old array.
+  Changing the value is an error (``cannot modify a `shared<number[]>`: a shared value is
+  read-only …``), and so is passing it to a function that may change it or to a function
+  value, and calling a method of it that changes it (also one returning the value it changes,
+  such as `fill` or a method ending in `return this`): share a `Mutex` instead.
+
+  ```ts
+  async function count(xs: shared<u8[]>, b: u8): Promise<i64> {
+    return countIn(xs, b);
+  }
+
+  function countIn(xs: u8[], b: u8): i64 {
+    let n: i64 = 0;
+    for (let i: usize = 0; i < xs.length; i++) {
+      if (xs[i] == b) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async function main() {
+    const data = shared([1 as u8, 2, 1, 3, 1]);
+    const ones = spawn(count(data, 1));
+    const threes = spawn(count(data, 3));
+    console.log(await ones, await threes, data.length, data[0]);
+  }
+  ```
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:
@@ -589,7 +653,12 @@ async function main() {
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
   awaited (when the task rejects, or when the handle is dropped after it did), and a stored
-  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  promise that rejects after it was dropped unawaited. As in Node, a stored promise that
+  rejects while its owner does not wait for it is reported too, once the callbacks queued
+  before have run (the microtask queue is drained), even though the owner still holds it:
+  `const p = f(); await sleep(10); await p;` ends the process at the rejection if `f` rejects
+  first. Awaiting it (or chaining `catch`, or handing it to a combinator) before then handles
+  it. A promise or handle handed to a
   combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
   error fails its `taskScope`.
 

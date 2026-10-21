@@ -29,9 +29,6 @@ pub(crate) struct TyEnv {
     pub locals: Vec<(String, TyId)>,
     /// `infer X` names that found nothing (TypeScript's `unknown`).
     pub unknowns: Vec<String>,
-    /// Inside a conditional or mapped type: `T[K]` of an optional field is `F | undefined`, as
-    /// TypeScript reads it.
-    pub ts_optional: bool,
     /// In a class's instance method (its signature and body): the class type, which the
     /// polymorphic `this` type resolves to (`m(): this`).
     pub this_ty: Option<TyId>,
@@ -45,7 +42,6 @@ impl TyEnv {
             args: vec![],
             locals: vec![],
             unknowns: vec![],
-            ts_optional: false,
             this_ty: None,
         }
     }
@@ -80,8 +76,8 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
-                rest: false,
-            } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
+                rest,
+            } => self.resolve_fn_type(params, *rest, ret, throws.as_deref(), env),
             ast::TypeExprKind::TupleRest(_) => {
                 self.error(
                     velt_common::Diagnostic::error(
@@ -102,10 +98,8 @@ impl Ctx<'_> {
                 );
                 self.ty.error
             }
-            ast::TypeExprKind::Function { rest: true, .. }
-            | ast::TypeExprKind::GenericFunction { .. }
-            | ast::TypeExprKind::Construct(_) => {
-                let (msg, note) = unsupported_fn_type(&t.kind);
+            ast::TypeExprKind::GenericFunction { .. } | ast::TypeExprKind::Construct(_) => {
+                let (msg, note) = crate::fn_types::unsupported_fn_type(&t.kind);
                 self.error(velt_common::Diagnostic::error(msg, t.span).with_note(note));
                 self.ty.error
             }
@@ -149,39 +143,6 @@ impl Ctx<'_> {
                 self.ty.undefined()
             }
         }
-    }
-
-    /// `(params) => ret [throws E]`. After a `Promise` result, `throws E` is the promise's
-    /// rejection type (calling an async function never throws; awaiting its promise does).
-    fn resolve_fn_type(
-        &mut self,
-        params: &[ast::TypeExpr],
-        ret: &ast::TypeExpr,
-        throws: Option<&ast::TypeExpr>,
-        env: &TyEnv,
-    ) -> TyId {
-        let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
-        let mut ret = self.resolve_type(ret, env);
-        let never = self.ty.never;
-        let err = throws.map(|t| {
-            let e = self.resolve_type(t, env);
-            self.no_void_error(e, t.span);
-            e
-        });
-        let err = self.canon_error(err).unwrap_or(never);
-        let throws = match self.ty.kind(ret).clone() {
-            TyKind::Promise(v, e) if err != never => {
-                let e = self.join_errors(Some(e), Some(err)).unwrap_or(never);
-                ret = self.ty.promise_rejecting(v, e);
-                never
-            }
-            _ => err,
-        };
-        self.ty.intern(TyKind::FnPtr {
-            params,
-            ret,
-            throws,
-        })
     }
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
@@ -598,11 +559,8 @@ impl Ctx<'_> {
             if let Some(own) = self.recursive_union_ref(a) {
                 return own;
             }
-            let d = velt_common::Diagnostic::error(
-                format!("type alias `{}` refers to itself", decl.name.name),
-                t.span,
-            )
-            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice, or a union that names itself behind an array, an index signature, a `Map` or a function type (`type Json = string | Json[]`); give any other recursive type a nominal member, such as an interface or a class");
+            let d =
+                crate::recursive_aliases::self_reference(&self.alias_blocked, &decl.name, t.span);
             self.error(d);
             return self.ty.error;
         }
@@ -776,23 +734,5 @@ pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
             }
         }
         _ => ty.clone(),
-    }
-}
-
-/// The function type forms Velt parses but doesn't support yet (#943): its error and a note.
-fn unsupported_fn_type(kind: &ast::TypeExprKind) -> (&'static str, &'static str) {
-    match kind {
-        ast::TypeExprKind::Construct(_) => (
-            "construct signatures (`new (...) => T`) are not supported yet",
-            "a class can't be passed as a value yet; pass a function that constructs it (`(buf: ArrayBuffer) => new Uint8Array(buf)`)",
-        ),
-        ast::TypeExprKind::GenericFunction { .. } => (
-            "generic function types (`<T>(x: T) => R`) are not supported yet",
-            "a function value has one type; declare a generic `function` and call it, or give the type parameters values (`(x: string) => R`)",
-        ),
-        _ => (
-            "rest parameters in function types (`(...xs: T[]) => R`) are not supported yet",
-            "take the array as an ordinary parameter (`(xs: T[]) => R`) and pass an array",
-        ),
     }
 }

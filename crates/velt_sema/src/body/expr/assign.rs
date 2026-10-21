@@ -11,7 +11,7 @@ use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, UseMode};
 
 /// What an assignment writes to.
-enum AssignTarget {
+pub(super) enum AssignTarget {
     /// A writable place (`BorrowMut` modes).
     Place(hir::Expr),
     /// `obj.name` where `name` is a setter, or a field written through an interface
@@ -25,7 +25,7 @@ enum AssignTarget {
     Dynamic(hir::Expr),
 }
 
-use super::assign_paths::{is_plain_path, is_pure_place};
+use super::assign_paths::is_plain_path;
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
                 if self.static_field_target(object, prop) {
                     return None;
                 }
-                let obj = self.expr(object, None, Want::Borrow);
+                let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => return d.map(AssignTarget::Dynamic),
                     Err(obj) => obj,
@@ -63,6 +63,9 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let place = self.field_access(obj, prop, Want::BorrowMut, target.span)?;
+                if self.temp_tuple_write(&place, target.span) {
+                    return None;
+                }
                 self.check_readonly(&place, prop);
                 self.require_mutable(&place, "assign to a field of");
                 Some(place)
@@ -72,7 +75,7 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let obj = self.expr(object, None, Want::Borrow);
+                let obj = self.assign_receiver(object);
                 let obj = match self.dynamic_write_receiver(obj) {
                     Ok(d) => {
                         if d.is_none() {
@@ -116,7 +119,7 @@ impl FnCx<'_, '_> {
                     }
                 }
                 let place = self.index_of(obj, index, Want::BorrowMut, target.span);
-                if self.cx.ty.is_bottom(place.ty) {
+                if self.cx.ty.is_bottom(place.ty) || self.temp_tuple_write(&place, target.span) {
                     return None;
                 }
                 self.require_mutable(&place, "assign to an element of");
@@ -233,15 +236,13 @@ impl FnCx<'_, '_> {
     /// A read of a place that was built for writing (compound assignment / `++` value).
     fn place_read(&mut self, place: &hir::Expr, want: Want) -> hir::Expr {
         let mut r = place.clone();
-        let m = self.use_mode(r.ty, want);
-        set_place_mode(&mut r, m);
+        set_place_mode(&mut r, self.use_mode(place.ty, want));
         r
     }
 
-    /// An assignment whose value is used (`(line = next()) != null`, `y = (x = 5) + 1`): the
-    /// assignment, then the target read again. Where no value is wanted (`void` expected, e.g.
-    /// an arrow body returning nothing) it stays a statement. Targets that are not plain
-    /// variables or fields of them would be evaluated twice and are not supported as values.
+    /// An assignment whose value is used (`(line = next()) != null`): the assignment, then the
+    /// target read again; a statement where no value is wanted (`void` expected). Other targets
+    /// than variables or fields of them would be evaluated twice: not supported as values.
     pub(crate) fn assign_value(
         &mut self,
         op: Option<ast::BinaryOp>,
@@ -251,18 +252,22 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let wanted = exp != Some(self.cx.ty.unit);
+        if wanted && !is_plain_path(target) {
+            if let Some(h) = self.element_assign_value(op, target, value, span) {
+                return h;
+            }
+        }
         let (a, valued) = self.assign_as(op, target, value, wanted, span);
         if valued || !wanted || self.cx.ty.is_bottom(a.ty) {
             return a;
         }
         if !is_plain_path(target) {
-            self.cx.err(
-                "an assignment to an element or a computed place cannot be used as a value",
-                span,
-            );
+            self.cx
+                .err(super::assign_pattern::value_use_message(target), span);
             return self.error_expr(span);
         }
         let v = self.expr(target, None, Want::Borrow);
+        let v = self.nullish_assigned_read(op, &a, v, span);
         let ty = v.ty;
         let block = hir::Block {
             stmts: vec![hir::Stmt {
@@ -285,9 +290,9 @@ impl FnCx<'_, '_> {
         self.assign_as(op, target, value, false, span).0
     }
 
-    /// [`Self::assign`]; with `as_value`, a read-modify-write of an accessor also produces the
-    /// assignment's value (returned `true`: the expression is that value).
-    fn assign_as(
+    /// [`Self::assign`]; with `as_value`, an accessor's read-modify-write also gives the value
+    /// (returned `true`); a destructuring target is `assign_pattern`'s.
+    pub(super) fn assign_as(
         &mut self,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,
@@ -295,8 +300,29 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        // The target's hidden statements (`assign_receiver`) run before the assignment.
+        let ((h, valued), temps) =
+            self.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span));
+        (self.with_lets(temps, h), valued)
+    }
+
+    fn assign_as_here(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> (hir::Expr, bool) {
+        if let Some(h) = self.pattern_assign(op, target, value, span) {
+            return (h, false);
+        }
         if let Some(h) = self.keyed_assign(op, target, value, span) {
             return (h, false);
+        }
+        let w = super::iface_nested::NestedWrite::Assign(op, value);
+        if let Some(r) = self.iface_nested_write(target, w, as_value, span) {
+            return r;
         }
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
             let checked = self.assign_target(target, span);
@@ -321,55 +347,6 @@ impl FnCx<'_, '_> {
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
         }
-    }
-
-    /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
-    fn logical_assign(
-        &mut self,
-        op: ast::BinaryOp,
-        checked: Option<AssignTarget>,
-        target: &ast::Expr,
-        value: &ast::Expr,
-        span: Span,
-    ) -> hir::Expr {
-        // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
-        // as usual. That reads the target twice, which is only right when reading it has no
-        // effect (JS evaluates `xs[f()]` once).
-        if !is_pure_place(target) {
-            self.cx.error(
-                Diagnostic::error(
-                    "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
-                    target.span,
-                )
-                .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
-            );
-            self.expr(value, None, Want::Borrow);
-            return self.error_expr(span);
-        }
-        // A target in error is reported once, here.
-        match checked {
-            None => {
-                self.expr(value, None, Want::Borrow);
-                return self.error_expr(span);
-            }
-            Some(
-                AssignTarget::Place(_)
-                | AssignTarget::Record(_)
-                | AssignTarget::Setter(_)
-                | AssignTarget::Indexer(_)
-                | AssignTarget::Dynamic(_),
-            ) => {}
-        }
-        let rhs = ast::Expr {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::ExprKind::Binary {
-                op,
-                lhs: Box::new(target.clone()),
-                rhs: Box::new(value.clone()),
-            },
-            span: value.span,
-        };
-        self.assign(None, target, &rhs, span)
     }
 
     /// `target = value` / `target op= value` (`op` not logical).
@@ -459,7 +436,7 @@ impl FnCx<'_, '_> {
             }
             let kind = H::Assign {
                 place: Box::new(place),
-                value: Box::new(v),
+                value: Box::new(self.held_rechecked(v)),
             };
             return self.mk(kind, unit, span);
         };
@@ -478,6 +455,7 @@ impl FnCx<'_, '_> {
                 Err(v) => self.concat_operand(v),
             };
             let v = self.coerce(v, lty);
+            let v = self.held_rechecked(v);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=
@@ -508,7 +486,7 @@ impl FnCx<'_, '_> {
                 let value = self.js_bitwise_assign(op, cur, v, span);
                 let kind = H::Assign {
                     place: Box::new(place),
-                    value: Box::new(value),
+                    value: Box::new(self.held_rechecked(value)),
                 };
                 let assign = self.mk(kind, unit, span);
                 return self.with_temps(stmts, assign);
@@ -528,7 +506,7 @@ impl FnCx<'_, '_> {
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),
-            value: Box::new(v),
+            value: Box::new(self.held_rechecked(v)),
         };
         let assign = self.mk(kind, unit, span);
         self.with_temps(stmts, assign)
@@ -543,7 +521,23 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        let (h, temps) = self.target_scope(|cx| cx.update_here(op, prefix, target, as_value, span));
+        self.with_lets(temps, h)
+    }
+
+    fn update_here(
+        &mut self,
+        op: ast::UpdateOp,
+        prefix: bool,
+        target: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> hir::Expr {
         if let Some(h) = self.keyed_update(op, prefix, target, as_value, span) {
+            return h;
+        }
+        let w = super::iface_nested::NestedWrite::Update(op, prefix);
+        if let Some((h, _)) = self.iface_nested_write(target, w, as_value, span) {
             return h;
         }
         let place = match self.assign_target(target, span) {

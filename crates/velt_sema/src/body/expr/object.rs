@@ -321,6 +321,9 @@ impl FnCx<'_, '_> {
         if let Some(props) = self.local_computed_keys(props) {
             return self.object_lit(&props, exp, span);
         }
+        if let Some(props) = self.enum_computed_keys(props) {
+            return self.object_lit(&props, exp, span);
+        }
         let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
             Some(u) => match self.union_member_for(props, u) {
                 Ok(Some(m)) => Some(m),

@@ -57,6 +57,7 @@ impl Cx<'_> {
             params,
             ret,
             throws,
+            rest: false,
         }))
     }
 

@@ -1,3 +1,2 @@
 rest_arrow_param_type.vlt:4:21: error: a rest parameter must have an array type (`...xs: T[]`)
 rest_arrow_param_type.vlt:7:25: error: a rest parameter must have an array type (`...xs: T[]`)
-rest_arrow_param_type.vlt:8:18: error: rest parameters of arrow functions are not supported yet

@@ -122,7 +122,9 @@ impl Interp<'_> {
                 self.write_bytes(f + 16, &b);
                 f
             }
-            "velt_rt_fut_start" => return Some(self.fut_start(a[0], a[1])),
+            "velt_rt_fut_start" | "velt_rt_fut_start_rejecting" => {
+                return Some(self.fut_start(a[0], a[1]))
+            }
             "velt_rt_fut_detach" => return Some(self.fut_detach(a[0], a[1]).map(|_| 0)),
             // One thread: a result never crosses to another one.
             "velt_rt_fut_transfer" => 0,

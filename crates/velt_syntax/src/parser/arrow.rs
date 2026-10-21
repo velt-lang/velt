@@ -31,6 +31,14 @@ impl<'a> Parser<'a> {
     pub(super) fn try_parse_arrow(&mut self) -> PResult<Option<Expr>> {
         let lo = self.cur_lo();
         let async_kw = self.at_kw(Kw::Async);
+        if async_kw && self.line_break_after(0) {
+            // `async` [no LineTerminator here] ArrowParameters, as in TypeScript.
+            let span = self.cur_span();
+            self.error(
+                "a line break is not permitted after `async` in an arrow function (as in TypeScript)",
+                span,
+            );
+        }
         if self.nth(usize::from(async_kw)) == Tok::Lt {
             return self.try_generic_arrow(lo, async_kw);
         }
@@ -44,6 +52,7 @@ impl<'a> Parser<'a> {
             }
             let name = self.take_ident();
             self.check_binding_name(&name);
+            self.no_line_break_before_arrow();
             self.bump(); // =>
             let params = vec![ArrowParam {
                 name,
@@ -156,8 +165,23 @@ impl<'a> Parser<'a> {
         } else {
             (None, None)
         };
+        if self.at(Tok::FatArrow) {
+            self.no_line_break_before_arrow();
+        }
         self.expect(Tok::FatArrow)?;
         Ok((params, ret, throws))
+    }
+
+    /// At `=>`: reports a line break before it (TS1200). Reported even while speculating, as
+    /// the head is not parsed again: a failed attempt drops the diagnostic with the rest.
+    fn no_line_break_before_arrow(&mut self) {
+        if self.line_break_before() {
+            let span = self.cur_span();
+            self.diags.push(velt_common::Diagnostic::error(
+                "a line break is not permitted before `=>` (as in TypeScript): put it on the line of the parameters",
+                span,
+            ));
+        }
     }
 
     /// `( params )` of an arrow or an object-literal method: types may be left out (they come

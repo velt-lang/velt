@@ -29,6 +29,7 @@ mod any_has;
 mod any_keys;
 mod any_member;
 mod any_proxy;
+mod any_rest;
 mod any_set;
 mod any_set_site;
 mod append;
@@ -241,6 +242,9 @@ enum Work {
     ArrayGrow,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
+    /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
+    /// promises or tasks; stores its result at `state` (entry.rs).
+    SyncMainRoot,
     /// `(state: ptr, cx: ptr) -> u32` poll function of an async function instance (async_fn/).
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.
@@ -362,6 +366,9 @@ struct Cx<'h> {
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
     nothing_clashes: Vec<Option<DefId>>,
+    /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
+    /// `keeps_nothings_apart`).
+    map_fields: u32,
 }
 
 /// Static ownership state of a droppable local without a drop flag.

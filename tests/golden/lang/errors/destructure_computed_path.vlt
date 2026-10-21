@@ -1,0 +1,14 @@
+// A destructuring pattern's computed key must be a string or number literal or a name: a path
+// or another expression (`[t.tag]`, `[K.A]`, `["a" + "b"]`) is reported; store the key in a
+// variable first (`const k = t.tag; const { [k]: v } = o`).
+
+const K = { A: "a" } as const;
+
+function main() {
+  const t = { tag: "a" };
+  const o: Record<string, number> = { a: 1, ab: 2 };
+  const { [t.tag]: v } = o;
+  const { [K.A]: w } = o;
+  const { ["a" + "b"]: x } = o;
+  console.log(v, w, x);
+}

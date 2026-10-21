@@ -1,0 +1,39 @@
+// check: no leaks
+// A rejected promise is not reported when its owner claims it before the microtask queue is
+// drained (awaits it, chains a handler, hands it to a combinator), as in Node (#1328).
+async function fail(n: i64): Promise<void> {
+  throw new Error(`boom ${n}`);
+}
+
+async function main() {
+  const p = fail(1);
+  console.log("created");
+  await Promise.resolve();
+  try {
+    await p;
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  const q = fail(2).catch((e) => console.log("handled", e.message));
+  await q;
+
+  const r = fail(3);
+  try {
+    await Promise.all([r]);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+
+  // Settled later, after a timer: its owner waits for it already.
+  const s = (async () => {
+    await sleep(5);
+    throw new Error("boom 4");
+  })();
+  try {
+    await s;
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  console.log("done");
+}

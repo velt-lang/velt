@@ -37,7 +37,8 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::callback::{synth, wrapper};
+use super::callback::synth;
+use super::callback_wrap::{wrapper, Shape};
 use crate::any::Dynamic;
 use crate::body::{FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
@@ -279,14 +280,17 @@ fn value_ok(
                 params: p,
                 ret: r,
                 throws: t,
+                rest: rest_a,
             },
             TyKind::FnPtr {
                 params: q,
                 ret: s,
                 throws: u,
+                rest: rest_b,
             },
         ) => {
             p.len() == q.len()
+                && rest_a == rest_b
                 && t == u
                 && q.iter()
                     .zip(&p)
@@ -703,31 +707,44 @@ impl FnCx<'_, '_> {
     /// A function value `h` as function type `exp` inside an adapter: `{ const f = h; (p…) =>
     /// f(p…) }`, the arrow checked against `exp`, which converts each argument and the result.
     pub(super) fn adapt_fn(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
-        let TyKind::FnPtr { params, .. } = self.cx.ty.kind(exp) else {
+        let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(exp) else {
             return Err(h);
         };
-        let n = params.len();
+        let shape = Shape::of(params.len(), *rest);
         let span = h.span;
         let name = ast::Ident {
             name: format!("#adapted{}", self.f.locals.len()),
             span,
         };
         self.push_scope();
-        if let H::Local(l, _) = h.kind {
+        if let (H::Local(l, _), true) = (&h.kind, self.adapting) {
+            let l = *l;
             if self.local_kind(l) == LocalKind::Param {
                 // A function passed to the method is borrowed: the arrow calling it is passed on
                 // at once and never kept, so it borrows the parameter by name.
                 if let Some(scope) = self.f.scopes.last_mut() {
                     scope.names.insert(name.name.clone(), l);
                 }
-                let arrow = wrapper(synth(ast::ExprKind::Ident(name), span), n, n, false, span);
+                let arrow = wrapper(
+                    synth(ast::ExprKind::Ident(name), span),
+                    shape,
+                    &shape.same(),
+                    false,
+                    span,
+                );
                 let w = self.closure(&arrow, Some(exp), false);
                 self.pop_scope();
                 return Ok(w);
             }
         }
         let local = self.declare_local(&name, h.ty, LocalKind::Const);
-        let arrow = wrapper(synth(ast::ExprKind::Ident(name), span), n, n, false, span);
+        let arrow = wrapper(
+            synth(ast::ExprKind::Ident(name), span),
+            shape,
+            &shape.same(),
+            false,
+            span,
+        );
         let w = self.closure(&arrow, Some(exp), true);
         self.pop_scope();
         let mut h = h;

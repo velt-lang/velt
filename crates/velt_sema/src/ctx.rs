@@ -128,6 +128,13 @@ pub(crate) struct Ctx<'m> {
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Declarations of the `for…of` bindings over a value read out of a `shared` (or what a
+    /// method of one returns): the ownership pass refuses changing them
+    /// (`ownership::finish::frozen_bindings`).
+    pub frozen_elems: FxHashSet<Span>,
+    /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
+    /// ownership pass track `FnInfo::modified_params`.
+    pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
     pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
@@ -165,6 +172,8 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: FxHashSet<Span>,
+    /// Why recursive aliases were not rewritten (`recursive_aliases::Blocked`).
+    pub alias_blocked: crate::recursive_aliases::Blocked,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
     pub kept_nested: FxHashSet<Span>,
     /// Name spans of the `const`s that closures in their own initializer use (`body::late_consts`):
@@ -328,6 +337,8 @@ impl<'m> Ctx<'m> {
             closure_counts: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
+            frozen_elems: FxHashSet::default(),
+            frozen_reads: false,
             cpu_targets: FxHashMap::default(),
             groups: None,
             literal_hosts: Default::default(),
@@ -349,6 +360,7 @@ impl<'m> Ctx<'m> {
             group_names: FxHashMap::default(),
             group_defs: FxHashSet::default(),
             generic_arrow_all: FxHashSet::default(),
+            alias_blocked: Default::default(),
             has_overloads: false,
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
@@ -568,54 +580,6 @@ impl<'m> Ctx<'m> {
         b
     }
 
-    /// Ownership: can values of this type be duplicated bitwise?
-    pub fn is_copy(&mut self, t: TyId) -> bool {
-        self.is_copy_depth(t, 0)
-    }
-
-    fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        if let Some(base) = self.brand_base(t) {
-            return self.is_copy_depth(base, depth + 1);
-        }
-        match self.ty.kind(t).clone() {
-            TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Bool
-            | TyKind::Symbol
-            | TyKind::Simd(_)
-            | TyKind::Literal(_)
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error => true,
-            TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t, _) => self.is_copy_depth(t, depth + 1),
-            TyKind::Result(a, b) => {
-                self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
-            }
-            // Copying a mutex would duplicate its lock word.
-            TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
-            TyKind::Adt(d, args) => {
-                // Objects (structs included, semantics stage 2) are references: never Copy.
-                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Enum(e) => e
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.payload.iter().copied())
-                        .collect(),
-                    _ => return false,
-                };
-                tys.into_iter().all(|f| {
-                    let f = self.subst(f, &args);
-                    self.is_copy_depth(f, depth + 1)
-                })
-            }
-            _ => false,
-        }
-    }
-
     /// Human-readable type for diagnostics.
     pub fn display(&self, t: TyId) -> String {
         self.display_in(t, &self.display_params)
@@ -676,8 +640,13 @@ impl<'m> Ctx<'m> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                let mut ps: Vec<String> =
+                    params.iter().map(|p| self.display_in(*p, names)).collect();
+                if let (true, Some(last)) = (*rest, ps.last_mut()) {
+                    last.insert_str(0, "...");
+                }
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {

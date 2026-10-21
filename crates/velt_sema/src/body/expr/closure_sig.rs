@@ -13,6 +13,8 @@ pub(super) struct Expected {
     pub ret: Option<TyId>,
     /// What the arrow may throw (for an async arrow: the promise's rejection type).
     pub throws: Option<TyId>,
+    /// The function type ends in a rest parameter (`(e: string, ...args: any[]) => void`).
+    pub rest: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -24,6 +26,7 @@ impl FnCx<'_, '_> {
                 params,
                 ret,
                 throws,
+                rest,
             }) => {
                 let throws = if is_async {
                     self.cx.ty.promise_error(ret).and_then(|e| known(self, e))
@@ -34,12 +37,14 @@ impl FnCx<'_, '_> {
                     params: Some(params),
                     ret: Some(ret),
                     throws,
+                    rest,
                 }
             }
             _ => Expected {
                 params: None,
                 ret: None,
                 throws: None,
+                rest: false,
             },
         }
     }
@@ -142,10 +147,66 @@ impl FnCx<'_, '_> {
         t
     }
 
-    /// `(params) => ret throws err`, or for an async arrow `(params) => Promise<ret, err>`.
+    /// Does an arrow's function type end in a rest parameter: its own (`(...args: any[]) => …`),
+    /// or the expected type's when the arrow leaves that one out (`(event) => …` for
+    /// `(event: string, ...args: any[]) => void`)? `None` after reporting a rest parameter that
+    /// doesn't stand where the expected type has its own (both are an array of the remaining
+    /// arguments), or named parameters for the arguments of the expected rest parameter.
+    pub(super) fn closure_rest(
+        &mut self,
+        params: &[ast::ArrowParam],
+        exp: Option<&[TyId]>,
+        exp_rest: bool,
+    ) -> Option<bool> {
+        let own = params.last().filter(|p| p.rest);
+        let Some(exp) = exp else {
+            return Some(own.is_some());
+        };
+        match (own, exp_rest) {
+            (None, false) => return Some(false),
+            (Some(_), true) if params.len() == exp.len() => return Some(true),
+            (None, true) if params.len() < exp.len() => return Some(true),
+            _ => {}
+        }
+        let d = match own {
+            Some(p) if !exp_rest => Diagnostic::error(
+                format!(
+                    "the rest parameter `...{}` takes parameters the function type it is used as lists one by one, which is not supported yet",
+                    p.name.name
+                ),
+                p.name.span,
+            )
+            .with_note("the function type has fixed parameters and no rest parameter; take them one by one (`(a, b) => …`)"),
+            Some(p) => Diagnostic::error(
+                format!(
+                    "the rest parameter `...{}` must stand where the function type it is used as has its rest parameter",
+                    p.name.name
+                ),
+                p.name.span,
+            )
+            .with_note("Velt passes the rest arguments as one array; take the parameters the function type lists one by one"),
+            None => {
+                let p = &params[exp.len() - 1];
+                Diagnostic::error(
+                    format!(
+                        "parameter `{}` takes an argument of the function type's rest parameter, which is not supported yet",
+                        p.name.name
+                    ),
+                    p.name.span,
+                )
+                .with_note("take the rest arguments as a rest parameter (`(...args) => …`) and read them from the array")
+            }
+        };
+        self.cx.error(d);
+        None
+    }
+
+    /// `(params) => ret throws err`, or for an async arrow `(params) => Promise<ret, err>`;
+    /// `rest`: the last parameter is a rest parameter.
     pub(super) fn closure_type(
         &mut self,
         params: Vec<TyId>,
+        rest: bool,
         ret: TyId,
         err: Option<TyId>,
         is_async: bool,
@@ -161,6 +222,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         })
     }
 

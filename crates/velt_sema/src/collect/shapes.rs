@@ -427,7 +427,7 @@ fn string_member(cx: &mut Ctx, v: &ast::Variant) -> Option<String> {
 }
 
 /// `"UP"`, `("UP")`.
-fn const_str(e: &ast::Expr) -> Option<String> {
+pub(crate) fn const_str(e: &ast::Expr) -> Option<String> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
         ast::ExprKind::Paren(x) => const_str(x),
@@ -436,7 +436,7 @@ fn const_str(e: &ast::Expr) -> Option<String> {
 }
 
 /// `5`, `-3`, `(7)`.
-fn const_int(e: &ast::Expr) -> Option<i64> {
+pub(crate) fn const_int(e: &ast::Expr) -> Option<i64> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Int { value, .. }) => i64::try_from(*value).ok(),
         ast::ExprKind::Unary {

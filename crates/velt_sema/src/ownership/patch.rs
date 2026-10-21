@@ -18,7 +18,7 @@ use rustc_hash::FxHashSet;
 use velt_common::{Diagnostic, Span};
 
 use super::infer::force_move;
-use crate::body::places::{is_place, set_place_mode};
+use crate::body::places::{frozen_root, is_place, set_place_mode};
 use crate::ctx::Ctx;
 use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, LocalId, PassMode, TyKind, UseMode,
@@ -40,6 +40,17 @@ pub(super) fn patch_calls(
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
+        let modified = match &e.kind {
+            // Only the receiver: an owned parameter gets its own copy (as `force_move` gives
+            // it), but a method changing its receiver changes a copy no one would see.
+            E::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } if cx.frozen_reads && cx.fn_info(*d).this.is_some() => {
+                cx.fn_info(*d).modified_params & 1
+            }
+            _ => 0,
+        };
         let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 // A closure literal passed to a parameter of a generic type may be kept as a
@@ -74,8 +85,15 @@ pub(super) fn patch_calls(
             table_args(cx, args, &mut errors);
         }
         if let Some(modes) = &modes {
-            for (a, m) in args.iter_mut().zip(modes) {
+            for (i, (a, m)) in args.iter_mut().zip(modes).enumerate() {
                 match m {
+                    // A receiver the method changes though it takes it owned (it returns `this`):
+                    // not one read out of a `shared`, whose change no one would see.
+                    PassMode::Owned | PassMode::Borrow
+                        if i < 64 && modified & (1 << i) != 0 && frozen_root(a) =>
+                    {
+                        modifies_frozen(cx, a, &mut errors)
+                    }
                     PassMode::Owned => changed |= force_move(cx, a, &mut errors),
                     PassMode::BorrowMut => changed |= borrow_mut(cx, a, &mut errors),
                     _ => {}
@@ -261,7 +279,7 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
     if let Some(k) = (slot as usize).checked_sub(i.methods.len() + i.fields.len()) {
         // A field setter (`crate::iface_writes`): it modifies the receiver and owns the value
         // (copies it for Copy types), as `collect::getters::field_setter` declares it.
-        let f = *cx.writable_fields(iface).get(k)?;
+        let f = *cx.setter_fields(iface).get(k)?;
         let ty = i.fields[f].ty;
         let v = match cx.is_copy(ty) {
             true => PassMode::Copy,
@@ -289,6 +307,17 @@ fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
         let msg = format!("cannot pass module constant `{name}` to a function value");
         errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
     }
+    // The same for a value read out of a `shared<T>`, which other tasks read at the same time.
+    for a in args.iter().filter(|a| frozen_root(a)) {
+        let tn = cx.display(a.ty);
+        errors.push(
+            Diagnostic::error(
+                format!("cannot pass a `{tn}` read out of a `shared` value to a function value"),
+                a.span,
+            )
+            .with_note("the function may modify it, and a shared value is read-only: pass a copy, or call a named function"),
+        );
+    }
 }
 
 /// Is argument `a` a table (through upcasts)?
@@ -306,6 +335,10 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
     };
+    if frozen_root(target) {
+        modifies_frozen(cx, target, errors);
+        return false;
+    }
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
@@ -332,6 +365,15 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     }
     set_place_mode(target, UseMode::BorrowMut);
     true
+}
+
+/// A call may modify `target`, a value read out of a `shared`: an error.
+fn modifies_frozen(cx: &Ctx, target: &Expr, errors: &mut Vec<Diagnostic>) {
+    let tn = cx.display(target.ty);
+    errors.push(Diagnostic::error(
+        format!("this call may modify its argument, a `{tn}` read out of a `shared` value"),
+        target.span,
+    ).with_note("a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`"));
 }
 
 fn outer_mode(e: &Expr) -> Option<UseMode> {
@@ -424,7 +466,9 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             Callback::Modifies => true,
             // A table can't be told apart from a copy here either: the function value may be
             // the one that modifies it.
-            Callback::Unknown => super::evidence::in_root_memory(arg) || table_arg(cx, arg),
+            Callback::Unknown => {
+                super::evidence::in_root_memory(arg) || table_arg(cx, arg) || frozen_root(arg)
+            }
             Callback::None => false,
         };
         // Only `Borrow` places change: Copy arguments are copied, receivers of any type

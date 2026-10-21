@@ -33,6 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod arrow_scans;
 mod assign_ends;
 mod assign_narrow;
 pub(crate) mod assigned;
@@ -51,10 +52,13 @@ mod for_iter;
 mod for_map;
 mod gated;
 mod generators;
+mod index_keys;
 mod late_consts;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod chain_facts;
+mod literal_patterns;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
@@ -89,6 +93,8 @@ use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use expr::REPORTED;
+pub(crate) use pattern_defaults::UNDEFINED_OR;
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -257,6 +263,9 @@ pub(crate) struct Frame {
     /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
     /// the body may not write to (`readonly_arrays.rs`).
     pub readonly_arrays: rustc_hash::FxHashSet<LocalId>,
+    /// `const c = [2, "y"] as const` (literals of different types): its elements, which an
+    /// array pattern taking `c` apart reads as the literal (`literal_patterns`).
+    pub as_const_tuples: FxHashMap<LocalId, Vec<velt_syntax::ast::Expr>>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: rustc_hash::FxHashMap<LocalId, DefId>,
@@ -316,6 +325,10 @@ pub(crate) struct Frame {
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: FxHashMap<LocalId, Span>,
+    /// `let x: T;` without an initializer that a closure assigns (`closure_assigned`): held as
+    /// a `T | undefined` that starts `undefined`, and read through a check
+    /// ([`FnCx::late_let_read`]).
+    pub late_lets: rustc_hash::FxHashSet<LocalId>,
     /// `const { value, done } = r` of a union discriminated by the `bool` field `done`
     /// (`IteratorResult<T>`): per `done` binding, the other bindings of the pattern that are not
     /// null when `done` holds the given value (`property_pattern.rs`, issue #1114).
@@ -362,6 +375,7 @@ impl Frame {
             using_shares: vec![],
             await_using: Default::default(),
             readonly_arrays: Default::default(),
+            as_const_tuples: Default::default(),
             closure_consts: Default::default(),
             callable_writes: None,
             assign_targets: vec![],
@@ -386,6 +400,7 @@ impl Frame {
             const_lits: FxHashMap::default(),
             regex_consts: FxHashMap::default(),
             untyped_lets: FxHashMap::default(),
+            late_lets: Default::default(),
             destructured_discriminants: FxHashMap::default(),
             groups: Default::default(),
             late: Default::default(),
@@ -439,12 +454,19 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
+    /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand
+    /// side with effects.
+    pub held_recheck: Vec<expr::assign_paths::HeldRecheck>,
     /// The span of the call being checked when its function or receiver has effects
     /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
     pub callee_effects: Option<Span>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// An arrow whose rest parameter is checked as an ordinary last parameter holding the
+    /// packed arguments (`expr/rest_shapes.rs`).
+    pub packed_rest: Option<Span>,
     /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
     pub task_callback: Option<Span>,
     /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
@@ -459,8 +481,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// closure it becomes is recorded in `Ctx::thread_adapters`.
     pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
-    /// members it was tried against and the types it could see (`expr/closure.rs`).
-    pub member_choices: FxHashMap<(Span, Vec<TyId>, u64), TyId>,
+    /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
+    pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
+    /// What scans of each arrow's syntax found (`arrow_scans`).
+    pub arrow_scans: arrow_scans::ArrowScans,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -523,14 +547,17 @@ impl<'a, 'm> FnCx<'a, 'm> {
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],
+            held_recheck: Vec::new(),
             callee_effects: None,
             void_task: None,
+            packed_rest: None,
             task_callback: None,
             thread_task: None,
             thread_callback: None,
             await_body: None,
             thread_adapter: None,
             member_choices: FxHashMap::default(),
+            arrow_scans: Default::default(),
             detached: false,
             immediate_hint: None,
             collect_iterable_args: false,

@@ -27,6 +27,14 @@ impl FnCx<'_, '_> {
         // A variable that a closure assigns is checked again where it is used, and read as it
         // is where a test checks it (`closure_assigned`).
         let reassigned = self.closure_assignment(l).is_some();
+        if reassigned
+            && want != Want::BorrowMut
+            && self.raw_read != Some(span)
+            && !self.is_narrowed(l)
+            && self.is_late_let(l)
+        {
+            return self.late_let_read(l, ty, want, span);
+        }
         if payload.is_some() && reassigned {
             if self.raw_read == Some(span) {
                 let mode = self.use_mode(ty, want);
@@ -449,22 +457,22 @@ impl FnCx<'_, '_> {
         ret: TyId,
         is_async: bool,
     ) -> TyId {
-        if is_async {
-            let ret = self.async_call_ret(d, ret);
-            return self.cx.ty.fn_ptr(params, ret);
-        }
         let never = self.cx.ty.never;
-        if self.is_generator_fn(d) {
+        let (ret, throws) = if is_async {
+            (self.async_call_ret(d, ret), never)
+        } else if self.is_generator_fn(d) {
             // Calling a generator only creates it: its errors are the result's `E`.
             let e = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
-            let ret = self.cx.with_generator_error(ret, e);
-            return self.cx.ty.fn_ptr(params, ret);
-        }
-        let throws = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
+            (self.cx.with_generator_error(ret, e), never)
+        } else {
+            let throws = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
+            (ret, throws)
+        };
         self.cx.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest: crate::body::defaults::has_rest(self.cx, d),
         })
     }
 
@@ -483,6 +491,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.ty.kind(ty).clone()
         else {
             return ty;
@@ -521,6 +530,7 @@ impl FnCx<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         })
     }
 }

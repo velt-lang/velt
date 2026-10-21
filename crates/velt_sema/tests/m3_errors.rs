@@ -158,11 +158,16 @@ fn json_types() {
          function main() { const w = JSON.parse<W>(\"{}\"); }",
     );
     assert!(r.contains("cannot convert to or from JSON"), "{r}");
-    let r = err_src(
+    // A `shared<T>` is written as its `T`, except an atomic `shared<int>`.
+    ok_src(
         "function send<T>(v: T): string { return JSON.stringify(v); }
          function main() { console.log(send(shared(1))); }",
     );
-    assert!(r.contains("`shared<f64>` has no JSON form"), "{r}");
+    let r = err_src(
+        "function send<T>(v: T): string { return JSON.stringify(v); }
+         function main() { console.log(send(shared(1 as i64))); }",
+    );
+    assert!(r.contains("`shared<i64>` has no JSON form"), "{r}");
 }
 
 #[test]

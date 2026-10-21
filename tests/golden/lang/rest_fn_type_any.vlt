@@ -1,0 +1,22 @@
+// A function value with a rest parameter called through `any` (#943): the arguments past its
+// fixed parameters are packed into the rest array, each converted as a fixed parameter's is.
+function sum(...xs: number[]): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function tag(name: string, ...parts: string[]): string {
+  return name + ":" + parts.join(",");
+}
+
+function main() {
+  const a: any = sum;
+  console.log(a(1, 2, 3), a());
+  const t: any = tag;
+  console.log(t("x"), t("y", "p", "q"));
+  const o: any = { f: (label: string, ...ns: number[]) => label + ns.length };
+  console.log(o.f("n", 1, 2));
+}

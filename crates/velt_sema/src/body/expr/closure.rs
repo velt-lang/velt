@@ -98,12 +98,12 @@ impl FnCx<'_, '_> {
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
     /// the first one, whose errors the real check then reports.
     fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // Remembered per arrow, members and the types of every local visible where it is
-        // checked: an arrow nested in one being tried is tried once, not once per try of each
-        // enclosing arrow (exponential in the nesting), unless something it can see has another
-        // type in this try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a
-        // string).
-        let key = (e.span, members.to_vec(), self.visible_types());
+        // Remembered per arrow, members and the types of the enclosing locals it names: an
+        // arrow nested in one being tried is tried once, not once per try of each enclosing
+        // arrow (exponential in the nesting), unless a local it uses has another type in this
+        // try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a string). Locals
+        // it doesn't name (the enclosing arrows' other locals) don't change how it checks.
+        let key = (e.span, members.to_vec(), self.named_local_types(e));
         if let Some(&m) = self.member_choices.get(&key) {
             return m;
         }
@@ -112,18 +112,16 @@ impl FnCx<'_, '_> {
         m
     }
 
-    /// A fingerprint of the types of the locals of this function and of the functions it is
-    /// nested in.
-    fn visible_types(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        for f in self.outer.iter().chain(std::iter::once(&self.f)) {
-            f.locals.len().hash(&mut h);
-            for l in &f.locals {
-                l.ty.hash(&mut h);
-            }
-        }
-        h.finish()
+    /// The types of the locals (of this function and of those it is nested in) named like a
+    /// value arrow `e` takes from its surroundings, or `this`.
+    fn named_local_types(&mut self, e: &ast::Expr) -> Vec<TyId> {
+        let free = self.arrow_scans.free_names(e);
+        let frames = self.outer.iter().chain(std::iter::once(&self.f));
+        frames
+            .flat_map(|f| f.locals.iter())
+            .filter(|l| free.binary_search(&l.name).is_ok())
+            .map(|l| l.ty)
+            .collect()
     }
 
     fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
@@ -173,23 +171,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
-        if let Some(p) = params.iter().find(|p| p.rest) {
-            // Its type is checked as a function's is; one of an array type is not supported yet
-            // (a module-level constant is lifted into a function, `generic_arrows`).
-            if let Some(t) = &p.ty {
-                let ty = self.resolve(t);
-                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
-                    return self.error_expr(e.span);
-                }
+        // A rest parameter's type is checked as a function's is.
+        if let Some(t) = params.last().filter(|p| p.rest).and_then(|p| p.ty.as_ref()) {
+            let ty = self.resolve(t);
+            if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                return self.error_expr(e.span);
             }
-            self.cx.error(
-                velt_common::Diagnostic::error(
-                    "rest parameters of arrow functions are not supported yet",
-                    p.name.span,
-                )
-                .with_note("declare a `function` with the rest parameter (`function f(...xs: T[])`), or take an array (`(xs: T[]) => …`)"),
-            );
-            return self.error_expr(e.span);
         }
         // Against a union of function types, the arrow is typed by one member; the caller
         // converts the closure to the union.
@@ -210,6 +197,9 @@ impl FnCx<'_, '_> {
         } else if let Some(h) = self.declared_member_callback(e, exp) {
             return h;
         }
+        if let Some(h) = self.rest_shape_callback(e, exp) {
+            return h;
+        }
         let await_body = self.await_body == Some(e.span) && *is_async;
         if await_body {
             self.await_body = None;
@@ -223,7 +213,18 @@ impl FnCx<'_, '_> {
             params: exp_params,
             ret: exp_ret,
             throws: exp_throws,
+            rest: exp_rest,
         } = self.expected_fn(exp, is_async);
+        let rest = match self.packed_rest == Some(span) {
+            true => {
+                self.packed_rest = None;
+                Some(false)
+            }
+            false => self.closure_rest(params, exp_params.as_deref(), exp_rest),
+        };
+        let Some(rest) = rest else {
+            return self.error_expr(span);
+        };
         let declared_err = match throws {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
@@ -262,16 +263,8 @@ impl FnCx<'_, '_> {
         };
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
-        frame.closure_assigned = closure_assigned_in(params, body);
-        let defaults = params.iter().filter_map(|p| p.default.as_ref());
-        frame.assign_ends = match body {
-            ast::ArrowBody::Block(b) => {
-                crate::body::assign_ends::assignment_ends(&b.stmts, defaults)
-            }
-            ast::ArrowBody::Expr(e) => {
-                crate::body::assign_ends::assignment_ends(&[], defaults.chain([&**e]))
-            }
-        };
+        frame.closure_assigned = self.arrow_scans.closure_assigned(e);
+        frame.assign_ends = self.arrow_scans.assignment_ends(e);
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
@@ -363,7 +356,7 @@ impl FnCx<'_, '_> {
             self.provisional_slot(span, &frame.uncaught);
         }
         let err = self.closure_error(def, declared_err, &frame, clause);
-        let fn_ty = self.closure_type(ptys.clone(), body_ret, err, is_async);
+        let fn_ty = self.closure_type(ptys.clone(), rest, body_ret, err, is_async);
         let ret = if is_async {
             self.cx.ty.promise(body_ret)
         } else {
@@ -694,21 +687,6 @@ impl FnCx<'_, '_> {
             }
         }
     }
-}
-
-/// The variables that closures created in an arrow function (`params`, `body`) assign.
-fn closure_assigned_in(
-    params: &[ast::ArrowParam],
-    body: &ast::ArrowBody,
-) -> rustc_hash::FxHashMap<String, Span> {
-    let defaults = params.iter().filter_map(|p| p.default.as_ref());
-    let assigned = match body {
-        ast::ArrowBody::Block(b) => crate::body::assigned::assigned_by_closures(&b.stmts, defaults),
-        ast::ArrowBody::Expr(e) => {
-            crate::body::assigned::assigned_by_closures(&[], defaults.chain([&**e]))
-        }
-    };
-    crate::body::closure_assigned::owned(assigned)
 }
 
 /// The captured variables a closure's body modifies, with the first place each is

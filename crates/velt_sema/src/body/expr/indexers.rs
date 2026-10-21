@@ -22,12 +22,14 @@ use super::accessor_rmw::{binary, block, is_field_path, stmt, Rmw};
 use super::assign_paths::is_pure_value;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, TyId};
+use crate::hir::{self, ExprKind as H, Nothing, TyId};
 
 /// The read method's name.
 const INDEX: &str = "__index";
 /// The write method's name.
 const SET_INDEX: &str = "__setIndex";
+/// An array's checked read (`T | undefined`), std/prelude/array.vlt.
+const GET: &str = "__get";
 const INDEX_TEMP: &str = "<index>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
@@ -76,7 +78,66 @@ impl FnCx<'_, '_> {
         index: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let prop = ident(INDEX, span);
+        self.read_through(obj, index, INDEX, span)
+    }
+
+    /// `xs[i]` on an array where the read is expected to be `T | undefined` (`return xs[0]`
+    /// from a function returning `T | undefined`, `const v: T | undefined = xs[i]`): a checked
+    /// read, `xs.__get(i)`, which gives `undefined` for a position outside the array, as in
+    /// JS (`T | undefined` at `T = U | undefined` is `U | undefined` itself). A read typed `T`
+    /// stays the plain index (an out-of-range one panics); `Err` gives the object back for it.
+    pub(super) fn checked_array_read(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let Some(elem) = self.cx.ty.array_elem(obj.ty) else {
+            return Err(obj);
+        };
+        let allows_undefined = |s: &Self, t: TyId| {
+            matches!(
+                s.cx.ty.nothing_of(t),
+                Some(Nothing::Undefined | Nothing::Both)
+            )
+        };
+        // Expected as `T | undefined` of the element type itself (not a type a generic call
+        // is still inferring), or an element that may itself be `undefined`
+        // (`(T | undefined)[]`), which is read this way wherever it is used.
+        // `T | null | undefined` of a `(T | null)[]` too: its payload is the element type.
+        let expected = exp.is_some_and(|t| match self.cx.ty.nothing_of(t) {
+            Some(Nothing::Undefined) => self.cx.ty.core(t) == Some(elem),
+            Some(Nothing::Both) => {
+                self.cx.ty.opt_payload(t) == Some(elem) || self.cx.ty.core(t) == Some(elem)
+            }
+            _ => false,
+        });
+        let wanted = expected || allows_undefined(self, elem);
+        // The standard library reads its arrays as it states (its code is not TypeScript's).
+        if !wanted
+            || self.cx.scopes[self.module].is_std
+            || want == Want::BorrowMut
+            || self.cx.ty.is_bottom(elem)
+            || self
+                .peek_ty(index)
+                .is_some_and(|t| !self.cx.ty.is_numeric(t))
+        {
+            return Err(obj);
+        }
+        Ok(self.read_through(obj, index, GET, span))
+    }
+
+    /// `obj.<method>(index)`, the index a number evaluated once, after the object.
+    fn read_through(
+        &mut self,
+        obj: hir::Expr,
+        index: &ast::Expr,
+        method: &str,
+        span: Span,
+    ) -> hir::Expr {
+        let prop = ident(method, span);
         if self.number_index(index) {
             return self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span);
         }

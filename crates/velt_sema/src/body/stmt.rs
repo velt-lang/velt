@@ -213,7 +213,13 @@ impl FnCx<'_, '_> {
 
     /// Expression in statement position (value discarded).
     pub fn expr_stmt(&mut self, e: &ast::Expr) -> hir::Expr {
+        let unit = Some(self.cx.ty.unit);
         match &e.kind {
+            ast::ExprKind::Update { .. } | ast::ExprKind::Assign { op: Some(_), .. }
+                if self.late_let_rmw(e) =>
+            {
+                self.expr(e, unit, Want::Borrow)
+            }
             ast::ExprKind::Update { op, prefix, target } => {
                 self.update(*op, *prefix, target, false, e.span)
             }
@@ -332,8 +338,12 @@ impl FnCx<'_, '_> {
             );
             return;
         };
+        if self.literal_pattern_decl(v, out) || self.computed_key_decl(v, out) {
+            return;
+        }
         if super::pattern_defaults::has_default(&v.pattern)
             || super::object_rest::has_object_rest(&v.pattern)
+            || super::index_keys::has_index_key(&v.pattern)
         {
             let e = match &v.ty {
                 // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
@@ -346,6 +356,21 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
+        if self.cx.dynamic(init.ty).is_some()
+            && matches!(
+                v.pattern.kind,
+                ast::PatternKind::Array { .. } | ast::PatternKind::Object { .. }
+            )
+        {
+            let name = ast::Ident {
+                name: format!("#d{}", self.f.locals.len()),
+                span,
+            };
+            self.hidden_local(name.clone(), init, false, out);
+            let tmp = super::pattern_defaults::mk(ast::ExprKind::Ident(name), span);
+            return self.any_pattern_decls(v.kind, &v.pattern, &tmp, out);
+        }
         if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
             if self.reads_properties(init.ty, fields) {
                 if let Some(src) = self.method_source(fields, e, init.clone(), out) {
@@ -433,6 +458,12 @@ impl FnCx<'_, '_> {
                 None => self.expr(e, None, Want::Move),
             }),
         };
+        // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).
+        let late = self.late_let(v, name, ann, init.is_none());
+        let ann = match (late, ann) {
+            (true, Some(t)) => Some(self.cx.ty.option_of(t, hir::Nothing::Undefined)),
+            _ => ann,
+        };
         // `let x: T | undefined;` starts as `undefined`, as in JavaScript (issue #930).
         let init = match (init, ann) {
             (None, Some(t))
@@ -480,6 +511,9 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if late {
+            self.f.late_lets.insert(local);
+        }
         self.note_readonly_array(local, v.ty.as_ref());
         self.note_as_const_array(local, v.init.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {

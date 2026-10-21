@@ -227,7 +227,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `any` argument `i` (a `u64` operand) of the buffer `argv`.
-    fn any_arg_place(&mut self, argv: vir::Local, i: Operand) -> Place {
+    pub(super) fn any_arg_place(&mut self, argv: vir::Local, i: Operand) -> Place {
         let any = self.cx.any_ty();
         let vt = self.cx.ty(any);
         let (size, _) = self.cx.size_align(vt);
@@ -276,6 +276,18 @@ impl FnLower<'_, '_> {
         argc: vir::Local,
         params: &[TyId],
     ) -> Vec<(Place, TyId)> {
+        let out = self.any_fixed_params(argv, argc, params);
+        self.any_drop_args(argv, params.len() as u64, argc);
+        out
+    }
+
+    /// [`Self::any_params`] without dropping the arguments past `params`.
+    pub(super) fn any_fixed_params(
+        &mut self,
+        argv: vir::Local,
+        argc: vir::Local,
+        params: &[TyId],
+    ) -> Vec<(Place, TyId)> {
         let any = self.cx.any_ty();
         let mut out = vec![];
         for (k, &p) in params.iter().enumerate() {
@@ -317,7 +329,6 @@ impl FnLower<'_, '_> {
             self.switch_to(done);
             out.push((slot, p));
         }
-        self.any_drop_args(argv, params.len() as u64, argc);
         out
     }
 
@@ -337,6 +348,7 @@ impl FnLower<'_, '_> {
             params,
             ret,
             throws,
+            rest,
         } = self.cx.kind(fty)
         else {
             self.any_drop_args(argv, 0, argc);
@@ -346,7 +358,15 @@ impl FnLower<'_, '_> {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
-        let slots = self.any_params(argv, argc, &params);
+        let slots = match (rest, params.split_last()) {
+            // A rest parameter gets the arguments past the fixed ones, packed (`any_rest`).
+            (true, Some((&last, fixed))) => {
+                let mut slots = self.any_fixed_params(argv, argc, fixed);
+                slots.push(self.any_rest_arg(argv, argc, fixed.len() as u64, last));
+                slots
+            }
+            _ => self.any_params(argv, argc, &params),
+        };
         let held = field.then(|| {
             let v = self.share_value(Operand::Copy(fp.clone()), fty);
             let vt = self.cx.ty(fty);
@@ -562,6 +582,15 @@ impl FnLower<'_, '_> {
         self.ret_status(ST_OK);
     }
 
+    /// A union, or an option of one (`string | number | null`), which `any_into` boxes as the
+    /// member or nothing it holds.
+    fn union_like(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Option(inner, _) => self.union_like(inner),
+            _ => self.cx.is_union(t),
+        }
+    }
+
     fn any_index_body(&mut self, data: vir::Local, i: vir::Local, out: vir::Local, ty: TyId) {
         let outp = self.any_out(out);
         if self.is_proxy(ty) {
@@ -587,6 +616,13 @@ impl FnLower<'_, '_> {
                     let ep = self.elem_place(&arr, idx, elem);
                     let v = self.share_value(Operand::Copy(ep), elem);
                     self.any_box_into(v, elem, &outp);
+                    self.ret_status(ST_OK);
+                } else if self.union_like(elem) {
+                    // A union element (`[1, "two"]` as `any`): the member it holds.
+                    let ep = self.elem_place(&arr, idx, elem);
+                    let v = self.share_value(Operand::Copy(ep), elem);
+                    let any = self.cx.any_ty();
+                    self.any_into(v, elem, any, &outp);
                     self.ret_status(ST_OK);
                 } else {
                     self.ret_status(ST_UNSUPPORTED);

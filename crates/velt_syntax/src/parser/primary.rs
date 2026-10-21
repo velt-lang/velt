@@ -47,7 +47,7 @@ impl<'a> Parser<'a> {
                 return Err(Fail);
             }
             Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
-            Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+            Tok::Kw(Kw::Async) if self.at_async_function() => {
                 self.bump(); // async
                 self.parse_fn_expr(lo, true)?
             }
@@ -139,7 +139,10 @@ impl<'a> Parser<'a> {
     /// `new Foo<T>(args)`; the argument list is optional (`new Foo`).
     fn parse_new(&mut self) -> PResult<ExprKind> {
         self.bump(); // new
-        let class = self.parse_named_type()?;
+        self.type_args_any_line = true;
+        let class = self.parse_named_type();
+        self.type_args_any_line = false;
+        let class = class?;
         let args = if self.at(Tok::LParen) {
             self.parse_args()?
         } else {
@@ -206,9 +209,45 @@ impl<'a> Parser<'a> {
         Ok(props)
     }
 
+    /// After an error in an object literal's property: past the literal's `}`, so the
+    /// statement around it recovers at its own end.
+    fn skip_rest_of_object(&mut self) {
+        let mut depth = 0u32;
+        loop {
+            match self.peek() {
+                Tok::Eof => break,
+                Tok::LBrace | Tok::LParen | Tok::LBracket => depth += 1,
+                Tok::RBrace if depth == 0 => {
+                    self.bump();
+                    break;
+                }
+                Tok::RBrace | Tok::RParen | Tok::RBracket => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            self.bump();
+        }
+    }
+
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {
         if self.eat(Tok::DotDotDot) {
             return Ok(ObjectProp::Spread(self.parse_assign()?));
+        }
+        if self.at_inline_symbol_key() {
+            let fail = self.reject_inline_symbol_key();
+            self.skip_rest_of_object();
+            return Err(fail);
+        }
+        if self.at_literal_name() {
+            let len = match self.peek() {
+                Tok::LBracket => self.member_key_len(0, false),
+                _ => 1,
+            };
+            if self.nth(len) == Tok::LParen {
+                let name = self.parse_pattern_key()?;
+                self.reject_literal_method_name(&name);
+                self.skip_rest_of_object();
+                return Err(Fail);
+            }
         }
         if let Some(m) = self.try_object_method()? {
             return Ok(m);
@@ -224,26 +263,21 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
-            // A numeric property name, as in TypeScript: `{ 7: v }` and `{ 0x10: v }` have the
-            // keys "7" and "16".
-            Tok::Int(_) => match self.literal_at_cursor() {
-                Some(Lit::Int {
-                    value,
-                    suffix: None,
-                }) if value < 1 << 53 => {
-                    let key = Ident {
-                        name: value.to_string(),
-                        span: self.cur_span(),
-                    };
-                    self.bump();
-                    self.expect(Tok::Colon)?;
-                    return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
-                }
-                _ => {
+            // A numeric property name, as in TypeScript: `{ 7: v }`, `{ 0x10: v }`, `{ 1.50: v }`
+            // and `{ 1e3: v }` have the keys "7", "16", "1.5" and "1000" (`String` of the number).
+            Tok::Int(_) | Tok::Float(_) => {
+                let Some(name) = self.literal_at_cursor().as_ref().and_then(number_key) else {
                     self.error_expected("property name");
                     return Err(Fail);
-                }
-            },
+                };
+                let key = Ident {
+                    name,
+                    span: self.cur_span(),
+                };
+                self.bump();
+                self.expect(Tok::Colon)?;
+                return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+            }
             Tok::LBracket if self.at_symbol_key() => {
                 let key = self.parse_symbol_key()?;
                 self.expect(Tok::Colon)?;
@@ -266,6 +300,20 @@ impl<'a> Parser<'a> {
         if !shorthand_ok {
             self.error_expected("`:`");
             return Err(Fail);
+        }
+        // `{ a = 1 }`: a default, which only an assignment pattern may have (`({ a = 1 } = o)`;
+        // sema rejects it elsewhere). It is `a: a = 1` with the assignment starting at the key.
+        if self.eat(Tok::Eq) {
+            let value = self.parse_assign()?;
+            let target = self.mk_expr(ExprKind::Ident(key.clone()), key.span);
+            let assign = ExprKind::Assign {
+                op: None,
+                target: Box::new(target),
+                value: Box::new(value),
+            };
+            let span = self.span_from(key.span.lo);
+            let assign = self.mk_expr(assign, span);
+            return Ok(ObjectProp::KeyValue(key, assign));
         }
         // `{ __DEV__ }` with a `define`: `{ __DEV__: false }`.
         if let Some(lit) = self.define_at.and_then(|d| d.get(&key.span.lo)).cloned() {
@@ -297,10 +345,18 @@ impl<'a> Parser<'a> {
         let value = self.parse_prop_value()?;
         let plain = match &key.kind {
             ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
-            ExprKind::Lit(Lit::Int {
-                value,
-                suffix: None,
-            }) if *value < 1 << 53 => Some(value.to_string()),
+            ExprKind::Lit(lit) => number_key(lit),
+            // `[-1]`: the key "-1" (and `[-0]` is "0", as `String(-0)` is).
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => match &expr.kind {
+                ExprKind::Lit(lit) => number_key(lit).map(|n| match n.as_str() {
+                    "0" => n,
+                    _ => format!("-{n}"),
+                }),
+                _ => None,
+            },
             _ => None,
         };
         if let Some(name) = plain {
@@ -331,8 +387,7 @@ impl<'a> Parser<'a> {
 
     /// The value of an object-literal property, after `:`.
     fn parse_prop_value(&mut self) -> PResult<Expr> {
-        self.fn_in_object = self.at_kw(Kw::Function)
-            || (self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function));
+        self.fn_in_object = self.at_kw(Kw::Function) || self.at_async_function();
         let value = self.parse_assign();
         self.fn_in_object = false;
         value
@@ -344,13 +399,20 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         // `get name() { … }` / `set name(v) { … }`: accessors (not `get(…)`, a method named `get`).
         if (self.at_word("get") || self.at_word("set"))
-            && (Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::Str(_)))
+            && (Self::is_name(self.nth(1))
+                || matches!(self.nth(1), Tok::Str(_) | Tok::Int(_) | Tok::Float(_)))
             && self.nth(2) == Tok::LParen
         {
             let kw = self.cur_span();
             let setter = self.at_word("set");
             self.bump();
+            let literal = self.at_literal_name();
             let name = self.parse_prop_key()?;
+            if literal {
+                self.reject_literal_method_name(&name);
+                self.skip_rest_of_object();
+                return Err(Fail);
+            }
             let ObjectProp::KeyValue(name, arrow) = self.finish_method_prop(lo, name, false)?
             else {
                 unreachable!("ICE: a method property is a key and a value");
@@ -373,8 +435,10 @@ impl<'a> Parser<'a> {
             };
             return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
         }
-        let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async)
+        // `async` [no LineTerminator here] the method name.
+        let async_kw = self.at_kw(Kw::Async) && !self.line_break_after(0);
+        let is_async = async_kw && matches!(self.nth(1), Tok::Star | Tok::LBracket)
+            || (async_kw
                 && Self::is_name(self.nth(1))
                 && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);
@@ -490,18 +554,6 @@ impl<'a> Parser<'a> {
     fn finish_method_prop(&mut self, lo: u32, name: Ident, is_async: bool) -> PResult<ObjectProp> {
         let type_params = self.parse_generic_params()?;
         let params = self.parse_arrow_params()?;
-        if let Some(p) = params.iter().find(|p| p.rest) {
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    format!(
-                        "rest parameters of object-literal methods (`{}(...xs)`) are not supported yet",
-                        name.name
-                    ),
-                    p.name.span,
-                )
-                .with_note("take an array (`sum(xs: number[])`) and pass one, or declare a class with the method"),
-            );
-        }
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
@@ -614,4 +666,25 @@ fn this_in_block(body: &Block) -> Option<Span> {
         crate::visit::walk_stmt(s, &mut f);
     }
     f.0
+}
+
+/// The property name a number literal key stands for: the number as `String` spells it (`7`,
+/// `1.5`, `1000` for `1e3`; `9007199254740992` for `9007199254740993`, which is not a double).
+/// `None` for a literal with a type suffix (`1u8`).
+pub(super) fn number_key(lit: &Lit) -> Option<String> {
+    match lit {
+        Lit::Int {
+            value,
+            suffix: None,
+        } if *value < 1 << 53 => Some(value.to_string()),
+        Lit::Int {
+            value,
+            suffix: None,
+        } => Some(crate::js_number(*value as f64)),
+        Lit::Float {
+            value,
+            suffix: None,
+        } => Some(crate::js_number(*value)),
+        _ => None,
+    }
 }

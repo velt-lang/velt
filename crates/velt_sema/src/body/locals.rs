@@ -163,6 +163,23 @@ impl FnCx<'_, '_> {
 
     /// A local visible here: the current frame's, or one of an enclosing function (which is then
     /// captured by every closure frame in between).
+    /// Is `name` a local of this function's frame (no capture is recorded)?
+    /// The literal elements of the mixed `[…] as const` the local `name` holds
+    /// (`Frame::as_const_tuples`), in this function or an enclosing one: `Some(None)` for a
+    /// local holding anything else, `None` when no local has that name. The literals give the
+    /// element types; the values are read from the array.
+    pub(crate) fn local_as_const_tuple(&self, name: &str) -> Option<Option<&[ast::Expr]>> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        frames.into_iter().find_map(|f| {
+            let l = frame_lookup(f, name)?;
+            Some(f.as_const_tuples.get(&l).map(|v| &v[..]))
+        })
+    }
+
+    pub(crate) fn declares_here(&self, name: &str) -> bool {
+        frame_lookup(&self.f, name).is_some()
+    }
+
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {
         if let Some(l) = frame_lookup(&self.f, name) {
             if !self.f.late.caps.is_empty() {

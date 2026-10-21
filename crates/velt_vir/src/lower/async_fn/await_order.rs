@@ -11,6 +11,7 @@ use crate::vir;
 /// The runtime functions through which a program can make a task's await word non-0.
 const OBSERVERS: &[&str] = &[
     "velt_rt_fut_start",
+    "velt_rt_fut_start_rejecting",
     "velt_rt_microtask",
     "velt_rt_latch_open",
     "velt_rt_fut_detach",

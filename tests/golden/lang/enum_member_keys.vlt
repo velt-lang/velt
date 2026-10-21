@@ -1,0 +1,33 @@
+// An enum member names a member by its value, as in TypeScript (#923): `[ReactiveFlags.SKIP]`
+// is the member `__v_skip`, and `[Slot.First]` of a numeric enum the member `"0"`. It works in
+// interfaces, object types, classes and object literals, and in `o[E.M]`, `o[E.M] = v` and
+// `E.M in o`. The enums may be imported.
+import { ReactiveFlags, Slot } from "./_enum_keys_lib";
+
+enum Local {
+  TAG = "tag",
+}
+
+interface Target {
+  name: string;
+  [ReactiveFlags.SKIP]?: boolean;
+  [Local.TAG]: string;
+}
+
+type Slots = { [Slot.First]: string; [Slot.Third]: number };
+
+class Ref {
+  public readonly [ReactiveFlags.IS_REF] = true;
+  value = 1;
+}
+
+function main() {
+  const t: Target = { name: "t", [ReactiveFlags.SKIP]: true, [Local.TAG]: "x" };
+  console.log(t.name, t[ReactiveFlags.SKIP], t.tag, JSON.stringify(t));
+  t[ReactiveFlags.SKIP] = false;
+  console.log(t[ReactiveFlags.SKIP], ReactiveFlags.SKIP in t, ReactiveFlags.IS_REACTIVE in t);
+  const s: Slots = { [Slot.First]: "zero", [Slot.Third]: 6 };
+  console.log(JSON.stringify(s), s[Slot.First], s[Slot.Third]);
+  const r = new Ref();
+  console.log(r[ReactiveFlags.IS_REF], r.__v_isRef, JSON.stringify(r));
+}

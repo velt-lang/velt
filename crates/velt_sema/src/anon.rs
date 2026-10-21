@@ -159,10 +159,12 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| c(self, *a)).collect(),
                 ret: c(self, ret),
                 throws: c(self, throws),
+                rest,
             },
             _ => {
                 self.canon_memo.insert(t, t);
@@ -607,10 +609,13 @@ pub(crate) fn shape_field(f: &FieldInfo) -> ShapeField {
 /// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present value
 /// (`hir::FieldDef::presence`): an optional field (`a?: T`, read as `T | undefined`) of an
 /// object type or struct, so that an absent key and one holding `undefined` stay apart, as in
-/// JavaScript (`"a" in o`, printing, spread; issue #930). A class's optional field is an own
-/// property holding `undefined` until set, and `a?: any` holds its own `undefined`.
+/// JavaScript (`"a" in o`, printing, spread; issue #930). That includes `a?: any` (and
+/// `unknown`), whose absent value is the dynamic `undefined` with the flag clear (#1319). A
+/// class's optional field is an own property holding `undefined` until set.
 pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
-    f.optional && kind != AdtKind::Class && ty.nothing_of(f.ty).is_some()
+    f.optional
+        && kind != AdtKind::Class
+        && (ty.nothing_of(f.ty).is_some() || matches!(ty.kind(f.ty), crate::hir::TyKind::Dyn(..)))
 }
 
 /// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): an

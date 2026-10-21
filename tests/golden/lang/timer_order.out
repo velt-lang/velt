@@ -1,0 +1,23 @@
+main end
+delay 1
+delay 0
+timeout a
+microtask a
+timeout b
+microtask b
+timeout c
+microtask c
+timeout d
+microtask d
+timeout e
+microtask e
+clearing
+interval
+stopping interval
+outer
+nested microtask
+nested immediate
+nested timeout
+delay 300
+delay 400
+delay 500

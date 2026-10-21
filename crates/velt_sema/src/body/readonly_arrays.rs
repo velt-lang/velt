@@ -113,9 +113,39 @@ impl FnCx<'_, '_> {
         let Some(ast::ExprKind::Cast { expr, ty }) = init.map(|e| &e.kind) else {
             return;
         };
+        if super::expr::member::is_as_const(ty) {
+            if let Some(names) = as_const_tuple(expr) {
+                self.f.as_const_tuples.insert(l, names);
+            }
+        }
         if super::expr::member::is_as_const(ty) && as_const_strings(expr).is_some() {
             self.f.readonly_arrays.insert(l);
         }
+    }
+}
+
+/// `[2, "y"]` (in parentheses or not): its elements when they are literals of more than one
+/// type (TypeScript's `readonly [2, "y"]` as `as const` gives it).
+pub(super) fn as_const_tuple(e: &ast::Expr) -> Option<Vec<ast::Expr>> {
+    let elems = match &e.kind {
+        ast::ExprKind::Paren(inner) => return as_const_tuple(inner),
+        ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
+        _ => return None,
+    };
+    let names: Vec<&'static str> = elems.iter().map(literal_type).collect::<Option<_>>()?;
+    (names.iter().any(|n| *n != names[0])).then(|| elems.clone())
+}
+
+/// The type of literal `x` as an element of a tuple `as const` gives it (`"number"` for `1`),
+/// if `x` is a string, number or boolean literal.
+pub(super) fn literal_type(x: &ast::Expr) -> Option<&'static str> {
+    match &x.kind {
+        ast::ExprKind::Lit(ast::Lit::Str(_)) => Some("string"),
+        ast::ExprKind::Lit(
+            ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. },
+        ) => Some("number"),
+        ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some("boolean"),
+        _ => None,
     }
 }
 

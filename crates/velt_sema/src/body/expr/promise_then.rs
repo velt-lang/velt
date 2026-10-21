@@ -26,6 +26,8 @@ pub(crate) fn is_promise_callback_fn(name: &str) -> bool {
             | "promiseThenElseAsync"
             | "promiseCatch"
             | "promiseCatchAsync"
+            | "promiseCatchVoid"
+            | "promiseCatchVoidAsync"
             | "promiseFinally"
             | "promiseFinallyThrows"
             | "promiseFinallyAsync"
@@ -118,6 +120,7 @@ impl FnCx<'_, '_> {
                 params,
                 ret: error,
                 throws: error,
+                rest: false,
             });
             let h = self.expr(a, Some(hint), Want::Move);
             if self.cx.ty.has_error(h.ty) {
@@ -206,6 +209,19 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![t, e, *u, f], recv.ty, *u, f)
             }
+            ("catch", [(u, xg)]) if *u == self.cx.ty.unit && t != self.cx.ty.unit => {
+                // A handler that returns nothing (`p.catch(() => {})`): TypeScript's
+                // `Promise<T | void>`, which is a `T | undefined`.
+                let g = xg.unwrap_or(never);
+                let name = if all_async {
+                    "promiseCatchVoidAsync"
+                } else {
+                    "promiseCatchVoid"
+                };
+                // Set from the prelude function's result type below (`T | undefined`, also when
+                // `T` holds a nothing).
+                (name, vec![t, e, g], recv.ty, t, g)
+            }
             ("catch", [(u, xg)]) => {
                 if *u != t {
                     let (a, b) = (self.cx.display(t), self.cx.display(*u));
@@ -255,6 +271,14 @@ impl FnCx<'_, '_> {
         };
         let mut all = vec![recv];
         all.extend(callbacks.into_iter().map(|c| c.0));
+        let mut value = value;
+        if name.starts_with("promiseCatchVoid") {
+            let declared = self.cx.fn_info(d).ret;
+            let declared = self.cx.subst(declared, &targs);
+            if let TyKind::Promise(v, _) = *self.cx.ty.kind(declared) {
+                value = v;
+            }
+        }
         let ret = self.cx.ty.promise_rejecting(value, err);
         self.note_async_args(d, &all);
         self.call_throws(d, &targs, ret, span);

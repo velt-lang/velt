@@ -3,12 +3,38 @@
 //! the `for` keyword, and several updates become `(() => { u1; u2; })()` with empty spans on the
 //! arrow and its parentheses. Both are printed back in the comma form the user wrote. A
 //! `for (const k in o)` is a `for...of` over `Object.keys(o)` whose callee has an empty span,
-//! printed back as `for...in`.
+//! printed back as `for...in`. A loop assigning to a target declared elsewhere
+//! (`for (x of xs)`) loops over a hidden `const` assigned first thing in the body, printed back
+//! as written.
 
 use velt_syntax::ast::{ArrowBody, Block, Expr, ExprKind, Pattern, Stmt, StmtKind, VarKind};
 
 use super::Printer;
 use crate::doc::{cat, group, indent, join, nil, softline, Doc};
+
+/// The target of a `for (target of xs)` loop (`velt_syntax::FOR_TARGET`) and the body
+/// without the assignment the parser added.
+fn for_target<'e>(pattern: &Pattern, body: &'e Block) -> Option<(&'e Expr, Block)> {
+    let velt_syntax::ast::PatternKind::Ident(id) = &pattern.kind else {
+        return None;
+    };
+    if id.name != velt_syntax::FOR_TARGET {
+        return None;
+    }
+    let (first, rest) = body.stmts.split_first()?;
+    let StmtKind::Expr(Expr {
+        kind: ExprKind::Assign { target, .. },
+        ..
+    }) = &first.kind
+    else {
+        return None;
+    };
+    let rest = Block {
+        stmts: rest.to_vec(),
+        span: body.span,
+    };
+    Some((target, rest))
+}
 
 impl<'a> Printer<'a> {
     /// `for (init; cond; update) body`, with an optional label in front.
@@ -53,6 +79,12 @@ impl<'a> Printer<'a> {
             Some(object) => (" in ", object),
             None => (" of ", iter),
         };
+        let open = if is_await { "for await (" } else { "for (" };
+        // `for (target of xs)`: a hidden `const` assigned to the target first in the body.
+        if let Some((target, rest)) = for_target(pattern, body) {
+            let head = cat![self.expr(target), word, self.expr(iter)];
+            return cat![open, head, ") ", self.block(&rest)];
+        }
         let head = cat![
             kind.keyword(),
             " ",
@@ -60,7 +92,6 @@ impl<'a> Printer<'a> {
             word,
             self.expr(iter)
         ];
-        let open = if is_await { "for await (" } else { "for (" };
         cat![open, head, ") ", self.block(body)]
     }
 

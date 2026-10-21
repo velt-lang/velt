@@ -46,6 +46,16 @@ impl<'a> Parser<'a> {
                 }
                 return self.finish_for_in(kind, pattern);
             }
+            ForInit::Target(target, of) => {
+                if !of && await_span.is_some() {
+                    self.error(
+                        "`for await` needs `of`: `for await (x in o)` is not JavaScript",
+                        target.span,
+                    );
+                    return Err(Fail);
+                }
+                return self.finish_for_target(target, of, await_span.is_some());
+            }
             ForInit::Stmts(stmts) => stmts,
         };
         if let Some(span) = await_span {
@@ -60,7 +70,7 @@ impl<'a> Parser<'a> {
         } else {
             Some(self.parse_expr()?)
         };
-        self.expect_semi()?;
+        self.expect(Tok::Semi)?;
         let update = if self.at(Tok::RParen) {
             None
         } else {
@@ -148,10 +158,17 @@ impl<'a> Parser<'a> {
                 let e = self.parse_expr();
                 self.no_in = no_in;
                 let e = e?;
+                if stmts.is_empty() && (self.at_kw(Kw::Of) || self.at_kw(Kw::In)) {
+                    let of = self.eat_kw(Kw::Of);
+                    if !of {
+                        self.bump();
+                    }
+                    return Ok(ForInit::Target(e, of));
+                }
                 if self.at_kw(Kw::Of) || self.at_kw(Kw::In) {
                     let span = self.cur_span();
                     self.error(
-                        "`for...of` and `for...in` require `const` or `let` before the loop variable",
+                        "`for...of` and `for...in` take one loop variable or target",
                         span,
                     );
                     return Err(Fail);
@@ -165,7 +182,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.expect_semi()?;
+        self.expect(Tok::Semi)?;
         Ok(ForInit::Stmts(stmts))
     }
 
@@ -228,6 +245,40 @@ impl<'a> Parser<'a> {
 }
 
 impl Parser<'_> {
+    /// After `for (target of` / `for (target in`: the loop over a hidden `const` (named
+    /// [`crate::FOR_TARGET`]) whose body first assigns it to the target, `target = #of;`.
+    /// `velt fmt` prints the loop back as written.
+    fn finish_for_target(&mut self, target: Expr, of: bool, is_await: bool) -> PResult<StmtKind> {
+        let span = target.span;
+        let hidden = Ident {
+            name: crate::FOR_TARGET.into(),
+            span,
+        };
+        let pattern = self.mk_pat(PatternKind::Ident(hidden.clone()), span);
+        let mut lp = if of {
+            self.finish_for_of(VarKind::Const, pattern, is_await)?
+        } else {
+            self.finish_for_in(VarKind::Const, pattern)?
+        };
+        if let StmtKind::ForOf { body, .. } = &mut lp {
+            let read = self.mk_expr(ExprKind::Ident(hidden), span);
+            let assign = ExprKind::Assign {
+                op: None,
+                target: Box::new(target),
+                value: Box::new(read),
+            };
+            let assign = self.mk_expr(assign, span);
+            body.stmts.insert(
+                0,
+                Stmt {
+                    kind: StmtKind::Expr(assign),
+                    span,
+                },
+            );
+        }
+        Ok(lp)
+    }
+
     /// After `for (const k in`: the loop over `Object.keys(o)`.
     fn finish_for_in(&mut self, kind: VarKind, pattern: Pattern) -> PResult<StmtKind> {
         let object = self.parse_expr()?;
@@ -266,6 +317,9 @@ enum ForInit {
     Of(VarKind, Pattern),
     /// `for (<kind> <name> in …`
     In(VarKind, Pattern),
+    /// `for (<target> of …` (`true`) or `for (<target> in …`: a loop assigning each value to
+    /// a variable, place or destructuring target declared elsewhere.
+    Target(Expr, bool),
     /// C-style init statements (none, one, or a comma list), `;` consumed.
     Stmts(Vec<Stmt>),
 }

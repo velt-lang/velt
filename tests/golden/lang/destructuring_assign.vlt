@@ -1,0 +1,61 @@
+// check: no leaks
+// Destructuring in assignments and `for...of` heads, with defaults and rests, as in Node
+// (#1227): `[a, b] = [b, a]`, `({ a, b = "d" } = o)`, `for (const { a, b = 1 } of xs)`.
+type P = { a: number; b?: string };
+
+class Pt {
+  x = 0;
+  y = 0;
+}
+
+function main(): void {
+  let a = 1;
+  let b = 2;
+  [a, b] = [b, a];
+  console.log(a, b);
+
+  let x = 0;
+  let y = 0;
+  const t: [number, number | undefined] = [5, undefined];
+  [x, y = 7] = t;
+  console.log(x, y);
+
+  const o: P = { a: 3 };
+  let n = 0;
+  let s = "";
+  ({ a: n, b: s = "dflt" } = o);
+  console.log(n, s);
+  let bb = "";
+  ({ b: bb = "none" } = { b: "set" });
+  console.log(bb);
+  {
+    let a = 0;
+    let b = "";
+    ({ a, b = "short" } = o);
+    console.log(a, b);
+  }
+  let aa = 0;
+  let cc = "";
+  ({ a: aa, b: cc = "x" } = o);
+  console.log(aa, cc);
+
+  const p = new Pt();
+  const xs = [10, 20, 30, 40];
+  let first = 0;
+  let rest: number[] = [];
+  [p.x, p.y] = xs;
+  [first, ...rest] = xs;
+  console.log(p.x, p.y, first, rest);
+
+  const ps: P[] = [{ a: 1 }, { a: 2, b: "x" }];
+  for (const { a, b = "dflt" } of ps) console.log(a, b);
+  const pairs: [number, number | undefined][] = [[1, undefined], [2, 3]];
+  for (const [k, v = 9] of pairs) {
+    const a = k * 10;
+    console.log(k, v, a);
+  }
+  for (let { a, ...others } of ps) {
+    a += 1;
+    console.log(a, others);
+  }
+}

@@ -46,10 +46,37 @@ export function larger(a: i64, b: i64): i64 {
 }
 ```
 
-- Semicolons are required after statements. There is no automatic semicolon insertion, except
-  that a line break ends a signature without a body ([overloads](functions.md#overloads)) and
-  a member of a class, an interface or an object type (`interface P {` / `x: number` /
-  `y: number` / `}` on four lines).
+- Semicolons are optional: automatic semicolon insertion follows JavaScript's rules, as
+  TypeScript and Node apply them, in `.vlt`, `.ts` and `.tsx` files alike. A statement, a
+  declaration, or a member of a class, an interface or an object type ends with `;`, or without
+  one at a line break, before `}` or at the end of the file, when the next token cannot
+  continue it. No `;` is inserted in a `for (;;)` header; one is after `do { … } while (c)`,
+  even on the same line. `velt fmt` prints semicolons.
+- Some productions end at a line break whatever follows, as in JavaScript: `return` and
+  `yield` (`return` / a line break / `x` returns nothing, and `x` is the next statement),
+  `break` and `continue` before a label, and postfix `++` / `--` (`a` / `++b` on two lines
+  increments `b`). A line break after `throw`, before `=>`, or after `async` in an arrow
+  function is an error, as in TypeScript. In a type, type arguments start on the line of
+  their type (`a: string` / `<T>(x: T): T` in an interface is a member and a call signature);
+  after `new` and in `extends` / `implements` they may follow on the next line. A modifier
+  followed by a line break is a member name (`async` / `foo() {}` in a class is a field `async`
+  and a method `foo`), except `static`, `get` and `set`, which apply to the name on the next
+  line; `type`, `interface`, `declare` and `namespace` followed by a line break do not declare
+  anything, as in TypeScript.
+- The line terminators are line feed, carriage return, U+2028 and U+2029.
+- A line that starts with `(`, `[`, `+`, `-` or `/` continues the statement on the line
+  before, as in Node: `const a = b` / `(c).run()` calls `b`. Velt warns about it ("this line
+  continues the expression on the line before; add `;` at the end of that line if it is a new
+  statement", ESLint's `no-unexpected-multiline`), unless the line break is inside
+  parentheses, brackets or braces, where the line before could not have ended the statement.
+  A template literal starting such a line would make a tagged template, which Velt does not
+  have: that is an error. Code formatted without semicolons starts such a line with `;`:
+
+```ts
+const parts: string[] = []
+;["a", "b"].forEach((p) => parts.push(p))
+console.log(parts.length)
+```
 
 ## Identifiers
 
@@ -141,5 +168,13 @@ that element where it is after the right side ran: `xs[0] += grow(xs)` updates `
 `grow` made `xs` longer. If the right side made the array shorter than the index, that write
 is out of bounds and panics, where JavaScript extends the array: `xs[0] += xs.pop()!` on `[5]`
 panics, on `[5, 6]` it makes `[11]` (Velt arrays never grow by assignment, see
-[Types](types.md#objects-arrays-tuples-and-maps)). A postfix `!` after an expression on the same
-line is the non-null assertion (`m.get(k)!`).
+[Types](types.md#objects-arrays-tuples-and-maps)). An assignment to an element or a member is an
+expression with the value assigned, as in JS: `const v = (xs[i] = 7)`, `(c.t[1] += "z")` and
+`(get().n = 4)` evaluate the object and indices once, before the right side, and give the
+element written even when the right side changes a variable index (`(xs[k] = next())`, where
+`next` changes `k`, gives the value written into the element `k` named before). The target's
+object may be any expression that gives an object: `(c ? a : b).t[0] = 7` and
+`xs.find(f)!.t[1] = "x"` write into the object the conditional or the call gave, which every
+other reference to it sees. A tuple is a value, so a write into an element of a tuple that a
+call or a conditional gives (`m.get(k)![1] = 2`) is an error: it would change a copy. A postfix
+`!` after an expression on the same line is the non-null assertion (`m.get(k)!`).

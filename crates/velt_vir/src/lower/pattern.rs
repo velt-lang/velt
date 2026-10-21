@@ -404,8 +404,13 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// [`Self::drop_rest`] of an object pattern, or of a field moved out of a struct, class or
+    /// tuple (`moved_field_pat`: a tuple's elements are its fields).
     fn drop_rest_fields(&mut self, place: Place, ty: TyId, fields: &[(u32, Pat)]) {
-        let tys = self.cx.adt_field_tys(ty);
+        let tys = match self.cx.kind(ty) {
+            TyKind::Tuple(tys) => tys,
+            _ => self.cx.adt_field_tys(ty),
+        };
         for (i, fty) in tys.into_iter().enumerate() {
             let fp = self.field_place(&place, ty, i as u32);
             match fields.iter().find(|(j, _)| *j as usize == i) {

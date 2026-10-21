@@ -1,0 +1,55 @@
+// Arrows whose parameters take a function type's arguments in another shape, as TypeScript
+// allows (#943): named parameters for the rest arguments (each missing one is `undefined`,
+// which its type must admit), a rest parameter for fixed arguments (packed into its array, or
+// into a tuple when they have different types), and a function with fixed parameters where a
+// rest function type is expected (a closure `const` among them gets its defaults).
+class Bus {
+  handlers: ((...args: any[]) => void)[] = [];
+  on(name: string, h: (...args: any[]) => void) {
+    this.handlers.push(h);
+  }
+  emit(...args: any[]) {
+    for (const h of this.handlers) {
+      h(...args);
+    }
+  }
+}
+
+function call(f: (...xs: number[]) => number): number {
+  return f(4, 5, 6);
+}
+
+function onFirst(cb: (x: number, ...more: number[]) => void) {
+  cb(1);
+  cb(1, 5);
+}
+
+function show(a: any, b?: string): string {
+  return `${a}~${b}`;
+}
+
+const top: (...args: any[]) => string = (a: any, b: any) => `${a}|${b}`;
+
+function main() {
+  const bus = new Bus();
+  bus.on("x", (a: any) => console.log("a", a));
+  bus.on("x", (a: any, b?: number) => console.log("ab", a, b));
+
+  bus.emit(1);
+  bus.emit(1, 2);
+  const table: Record<string, (...args: any[]) => any> = { id: (x: any) => x };
+  console.log(table["id"]!("v"));
+  const k: (...args: [number, string]) => string = (...args) => args[1] + args[0];
+  console.log(k(5, "c"));
+  const h: (a: number, b: number) => number = (...xs: number[]) => xs.length;
+  console.log(h(1, 2));
+  const g: (a: number, b: number, c: number) => number = (a, ...more) => a + more.length;
+  console.log(g(10, 0, 0));
+  console.log(call((x?: number, y?: number) => (x ?? 0) + (y ?? 0)));
+  console.log(top(1), top(1, 2));
+  const loose: (...xs: any[]) => string = show;
+  console.log(loose(), loose(1), loose(1, "b", 3));
+  // A closure `const` fills in its default when the rest argument is missing.
+  const scaled = (a: number, b: number = 2) => console.log("scaled", a * b);
+  onFirst(scaled);
+}
