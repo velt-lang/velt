@@ -30,5 +30,15 @@ function norm(c: Child): string {
   return "<" + (c as VNode).type + ">";
 }
 
+type Rendered = VNode | string | (() => string);
+
+function render(r: Rendered): string {
+  if (isComputed(r)) return "computed";
+  if (typeof r === "function") return r();
+  if (typeof r === "string") return r;
+  return "<" + r.type + ">";
+}
+
 console.log(norm(["a", 1, [true, null], { type: "div", children: [] }]));
+console.log(render(() => "lazy"), render("s"), render({ type: "p", children: [] }));
 console.log(norm(undefined), norm(7));
