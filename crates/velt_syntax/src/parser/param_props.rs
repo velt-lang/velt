@@ -65,6 +65,10 @@ impl<'a> Parser<'a> {
         };
         // A modifier is followed by the parameter's name (or a pattern, rejected later).
         while Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::LBracket | Tok::LBrace) {
+            // Before a line break, a modifier is the parameter's name, as in TypeScript.
+            if self.line_break_after(0) {
+                break;
+            }
             if self.at_word("private") {
                 m.is_private = true;
             } else if self.at_kw(Kw::Readonly) {

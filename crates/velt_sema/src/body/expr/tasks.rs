@@ -445,6 +445,7 @@ impl FnCx<'_, '_> {
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
             self.no_spawned_generators(&e);
+            self.spawned_promises(&e);
             if let H::Call { args, .. } = &mut e.kind {
                 if let [p] = args.as_mut_slice() {
                     self.hand_on_spawned_callee(p);
@@ -462,7 +463,9 @@ impl FnCx<'_, '_> {
             TyKind::FnPtr { params, ret, .. }
                 if params.is_empty() && self.cx.ty.promise_payload(ret).is_some() =>
             {
-                self.intrinsic(Intrinsic::Spawn, vec![f], ret, span)
+                let e = self.intrinsic(Intrinsic::Spawn, vec![f], ret, span);
+                self.spawned_promises(&e);
+                e
             }
             TyKind::Error => self.error_expr(span),
             _ => {
@@ -717,7 +720,7 @@ pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>
     }
 }
 
-fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
+pub(crate) fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;
     loop {

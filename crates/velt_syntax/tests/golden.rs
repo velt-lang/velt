@@ -54,14 +54,16 @@ fn golden_m1_files_parse() {
                 | "function_expression_errors.vlt"
                 | "function_expression_this_errors.vlt"
                 | "string_escape_octal.vlt"
+                | "asi_restricted.vlt"
                 | "computed_key_errors.vlt"
                 | "destructure_computed_path.vlt"
                 | "literal_method_names.vlt"
         ) {
             continue;
         }
+        // Warnings are fine (`asi_continuation.vlt` expects some).
         assert!(
-            diags.is_empty(),
+            diags.iter().all(|d| !d.is_error()),
             "{}: unexpected diagnostics: {:?}",
             f.display(),
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()

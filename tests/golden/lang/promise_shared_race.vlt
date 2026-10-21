@@ -1,0 +1,32 @@
+// check: no leaks
+// `Promise.race` over a holder of a shared promise (#212): the holder settles when its promise
+// does, so it wins over a promise that settles later, also when a `then` callback of another
+// holder is queued first, as in Node.
+class Obj {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+async function tick(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await Promise.resolve();
+  }
+}
+async function make(i: number, n: number): Promise<Obj> {
+  await tick(n);
+  return new Obj(i);
+}
+async function main() {
+  for (let k = 1; k <= 3; k++) {
+    const r = make(9, 1);
+    const r2 = r;
+    r2.then((o) => console.log("then2", o.n));
+    console.log("race", (await Promise.race([r, make(100, k)])).n);
+  }
+  const a = make(1, 2);
+  const b = a;
+  const c = a;
+  const first = await Promise.race([make(5, 4), b, c]);
+  console.log("first", first.n, (await a).n);
+}

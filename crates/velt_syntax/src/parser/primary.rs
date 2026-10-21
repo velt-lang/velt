@@ -47,7 +47,7 @@ impl<'a> Parser<'a> {
                 return Err(Fail);
             }
             Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
-            Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+            Tok::Kw(Kw::Async) if self.at_async_function() => {
                 self.bump(); // async
                 self.parse_fn_expr(lo, true)?
             }
@@ -373,8 +373,7 @@ impl<'a> Parser<'a> {
 
     /// The value of an object-literal property, after `:`.
     fn parse_prop_value(&mut self) -> PResult<Expr> {
-        self.fn_in_object = self.at_kw(Kw::Function)
-            || (self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function));
+        self.fn_in_object = self.at_kw(Kw::Function) || self.at_async_function();
         let value = self.parse_assign();
         self.fn_in_object = false;
         value
@@ -415,8 +414,10 @@ impl<'a> Parser<'a> {
             };
             return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
         }
-        let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async)
+        // `async` [no LineTerminator here] the method name.
+        let async_kw = self.at_kw(Kw::Async) && !self.line_break_after(0);
+        let is_async = async_kw && matches!(self.nth(1), Tok::Star | Tok::LBracket)
+            || (async_kw
                 && Self::is_name(self.nth(1))
                 && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);

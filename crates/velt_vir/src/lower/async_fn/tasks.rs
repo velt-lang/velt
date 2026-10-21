@@ -216,7 +216,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Address of a `(slot: ptr)` function dropping a `T` in place, if `T` needs dropping (the
     /// runtime drops finished results of a cancelled `Promise.all` with it).
-    pub(super) fn result_drop_fn(&mut self, t: TyId) -> Option<Operand> {
+    pub(in crate::lower) fn result_drop_fn(&mut self, t: TyId) -> Option<Operand> {
         if !self.cx.needs_drop(t) {
             return None;
         }
