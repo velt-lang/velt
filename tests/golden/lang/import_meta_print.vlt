@@ -1,0 +1,10 @@
+// How `console.log` and `JSON.stringify` show `import.meta`, as Node does, for fixed paths:
+// `import.meta` is an instance of std's `ImportMeta`, made here directly (the Node copy of this
+// file prints `Object.assign(Object.create(null), { …, resolve() {} })` instead).
+import { ImportMeta } from "velt:import_meta";
+
+const m = new ImportMeta("/srv/app", "/srv/app/main.ts", true, "file:///srv/app/main.ts");
+console.log(m);
+console.log(JSON.stringify(m));
+const q = new ImportMeta("/it's", "/it's/a\\b.ts", false, "file:///it's/a%5Cb.ts");
+console.log(q);

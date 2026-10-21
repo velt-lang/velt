@@ -386,6 +386,17 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.throws_where_none_may(expected, found, &e, &f) {
+            return;
+        }
+        if let Some(note) = self.field_throws_note(expected, found.ty) {
+            self.cx.error(
+                Diagnostic::error("mismatched types", found.span)
+                    .with_note(format!("expected {e}, found {f}"))
+                    .with_note(note),
+            );
+            return;
+        }
         if self.cx.unfreezes(found.ty, expected) {
             self.cx.error(
                 Diagnostic::error(
