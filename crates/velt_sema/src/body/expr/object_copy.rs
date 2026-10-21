@@ -287,6 +287,8 @@ impl FnCx<'_, '_> {
         from == to
             || self.cx.canon(from) == self.cx.canon(to)
             || self.cx.same_layout(from, to)
+            // Equal but for their error-set variables (`throws::vars`), which become one set.
+            || (self.cx.fn_sites.use_vars && self.cx.unify_err_vars(from, to))
             || self.copy_plan(from, to, depth + 1).is_some()
     }
 }
