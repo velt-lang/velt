@@ -1,0 +1,39 @@
+// check: no leaks
+// A timer callback runs on the task that created the timer, so it shares what it captures with
+// the code around it, as in Node (#1315): what the callback changes is seen afterwards, and what
+// the creating code changes after `setTimeout` is seen by the callback.
+interface Ctr {
+  inc(): void;
+  get(): number;
+}
+
+class CC implements Ctr {
+  n = 0;
+  inc(): void {
+    this.n++;
+  }
+  get(): number {
+    return this.n;
+  }
+}
+
+async function main() {
+  const k: Ctr = new CC();
+  setTimeout(() => {
+    k.inc();
+  }, 1);
+  setTimeout(() => console.log("count", k.get()), 5);
+  const xs = [1];
+  setTimeout(() => console.log("length", xs.length), 1);
+  xs.push(2);
+  let s = "abc".repeat(2);
+  setTimeout(() => console.log("timeout " + s + s.length), 1);
+  s = "changed";
+  const every = setInterval(() => {
+    xs.push(xs.length + 1);
+    if (xs.length == 4) {
+      clearInterval(every);
+      console.log("interval", xs.join(","));
+    }
+  }, 10);
+}

@@ -128,6 +128,13 @@ pub(crate) struct Ctx<'m> {
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
+    /// Declarations of the `for…of` bindings over a value read out of a `shared` (or what a
+    /// method of one returns): the ownership pass refuses changing them
+    /// (`ownership::finish::frozen_bindings`).
+    pub frozen_elems: FxHashSet<Span>,
+    /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
+    /// ownership pass track `FnInfo::modified_params`.
+    pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
     pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
@@ -336,6 +343,8 @@ impl<'m> Ctx<'m> {
             closure_counts: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
+            frozen_elems: FxHashSet::default(),
+            frozen_reads: false,
             cpu_targets: FxHashMap::default(),
             groups: None,
             literal_hosts: Default::default(),

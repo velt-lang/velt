@@ -61,6 +61,7 @@ pub(super) enum Rt {
     FutShare,
     FutBox,
     FutStart,
+    FutStartRejecting,
     /// An unhandled rejection waits for the task's microtasks (`build_unclaimed`).
     UnhandledDefer,
     FutDetach,
@@ -234,6 +235,7 @@ impl Rt {
             Rt::FutShare => f("velt_rt_fut_share", vec![Ptr, U64, Ptr, Ptr], Ptr),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
+            Rt::FutStartRejecting => f("velt_rt_fut_start_rejecting", vec![Ptr, Ptr], Unit),
             Rt::UnhandledDefer => f("velt_rt_unhandled_defer", vec![], U8),
             Rt::FutDetach => f("velt_rt_fut_detach", vec![Ptr, Ptr], Unit),
             Rt::FutTransfer => f("velt_rt_fut_transfer", vec![Ptr, Ptr], Unit),

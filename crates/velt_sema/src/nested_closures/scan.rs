@@ -153,7 +153,13 @@ impl Scan {
                 self.binds.insert(id.name.clone());
             }
             P::Object { fields, rest } => {
-                fields.iter().for_each(|(_, sub)| self.pattern(sub));
+                for (key, sub) in fields {
+                    // `{ [k]: v }` reads `k`.
+                    if let Some(k) = velt_syntax::computed_key_name(key) {
+                        self.refs.insert(k.to_string());
+                    }
+                    self.pattern(sub);
+                }
                 rest.iter().for_each(|r| {
                     self.binds.insert(r.name.clone());
                 });
@@ -205,7 +211,13 @@ impl Scan {
                             self.refs.insert(id.name.clone());
                         }
                         ast::ObjectProp::Method(d) => self.func(d),
-                        ast::ObjectProp::KeyValue(..) | ast::ObjectProp::Spread(_) => {}
+                        // `{ [k]: v }` reads `k`, also as an assignment target.
+                        ast::ObjectProp::KeyValue(key, _) => {
+                            if let Some(k) = velt_syntax::computed_key_name(key) {
+                                self.refs.insert(k.to_string());
+                            }
+                        }
+                        ast::ObjectProp::Spread(_) => {}
                     }
                 }
             }

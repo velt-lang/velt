@@ -186,6 +186,11 @@ pub unsafe extern "C" fn velt_rt_process_chdir(path: *const VeltStr, out: *mut V
     out.write(e);
 }
 
+/// The moment `performance.now()` counts from (process start).
+pub(crate) fn clock_origin() -> Instant {
+    *ORIGIN.get_or_init(Instant::now)
+}
+
 /// `performance.now()`: monotonic milliseconds (fractional) since process start.
 #[no_mangle]
 pub extern "C" fn velt_rt_perf_now() -> f64 {

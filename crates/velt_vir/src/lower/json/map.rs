@@ -74,6 +74,16 @@ impl FnLower<'_, '_> {
                 lw.branch(present, written, skip);
                 lw.switch_to(written);
             }
+            // So is a value holding `undefined` (`Record<string, T | undefined>`), as JavaScript
+            // leaves out such a property; a `null` is written.
+            if let TyKind::Option(_, n) = lw.cx.kind(vt) {
+                if n.has_undefined() {
+                    let present = lw.option_is_some(&vp, vt);
+                    let written = lw.new_block();
+                    lw.branch(present, written, skip);
+                    lw.switch_to(written);
+                }
+            }
             let (sep_bb, entry_bb) = (lw.new_block(), lw.new_block());
             lw.branch(Operand::Copy(Place::local(first)), entry_bb, sep_bb);
             lw.switch_to(sep_bb);

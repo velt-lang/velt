@@ -13,9 +13,9 @@
 //! class's field) would need deferred evaluation, which is not implemented: it is a "not
 //! supported yet" error, never a guess. Declaring such an alias is fine, as in TypeScript.
 //!
-//! Inside these forms an optional field's `T[K]` is `F | undefined` (`TyEnv::ts_optional`), as
-//! TypeScript reads it, so `undefined extends T[K]` finds the optional keys; an optional field
-//! of a mapped type's result drops that `undefined` again, and so does `-?`.
+//! An optional field's `T[K]` is `F | undefined`, as TypeScript reads it, so
+//! `undefined extends T[K]` finds the optional keys; an optional field of a mapped type's result
+//! drops that `undefined` again, and so does `-?`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -221,9 +221,6 @@ impl Ctx<'_> {
         c: &ast::ConditionalType,
         env: &TyEnv,
     ) -> TyId {
-        let mut env = env.clone();
-        env.ts_optional = true;
-        let env = &env;
         let naked = naked_param(&c.check, env);
         let subjects = match &c.check.kind {
             ast::TypeExprKind::Undefined => vec![Subject::Nothing(Nothing::Undefined)],
@@ -353,7 +350,6 @@ impl Ctx<'_> {
         }
         let names = infer_names(pat);
         let mut inner = env.clone();
-        inner.ts_optional = true;
         for (i, n) in names.iter().enumerate() {
             let p = self.ty.param(INFER_BASE + i as u32);
             inner.locals.push((n.clone(), p));
@@ -390,9 +386,6 @@ impl Ctx<'_> {
         m: &ast::MappedType,
         env: &TyEnv,
     ) -> TyId {
-        let mut env = env.clone();
-        env.ts_optional = true;
-        let env = &env;
         // `[K in keyof X]` maps `X`'s fields, keeping their `?` and `readonly` (homomorphic).
         let source_fields = match &m.source.kind {
             ast::TypeExprKind::KeyOf(x) => {
@@ -596,9 +589,6 @@ impl Ctx<'_> {
             );
             return Some(self.ty.error);
         }
-        let mut env = env.clone();
-        env.ts_optional = true;
-        let env = &env;
         // `NonNullable<M>` of an `infer M` that found nothing (`unknown`) is `{}`.
         if name == "NonNullable" && unknown_name(&args[0], env) {
             return Some(self.anon_type_with(&[], env.module));

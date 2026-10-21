@@ -1,0 +1,24 @@
+// check: no leaks
+// A function with a trailing `void` parameter where one without it is expected: a
+// `Promise<void>`'s `resolve` kept in a `() => void` (TypeScript lets the `void` argument be
+// left out).
+async function main(): Promise<void> {
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((res) => {
+    resolveDone = res;
+  });
+  setTimeout(() => {
+    console.log("resolving");
+    resolveDone();
+  }, 1);
+  await done;
+  console.log("done");
+  const later: (() => void)[] = [];
+  const p = new Promise<void>((res) => {
+    later.push(res);
+  });
+  for (const f of later) f();
+  await p;
+  console.log("all");
+}
+

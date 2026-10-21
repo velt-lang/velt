@@ -1,0 +1,24 @@
+// check: no leaks
+// `await` of a promise that may be missing (`Promise<T> | undefined`, what a `Record` or `Map`
+// lookup gives) is a `T | undefined`: `undefined` where it is missing, and so is a
+// `Promise<void>` member of a union, as in Node.
+async function load(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function waitFor(p: Promise<number> | undefined): Promise<void> {
+  const v = await p;
+  console.log(v, typeof v, v === undefined);
+}
+
+async function step(x: number | Promise<void>): Promise<void> {
+  const y = await x;
+  console.log(y, typeof y);
+}
+
+async function main(): Promise<void> {
+  await waitFor(load(2));
+  await waitFor(undefined);
+  await step(3);
+  await step((async (): Promise<void> => {})());
+}

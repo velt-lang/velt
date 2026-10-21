@@ -43,11 +43,29 @@ impl<'h> Cx<'h> {
         // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
             if matches!(self.types.kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
+                && !self.keeps_nothings_apart()
             {
                 self.nothing_clashes.push(self.cur_def);
             }
         }
         self.types.intern(k)
+    }
+
+    /// Is the type being made part of the prelude `Map` or `Record` (a function of theirs being
+    /// built, or a map's field types)? Their `V | null` entry slots tell a deleted entry from
+    /// a live one by the map's index where `V` holds a nothing (`__intrinsic_holds_null`), so a
+    /// `V` that allows `undefined` keeps its values (velt_sema `undefined_args`).
+    fn keeps_nothings_apart(&self) -> bool {
+        if self.map_fields > 0 {
+            return true;
+        }
+        let Some(d) = self.cur_def else { return false };
+        match self.hir.def(d) {
+            hir::Def::Fn(f) => ["std/prelude/map::", "std/prelude/record::"]
+                .iter()
+                .any(|m| f.name.starts_with(m)),
+            _ => false,
+        }
     }
 
     /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`, with anonymous object types in
@@ -565,8 +583,14 @@ impl<'h> Cx<'h> {
         let TyKind::Adt(d, args) = self.kind(t) else {
             ice("field types of a non-ADT type")
         };
-        let tys: Vec<TyId> = self.adt_def(d).fields.iter().map(|f| f.ty).collect();
-        tys.into_iter().map(|f| self.subst(f, &args)).collect()
+        let a = self.adt_def(d);
+        let map = (a.name == "Map" || a.name.ends_with("::Map"))
+            && a.fields.get(2).is_some_and(|f| f.name == "entryValues");
+        let tys: Vec<TyId> = a.fields.iter().map(|f| f.ty).collect();
+        self.map_fields += u32::from(map);
+        let out = tys.into_iter().map(|f| self.subst(f, &args)).collect();
+        self.map_fields -= u32::from(map);
+        out
     }
 
     /// Payload types of enum variant `v` of the concrete enum type `t`.

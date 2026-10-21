@@ -28,6 +28,20 @@ impl FnCx<'_, '_> {
         };
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
+        // A `shared<T>` has `T`'s methods (#36): they read the value inside, and one that
+        // modifies its receiver is an error (`frozen_write`).
+        let recv = match matches!(self.cx.ty.kind(recv.ty), TyKind::Shared(_))
+            && !self.method_exists(recv.ty, &prop.name)
+        {
+            true => self.frozen_view(recv, Some(&prop.name)),
+            false => recv,
+        };
+        if self.frozen_buffer_view(&recv, &prop.name, span) {
+            for a in args {
+                self.expr(a, None, Want::Borrow);
+            }
+            return self.error_expr(span);
+        }
         // `x.toFixed(2)`: a number's method (`literal_locals`).
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
@@ -357,10 +371,17 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
+        } else if self.unreadable_shared(recv.ty) {
+            d = d.with_note(self.unreadable_shared_note(recv.ty));
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
+        } else if self.is_record_read(&recv) {
+            d = d.with_note(format!(
+                "a `Record` read is `V | undefined`, since the key may be missing (TypeScript types it `V`): use `?.{0}(...)`, or keep the value you store: `(r[k] ??= []).{0}(...)`",
+                prop.name
+            ));
         } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
                 "the value may be {}: use `?.{}(...)` or check `!= null` first",
@@ -376,6 +397,12 @@ impl FnCx<'_, '_> {
         self.cx.error(d);
         self.check_args_loose(args);
         self.error_expr(span)
+    }
+
+    /// Is `h` a read of a `Record` key (`r[k]`, `r.name`: `Record.__get`)?
+    fn is_record_read(&self, h: &hir::Expr) -> bool {
+        matches!(&h.kind, H::Call { callee: hir::Callee::Def(d, _), .. }
+            if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with("Record.__get")))
     }
 
     /// Is `t` the `Stdout` of `velt:process` (the byte sink `stdout`)?

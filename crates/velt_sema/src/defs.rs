@@ -251,6 +251,10 @@ pub(crate) struct FnInfo<'m> {
     /// Indices of params that are `Owned` only because the body reassigns them: a caller that
     /// uses the argument again passes a clone (`crate::ownership::mutation`).
     pub soft_params: Vec<usize>,
+    /// Bit `i`: the body modifies what parameter `i` (`this` first) holds, whatever its mode
+    /// (a method returning `this` it changes is `Owned`): a value read out of a `shared` cannot
+    /// be the receiver of such a method (`crate::ownership::patch`).
+    pub modified_params: u64,
     /// Async closures: the captured variables the body modifies (name, first place). Allowed
     /// when the closure stays on its task, an error when it may reach a thread boundary
     /// (`crate::ownership::local_async`).

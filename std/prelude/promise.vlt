@@ -499,6 +499,37 @@ export async function promiseCatchAsync<T, E, G>(
 }
 
 /**
+ * `p.catch(g)` where `g` returns nothing (`() => {}`) and `p` gives a value: the new promise
+ * gives `p`'s value, or `undefined` once `g` handled a rejection (TypeScript's `T | void`).
+ */
+export async function promiseCatchVoid<T, E, G>(
+  p: Promise<T, E>,
+  g: (reason: E) => void throws G,
+): Promise<T | undefined> throws G {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    g(r.reason);
+    return undefined;
+  }
+  return r.value;
+}
+
+/** `p.catch(g)` where `g` returns a `Promise<void>` and `p` gives a value. */
+export async function promiseCatchVoidAsync<T, E, G>(
+  p: Promise<T, E>,
+  g: (reason: E) => Promise<void, G>,
+): Promise<T | undefined> throws G {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    await adopted<void, G>(g(r.reason));
+    return undefined;
+  }
+  return r.value;
+}
+
+/**
  * `p.finally(h)`: the value or reason passes through two microtasks after `h` returned, as in
  * Node (`h` does not throw).
  */

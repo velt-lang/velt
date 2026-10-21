@@ -1,0 +1,12 @@
+// 100k `setTimeout(f, 1)` that all fire: the cost of one timer, from `setTimeout` to its
+// callback (the order of timers, the turn, the callback). The last one prints.
+function main() {
+  const n = 100000;
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      if (i == n - 1) {
+        console.log("fired", n);
+      }
+    }, 1);
+  }
+}

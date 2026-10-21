@@ -1,0 +1,16 @@
+// check: no leaks
+// A promise that rejects while its owner does not wait for it is reported as uncaught once the
+// microtask queue is drained, as in Node: the process ends there, before `main` goes on after
+// its timer, though `main` still holds the promise (#1328).
+async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+
+async function main() {
+  console.log("start");
+  const p = fail();
+  console.log("still synchronous");
+  queueMicrotask(() => console.log("microtask before the report"));
+  await sleep(10);
+  console.log("never printed");
+}

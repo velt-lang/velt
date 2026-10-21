@@ -1,0 +1,37 @@
+// check: no leaks
+// A mixed `[…] as const` taken apart by element type where it is captured (an arrow, a nested
+// function, a closure in a closure) and where it is a module constant. Expected output: Node's.
+const c = [1, "s"] as const;
+const d = [true, 2, "t"] as const;
+function useModule(): string {
+  const [n, s] = c;
+  let a = 0;
+  let b = "";
+  [a, b] = c;
+  const [x, , z] = d;
+  return s.toUpperCase() + (n + a) + b + x + z.toUpperCase();
+}
+function run(): void {
+  const e = [1, "s"] as const;
+  const g = () => {
+    const [p, q] = e;
+    return q.toUpperCase() + p;
+  };
+  function h(): string {
+    const [p, q] = e;
+    return q + (p + 1);
+  }
+  const deep = () => () => {
+    let m = 0;
+    let k = "";
+    [m, k] = e;
+    return k + m;
+  };
+  console.log(g(), h(), deep()());
+  // A local of another name shadows nothing; one of the same name hides the module constant.
+  const c = [7, 8];
+  const [u, v] = c;
+  console.log(u + v);
+}
+console.log(useModule());
+run();

@@ -1,0 +1,20 @@
+destructuring_assign_errors.vlt:10:4: error: mismatched types
+  = note: expected f64, found string
+
+destructuring_assign_errors.vlt:10:7: error: mismatched types
+  = note: expected string, found f64
+
+destructuring_assign_errors.vlt:12:9: error: mismatched types
+  = note: expected f64, found f64 | undefined
+
+destructuring_assign_errors.vlt:13:3: error: cannot destructure a value of type `f64` with `[...]`
+
+destructuring_assign_errors.vlt:18:4: error: cannot assign twice to const `c`
+
+destructuring_assign_errors.vlt:19:19: error: `=` after a shorthand property is only allowed in a destructuring assignment (`({ a = 1 } = o)`); did you mean `:`? (TypeScript's TS1312)
+
+destructuring_assign_errors.vlt:20:17: error: `=` after a shorthand property is only allowed in a destructuring assignment (`({ a = 1 } = o)`); did you mean `:`? (TypeScript's TS1312)
+
+destructuring_assign_errors.vlt:21:21: error: a hole in an array literal (`[1, , 2]`) is only allowed in a destructuring assignment (`[a, , b] = xs`); write `undefined`
+
+destructuring_assign_errors.vlt:23:7: error: a destructuring assignment cannot be used as a value yet; assign the value to a variable first (`const v = c; [a, b] = v;`)
