@@ -345,6 +345,25 @@ impl FnCx<'_, '_> {
                 };
             }
         }
+        // `r.f()` on a `Record<string, any>` (or of functions): a call of the entry's value,
+        // as `r.f` reads it (`slots.header()` through `[key: string]: any`).
+        if let Some((_, v)) = self.record_args(recv.ty) {
+            let callable = matches!(self.cx.ty.kind(v), TyKind::FnPtr { .. })
+                || matches!(
+                    self.cx.dynamic(v),
+                    Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
+                );
+            if callable {
+                let f = self.record_read(recv, super::record::RecordKey::Name(prop), span);
+                // A missing entry of a `Record<string, any>` reads as an `any` holding
+                // `undefined`, whose call is the `TypeError` Node throws.
+                let f = match self.cx.dynamic(v) {
+                    Some(_) if f.ty != v => self.coerce(f, v),
+                    _ => f,
+                };
+                return self.call_value(f, args, span);
+            }
+        }
         // A function in an object part of `T & { … }` (`s.$set(v)`), read through its slot.
         if let Some(f) = self.iface_field_of(recv.ty, &prop.name) {
             if matches!(self.cx.ty.kind(f.ty), TyKind::FnPtr { .. }) {

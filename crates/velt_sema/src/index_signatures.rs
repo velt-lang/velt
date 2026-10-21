@@ -1,9 +1,12 @@
 //! Index signatures (docs/reference/types.md "Objects, arrays, tuples and maps"): an object type
 //! or interface with only an index signature, `{ [key: string]: V }`, is `Record<string, V>`, as
 //! the two are interchangeable in TypeScript. `readonly` is not checked yet, as for
-//! `readonly T[]`. What Velt cannot represent exactly is an error saying it is not supported yet:
-//! named members next to an index signature (a read of `name` would be `V | null`, and an
-//! optional one needs `undefined`, #930) and a `number` key.
+//! `readonly T[]`. Named members next to an index signature whose values are `any` or `unknown`
+//! (`{ children?: JSXChildren; [key: string]: any }`) are keys of that record too: every type is
+//! one the values have, and a named member reads as `any` (or `unknown`) like any other key.
+//! What Velt cannot represent exactly is an error saying it is not supported yet: named members
+//! next to another index signature (a read of `name` would be `V | null`, and an optional one
+//! needs `undefined`, #930) and a `number` key.
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -50,14 +53,26 @@ impl Ctx<'_> {
                 );
             }
         }
-        if let Some(f) = fields.first() {
+        // Next to `[key: string]: any` (or `unknown`) every named member's type is one the
+        // values have, so the type is that record: a named member reads as `V`, like any key.
+        let dynamic_values = matches!(
+            self.dynamic(v),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        );
+        if dynamic_values {
+            for f in fields {
+                if self.resolve_type(&f.ty, env) == self.ty.error {
+                    ok = false;
+                }
+            }
+        } else if let Some(f) = fields.first() {
             ok = false;
             self.error(
                 Diagnostic::error(
                     format!("a named member (`{}`) next to an index signature is not supported yet (#937)", f.name.name),
                     f.name.span,
                 )
-                .with_note("an object type with only an index signature is a `Record<string, V>`; with named members, each would need its own type (and an optional one `undefined`, #930)"),
+                .with_note("an object type with only an index signature is a `Record<string, V>`, and so is one with named members next to `[key: string]: any` (or `unknown`); next to other values, each would need its own type (and an optional one `undefined`, #930)"),
             );
         }
         if !ok {

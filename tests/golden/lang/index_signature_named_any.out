@@ -1,0 +1,9 @@
+x x { key: 1 } 1 true
+undefined undefined {} undefined false
+2 [ 'a:b', 'c:d' ] x
+[ '_version', 'header' ] 1 undefined [ 'h' ]
+key _version
+key header
+{"_version":{"v":1},"n":1}
+2
+[ '_version', 'default' ]

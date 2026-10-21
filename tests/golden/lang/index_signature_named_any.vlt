@@ -1,0 +1,49 @@
+// Named members next to an index signature whose values are `any` or `unknown` (sigx's
+// `JSXProps`, `InternalSlotsObject` and `DevtoolsEventBase`), as in TypeScript: the type is a
+// `Record<string, any>` (or `unknown`), so every key, named or not, can be read, written,
+// deleted, spread and listed. A function held by a key is called as `r.key()`.
+interface JSXProps {
+  children?: string;
+  [key: string]: any;
+}
+
+interface EventBase {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+interface Slots {
+  default?: (p?: any) => any[];
+  _version: { v: number };
+  [key: string]: any;
+}
+
+function props(p: JSXProps | null): void {
+  const copy = { ...p };
+  const { children, ...rest } = p || {};
+  console.log(copy.children, children, rest, rest.key, "children" in copy);
+}
+
+const seen: EventBase[] = [];
+
+function emit(event: EventBase): void {
+  seen.push(event);
+}
+
+props({ children: "x", key: 1 });
+props(null);
+emit({ type: "a:b", id: 1 });
+emit({ type: "c:d", id: 2, extra: "x" });
+console.log(seen.length, seen.map((e) => e.type), seen[1]["extra"]);
+
+const s: Slots = { _version: { v: 1 } };
+s.header = () => ["h"];
+console.log(Object.keys(s), s._version.v, typeof s.default, s.header());
+for (const k in s) {
+  console.log("key", k);
+}
+console.log(JSON.stringify({ ...s, n: 1 }));
+s.default = () => [1, 2];
+console.log(s.default().length);
+delete s.header;
+console.log(Object.keys(s));
