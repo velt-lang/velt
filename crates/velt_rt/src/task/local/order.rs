@@ -41,7 +41,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use tokio::time::Instant;
+use std::time::Instant;
 
 use self::pass::Peek;
 use super::gate::{self, Gate};
@@ -324,7 +324,7 @@ impl Order {
         let key = self.insert_at(ms, start, task);
         let due = crate::process::clock_origin() + Duration::from_millis(start.saturating_add(ms));
         let at = due.max(at + Duration::from_millis(ms));
-        (key, Instant::from_std(at))
+        (key, at)
     }
 
     /// Take `k` out of its list (deleting the list once empty); false if it was not queued.
@@ -647,7 +647,7 @@ impl Future for Turn {
                 // list's expiry, as Node's loop wakes then (its own due time may be later).
                 order.armed = Some(k);
                 let origin = crate::process::clock_origin();
-                let at = Instant::from_std(origin + Duration::from_millis(expiry));
+                let at = origin + Duration::from_millis(expiry);
                 if self.sleep_until(at, cx) {
                     order.expired(&look, current.as_ref(), key);
                     cx.waker().wake_by_ref();

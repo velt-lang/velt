@@ -57,7 +57,7 @@ pub(super) fn workers() -> &'static [Shared] {
     WORKERS.get().map_or(&[], Vec::as_slice)
 }
 
-/// CPU time this thread has used (wall time where the platform has no thread clock here).
+/// CPU time this thread has used (`CLOCK_THREAD_CPUTIME_ID`).
 #[cfg(unix)]
 fn thread_cpu() -> Duration {
     let mut ts = libc::timespec {
@@ -69,7 +69,34 @@ fn thread_cpu() -> Duration {
     Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
 
-#[cfg(not(unix))]
+/// CPU time this thread has used: kernel plus user time (`GetThreadTimes`, in 100 ns units).
+#[cfg(windows)]
+fn thread_cpu() -> Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the pseudo handle of this thread; the four out-pointers are valid `FILETIME`s.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if ok == 0 {
+        return Duration::ZERO;
+    }
+    let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+    Duration::from_nanos((ticks(kernel) + ticks(user)).saturating_mul(100))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn thread_cpu() -> Duration {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed()
