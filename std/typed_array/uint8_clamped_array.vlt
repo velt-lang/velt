@@ -91,9 +91,15 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     return 1;
   }
 
+  // The number of elements, below 2^53 (`layout` rejects longer views): the mask says so to
+  // the compiler, which then counts an index up to it in integers.
+  private count(): number {
+    return (this.len & 0x1fffffffffffff) as number;
+  }
+
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   __index(i: number): number {
-    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
+    if (!(i >= 0 && i < this.count()) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
@@ -101,7 +107,7 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
   __setIndex(i: number, v: number) {
-    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
+    if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -123,15 +129,15 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
 
   /** The number of elements. */
   get length(): number {
-    return this.len as number;
+    return this.count();
   }
 
-  /** Element `i`, counting from the end when negative; `undefined` out of range. */
-  at(position: number): number | undefined {
+  /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
+  at(position: number): number | null {
     const index = toInteger(position);
     const i = index < 0 ? index + (this.len as i64) : index;
     if (i < 0 || (i as usize) >= this.len) {
-      return undefined;
+      return null;
     }
     return this.get(i as usize);
   }
@@ -232,15 +238,15 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     return Uint8ClampedArray.ofArray(kept);
   }
 
-  /** The first element `pred` holds for, or `undefined`. */
-  find<E>(pred: (x: number, i: number) => bool throws E): number | undefined throws E {
+  /** The first element `pred` holds for, or null (JS: `undefined`). */
+  find<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     for (let i: usize = 0; i < this.len; i++) {
       const x = this.get(i);
       if (pred(x, i as number)) {
         return x;
       }
     }
-    return undefined;
+    return null;
   }
 
   /** The index of the first element `pred` holds for, or -1. */
@@ -253,8 +259,8 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     return -1;
   }
 
-  /** The last element `pred` holds for, or `undefined`. */
-  findLast<E>(pred: (x: number, i: number) => bool throws E): number | undefined throws E {
+  /** The last element `pred` holds for, or null (JS: `undefined`). */
+  findLast<E>(pred: (x: number, i: number) => bool throws E): number | null throws E {
     let i = this.len;
     while (i > 0) {
       i--;
@@ -263,7 +269,7 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
         return x;
       }
     }
-    return undefined;
+    return null;
   }
 
   /** The index of the last element `pred` holds for, or -1. */

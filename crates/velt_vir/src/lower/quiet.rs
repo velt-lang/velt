@@ -78,7 +78,8 @@ impl Cx<'_> {
                 self.quiet_expr(lhs) && self.quiet_expr(rhs)
             }
             H::Assign { place, value } | H::CompoundAssign { place, value, .. } => {
-                self.quiet_place(place) && self.quiet_value(value)
+                // The old value is dropped too: neither may need a drop.
+                !self.needs_drop(place.ty) && self.quiet_place(place) && self.quiet_value(value)
             }
             H::If { cond, then, els } => {
                 self.quiet_expr(cond) && self.quiet_expr(then) && self.quiet_expr(els)
@@ -101,8 +102,7 @@ impl Cx<'_> {
                         _ => false,
                     },
                     hir::Callee::Intrinsic(i) => {
-                        !velt_sema::effects::runs_user_code(*i)
-                            && !args.iter().any(velt_sema::effects::writes_place)
+                        pure_intrinsic(*i) && !args.iter().any(velt_sema::effects::writes_place)
                     }
                     _ => false,
                 };
@@ -121,4 +121,23 @@ impl Cx<'_> {
             _ => false,
         }
     }
+}
+
+/// Intrinsics that only read their arguments and compute: no user code (unlike `MutexWith`,
+/// `JsonStringify`, `Print` or `ToString`, which call methods), no allocation, nothing dropped.
+fn pure_intrinsic(i: hir::Intrinsic) -> bool {
+    use hir::Intrinsic as I;
+    matches!(
+        i,
+        I::ArrayLen
+            | I::StrLen
+            | I::StrCharCodeAt
+            | I::Sqrt
+            | I::Floor
+            | I::Ceil
+            | I::Round
+            | I::Trunc
+            | I::FAbs
+            | I::SimdShuffle(..)
+    )
 }

@@ -27,13 +27,16 @@ KINDS = [
     ("Uint8Array", 1, "b[o]", "b[o] = toUint8(v)", "8-bit unsigned integers (bytes)"),
     ("Uint8ClampedArray", 1, "b[o]", "b[o] = toUint8Clamp(v)",
      "8-bit unsigned integers, clamped to 0..255 when written"),
-    ("Int16Array", 2, "(load16(b, o) as i16)", "store16(b, o, toUint32(v) as u16)", "16-bit signed integers"),
-    ("Uint16Array", 2, "load16(b, o)", "store16(b, o, toUint32(v) as u16)", "16-bit unsigned integers"),
-    ("Int32Array", 4, "(load32(b, o) as i32)", "store32(b, o, toUint32(v))", "32-bit signed integers"),
-    ("Uint32Array", 4, "load32(b, o)", "store32(b, o, toUint32(v))", "32-bit unsigned integers"),
-    ("Float32Array", 4, "loadF32(b, o)", "storeF32(b, o, v as f32)",
+    ("Int16Array", 2, "(element16(b, o) as i16)", "setElement16(b, o, toUint32(v) as u16)",
+     "16-bit signed integers"),
+    ("Uint16Array", 2, "element16(b, o)", "setElement16(b, o, toUint32(v) as u16)",
+     "16-bit unsigned integers"),
+    ("Int32Array", 4, "(element32(b, o) as i32)", "setElement32(b, o, toUint32(v))",
+     "32-bit signed integers"),
+    ("Uint32Array", 4, "element32(b, o)", "setElement32(b, o, toUint32(v))", "32-bit unsigned integers"),
+    ("Float32Array", 4, "elementF32(b, o)", "setElementF32(b, o, v as f32)",
      "32-bit floats (`f32`)"),
-    ("Float64Array", 8, "loadF64(b, o)", "storeF64(b, o, v)", "64-bit floats (numbers)"),
+    ("Float64Array", 8, "elementF64(b, o)", "setElementF64(b, o, v)", "64-bit floats (numbers)"),
 ]
 
 BASE_DOC = """\
@@ -81,7 +84,7 @@ export struct Layout {
 export function layout(
   arg: number | ArrayBuffer | number[] | TypedArray,
   byteOffset: number,
-  length: number | null,
+  length: number | null | undefined,
   size: usize,
   kind: u32,
   name: string,
@@ -292,9 +295,15 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return @N@;
   }
 
+  // The number of elements, below 2^53 (`layout` rejects longer views): the mask says so to
+  // the compiler, which then counts an index up to it in integers.
+  private count(): number {
+    return (this.len & 0x1fffffffffffff) as number;
+  }
+
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   __index(i: number): number {
-    if (!(i >= 0 && i < (this.len as number)) || i != Math.trunc(i)) {
+    if (!(i >= 0 && i < this.count()) || i != Math.trunc(i)) {
       panic(`index out of bounds: the len is ${this.len} but the index is ${i}`);
     }
     return this.get(i as usize);
@@ -302,7 +311,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS. */
   __setIndex(i: number, v: number) {
-    if (i >= 0 && i < (this.len as number) && i == Math.trunc(i)) {
+    if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       this.put(i as usize, v);
     }
   }
@@ -324,7 +333,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** The number of elements. */
   get length(): number {
-    return this.len as number;
+    return this.count();
   }
 
   /** Element `i`, counting from the end when negative; null out of range (JS: `undefined`). */
@@ -763,9 +772,10 @@ UINT8_EXTRA = """
 """
 
 
-BUFFER_NAMES = ["ArrayBuffer", "load16", "load32", "loadF32", "loadF64", "relative", "store16",
-                "store32", "storeF32", "storeF64", "toIndex", "toInteger", "toUint32", "toUint8",
-                "toUint8Clamp"]
+BUFFER_NAMES = ["ArrayBuffer", "element16", "element32", "elementF32", "elementF64", "load16",
+                "load32", "loadF32", "loadF64", "relative", "setElement16", "setElement32",
+                "setElementF32", "setElementF64", "store16", "store32", "storeF32", "storeF64",
+                "toIndex", "toInteger", "toUint32", "toUint8", "toUint8Clamp"]
 BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "layout", "localeNumber"]
 
 

@@ -56,6 +56,8 @@ pub(super) struct Flow {
     entry: Vec<Option<State>>,
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
+    /// Per aggregate, its field types (`Env::field_tys`).
+    field_tys: std::rc::Rc<[Vec<Ty>]>,
     /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
     /// facts wherever it changes.
     caps: Vec<Option<Fact>>,
@@ -82,6 +84,7 @@ impl Flow {
             tys,
             entry: vec![None; func.blocks.len()],
             array: env.array,
+            field_tys: env.field_tys.clone(),
             caps: vec![None; tracked.len()],
             preds: crate::map_probe::region::predecessors(func),
         };
@@ -143,14 +146,29 @@ impl Flow {
                 })
             }
             Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
+            // A value read from memory: any value of its type (a field's too, so that
+            // `len & mask` is bounded by the mask).
             Operand::Copy(p) => {
-                let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
-                    Some(velt_vir::vir::Proj::Deref(t)) => *t,
-                    _ => Ty::Unit,
-                })?;
+                let ty = self.place_ty(func, p)?;
                 (ty.is_int() || ty.is_float()).then(|| Fact::top(ty))
             }
         }
+    }
+
+    /// The type of the value at place `p`, if its projections are well-formed.
+    fn place_ty(&self, func: &Function, p: &Place) -> Option<Ty> {
+        let mut ty = func.locals.get(p.local.0 as usize)?.ty;
+        for proj in &p.proj {
+            ty = match (proj, ty) {
+                (Proj::Deref(t), Ty::Ptr) => *t,
+                (Proj::Cast(id), _) => Ty::Agg(*id),
+                (Proj::Field(n), Ty::Agg(id)) => {
+                    *self.field_tys.get(id.0 as usize)?.get(*n as usize)?
+                }
+                _ => return None,
+            };
+        }
+        Some(ty)
     }
 
     /// Is `p` the length of an array (field 1 of the arrays' aggregate)?

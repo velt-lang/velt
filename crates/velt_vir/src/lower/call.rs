@@ -77,9 +77,12 @@ impl FnLower<'_, '_> {
             }
         }
         let mut argv = pre;
-        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no stabilizing.
-        let user_code = !self.cx.quiet(def);
-        argv.extend(self.lower_args(args, &modes, user_code));
+        // A quiet callee (quiet.rs) cannot reach what a borrow goes through: no shares.
+        let how = match self.cx.quiet(def) {
+            true => Stabilize::Facts,
+            false => Stabilize::Share,
+        };
+        argv.extend(self.lower_args(args, &modes, how));
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -127,7 +130,7 @@ impl FnLower<'_, '_> {
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
         let argv = match foreign {
             true => self.foreign_args(&x.params, args, false),
-            false => self.lower_args(args, &modes, false),
+            false => self.lower_args(args, &modes, Stabilize::No),
         };
         self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
     }
@@ -199,13 +202,13 @@ impl FnLower<'_, '_> {
         argv
     }
 
-    /// Arguments of a direct call per the callee's modes. `user_code`: the callee may run user
-    /// code (not a runtime extern), so borrows through counted objects are stabilized.
+    /// Arguments of a direct call per the callee's modes, borrows through counted objects
+    /// stabilized as `how` says.
     pub(super) fn lower_args(
         &mut self,
         args: &[hir::Expr],
         modes: &[PassMode],
-        user_code: bool,
+        how: Stabilize,
     ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
@@ -232,9 +235,10 @@ impl FnLower<'_, '_> {
                     argv.push(self.addr(place));
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
-                    let v = match user_code {
-                        true => self.stable_borrow(a, &args[i + 1..]),
-                        false => self.borrowed_arg(a),
+                    let v = match how {
+                        Stabilize::Share => self.stable_borrow(a, &args[i + 1..]),
+                        Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
+                        Stabilize::No => self.borrowed_arg(a),
                     };
                     // A value the callee modifies stays where it is (it may only be shared).
                     let v = match mode {
@@ -255,8 +259,9 @@ impl FnLower<'_, '_> {
                 }
                 (_, m) => {
                     let v = match m {
-                        PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            let v = self.stable_borrow(a, &args[i + 1..]);
+                        PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
+                            let share = how == Stabilize::Share;
+                            let v = self.stable_borrow_as(a, &args[i + 1..], share);
                             self.hold(v, a.ty, later)
                         }
                         _ => self.expr_held(a, later),
@@ -451,4 +456,15 @@ fn is_copy_read(a: &hir::Expr) -> bool {
                 ..
             }
     )
+}
+
+/// How a direct call's borrowed arguments are kept alive (stabilize.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stabilize {
+    /// The callee may run user code: borrows through counted objects are shared or retained.
+    Share,
+    /// A quiet callee (quiet.rs): the same facts recorded, no shares.
+    Facts,
+    /// A runtime extern: plain borrows.
+    No,
 }

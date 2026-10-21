@@ -2,7 +2,8 @@
 //! than a vector's), in a few scalar loads or stores that stay inside them. With `c` bytes
 //! left: 9 to 15 are two overlapping 8-byte accesses, 4 to 8 two overlapping 4-byte ones, 1 to
 //! 3 three single bytes (the first, the middle and the last). Each load is shifted into place
-//! in a register, so nothing goes through memory twice.
+//! in a register, so nothing goes through memory twice. Exactly 8 or 2 bytes (a typed array's
+//! element) are one access.
 
 use velt_vir::simd::Lanes;
 
@@ -13,6 +14,22 @@ pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     let (lane, _, _) = spell(lanes);
     let p = element(b, lane, 0);
     let c = b.inst(format!("mul i64 %a2, {}", lanes.bits() / 8));
+    // A whole 8- or 2-byte element (a typed array's, with a constant count once inlined): one
+    // load, which the compiler can vectorize in a loop.
+    b.lines.push_str(&format!(
+        "  switch i64 {c}, label %general [ i64 8, label %exact8 i64 2, label %exact2 ]\nexact8:\n"
+    ));
+    let e8 = b.inst(format!(
+        "load i64, ptr {p}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
+    b.lines.push_str("  br label %join\nexact2:\n");
+    let e2 = b.inst(format!(
+        "load i16, ptr {p}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
+    let e2w = b.inst(format!("zext i16 {e2} to i64"));
+    b.lines.push_str("  br label %join\ngeneral:\n");
     let big = b.inst(format!("icmp ugt i64 {c}, 8"));
     b.lines
         .push_str(&format!("  br i1 {big}, label %big, label %notbig\nbig:\n"));
@@ -77,10 +94,12 @@ pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     }
     b.lines.push_str("  br label %join\njoin:\n");
     let low = b.inst(format!(
-        "phi i64 [ {lo8}, %big ], [ {lo4}, %four ], [ 0, %small ], [ {word}, %bytes ]"
+        "phi i64 [ {lo8}, %big ], [ {lo4}, %four ], [ 0, %small ], [ {word}, %bytes ], \
+         [ {e8}, %exact8 ], [ {e2w}, %exact2 ]"
     ));
     let high = b.inst(format!(
-        "phi i64 [ {hi8}, %big ], [ 0, %four ], [ 0, %small ], [ 0, %bytes ]"
+        "phi i64 [ {hi8}, %big ], [ 0, %four ], [ 0, %small ], [ 0, %bytes ], [ 0, %exact8 ], \
+         [ 0, %exact2 ]"
     ));
     let v0 = b.inst(format!(
         "insertelement <2 x i64> zeroinitializer, i64 {low}, i64 0"
@@ -97,6 +116,19 @@ pub(super) fn store(b: &mut Body, lanes: Lanes) {
     let hi = b.inst(format!("extractelement <2 x i64> {words}, i64 1"));
     let p = element(b, lane, 1);
     let c = b.inst(format!("mul i64 %a3, {}", lanes.bits() / 8));
+    // A whole 8- or 2-byte element: one store (see `load`).
+    b.lines.push_str(&format!(
+        "  switch i64 {c}, label %general [ i64 8, label %exact8 i64 2, label %exact2 ]\nexact8:\n"
+    ));
+    b.lines.push_str(&format!(
+        "  store i64 {lo}, ptr {p}, align 1{}\n  br label %done\nexact2:\n",
+        super::ELEMENT.suffix()
+    ));
+    let two = b.inst(format!("trunc i64 {lo} to i16"));
+    b.lines.push_str(&format!(
+        "  store i16 {two}, ptr {p}, align 1{}\n  br label %done\ngeneral:\n",
+        super::ELEMENT.suffix()
+    ));
     let big = b.inst(format!("icmp ugt i64 {c}, 8"));
     b.lines
         .push_str(&format!("  br i1 {big}, label %big, label %notbig\nbig:\n"));
