@@ -163,19 +163,32 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
         .collect();
     let mut binds: Vec<(LocalId, bool)> = binds.into_iter().collect();
     binds.sort();
+    let changed = |l: &LocalId| match held.contains(l) {
+        true => ev.deep.contains(l),
+        false => ev.mutated.contains(l) || ev.modified.contains(l) || ev.weak.contains(l),
+    };
+    // A hidden local of a named one reported (`(o.it ?? x).v = 1`) is that write again.
+    let named: rustc_hash::FxHashSet<LocalId> = (binds.iter())
+        .map(|&(l, _)| l)
+        .filter(|l| changed(l) && !f.body.locals[l.0 as usize].name.starts_with('<'))
+        .collect();
     for (l, elem) in binds {
         let local = &f.body.locals[l.0 as usize];
-        let changed = match held.contains(&l) {
-            true => ev.deep.contains(&l),
-            false => ev.mutated.contains(&l) || ev.modified.contains(&l) || ev.weak.contains(&l),
-        };
+        let changed = changed(&l);
+        let of_named = local.name.starts_with('<')
+            && (edges.iter()).any(|e| e.bound == l && e.src.is_some_and(|x| named.contains(&x)));
         // A map loop's hidden local holds the source; the body can't name it. One of `x!` or
         // `?.` inside a write reported as a write is that write.
         let covered = local.name.starts_with('<')
             && written.iter().any(|w| {
                 w.file == local.span.file && w.lo <= local.span.lo && local.span.hi <= w.hi
             });
-        if local.name.starts_with("<map@") || covered || !changed || cx.is_copy(local.ty) {
+        if local.name.starts_with("<map@")
+            || covered
+            || of_named
+            || !changed
+            || cx.is_copy(local.ty)
+        {
             continue;
         }
         let (name, tn, span) = (local.name.clone(), cx.display(local.ty), local.span);
@@ -207,14 +220,16 @@ pub(super) fn frozen_bindings(cx: &mut Ctx, f: &mut FnDef) {
 /// `frozen_bindings` would not see them.
 fn direct_writes(cx: &mut Ctx, f: &mut FnDef) -> Vec<Diagnostic> {
     let mut found = vec![];
+    let closures = evidence::closure_locals(&mut f.body.block);
     visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
         // A callback changing what it is given, passed with a part (`[s.items[0]].forEach(…)`).
-        if let E::Call { args, .. } = &e.kind {
-            let changing = args
-                .iter()
-                .any(|a| matches!(a.kind, E::Closure(c) if cx.fn_info(c).modified_params != 0));
-            if changing {
-                for a in args.iter().filter(|a| !matches!(a.kind, E::Closure(_))) {
+        if let E::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } = &e.kind
+        {
+            if evidence::changing_callback(cx, &closures, *d, args) {
+                for a in (args.iter()).filter(|a| evidence::callback(cx, &closures, a).is_none()) {
                     let r = super::derived::roots(cx, a);
                     if (r.frozen || r.held_frozen) && through_call(a) {
                         found.push((a.span, a.ty));

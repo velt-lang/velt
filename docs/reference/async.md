@@ -482,13 +482,15 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   got there: through a variable bound or assigned to it, a `for…of` loop over the value (or
   over what a method of it returns, such as `s.values()`), a conditional, what a method or
   getter of it returns (`s.m.get(k)!.v = 1`), a closure at any depth, a function changing it,
-  and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field; the
-  container's own slots may change). `subarray()` and `buffer` of a shared typed array are
+  and through a container holding it (`[s.items[0]]`, `xs.slice()`, an object's field, also
+  destructured or nested; the container's own slots may change). A new object built from a
+  number or string read out of the value (`new Item(s.head.v)`), or a `map` result, holds no
+  part of it and may change. `subarray()` and `buffer` of a shared typed array are
   refused too: in JavaScript all of them reach the shared value itself. Not yet followed (a
   change lands on a copy, #1405): a part returned by a function or closure (other than a method
   or getter of the value: generic, static and interface functions, another object's method), a
-  spread or `Array.from` copy, a generator, an `await`, `any` or `Reflect`, and a container
-  filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
+  spread or `Array.from` copy, a `map` whose callback returns its element (`xs.map((x) => x)`),
+  a generator, an `await`, `any` or `Reflect`, and a container filled with `push` / `set`. Change a copy (`.clone()`, `s.ports.slice()`) instead.
   `console.log(s)`, `[...s]`, `Object.keys(s)` and `JSON.stringify(s)` read the value inside
   as well. A value of
   `T` that holds a class with subclasses or with a `clone()` of its own is not read like this

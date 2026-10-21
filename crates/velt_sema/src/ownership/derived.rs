@@ -33,6 +33,14 @@ pub(super) fn roots(cx: &Ctx, e: &Expr) -> Roots {
     r
 }
 
+/// The roots of an element (or field) of the value `e` evaluates to, `levels` deep:
+/// `[[v]][0][0]` is `v` itself.
+pub(super) fn elem_roots(cx: &Ctx, e: &Expr) -> Roots {
+    let mut r = Roots::default();
+    elems(cx, e, &mut r, false, 1, 0);
+    r
+}
+
 fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
     if depth > 64 {
         return;
@@ -55,7 +63,7 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
             args,
         } => args.iter().for_each(|a| go(a, r, holds)),
         // An element taken out of a new container is a part again (`[v][0]`, `xs.slice()[0]`).
-        E::Field { base, .. } | E::Index { base, .. } => elems(cx, base, r, holds, depth + 1),
+        E::Field { base, .. } | E::Index { base, .. } => elems(cx, base, r, holds, 1, depth + 1),
         E::UnwrapSome(base, _)
         | E::UnwrapVariant { expr: base, .. }
         | E::WrapSome(base)
@@ -74,15 +82,21 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
             arms.iter().for_each(|a| go(&a.body, r, holds));
         }
         E::Block(b) => b.value.iter().for_each(|v| go(v, r, holds)),
-        // A new container holds its elements.
-        E::ArrayLit(es) | E::Tuple(es) => es.iter().for_each(|x| go(x, r, true)),
-        E::AdtLit { fields: es, .. } | E::Variant { args: es, .. } | E::New { args: es, .. } => {
-            es.iter().for_each(|x| go(x, r, true))
-        }
+        // A new container holds its elements; a value without references in it (a number read
+        // out of the shared value) holds no part.
+        E::ArrayLit(es) | E::Tuple(es) => es.iter().for_each(|x| {
+            if !leaf(cx, x.ty) {
+                go(x, r, true)
+            }
+        }),
+        E::AdtLit { fields: es, .. } | E::Variant { args: es, .. } | E::New { args: es, .. } => es
+            .iter()
+            .filter(|x| !leaf(cx, x.ty))
+            .for_each(|x| go(x, r, true)),
         E::Call {
             callee: Callee::Def(d, _),
             args,
-        } if cx.fn_info(*d).this.is_some() => {
+        } if cx.fn_info(*d).this.is_some() && !builds(cx, *d) => {
             // A std copy is a new container holding the receiver's parts.
             let holds = holds || copies(cx, *d);
             args.first().iter().for_each(|a| go(a, r, holds))
@@ -95,13 +109,24 @@ fn walk(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
     }
 }
 
-/// The roots of what an element or field of `e` is: for a new container (a literal, a
-/// constructor's arguments, a std copy) the parts it holds, else what `e` is part of.
-fn elems(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
+/// The roots of what an element or field of `e` is, `levels` deep (`levels` > 0): for a new
+/// container (a literal, a constructor's arguments, a std copy) those of the parts it holds,
+/// else what `e` is part of.
+fn elems(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, levels: u32, depth: u32) {
+    if depth > 64 {
+        return;
+    }
+    let inner = |x: &Expr, r: &mut Roots| match levels {
+        1 => walk(cx, x, r, holds, depth + 1),
+        _ => elems(cx, x, r, holds, levels - 1, depth + 1),
+    };
     match &e.kind {
-        E::ArrayLit(es) | E::Tuple(es) => es.iter().for_each(|x| walk(cx, x, r, holds, depth + 1)),
+        E::ArrayLit(es) | E::Tuple(es) => es.iter().for_each(|x| inner(x, r)),
         E::AdtLit { fields: es, .. } | E::Variant { args: es, .. } | E::New { args: es, .. } => {
-            es.iter().for_each(|x| walk(cx, x, r, holds, depth + 1))
+            es.iter().for_each(|x| inner(x, r))
+        }
+        E::Field { base, .. } | E::Index { base, .. } => {
+            elems(cx, base, r, holds, levels + 1, depth + 1)
         }
         E::Call {
             callee: Callee::Def(d, _),
@@ -109,8 +134,18 @@ fn elems(cx: &Ctx, e: &Expr, r: &mut Roots, holds: bool, depth: u32) {
         } if cx.fn_info(*d).this.is_some() && copies(cx, *d) => args
             .first()
             .iter()
-            .for_each(|a| walk(cx, a, r, holds, depth + 1)),
+            .for_each(|a| elems(cx, a, r, holds, levels, depth + 1)),
         _ => walk(cx, e, r, holds, depth),
+    }
+}
+
+/// Does a value of type `t` hold no references (a number, a string, a boolean)?
+fn leaf(cx: &Ctx, t: crate::hir::TyId) -> bool {
+    use crate::hir::TyKind as T;
+    match cx.ty.kind(t) {
+        T::Int(_) | T::Float(_) | T::Bool | T::Str | T::Literal(_) | T::Unit | T::Never => true,
+        T::Option(x, _) => leaf(cx, *x),
+        _ => false,
     }
 }
 
@@ -122,9 +157,16 @@ pub(super) fn fresh(cx: &Ctx, e: &Expr) -> bool {
         E::Call {
             callee: Callee::Def(d, _),
             ..
-        } => cx.fn_info(*d).this.is_some() && copies(cx, *d),
+        } => cx.fn_info(*d).this.is_some() && (copies(cx, *d) || builds(cx, *d)),
         _ => false,
     }
+}
+
+/// Is `d` a std method that returns a new container of what its callback returns (`map`)?
+/// What that is isn't followed: `xs.map((x) => x)` holds the receiver's parts unseen.
+fn builds(cx: &Ctx, d: crate::hir::DefId) -> bool {
+    let name = &cx.fn_info(d).name;
+    name.starts_with("std/") && [".map", ".flatMap"].iter().any(|m| name.ends_with(m))
 }
 
 /// Is `d` a std method that returns a new container of the receiver's parts (`slice()`, a
@@ -135,10 +177,8 @@ fn copies(cx: &Ctx, d: crate::hir::DefId) -> bool {
         && [
             "slice",
             "concat",
-            "map",
             "filter",
             "flat",
-            "flatMap",
             "toSorted",
             "toReversed",
             "toSpliced",
@@ -225,6 +265,13 @@ impl Edges<'_, '_> {
             self.out.push((l, roots(self.cx, from), from.ty, projected));
         }
     }
+
+    /// `bound` get elements or fields of `from` (a destructuring pattern, a loop element).
+    fn bind_elems(&mut self, bound: Vec<LocalId>, from: &Expr) {
+        for l in bound {
+            self.out.push((l, elem_roots(self.cx, from), from.ty, true));
+        }
+    }
 }
 
 impl VisitMut for Edges<'_, '_> {
@@ -234,8 +281,11 @@ impl VisitMut for Edges<'_, '_> {
                 local,
                 init: Some(init),
             } => self.bind(vec![*local], init),
-            S::LetPat { pat, init } => self.bind(pat_locals(pat), init),
-            S::ForOf { binding, iter, .. } => self.bind_as(pat_locals(binding), iter, true),
+            S::LetPat { pat, init } => match pat.kind {
+                PatKind::Binding(..) => self.bind(pat_locals(pat), init),
+                _ => self.bind_elems(pat_locals(pat), init),
+            },
+            S::ForOf { binding, iter, .. } => self.bind_elems(pat_locals(binding), iter),
             _ => {}
         }
     }
@@ -273,6 +323,11 @@ fn projected(e: &Expr) -> bool {
     match &e.kind {
         E::Field { .. } | E::Index { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. } => true,
         E::Upcast(x) | E::Downcast(x) => projected(x),
+        // Any branch may be the projection.
+        E::If { then, els, .. } => projected(then) || projected(els),
+        E::Logical { lhs, rhs, .. } => projected(lhs) || projected(rhs),
+        E::Match { arms, .. } => arms.iter().any(|a| projected(&a.body)),
+        E::Block(b) => b.value.as_deref().is_some_and(projected),
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::Share),
             args,

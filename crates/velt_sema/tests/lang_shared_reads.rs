@@ -456,6 +456,17 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
         "const c = s.items.slice(); for (const x of c) { x.v = 50; }",
         "const c = s.items.slice(); c.forEach((x) => { x.v = 50; });",
         "[s.items[0]].forEach((x) => { x.v = 50; });",
+        // Destructuring takes elements or fields out of the holder.
+        "const a = [s.items[0]]; const [q] = a; q.v = 50;",
+        "const b = { it: s.items[0] }; const { it } = b; it.v = 50;",
+        "const [q] = s.items.slice(); q.v = 50;",
+        // A loop over a literal, a conditional of a projection.
+        "for (const x of [s.items[0]]) { x.v = 50; }",
+        "const a = [s.items[0]]; const q = a.length > 0 ? a[0] : new Item(); q.v = 50;",
+        // A callback that is a closure variable, nested callbacks, doubly nested literals.
+        "const c = s.items.slice(); const g = (x: Item) => { x.v = 50; }; c.forEach(g);",
+        "const c = s.items.slice(); c.forEach((x) => { [x].forEach((y) => { y.v = 50; }); });",
+        "[[s.items[0]]][0][0].v = 50;",
     ] {
         let r = err_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"
@@ -466,6 +477,7 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
     for body in [
         "(s.m.get(\"k0\") ?? new Item()).v = 50;",
         "(s.items.length == 1 ? s.m.get(\"k0\")! : s.m.get(\"k1\")!).v = 50;",
+        "const o: { it: Item | undefined } = { it: s.items[0] }; (o.it ?? new Item()).v = 50;",
     ] {
         let r = err_src(&format!(
             "{defs} function main() {{ const s = shared(new Store()); {body} }}"
@@ -482,4 +494,36 @@ fn parts_out_of_holders_and_inline_containers_cannot_be_changed() {
            const c = s.items.slice(); c.sort((a, b) => a.v - b.v); c.forEach((x) => {{ console.log(x.v); }});
            const a = [s.items[0]]; a[0] = new Item(); const q = a[0]; console.log(q.v); }}"
     ));
+}
+
+#[test]
+fn fresh_objects_built_from_shared_numbers_or_by_map_may_change() {
+    let defs = "class Item { v: number = 3; tags: string[] = []; name: string = \"n\";
+          constructor(v: number) { this.v = v; } }
+        class Store { items: Item[] = [new Item(1), new Item(2)]; get head(): Item { return this.items[0]; } }
+        function mkc(x: Item): Item { const n = new Item(x.v); n.tags.push(\"z\"); return n; }";
+    for body in [
+        // `map` builds a new array of what its callback returns.
+        "const ys = s.items.map((x) => new Item(x.v)); for (const y of ys) { y.v = 9; }",
+        "const ys = s.items.map((x) => new Item(x.v)); ys.forEach((y) => { y.v = 9; });",
+        "s.items.map((x) => new Item(x.v)).forEach((y) => { y.v = 9; });",
+        "const ys = s.items.map((x) => new Item(x.v)).filter((y) => y.v > 0); ys.forEach((y) => { y.v = 9; });",
+        "const out = s.items.map((x) => new Item(x.v)); out[0].v = 9;",
+        // A reducer changes its accumulator, not the elements.
+        "const init: number[] = []; [s.items[0]].reduce((a: number[], x: Item) => { a.push(x.v); return a; }, init);",
+        // A number read out of the shared value holds no part of it.
+        "const n = new Item(s.head.v); n.tags.push(\"q\");",
+        "const o = { n: s.head.v, t: [] as string[] }; o.t.push(\"a\");",
+        "const t: [number, string[]] = [s.head.v, []]; t[1].push(\"a\");",
+        "s.items.map((x) => { const n = new Item(x.v); n.v += 10; n.tags.push(\"z\"); return n; });",
+        "console.log(mkc(s.head).tags.length);",
+        // `Array.from` with a mapper only reads.
+        "console.log(Array.from(s.items, (x) => x.v).length);",
+        "console.log(Array.from(s.items, (x) => x.name).length);",
+        "const xs = s.items; console.log(Array.from(xs, (x) => x.v).length);",
+    ] {
+        ok_src(&format!(
+            "{defs} function main() {{ const s = shared(new Store()); {body} }}"
+        ));
+    }
 }
