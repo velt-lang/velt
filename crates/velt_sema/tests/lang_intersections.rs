@@ -339,7 +339,7 @@ fn an_alias_may_refer_to_itself_through_written_object_types() {
          function main() { console.log(f({ v: 1, kids: [] })); }",
     );
     assert!(show(&p, func(&p, "f").params[0].ty).starts_with("{ v: f64; kids: "));
-    // Parts that are no object types, or that share a field, still can't.
+    // Parts that are not object types, or that share a field, still can't.
     let e = err_src("type A = string[]; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
     let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
