@@ -251,7 +251,7 @@ fn promise_in_state(cx: &mut Ctx, d: DefId, ty: crate::hir::TyId, span: velt_com
 
 /// Does a value of `t` hold a promise itself (not behind a class, an array or a `Map`, which
 /// tasks fill as they run)?
-fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
+pub(crate) fn holds_promise_by_value(cx: &Ctx, t: crate::hir::TyId, depth: u32) -> bool {
     use crate::hir::{AdtKind, TyKind};
     if depth > 8 {
         return false;

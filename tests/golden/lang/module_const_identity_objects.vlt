@@ -1,0 +1,23 @@
+// A module constant compared by identity is the one object Node evaluates once (#1383), kept in
+// the module state like one from a call (#802): `ORIGIN === ORIGIN` holds, and so does
+// comparing it with another name for it.
+
+function adder(n: number): (x: number) => number {
+  return (x: number): number => x + n;
+}
+
+type Point = { x: number; y: number };
+
+const ADD_ONE = adder(1);
+const ORIGIN: Point = { x: 0, y: 0 };
+
+function isOrigin(p: Point): boolean {
+  return p === ORIGIN;
+}
+
+function main() {
+  console.log(ADD_ONE === ADD_ONE);
+  console.log(ORIGIN !== ORIGIN, ORIGIN === ORIGIN);
+  const keep = ORIGIN;
+  console.log(isOrigin(keep), isOrigin({ x: 0, y: 0 }));
+}

@@ -80,7 +80,9 @@ impl FnCx<'_, '_> {
         // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
         // table can't be taken over, like `const v = K`.
         if let H::Global(d) = e.kind {
-            if crate::body::pure_init::is_table(self.cx, d) {
+            if crate::body::pure_init::is_table(self.cx, d)
+                && !crate::module_state::keep(self.cx, d)
+            {
                 let name = self
                     .cx
                     .global(d)
@@ -126,7 +128,10 @@ impl FnCx<'_, '_> {
                 .global(d)
                 .map(|g| (g.name.clone(), g.stored, g.mutable, g.module))
                 .unwrap_or_default();
-            if stored {
+            // Assigning a constant itself stays an error; what it holds may be modified, as in
+            // Node, once it is the one object the module state keeps.
+            let rebinds = matches!(e.kind, H::Global(_)) && what == "assign to";
+            if stored || (!rebinds && crate::module_state::keep(self.cx, d)) {
                 if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
                     self.cx.err(
                         format!("cannot assign to `{name}`, a module `const`"),

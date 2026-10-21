@@ -1,0 +1,18 @@
+// A `static readonly` table is read-only data, and is not kept in the module state like a
+// module constant (#1383): binding it to a name, or passing it to a function value, could modify
+// it, and is an error. `Limits.STEPS.slice()` is the copy to use instead.
+
+class Limits {
+  static readonly STEPS: number[] = [1, 2, 4];
+}
+
+function main() {
+  const w = (xs: number[]) => {
+    xs.push(8);
+    return xs.length;
+  };
+  console.log(w(Limits.STEPS));
+  const c = Limits.STEPS;
+  c.push(4);
+  console.log(c);
+}

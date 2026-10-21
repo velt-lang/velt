@@ -301,8 +301,13 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
 
 /// Tables passed to a callee whose parameter modes are not known (a function value): it may
 /// modify them, and they are read-only data.
-fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
-    for a in args.iter().filter(|a| table_arg(cx, a)) {
+/// A table the program also uses in a way that needs one object is module state instead
+/// (`crate::module_state::keep`), which such a callee may modify.
+fn table_args(cx: &mut Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
+    for a in args {
+        if !table_arg(cx, a) || keep_root(cx, a) {
+            continue;
+        }
         let name = global_root(cx, a).unwrap_or_default();
         let msg = format!("cannot pass module constant `{name}` to a function value");
         errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
@@ -330,7 +335,7 @@ fn table_arg(cx: &Ctx, a: &Expr) -> bool {
 }
 
 /// Borrow argument place `e` mutably (through an upcast); returns whether a mode changed.
-fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
+fn borrow_mut(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     let target = match &mut e.kind {
         E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
@@ -342,8 +347,10 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
-    if mutable_root(cx, target) {
-        // A module-level `let` may be modified in place: its slot is the place itself.
+    // Module state may be modified in place: a module-level `let`, or a module constant the call
+    // may modify, which is then the one object the module state keeps, as in Node.
+    if keep_root(cx, target) {
+        // The slot is the place itself.
         if matches!(target.kind, E::Global(_)) {
             return false;
         }
@@ -389,15 +396,17 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
     }
 }
 
-/// Is place `e` rooted at a module-level `let`?
-fn mutable_root(cx: &Ctx, e: &Expr) -> bool {
+/// Is place `e` rooted at module state: a module-level `let`, or a module constant kept there
+/// from now on (`crate::module_state::keep`)?
+fn keep_root(cx: &mut Ctx, e: &Expr) -> bool {
     match &e.kind {
-        E::Global(d) => cx.global(*d).is_some_and(|g| g.stored),
+        E::Global(d) => crate::module_state::keep(cx, *d),
         E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)
         | E::UnwrapVariant { expr: base, .. }
-        | E::Downcast(base) => mutable_root(cx, base),
+        | E::Upcast(base)
+        | E::Downcast(base) => keep_root(cx, base),
         _ => false,
     }
 }

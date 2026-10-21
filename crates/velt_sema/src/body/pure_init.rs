@@ -111,9 +111,11 @@ pub(crate) fn has_call(e: &Expr) -> bool {
     }
 }
 
-/// Is module constant `d` a table (an array literal stored once as read-only data)?
+/// Is module constant `d` a table (an array literal stored once as read-only data)? Not once it
+/// is module state (`crate::module_state::keep`).
 pub(crate) fn is_table(cx: &Ctx, d: DefId) -> bool {
     cx.global(d)
+        .filter(|g| !g.stored)
         .and_then(|g| g.init.as_ref())
         .is_some_and(|init| matches!(init.kind, H::ArrayLit(_)))
 }
@@ -663,7 +665,8 @@ fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
 }
 
 /// `===` / `!==` with an operand that is directly a module constant compared by identity: the
-/// constant is a new value at each use, so the comparison would always be false.
+/// constant is kept in the module state (`crate::module_state::keep`), or, where it can't be,
+/// is a new value at each use, so the comparison would always be false.
 pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
     for e in operands {
         let mut x = e;
@@ -680,6 +683,10 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
             continue;
         }
         let name = g.name.clone();
+        // The one object Node evaluates once, kept in the module state.
+        if crate::module_state::keep(cx, d) {
+            continue;
+        }
         cx.error(
             Diagnostic::error(
                 format!("`{name}` is evaluated at each use, so comparing it by identity is always false"),

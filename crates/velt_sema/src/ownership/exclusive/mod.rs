@@ -86,11 +86,25 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             held: &held,
             soft: &soft,
             errors: vec![],
+            shares: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
         errors.extend(checker.errors);
+        let shares = checker.shares;
         cx.diags.extend(errors);
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        for (c, outer) in shares {
+            share_capture(cx, c, outer);
+        }
+    }
+}
+
+/// Closure `c` shares enclosing variable `outer` instead of taking it over.
+fn share_capture(cx: &mut Ctx, c: DefId, outer: LocalId) {
+    if let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] {
+        for cap in f.captures.iter_mut().filter(|cap| cap.outer == outer) {
+            cap.share = true;
+        }
     }
 }
 
@@ -124,6 +138,8 @@ struct Checker<'a, 'm> {
     /// The function's soft moves (`FnInfo::soft_moves`).
     soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
+    /// Captures that share their variable ([`share_borrowed_captures`]).
+    shares: Vec<(DefId, LocalId)>,
 }
 
 /// The argument uses of one call: `(direct, nested)` per argument.
@@ -184,10 +200,45 @@ impl Checker<'_, '_> {
                 u.access = Access::Unique;
             }
         }
+        self.shares.extend(share_borrowed_captures(&mut uses));
         if let Some(d) = first_conflict(&uses) {
             self.errors.push(d);
         }
     }
+}
+
+/// A closure argument that takes over a variable another argument of the call only borrows
+/// (`derive(parts, () => parts.length)`) shares it instead, as JavaScript refers to one value
+/// from both: the call's borrow stays valid, and the variable stays the caller's. Not when an
+/// argument may modify the variable, or takes it over too. Returns the captures to share.
+fn share_borrowed_captures(uses: &mut ArgUses) -> Vec<(DefId, LocalId)> {
+    let mut out = vec![];
+    for i in 0..uses.len() {
+        for k in 0..uses[i].0.len() {
+            let u = &uses[i].0[k];
+            let Some((c, outer)) = u.capture else {
+                continue;
+            };
+            if u.access != Access::Move || !u.place.proj.is_empty() || u.place.root != outer {
+                continue;
+            }
+            let others = (uses.iter().enumerate())
+                .filter(|(j, _)| *j != i)
+                .flat_map(|(_, (direct, nested))| direct.iter().chain(nested))
+                .filter(|w| w.place.overlaps(&u.place));
+            let mut borrowed = false;
+            let mut only_borrows = true;
+            for w in others {
+                borrowed = true;
+                only_borrows &= w.access == Access::Shared;
+            }
+            if borrowed && only_borrows {
+                uses[i].0[k].access = Access::Shared;
+                out.push((c, outer));
+            }
+        }
+    }
+    out
 }
 
 fn first_conflict(uses: &ArgUses) -> Option<Diagnostic> {

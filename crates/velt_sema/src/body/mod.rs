@@ -92,7 +92,9 @@ use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
-pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
+pub(crate) use driver::{
+    check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,
+};
 pub(crate) use expr::REPORTED;
 pub(crate) use pattern_defaults::UNDEFINED_OR;
 

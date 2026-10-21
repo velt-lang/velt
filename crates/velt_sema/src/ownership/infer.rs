@@ -349,7 +349,14 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
             if mutable && cx.is_copy(ty) {
                 return false;
             }
-            if mutable || crate::body::pure_init::shares_on_move(cx, *d) {
+            // A function computed at each use is shared as it is; any other constant taken over
+            // is the one object the module state keeps (`crate::module_state::keep`).
+            let shared_fn = crate::body::pure_init::shares_on_move(cx, *d);
+            let kept = !shared_fn
+                && !cx.is_copy(ty)
+                && ty != cx.ty.str_
+                && crate::module_state::keep(cx, *d);
+            if mutable || shared_fn || kept {
                 // A function computed at each use, or a module-level `let` the module state
                 // keeps: another reference to it is owned.
                 let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));

@@ -37,6 +37,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: FxHashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        keep_moved_constants(cx, &mut f.body.block, &soft);
         let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
@@ -103,6 +104,46 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         for (c, pinned) in copied_captures {
             super::shares::share_captures(cx, c, &pinned);
         }
+    }
+}
+
+/// A part moved out of a module constant (`return K.inner`): the constant is the one object the
+/// module state keeps (`crate::module_state::keep`), and lowering shares the part, as Node
+/// refers to it. Not for a soft move (`soft`), which shares the part already.
+fn keep_moved_constants(cx: &mut Ctx, b: &mut crate::hir::Block, soft: &FxHashSet<Span>) {
+    let mut roots = vec![];
+    visit::exprs_mut(b, &mut |e: &mut Expr| {
+        if soft.contains(&e.span) {
+            return;
+        }
+        let (E::Field {
+            base,
+            mode: UseMode::Move,
+            ..
+        }
+        | E::UnwrapSome(base, UseMode::Move)
+        | E::UnwrapVariant {
+            expr: base,
+            mode: UseMode::Move,
+            ..
+        }) = &e.kind
+        else {
+            return;
+        };
+        let mut cur: &Expr = base;
+        loop {
+            match &cur.kind {
+                E::Field { base, .. }
+                | E::UnwrapSome(base, _)
+                | E::UnwrapVariant { expr: base, .. }
+                | E::Downcast(base) => cur = base,
+                E::Global(d) => return roots.push(*d),
+                _ => return,
+            }
+        }
+    });
+    for d in roots {
+        crate::module_state::keep(cx, d);
     }
 }
 

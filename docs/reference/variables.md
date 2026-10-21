@@ -144,6 +144,34 @@ function main() {
 }
 ```
 
+A module-level `const` whose value is not a constant is kept the same way (`seen` above), and
+so is one the program uses as the one object Node evaluates once: a use takes its value over
+(binds it to a name, stores it, returns it, passes it to a function that keeps it), modifies
+what it holds (`K.n = 1`, `K.push(1)`, passing it to a function that modifies it) or compares
+it by identity (`K === x`). Every use then refers to that object, and a change through one name
+shows through the others. A constant that is only read is evaluated where it is used instead
+(a [table](#tables)'s elements are read from read-only data), which costs nothing at startup.
+A `static readonly` field is not kept this way: taking it over or modifying it is an error.
+
+```ts
+type Hit = { hit: boolean; value: number };
+
+const MISS: Hit = { hit: false, value: 0 };
+const EMPTY: number[] = [];
+
+function peek(key: string): Hit {
+  return key === "x" ? { hit: true, value: 1 } : MISS;   // MISS itself, as in Node
+}
+
+function main() {
+  const a = peek("y");
+  a.value = 7;
+  const xs = EMPTY;
+  xs.push(1);
+  console.log(MISS.value, a === MISS, EMPTY.length);   // 7 true 1
+}
+```
+
 - **One per process**, as in Node: every task (a task started with `spawn`, an HTTP request
   handler, a task on any core) reads and updates the same module state, so a module counter
   that every request handler increments counts every request. Code that uses module state
@@ -258,22 +286,17 @@ function main() {
 - Passed to a function or method that only reads it (`f(K)` when `f` doesn't modify its parameter,
   `K.includes(x)`, `K.indexOf(x)`, `u32x4.load(K, i)`), a table is that read-only data too:
   nothing is built, so such calls are as cheap in a hot loop as indexing.
-- Used in any other way, a table is what every module constant is: evaluated at that use, here
-  to a new array with those elements. `K.slice()` is the one to use for a copy.
-- Nothing can modify a table or take it over, and a use that could is a compile error. That is
-  `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
-  parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
-  table it is also:
-  - passing it to a function value (`const f = (xs: u8[]) => …; f(K)`, `fs[0](K)`, a callback
-    parameter), or to a function together with a function value that could modify it
-    (``cannot pass module constant `K` to a function value``): the compiler can't see what that
-    function does;
-  - binding it to a name or a field, however it is named: `const mine = K`, `K!`, `ns.K` for an
-    imported table, `Cls.K` for a `static readonly` one (``cannot move out of module constant
-    `K` ``); an `async` function, which takes over its arguments, is the same.
-
-  `K.slice()` is the copy to use there: an ordinary array to keep, modify or pass anywhere.
-- Comparing a table by identity (`K === K`) is an error, like for other module constants.
+- Used in any other way, a table is [module state](#module-state), like every module constant
+  used so: binding it to a name or a field (`const mine = K`, `K!`, `ns.K` for an imported
+  table), returning it, modifying it (`K[0] = 1`, `K.push(1)`, `K.fill(0)`, passing it to a
+  function that modifies its parameter), passing it to a function value the compiler can't see
+  into, or comparing it by identity. It is then the one array Node evaluates once, every use
+  refers to it, and its elements are read from it instead of from read-only data. `K.slice()`
+  makes a copy.
+- A `static readonly` table can't be modified or taken over: `Cls.K.push(1)` is an error
+  (``cannot modify module-level constant `Cls.K` ``), and so are `const mine = Cls.K` (``cannot
+  move out of module constant `Cls.K` ``) and passing it to a function value (``cannot pass
+  module constant `Cls.K` to a function value``). `Cls.K.slice()` is the copy to use there.
 
 ## Module constants initialized by a call
 
@@ -296,9 +319,9 @@ gives; any other initializer (a call with effects, a class instance, a `Map`) ma
   kept as module state, so that it is one value as in Node, and so are class instances, arrays
   and maps (a new array at each use would change what `X.push(1)` does; an array of number
   literals is a [table](#tables), which needs no call).
-  An object or struct constant can't be moved into a variable or a field (``cannot move out of
-  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
-  so a change through the copy would show in the constant.
+  An object or struct constant that the program takes over, modifies or compares by identity
+  is [module state](#module-state), so a change through a variable or a field holding it shows
+  in the constant, as in Node.
 
 ```ts
 type Props = { start: number };

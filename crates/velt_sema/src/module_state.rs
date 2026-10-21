@@ -79,6 +79,31 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
     order
 }
 
+/// Keep module constant `d` in the module state: a use takes its value over (binds, stores or
+/// returns it), modifies it or compares it by identity, where a value evaluated at each use
+/// would be a different object from the one Node evaluates once. Kept, it is evaluated once like
+/// a module-level `let`, and each such use refers to that one object (a move shares it). Not for
+/// a constant of the standard library, a `static readonly` field, one whose type is an error, or
+/// one holding a promise (`driver::promise_in_state`): those keep their errors. Returns whether
+/// `d` is module state.
+pub(crate) fn keep(cx: &mut Ctx, d: DefId) -> bool {
+    let Some(g) = cx.global(d) else { return false };
+    if g.stored {
+        return true;
+    }
+    let keepable = g.state == crate::defs::BodyState::Done
+        && g.src.owner.is_none()
+        && !cx.modules[g.module].is_std
+        && g.ty != cx.ty.error
+        && !crate::body::holds_promise_by_value(cx, g.ty, 0);
+    if keepable {
+        if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
+            g.stored = true;
+        }
+    }
+    keepable
+}
+
 /// Module indices in evaluation order: those reachable from the root by a post-order walk over
 /// value imports, then any others (which have no code that runs first); per module, whether
 /// the walk reached it (whether Node evaluates it); and whether any import reaches it.
