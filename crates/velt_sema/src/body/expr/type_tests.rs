@@ -316,8 +316,22 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let sty = s.ty;
-        if self.cx.ty.is_bottom(sty) {
+        if sty == self.cx.ty.error {
             return self.error_expr(span);
+        }
+        // A value that can't exist (the reason of a promise that never rejects) is no
+        // instance. Error-set variables alone (the reason of a promise a function type written
+        // without `throws` returns) are nothing as written: assumed empty until their sets are
+        // known (`throws::vars`).
+        let never = sty == self.cx.ty.never
+            || self.cx.mentions_err_var(sty) && {
+                let plain = self.cx.plain_type(sty);
+                plain == self.cx.ty.never
+            };
+        if never {
+            self.cx.assume_empty_in(sty);
+            let b = self.cx.ty.bool_;
+            return self.mk(H::Lit(hir::Lit::Bool(false)), b, span);
         }
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
