@@ -227,12 +227,18 @@ impl Ctx<'_> {
             }
             (
                 TyKind::FnPtr {
-                    params: p, ret: r, ..
+                    params: p,
+                    ret: r,
+                    rest: pr,
+                    ..
                 },
                 TyKind::FnPtr {
-                    params: q, ret: s, ..
+                    params: q,
+                    ret: s,
+                    rest: qr,
+                    ..
                 },
-            ) => same(self, &p, &q) && same(self, &[r], &[s]),
+            ) => pr == qr && same(self, &p, &q) && same(self, &[r], &[s]),
             (TyKind::Promise(x, _), TyKind::Promise(y, _))
             | (TyKind::Array(x), TyKind::Array(y))
             | (TyKind::Shared(x), TyKind::Shared(y)) => same(self, &[x], &[y]),

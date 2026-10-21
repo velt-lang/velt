@@ -651,8 +651,13 @@ impl<'m> Ctx<'m> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
+                let mut ps: Vec<String> =
+                    params.iter().map(|p| self.display_in(*p, names)).collect();
+                if let (true, Some(last)) = (*rest, ps.last_mut()) {
+                    last.insert_str(0, "...");
+                }
                 // A function type written without `throws`, as written (`throws::fn_types`).
                 let promise_var =
                     matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));

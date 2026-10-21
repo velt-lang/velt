@@ -256,10 +256,12 @@ impl Ctx<'_> {
         let params = params.iter().map(|&p| self.subst(p, &targs)).collect();
         let ret = self.subst(ret, &targs);
         let throws = crate::throws::throws_now(self, d, &targs).unwrap_or(never);
+        let rest = crate::body::defaults::has_rest(self, d);
         self.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest,
         })
     }
 
@@ -460,10 +462,21 @@ impl Ctx<'_> {
             return f;
         }
         match self.ty.kind(f).clone() {
-            TyKind::FnPtr { params, ret, .. } => match name {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => match name {
                 "ReturnType" => ret,
                 // A parameter already reported (a cycle): no tuple with an error inside.
                 _ if params.contains(&self.ty.error) => self.ty.error,
+                // `(...xs: T[]) => R`: the rest parameter's array is the parameter list.
+                _ if rest && params.len() == 1 => params[0],
+                _ if rest => {
+                    self.err(
+                        "variadic tuple types (`[a: A, ...rest: T[]]`, the `Parameters` of a function type with a rest parameter after others) are not supported yet",
+                        t.span,
+                    );
+                    self.ty.error
+                }
                 _ => self.ty.intern(TyKind::Tuple(params)),
             },
             TyKind::Param(_) => {

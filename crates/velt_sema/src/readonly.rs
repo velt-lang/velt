@@ -171,10 +171,12 @@ pub(crate) fn erase_ty(
             params,
             ret,
             throws,
+            rest,
         } => TyKind::FnPtr {
             params: params.iter().map(|a| sub(ty, cache, *a)).collect(),
             ret: sub(ty, cache, ret),
             throws: sub(ty, cache, throws),
+            rest,
         },
         _ => {
             cache.insert(t, t);

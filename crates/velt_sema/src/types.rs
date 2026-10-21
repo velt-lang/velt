@@ -58,7 +58,29 @@ impl Types {
         self.never
     }
 
+    /// The id of type `k`. A function type whose rest parameter is a tuple
+    /// (`(...args: [string, number]) => R`, often a type parameter's or `infer`'s value) is the
+    /// function type with those parameters (`(a: string, b: number) => R`), as in TypeScript.
     pub fn intern(&mut self, k: TyKind) -> TyId {
+        if let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest: true,
+        } = &k
+        {
+            if let Some(TyKind::Tuple(ts)) = params.last().map(|t| self.kind(*t)) {
+                let mut params = params[..params.len() - 1].to_vec();
+                params.extend(ts);
+                let (ret, throws) = (*ret, *throws);
+                return self.table.intern(TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                    rest: false,
+                });
+            }
+        }
         self.table.intern(k)
     }
 
@@ -187,6 +209,7 @@ impl Types {
             params,
             ret,
             throws,
+            rest: false,
         })
     }
 
@@ -264,10 +287,13 @@ impl Types {
         let m = |s: &mut Self, x: TyId| s.without_error_types(x);
         let nk = match k {
             TyKind::Promise(v, _) => TyKind::Promise(m(self, v), error),
-            TyKind::FnPtr { params, ret, .. } => TyKind::FnPtr {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: error,
+                rest,
             },
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
@@ -304,10 +330,12 @@ impl Types {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: m(self, throws),
+                rest,
             },
             other => return self.intern(other),
         };
@@ -372,6 +400,7 @@ pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
             params,
             ret,
             throws,
+            ..
         } => {
             let mut v = params.clone();
             v.push(*ret);
@@ -396,12 +425,14 @@ pub(crate) fn map_children(k: &TyKind, f: &mut dyn FnMut(TyId) -> TyId) -> TyKin
             params,
             ret,
             throws,
+            rest,
         } => {
             let params = m(params, f);
             TyKind::FnPtr {
                 params,
                 ret: f(*ret),
                 throws: f(*throws),
+                rest: *rest,
             }
         }
         TyKind::Array(e) => TyKind::Array(f(*e)),

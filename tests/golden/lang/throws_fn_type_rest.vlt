@@ -1,0 +1,39 @@
+// Function types with a rest parameter, written without `throws` (#1154, #943): what a closure
+// stored there throws reaches the calls through them. Expected output: Node's.
+class Bad extends Error {}
+
+type Handler = (...args: number[]) => number;
+
+function call(h: Handler, ...xs: number[]): number {
+  try {
+    return h(...xs);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+    return -1;
+  }
+}
+
+const sum: Handler = (...args) => {
+  if (args.length > 2) {
+    throw new Bad(`too many: ${args.length}`);
+  }
+  return args.reduce((a, b) => a + b, 0);
+};
+console.log(call(sum, 1, 2));
+console.log(call(sum, 1, 2, 3));
+
+const handlers: { on: (name: string, ...rest: string[]) => void }[] = [
+  { on: (name, ...rest) => console.log(name, rest.join(",")) },
+  {
+    on: (name) => {
+      throw new Bad(name);
+    },
+  },
+];
+for (const h of handlers) {
+  try {
+    h.on("evt", "a", "b");
+  } catch (e) {
+    console.log("handler", (e as Error).message);
+  }
+}

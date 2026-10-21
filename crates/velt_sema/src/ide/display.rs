@@ -105,11 +105,19 @@ impl Names {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
                 let ps: Vec<String> = params
                     .iter()
                     .enumerate()
-                    .map(|(i, p)| format!("arg{i}: {}", self.show(*p, param)))
+                    .map(|(i, p)| {
+                        let dots = if *rest && i + 1 == params.len() {
+                            "..."
+                        } else {
+                            ""
+                        };
+                        format!("{dots}arg{i}: {}", self.show(*p, param))
+                    })
                     .collect();
                 let th = match self.table.kind(*throws) {
                     TyKind::Never => String::new(),

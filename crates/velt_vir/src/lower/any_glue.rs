@@ -333,10 +333,12 @@ impl FnLower<'_, '_> {
         argc: vir::Local,
         out: &Place,
     ) {
+        // A rest parameter's arguments from `any` would need packing into its array: not yet.
         let TyKind::FnPtr {
             params,
             ret,
             throws,
+            rest: false,
         } = self.cx.kind(fty)
         else {
             self.any_drop_args(argv, 0, argc);

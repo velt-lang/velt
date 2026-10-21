@@ -217,10 +217,12 @@ fn closure_type(cx: &mut Ctx, d: DefId, allowed: Option<TyId>) -> TyId {
         Some(v) => (cx.ty.promise_rejecting(v, err), never),
         None => (ret, err),
     };
+    let rest = crate::body::defaults::has_rest(cx, d) || cx.fn_sites.rest_closures.contains(&d);
     cx.ty.intern(crate::hir::TyKind::FnPtr {
         params,
         ret,
         throws,
+        rest,
     })
 }
 

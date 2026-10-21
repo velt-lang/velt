@@ -254,6 +254,7 @@ impl FnCx<'_, '_> {
             params: vec![c.elem, i64_],
             ret: error,
             throws: error,
+            rest: false,
         });
         let fh = match as_arrow(f) {
             Some(a) => {

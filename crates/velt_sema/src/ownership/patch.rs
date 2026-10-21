@@ -279,7 +279,7 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
     if let Some(k) = (slot as usize).checked_sub(i.methods.len() + i.fields.len()) {
         // A field setter (`crate::iface_writes`): it modifies the receiver and owns the value
         // (copies it for Copy types), as `collect::getters::field_setter` declares it.
-        let f = *cx.writable_fields(iface).get(k)?;
+        let f = *cx.setter_fields(iface).get(k)?;
         let ty = i.fields[f].ty;
         let v = match cx.is_copy(ty) {
             true => PassMode::Copy,

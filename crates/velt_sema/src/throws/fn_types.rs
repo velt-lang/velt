@@ -69,6 +69,8 @@ pub(crate) struct FnSites {
     pub target: Option<Span>,
     /// The site each closure (by its span) was created for.
     pub(super) closure_sites: HashMap<Span, Span>,
+    /// The closures that end in a rest parameter (`(...args) => …`): their function types do.
+    pub rest_closures: HashSet<DefId>,
     /// Where the values of each site are stored (an argument read from a parameter), so what
     /// is stored into a site is stored into those too.
     pub(super) flows: HashMap<Span, Vec<Span>>,
@@ -145,19 +147,32 @@ impl FnSites {
 }
 
 impl Ctx<'_> {
-    /// `(params) => ret [throws E]`. After a `Promise` result, `throws E` is the promise's
+    /// `(params) => ret [throws E]`, with `rest`: `(a: A, ...xs: T[]) => R`, whose last parameter
+    /// must have an array or tuple type. After a `Promise` result, `throws E` is the promise's
     /// rejection type (calling an async function never throws; awaiting its promise does).
     /// Without `throws` in a user module, it throws what the throwing closures stored into it
     /// throw (the module docs).
     pub(crate) fn resolve_fn_type(
         &mut self,
-        params: &[ast::TypeExpr],
+        written: &[ast::TypeExpr],
+        rest: bool,
         ret: &ast::TypeExpr,
         throws: Option<&ast::TypeExpr>,
         env: &crate::resolve::TyEnv,
         span: Span,
     ) -> TyId {
-        let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
+        let params: Vec<TyId> = written.iter().map(|t| self.resolve_type(t, env)).collect();
+        if let (true, Some(&last), Some(w)) = (rest, params.last(), written.last()) {
+            // A tuple is its elements (`Types::intern`); a type parameter or `infer` slot is
+            // one once it is known.
+            let later = matches!(
+                self.ty.kind(last),
+                TyKind::Tuple(_) | TyKind::Param(_) | TyKind::Op(..)
+            );
+            if !later && !crate::collect::sigs::rest_param_type(self, w.span, last) {
+                return self.ty.error;
+            }
+        }
         let mut ret = self.resolve_type(ret, env);
         let never = self.ty.never;
         let throws_clause = throws;
@@ -188,6 +203,7 @@ impl Ctx<'_> {
             params,
             ret,
             throws,
+            rest,
         });
         if throws_clause.is_none() {
             self.record_fn_site(span, env.module, t);
@@ -195,13 +211,14 @@ impl Ctx<'_> {
         // The type as written is interned here too, as in a check without variables: unions
         // order their members by it (`throws::vars`).
         if var_site {
-            let TyKind::FnPtr { params, .. } = self.ty.kind(t).clone() else {
+            let TyKind::FnPtr { params, rest, .. } = self.ty.kind(t).clone() else {
                 unreachable!("ICE: a function type");
             };
             let plain = self.ty.intern(TyKind::FnPtr {
                 params,
                 ret: plain_ret,
                 throws: never,
+                rest,
             });
             self.fn_sites.var_sets.note_written(t, plain);
         }
@@ -219,6 +236,7 @@ impl Ctx<'_> {
             params,
             mut ret,
             throws,
+            rest,
         } = self.ty.kind(t).clone()
         else {
             return t;
@@ -243,6 +261,7 @@ impl Ctx<'_> {
             params,
             ret,
             throws,
+            rest,
         });
         self.record_fn_site(span, module, s);
         self.ty.inferred_fns.insert(s);
@@ -418,12 +437,18 @@ impl Ctx<'_> {
             (TyKind::Param(_) | TyKind::Op(..) | TyKind::Error, _) => true,
             (
                 TyKind::FnPtr {
-                    params: p, ret: r, ..
+                    params: p,
+                    ret: r,
+                    rest: pr,
+                    ..
                 },
                 TyKind::FnPtr {
-                    params: q, ret: s, ..
+                    params: q,
+                    ret: s,
+                    rest: qr,
+                    ..
                 },
-            ) => all(p, q) && m(*r, *s),
+            ) => pr == qr && all(p, q) && m(*r, *s),
             (TyKind::Promise(a, _), TyKind::Promise(b, _)) => m(*a, *b),
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {
                 d == e && all(xs, ys)
@@ -522,11 +547,13 @@ impl Ctx<'_> {
                 params: p,
                 ret: r,
                 throws: e,
+                rest: pr,
             },
             TyKind::FnPtr {
                 params: q,
                 ret: s,
                 throws: f,
+                rest: qr,
             },
         ) = (self.ty.kind(from).clone(), self.ty.kind(to).clone())
         else {
@@ -537,7 +564,7 @@ impl Ctx<'_> {
             _ => (t, None),
         };
         let ((rv, re), (sv, se)) = (promise_err(self, r), promise_err(self, s));
-        if p != q || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
+        if p != q || pr != qr || rv != sv || re.is_some() != se.is_some() || (e == f && re == se) {
             return None;
         }
         let have = self.join_errors(Some(e), re);

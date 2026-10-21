@@ -84,8 +84,8 @@ fn check_impl(
     Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter, and each
-/// writable one a setter source (`crate::iface_writes`).
+/// The class must have every interface field (same type); each gets a getter and a setter
+/// source (`crate::iface_writes`).
 fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Vec<SetterSrc>) {
     let ifields = cx
         .iface(p.bound.iface)
@@ -106,14 +106,12 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> (Vec<DefId>, Ve
             };
             cache.insert((p.d, i), g);
             getters.push(g);
-            if !f.readonly {
-                setters.push(SetterSrc::Field {
-                    d: p.d,
-                    self_ty: p.self_ty,
-                    index: i,
-                    ty,
-                });
-            }
+            setters.push(SetterSrc::Field {
+                d: p.d,
+                self_ty: p.self_ty,
+                index: i,
+                ty,
+            });
         } else {
             let tn = cx.display(want);
             let (cname, iname) = (&p.cname, &p.iname);

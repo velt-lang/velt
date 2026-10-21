@@ -90,6 +90,8 @@ pub enum TyKind {
         params: Vec<TyId>,
         ret: TyId,
         throws: TyId,
+        /// The last parameter is a rest parameter (`(...xs: T[]) => R`; hir_encodings.md).
+        rest: bool,
     },
     /// Closure value: unique type per closure expression (`DefId` of its `Def::Fn`).
     Closure(DefId),

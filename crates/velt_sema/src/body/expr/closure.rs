@@ -181,23 +181,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
-        if let Some(p) = params.iter().find(|p| p.rest) {
-            // Its type is checked as a function's is; one of an array type is not supported yet
-            // (a module-level constant is lifted into a function, `generic_arrows`).
-            if let Some(t) = &p.ty {
-                let ty = self.resolve(t);
-                if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
-                    return self.error_expr(e.span);
-                }
+        // A rest parameter's type is checked as a function's is.
+        if let Some(t) = params.last().filter(|p| p.rest).and_then(|p| p.ty.as_ref()) {
+            let ty = self.resolve(t);
+            if !crate::collect::sigs::rest_param_type(self.cx, t.span, ty) {
+                return self.error_expr(e.span);
             }
-            self.cx.error(
-                velt_common::Diagnostic::error(
-                    "rest parameters of arrow functions are not supported yet",
-                    p.name.span,
-                )
-                .with_note("declare a `function` with the rest parameter (`function f(...xs: T[])`), or take an array (`(xs: T[]) => …`)"),
-            );
-            return self.error_expr(e.span);
         }
         // Against a union of function types, the arrow is typed by one member; the caller
         // converts the closure to the union.
@@ -231,7 +220,11 @@ impl FnCx<'_, '_> {
             params: exp_params,
             ret: exp_ret,
             throws: exp_throws,
+            rest: exp_rest,
         } = self.expected_fn(exp, is_async);
+        let Some(rest) = self.closure_rest(params, exp_params.as_deref(), exp_rest) else {
+            return self.error_expr(span);
+        };
         let declared_err = match throws {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
@@ -363,7 +356,10 @@ impl FnCx<'_, '_> {
             self.provisional_slot(span, &frame.uncaught);
         }
         let err = self.closure_error(def, declared_err, &frame, clause);
-        let fn_ty = self.closure_type(ptys.clone(), body_ret, err, is_async);
+        if rest {
+            self.cx.fn_sites.rest_closures.insert(def);
+        }
+        let fn_ty = self.closure_type(ptys.clone(), rest, body_ret, err, is_async);
         let ret = if is_async {
             self.cx.ty.promise(body_ret)
         } else {

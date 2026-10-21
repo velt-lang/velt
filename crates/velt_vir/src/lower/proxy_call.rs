@@ -35,6 +35,7 @@ impl FnLower<'_, '_> {
             params,
             ret,
             throws,
+            ..
         } = self.cx.kind(fty)
         else {
             return None;

@@ -110,12 +110,6 @@ fn defaults_that_would_run_out_of_order_are_errors() {
 }
 
 #[test]
-fn a_rest_parameter_of_an_object_literal_method_names_the_method() {
-    let errs = errors("const o = { sum(...xs: number[]): number { return 0; } };");
-    assert!(
-        errs.iter().any(|e| e.contains(
-            "rest parameters of object-literal methods (`sum(...xs)`) are not supported yet"
-        )),
-        "{errs:?}"
-    );
+fn an_object_literal_method_may_have_a_rest_parameter() {
+    parse_ok("const o = { sum(...xs: number[]): number { return 0; } };");
 }
