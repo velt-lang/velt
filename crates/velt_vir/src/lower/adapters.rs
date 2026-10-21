@@ -69,7 +69,7 @@ impl FnLower<'_, '_> {
         }
         self.cx.note_wrapped_identity();
         let vt = self.cx.ty(ty);
-        let cur = Place::local(self.temp(vt.clone()));
+        let cur = Place::local(self.temp(vt));
         self.assign(cur.clone(), Rvalue::Use(Operand::Copy(place.clone())));
         let (head, body, done) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(head);
