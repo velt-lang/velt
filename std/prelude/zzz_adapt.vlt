@@ -259,8 +259,9 @@ export function __anyDeletePlain(o: any, key: any): boolean {
     panic("TypeError: this property key is not supported through a proxy yet (#823)");
   }
   const k = typeof key === "string" ? (key as string) : `${key as number}`;
-  // Velt's arrays have no holes: an element past the end is not there, and the last one goes
-  // (as `pop`, `shift` and `splice` delete it before they shorten the array).
+  // Velt's arrays have no holes: an element past the end is not there, and one inside would
+  // leave a hole (Node keeps the length). An array method on a proxy deletes the last ones
+  // before it writes the shorter length (velt:proxy/array).
   if (Array.isArray(o)) {
     const i = __arrayIndex(k) as number;
     if (i >= 0) {
@@ -268,10 +269,9 @@ export function __anyDeletePlain(o: any, key: any): boolean {
       if (i >= n) {
         return true;
       }
-      if (i == n - 1) {
-        o.length = i;
-        return true;
-      }
+      panic(
+        `TypeError: deleting element ${i} of an array of ${n} through \`any\` is not supported yet (#823): Velt's arrays have no holes`,
+      );
     }
   }
   return __intrinsic_any_delete(o, k);

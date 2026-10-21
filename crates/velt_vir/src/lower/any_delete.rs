@@ -5,9 +5,10 @@
 //! `DEL_UNSUPPORTED` (a `TypeError`):
 //!
 //! - a `Record<string, V>`: its entry is removed (`__delete`), `true`;
-//! - class instances and object types: an optional field is made absent, `true`; a key the
-//!   value does not have as its own (a class's methods and accessors live on its prototype) is
-//!   `true`; a fixed field, which Velt cannot remove, is not supported;
+//! - class instances and object types: an object type's optional field is made absent, `true`;
+//!   a key the value does not have as its own (a class's methods and accessors live on its
+//!   prototype) is `true`; a fixed field and a class's field, optional or not, which Velt cannot
+//!   remove, are not supported;
 //! - arrays: `length` is `false` (not configurable, as in Node); other keys come later.
 
 use velt_sema::hir::{DynMemberKind, TyId, TyKind};
@@ -31,6 +32,10 @@ impl FnLower<'_, '_> {
         k: &velt_sema::hir::Expr,
     ) -> Operand {
         self.cx.note_any_delete();
+        // As a write (`any_set`), a delete must reach the object itself: an object type
+        // converted to `any` is then one counted object, never a copy.
+        let any = self.cx.any_ty();
+        self.cx.note_identity(any);
         let kt = self.sub(k.ty);
         let kv = self.expr(k);
         if self.dead() {
@@ -82,6 +87,7 @@ impl FnLower<'_, '_> {
                 return self.ret_status(DEL_UNSUPPORTED);
             }
             self.any_subclass_dispatch(Glue::AnyDelete, ty, d, &[data, key]);
+            let class = self.cx.is_class(ty);
             let fields: Vec<(String, bool)> = self
                 .cx
                 .adt_def(d)
@@ -96,7 +102,9 @@ impl FnLower<'_, '_> {
                 }
                 let next = self.on_key(key, name);
                 let fty = self.cx.member_ty(ty, i as u32);
-                if *optional && matches!(self.cx.kind(fty), TyKind::Option(..)) {
+                // A class's fields are its own properties even when optional (`undefined`), so
+                // removing one would leave a key Velt still lists.
+                if *optional && !class && matches!(self.cx.kind(fty), TyKind::Option(..)) {
                     let fp = self.field_place(&vp, ty, i as u32);
                     if let Some(slot) = self.cx.presence_slot(ty, i as u32) {
                         let mut flag = fp.clone();

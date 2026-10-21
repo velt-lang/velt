@@ -2487,16 +2487,17 @@ target's keys that are not configurable, and a `getOwnPropertyDescriptor`, `dele
 non-configurable only when the target's is). When the target is itself a proxy, the target's
 traps run for these checks, in Node's order. A descriptor the `getOwnPropertyDescriptor` trap
 answers is completed: an accessor (`get` / `set`) or a data property, an attribute left out
-`false`. The handler's `defineProperty` trap runs for `Reflect.defineProperty(p, k,
-attributes)`, and `Reflect.set(t, k, v, p)` with a proxy `p` as the receiver runs `p`'s
+`false` (and a data property's `value` `undefined`). The handler's `defineProperty` trap runs
+for `Reflect.defineProperty(p, k, attributes)`, and `Reflect.set(t, k, v, p)` with a proxy `p` as the receiver runs `p`'s
 `getOwnPropertyDescriptor` and `defineProperty` traps, as Node does. `Reflect.defineProperty`
 of a plain value writes the value of an existing property; a new property, whose attributes
 left out are `false`, is a `TypeError` naming #823. `delete x.k` through `any` and
 `Reflect.deleteProperty(x, k)` of a value that is not a proxy remove a `Record`'s entry and make
-an optional field absent; a key the value doesn't have as its own (a class's methods are on its
-prototype) gives `true`, and an array's `length` gives `false` (`delete a.length` throws Node's
+an object type's optional field absent; a key the value doesn't have as its own (a class's
+methods are on its prototype) gives `true`, and an array's `length` gives `false` (`delete a.length` throws Node's
 `TypeError: Cannot delete property 'length' of [object Array]`). A field the value's type fixes
-can't be removed: that is a `TypeError` naming #823. Deleting a string's `length` or one of its
+and a class's field (an own property even when optional) can't be removed: that is a
+`TypeError` naming #823. Deleting a string's `length` or one of its
 characters throws Node's `TypeError: Cannot delete property '0' of [object String]`; another key
 of a string, and any key of a number or a boolean, gives `true`.
 
@@ -2517,11 +2518,19 @@ as Node does (the callbacks get the element, its index and the proxy; a `thisArg
 on yet; `map`, `filter` and `slice` give a new plain array): every read of `length` or of an element, every write (`set`), `in` test
 (`has`) and delete (`deleteProperty`) goes through the traps, in Node's order, and a trap that
 refuses throws Node's `TypeError`. A trap that forwards with `Reflect` reaches the array:
-`Reflect.has(a, "1")` tests an element, `Reflect.deleteProperty(a, k)` of the last element
-removes it, and `Reflect.get(a, "constructor")` (which `splice` reads) is `undefined`. Velt's
-arrays have no holes, so a write past the end fills the gap with the value written (the
-algorithms write the gap right after), and deleting the last element shortens the array, where
-Node leaves an empty slot until the algorithm shortens it. `const hasOwn = Object.prototype.hasOwnProperty`
+`Reflect.has(a, "1")` tests an element, and `Reflect.get(a, "push")` is the method, a
+function to `typeof` and `console.log` (`[Function: push]`; `Reflect.get(a, "constructor")` is
+`[Function: Array]`), so a reactive `get` trap that wraps only objects passes it through and a
+nested reactive array runs it. Called other than on a proxy, such a method is a `TypeError`
+naming #924. While an algorithm runs, the holes it makes behave as in Node: `pop`, `shift` and
+`splice` delete the last elements (`Reflect.deleteProperty`) before they write the shorter
+`length`, and the array keeps its length until then, while `Reflect.get`, `Reflect.has`,
+`Reflect.ownKeys`, `Reflect.getOwnPropertyDescriptor`, `Object.hasOwn` and
+`hasOwnProperty.call` see the deleted elements as gone; `unshift` and `splice` write an element
+past the end, and the gap before it is holes until they fill it. Velt's arrays have no holes
+otherwise: deleting an element that is not past the end (`delete a[i]` through `any`,
+`Reflect.deleteProperty`) outside such an algorithm, and `Reflect.set(a, i, v)` further past the
+end, are `TypeError`s naming #823 and #924. `const hasOwn = Object.prototype.hasOwnProperty`
 reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
