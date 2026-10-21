@@ -15,11 +15,13 @@ use crate::dispatch::{add_work, Pass};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::types::children;
 
-/// How many instances of one generic definition may be nested in each other on one path of a
-/// walk: a generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end,
-/// while the generics of a finite program nest a few levels deep. A result this limit cut short
-/// is not kept.
-const MAX_NESTING: u32 = 64;
+/// How many times the instances of one generic definition may grow on one path of a walk: an
+/// instance counts when its type arguments are larger than those of the nearest instance of the
+/// same definition around it on the path. A generic type that grows as it recurses
+/// (`class A<T> { next: A<T[]> }`) has no end; a chain of distinct types linked through a
+/// wrapper (`Box<C1<K>>` in `C0`, `Box<C2<K>>` in `C1`, …) doesn't grow, however long. A result
+/// this limit cut short is not kept.
+const MAX_GROWTH: u32 = 64;
 
 /// The most types one walk visits, as a last resort for generic types that grow in many ways at
 /// once: far more than a program's types.
@@ -42,7 +44,7 @@ pub(crate) fn keys_in(cx: &mut Ctx, t: TyId, memo: &mut FxHashMap<TyId, Vec<TyId
         }
         let mut generic = None;
         if let TyKind::Adt(d, args) = &kind {
-            generic = (!args.is_empty()).then_some(d.0);
+            generic = (!args.is_empty()).then(|| (d.0, args_size(cx, args)));
             for m in member_types(cx, *d) {
                 parts.push(cx.subst(m, args));
             }
@@ -59,6 +61,24 @@ pub(crate) fn keys_in(cx: &mut Ctx, t: TyId, memo: &mut FxHashMap<TyId, Vec<TyId
     keys
 }
 
+/// How large type arguments `args` are: the number of types written in them, counted up to
+/// [`MAX_SIZE`] (a bound on the work; growth past it is still growth by a later instance).
+fn args_size(cx: &Ctx, args: &[TyId]) -> u32 {
+    let mut n = 0;
+    let mut todo = args.to_vec();
+    while let Some(t) = todo.pop() {
+        n += 1;
+        if n >= MAX_SIZE {
+            break;
+        }
+        todo.extend(children(cx.ty.kind(t)));
+    }
+    n
+}
+
+/// The largest type argument size [`args_size`] counts to.
+const MAX_SIZE: u32 = 1 << 16;
+
 /// Field types of a struct, class or object type; payload types of an enum (generic).
 fn member_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
     match &cx.info[d.0 as usize] {
@@ -74,21 +94,21 @@ struct Look {
     key: Option<TyId>,
     /// The types it contains.
     parts: Vec<TyId>,
-    /// The generic definition it instantiates (with type arguments).
-    generic: Option<u32>,
+    /// The generic definition it instantiates, and how large its type arguments are.
+    generic: Option<(u32, u32)>,
 }
 
 type Step<'s> = dyn FnMut(TyId) -> Look + 's;
 
-/// Where a walk stops: [`MAX_NESTING`] and [`MAX_WALK`] (smaller in the tests).
+/// Where a walk stops: [`MAX_GROWTH`] and [`MAX_WALK`] (smaller in the tests).
 #[derive(Clone, Copy)]
 struct Limits {
-    nesting: u32,
+    growth: u32,
     total: usize,
 }
 
 const LIMITS: Limits = Limits {
-    nesting: MAX_NESTING,
+    growth: MAX_GROWTH,
     total: MAX_WALK,
 };
 
@@ -123,8 +143,9 @@ struct Walk<'a> {
     stack: Vec<TyId>,
     /// Results of this walk that a limit cut short: used in it, never kept.
     cut_short: FxHashMap<TyId, Vec<TyId>>,
-    /// Per generic definition, how many of its instances the path being walked goes through.
-    nested: FxHashMap<u32, u32>,
+    /// Per generic definition, the instances of it on the path being walked, innermost last:
+    /// the size of their type arguments and how often they grew up to there.
+    nested: FxHashMap<u32, Vec<(u32, u32)>>,
     visited: usize,
     limits: Limits,
 }
@@ -158,12 +179,13 @@ impl Walk<'_> {
             return found(vec![], usize::MAX, true);
         }
         let look = step(t);
-        if let Some(g) = look.generic {
-            let depth = self.nested.entry(g).or_default();
-            if *depth >= self.limits.nesting {
+        if let Some((g, size)) = look.generic {
+            let on_path = self.nested.entry(g).or_default();
+            let grown = on_path.last().map_or(0, |&(s, n)| n + u32::from(size > s));
+            if grown >= self.limits.growth {
                 return found(vec![], usize::MAX, true);
             }
-            *depth += 1;
+            on_path.push((size, grown));
         }
         let n = self.visited;
         self.visited += 1;
@@ -195,8 +217,8 @@ impl Walk<'_> {
             }
             f.low = usize::MAX;
         }
-        if let Some(g) = look.generic {
-            *self.nested.entry(g).or_default() -= 1;
+        if let Some((g, _)) = look.generic {
+            self.nested.entry(g).or_default().pop();
         }
         f
     }
@@ -289,7 +311,7 @@ mod tests {
             k => Look {
                 key: (k == n).then_some(TyId(u32::MAX)),
                 parts: vec![],
-                generic: Some(7),
+                generic: Some((7, 1)),
             },
         };
         let mut memo = FxHashMap::default();
@@ -298,24 +320,39 @@ mod tests {
         assert_eq!(memo.len(), n as usize + 1);
     }
 
+    /// A long chain of instances of one generic definition whose arguments don't grow (type k
+    /// holds type k+1, both of argument size 3) is walked completely.
+    #[test]
+    fn chains_through_one_wrapper_are_walked_completely() {
+        let n = 1000;
+        let mut step = |t: TyId| Look {
+            key: (t.0 == n).then_some(TyId(99)),
+            parts: if t.0 < n { vec![TyId(t.0 + 1)] } else { vec![] },
+            generic: Some((1, 3)),
+        };
+        let mut memo = FxHashMap::default();
+        let (keys, visited) = walk(TyId(0), &mut memo, LIMITS, &mut step);
+        assert_eq!((keys, visited), (vec![TyId(99)], n as usize + 1));
+    }
+
     /// A generic type that grows as it recurses (type k holds type k+1, an instance of the same
-    /// definition, without end) is cut short, and its result is not kept: a later walk with
-    /// room is not given it.
+    /// definition with larger arguments, without end) is cut short, and its result is not
+    /// kept: a later walk with room is not given it.
     #[test]
     fn growing_generics_are_cut_short_and_not_kept() {
         let mut step = |t: TyId| Look {
             key: (t.0 == 3).then_some(TyId(99)),
             parts: vec![TyId(t.0 + 1)],
-            generic: Some(1),
+            generic: Some((1, t.0 + 1)),
         };
         let mut memo = FxHashMap::default();
         let (keys, visited) = walk(TyId(0), &mut memo, LIMITS, &mut step);
-        assert_eq!((keys, visited), (vec![TyId(99)], MAX_NESTING as usize));
+        assert_eq!((keys, visited), (vec![TyId(99)], MAX_GROWTH as usize));
         assert!(memo.is_empty(), "{memo:?}");
         // A walk cut short by the total keeps nothing either.
         let g = cycle();
         let tight = Limits {
-            nesting: MAX_NESTING,
+            growth: MAX_GROWTH,
             total: 2,
         };
         assert!(g.keys(0, &mut memo, tight).len() < 3);

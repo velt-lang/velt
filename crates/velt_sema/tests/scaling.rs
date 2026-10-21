@@ -302,6 +302,41 @@ fn wide_types_are_searched_completely() {
     );
 }
 
+/// A chain of `n` distinct generic interfaces, each holding the next in one of `wrappers`
+/// (taken in turn), the last holding a `Record<K, number>`; `g` uses the first with `K` and
+/// `main` instantiates it with `number`, which a record cannot have as a key.
+fn wrapped_chain(n: usize, wrappers: &[&str]) -> String {
+    let mut out: String = wrappers
+        .iter()
+        .map(|w| format!("interface {w}<T> {{\n  v: T;\n}}\n"))
+        .collect();
+    for i in 0..n {
+        let w = wrappers[i % wrappers.len()];
+        out += &format!("interface C{i}<K> {{\n  b: {w}<C{}<K>>;\n}}\n", i + 1);
+    }
+    out += &format!("interface C{n}<K> {{\n  r: Record<K, number>;\n}}\n");
+    out + "function g<K>(): number {\n  const h: C0<K> | null = null;\n  return h === null ? 1 : 2;\n}\n\
+           function main() {\n  console.log(g<number>());\n}\n"
+}
+
+/// The record-key walk follows a chain of distinct types through one generic wrapper (or two
+/// in turn) to its end, however long: a wrapper whose type arguments don't grow is not a
+/// generic type that grows as it recurses (#859).
+#[test]
+fn chains_through_generic_wrappers_are_walked_to_the_end() {
+    for src in [
+        wrapped_chain(70, &["Box"]),
+        wrapped_chain(140, &["Box", "Cell"]),
+    ] {
+        let e = err_src(&src);
+        assert!(e.contains("`f64` cannot be a `Record` key"), "{e}");
+        assert!(
+            e.contains("required because `g` uses it as a `Record` key"),
+            "{e}"
+        );
+    }
+}
+
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
 /// Each try of an arrow checks the arrows nested in it, so the work is quadratic in the depth:

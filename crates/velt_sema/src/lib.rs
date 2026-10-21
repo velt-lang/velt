@@ -37,6 +37,7 @@ mod call_sigs;
 mod callables;
 mod collect;
 mod copy_flow;
+mod copy_types;
 mod creation_notes;
 mod ctx;
 mod defined_props;
