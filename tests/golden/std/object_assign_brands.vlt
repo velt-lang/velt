@@ -1,0 +1,17 @@
+// `Object.assign` copies enumerable symbol-keyed fields, onto interface-typed targets too (#1299).
+const K: unique symbol = Symbol("k");
+const H: unique symbol = Symbol("h");
+
+interface Tag {
+  a: number;
+}
+
+const o: Tag = { a: 1 };
+Object.defineProperty(o, K, { value: true, enumerable: true });
+Object.defineProperty(o, H, { value: "hidden" });
+const t: Tag = { a: 0 };
+Object.assign(t, o);
+const plain: Tag = { a: 2 };
+const u: Tag = { a: 0 };
+Object.assign(u, plain);
+console.log(t, K in t, H in t, u, K in u);
