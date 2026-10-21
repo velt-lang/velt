@@ -1,0 +1,134 @@
+// Prelude: the array methods `push`, `pop`, `shift`, `unshift` and `splice` called on a proxy
+// (issue #823; docs/reference/types.md "Proxy and Reflect").
+//
+// `p.push(x)` on a proxy reads `push` through the `get` trap. When the trap forwards to an array
+// (`Reflect.get(target, key, receiver)`), the method it reads is an `__ArrayMethod`, and the call
+// runs the method's generic algorithm from the ECMAScript specification with the proxy as `this`
+// (`Proxy.__arrayCall`, which velt_vir's proxy call slot calls): every read of `length` or of an
+// element, every write, `in` test and delete goes through the traps, in Node's order.
+//
+// The file name sorts last, so the prelude modules before it keep their indexes.
+
+/**
+ * An array method read through a proxy (`Reflect.get(array, "push")`): calling it on a proxy
+ * runs the method on the proxy.
+ */
+export class __ArrayMethod {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+/** Is `key` an array method a proxy runs generically (`__ArrayMethod`)? */
+export function __proxyArrayMethod(key: string): boolean {
+  return key === "push" ||
+    key === "pop" ||
+    key === "shift" ||
+    key === "unshift" ||
+    key === "splice";
+}
+
+/** JavaScript's `ToIntegerOrInfinity` of an argument (a number; anything else is 0). */
+function arrayInt(v: any): number {
+  if (typeof v !== "number") {
+    return 0;
+  }
+  const n = v as number;
+  if (n !== n) {
+    return 0;
+  }
+  return n < 0 ? -Math.floor(-n) : Math.floor(n);
+}
+
+/** `Set(O, key, v, true)` through the proxy `p`: a trap answering `false` is Node's `TypeError`. */
+function arraySet(p: Proxy, o: any, key: string, v: any): void {
+  if (!p.__set(key, v, o)) {
+    panic(`TypeError: 'set' on proxy: trap returned falsish for property '${key}'`);
+  }
+}
+
+/** Moves element `from` to `to` (`has`, then `get` and `set`, or `deleteProperty`). */
+function arrayMove(p: Proxy, o: any, from: number, to: number): void {
+  const f = `${from}`;
+  const t = `${to}`;
+  if (p.__has(f)) {
+    arraySet(p, o, t, p.__get(f, o));
+  } else {
+    p.__delete(t);
+  }
+}
+
+/**
+ * `Array.prototype[name].apply(o, args)` for the proxy `p` of an array, `o` its receiver: each
+ * method is the steps of `splice` that its own algorithm takes in the same order.
+ */
+export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
+  const n = arrayInt(p.__get("length", o));
+  const len = n < 0 ? 0 : n;
+  const none: any[] = [];
+  if (name === "push") {
+    proxySplice(p, o, len, len, 0, args, 0, false);
+    return len + (args.length as number);
+  }
+  if (name === "unshift") {
+    proxySplice(p, o, len, 0, 0, args, 0, false);
+    return len + (args.length as number);
+  }
+  if (name === "pop" || name === "shift") {
+    const at = name === "pop" && len > 0 ? len - 1 : 0;
+    const removed = proxySplice(p, o, len, at, len > 0 ? 1 : 0, none, 0, false);
+    return len > 0 ? removed[0] : undefined;
+  }
+  const argc = args.length as number;
+  const rel = argc > 0 ? arrayInt(args[0]) : 0;
+  const start = rel < 0 ? Math.max(len + rel, 0) : Math.min(rel, len);
+  let count = argc == 1 ? len - start : 0;
+  if (argc > 1) {
+    count = Math.min(Math.max(arrayInt(args[1]), 0), len - start);
+  }
+  return proxySplice(p, o, len, start, count, args, 2, true);
+}
+
+/**
+ * Removes `count` elements at `start` from the proxy `p` (length `len`) and inserts
+ * `items[from..]` there, through the traps; the removed elements. `splice` reads the
+ * constructor (ArraySpeciesCreate) and tests each removed element with `has` first.
+ */
+function proxySplice(
+  p: Proxy,
+  o: any,
+  len: number,
+  start: number,
+  count: number,
+  items: any[],
+  from: number,
+  splice: boolean,
+): any[] {
+  const n = (items.length as number) > from ? (items.length as number) - from : 0;
+  if (splice) {
+    p.__get("constructor", o);
+  }
+  const removed: any[] = [];
+  for (let k = 0; k < count; k++) {
+    const key = `${start + k}`;
+    removed.push(!splice || p.__has(key) ? p.__get(key, o) : undefined);
+  }
+  if (n < count) {
+    for (let k = start; k < len - count; k++) {
+      arrayMove(p, o, k + count, k + n);
+    }
+    for (let k = len; k > len - count + n; k--) {
+      p.__delete(`${k - 1}`);
+    }
+  }
+  for (let k = len - count; k > start && n > count; k--) {
+    arrayMove(p, o, k + count - 1, k + n - 1);
+  }
+  for (let i = 0; i < n; i++) {
+    arraySet(p, o, `${start + i}`, items[i + from]);
+  }
+  arraySet(p, o, "length", len - count + n);
+  return removed;
+}

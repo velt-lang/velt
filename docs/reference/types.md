@@ -2397,7 +2397,18 @@ typed `any` (`new Proxy(t, handler as any)`) works too: its traps are called thr
 `JSON.stringify` of a proxy reads it through its traps in Node's order (`toJSON`, then the
 keys, whether each is enumerable and their values; an array target's `length` and elements).
 `Object.keys(s)` and `for (k in s)` of a typed proxy `s` run its `ownKeys` and
-`getOwnPropertyDescriptor` traps, as in Node. `const hasOwn = Object.prototype.hasOwnProperty`
+`getOwnPropertyDescriptor` traps, as in Node.
+
+`p.push(…)`, `p.pop()`, `p.shift()`, `p.unshift(…)` and `p.splice(…)` on a proxy of an array
+read the method through the `get` trap and run JavaScript's generic algorithm with the proxy as
+`this`, as Node does: every read of `length` or of an element, every write (`set`), `in` test
+(`has`) and delete (`deleteProperty`) goes through the traps, in Node's order, and a trap that
+refuses throws Node's `TypeError`. A trap that forwards with `Reflect` reaches the array:
+`Reflect.has(a, "1")` tests an element, `Reflect.deleteProperty(a, k)` of the last element
+removes it, and `Reflect.get(a, "constructor")` (which `splice` reads) is `undefined`. Velt's
+arrays have no holes, so a write past the end fills the gap with the value written (the
+algorithms write the gap right after), and deleting the last element shortens the array, where
+Node leaves an empty slot until the algorithm shortens it. `const hasOwn = Object.prototype.hasOwnProperty`
 reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
@@ -2466,12 +2477,11 @@ function main(): void {
 **Planned** (#823): a symbol known only at run time as the key of `o[k]` on an `any` (a trap
 answering one through `Reflect` works); a spread of a typed proxy (a `TypeError`); a completed
 descriptor's `value: undefined` (an optional `any` field cannot hold a present `undefined`,
-#930); array methods (`push`, `splice`, ...) and `length` writes through a proxy of an array;
-an interface value as a `WeakMap` key;
+#930); the other array methods through a proxy of an array (`map`, `includes`, ...);
 an `ownKeys` trap answering an array-like object that is not an array; deleting a fixed field,
-an array element or a symbol-keyed member through `any` from a value that is not a proxy, and
-`Reflect.defineProperty` of a plain value with
-accessors or attributes other than `true`; proxies typed
+an array element other than the last or a symbol-keyed member through `any` from a value
+that is not a proxy, and `Reflect.defineProperty` of a plain value with accessors or
+attributes other than `true`; proxies typed
 as an array or a `Record`, and `in` on a typed proxy; a function the `get` trap returns read
 as a value from a function-typed field (`const f = s.$set`), or one it answers for a method name
 of a class; an async method called through a proxy with a `get` trap; a method call through an

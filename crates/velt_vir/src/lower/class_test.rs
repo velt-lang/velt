@@ -49,8 +49,9 @@ impl Cx<'_> {
 
     /// Is `d` one of the prelude's proxy classes (`number_classes`)?
     fn numbered_last(&self, d: DefId) -> bool {
-        use super::any_proxy::{PRELUDE_PROXY, PRELUDE_REFLECT};
-        matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_PROXY || a.name == PRELUDE_REFLECT)
+        use super::any_proxy::{PRELUDE_ARRAY_METHOD, PRELUDE_PROXY, PRELUDE_REFLECT};
+        matches!(self.hir.def(d), hir::Def::Adt(a)
+            if [PRELUDE_PROXY, PRELUDE_REFLECT, PRELUDE_ARRAY_METHOD].contains(&a.name.as_str()))
     }
 
     /// Pre-order ids of every class (from 1), with the last id of each subtree.

@@ -244,10 +244,11 @@ export class Proxy {
    * Whether the handler has no `get`, `set` or `has` trap: then a method call through this
    * proxy is the call on the target (`__target`), since the method's reads and writes of `this`
    * could not tell the difference. (The key traps, `ownKeys`, `deleteProperty`, ..., don't run
-   * for a method call.)
+   * for a method call.) An array target's methods run through the proxy (`__arrayCall`).
    */
   __plain(): boolean {
-    return this.#handler.get == null && this.#handler.set == null && this.#handler.has == null;
+    const h = this.#handler;
+    return h.get == null && h.set == null && h.has == null && !Array.isArray(this.#target);
   }
 
   /**
@@ -350,42 +351,33 @@ export class Proxy {
       );
     }
     const out: (string | symbol)[] = [];
-    const strings = new Map<string, boolean>();
-    const symbols: symbol[] = [];
     for (const k of res) {
+      let key: string | symbol = "";
       if (typeof k === "string") {
-        const s = k as string;
-        if (strings.has(s)) {
-          panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
-        }
-        strings.set(s, true);
-        out.push(s);
+        key = k as string;
       } else if (typeof k === "symbol") {
-        const y = k as symbol;
-        if (symbols.includes(y)) {
-          panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
-        }
-        symbols.push(y);
-        out.push(y);
+        key = k as symbol;
       } else {
         panic(`TypeError: ${proxyNameText(k)} is not a valid property name`);
       }
+      if (out.includes(key)) {
+        panic("TypeError: 'ownKeys' on proxy: trap returned duplicate entries");
+      }
+      out.push(key);
     }
     // The target's keys that are not configurable must be listed (an array's `length`); Node
-    // reads them after the trap, observably when the target is a proxy.
+    // reads them all after the trap, observably when the target is a proxy.
     const target = this.#target;
     if (target instanceof Proxy || Array.isArray(target)) {
-      const fixed: (string | symbol)[] = [];
+      let missing: string | null = null;
       for (const tk of Reflect.ownKeys(target)) {
         const t = Reflect.getOwnPropertyDescriptor(target, tk);
-        if (t !== undefined && t.configurable !== true) {
-          fixed.push(tk);
+        if (missing === null && t !== undefined && t.configurable !== true && !out.includes(tk)) {
+          missing = proxyKeyText(tk);
         }
       }
-      for (const tk of fixed) {
-        if (!out.includes(tk)) {
-          panic(`TypeError: 'ownKeys' on proxy: trap result did not include '${proxyKeyText(tk)}'`);
-        }
+      if (missing !== null) {
+        panic(`TypeError: 'ownKeys' on proxy: trap result did not include '${missing}'`);
       }
     }
     return out;
@@ -543,20 +535,22 @@ export class Proxy {
       }
       return items;
     }
-    const keys: string[] = [];
-    for (const k of this.__ownKeys()) {
-      if (typeof k === "string") {
-        const d = this.__getOwnPropertyDescriptor(k);
-        if (d !== undefined && d.enumerable === true) {
-          keys.push(k);
-        }
-      }
-    }
     const out: Record<string, any> = {};
-    for (const k of keys) {
+    for (const k of this.__keys()) {
       out[k] = this.__get(k, self);
     }
     return out;
+  }
+
+  /**
+   * `p.m(...args)` where the `get` trap answered an array method `m` (`__ArrayMethod`, velt_vir's
+   * proxy call slot): the method's generic algorithm with `receiver` (the proxy) as `this`.
+   */
+  __arrayCall(m: any, args: any[], receiver: any): any {
+    if (m instanceof __ArrayMethod) {
+      return __proxyArrayCall(this, m.name, args, receiver);
+    }
+    return undefined;
   }
 
   /** `Object.hasOwn(p, key)`: whether `__getOwnPropertyDescriptor` finds the property. */
@@ -585,6 +579,15 @@ export class Reflect {
       }
       // `toJSON` (what `JSON.stringify` asks for): an array has none.
       if (key === "toJSON") {
+        return undefined;
+      }
+      // A method that a call on a proxy runs through the proxy (`__arrayCall`).
+      if (__proxyArrayMethod(key)) {
+        return new __ArrayMethod(key);
+      }
+      // What `splice` reads to make its result (Node's `Array`; Velt has no constructor
+      // values yet): `undefined`, for which the result is an array too.
+      if (key === "constructor") {
         return undefined;
       }
     }
@@ -617,6 +620,11 @@ export class Reflect {
     if (typeof key === "string" && Array.isArray(target)) {
       const i = proxyIndex(key);
       if (i >= 0) {
+        // Velt's arrays have no holes: a write past the end fills the gap with the value (a
+        // generic array method run on a proxy writes the gap's elements right after).
+        while ((target.length as number) < i) {
+          target[target.length] = value;
+        }
         target[i] = value;
         return true;
       }
@@ -640,6 +648,13 @@ export class Reflect {
         return target.__has(key);
       }
       return plainKey(key) in target;
+    }
+    // An array element named by its string (`"1"`), as a `has` trap passes it on.
+    if (typeof key === "string" && Array.isArray(target)) {
+      const i = proxyIndex(key);
+      if (i >= 0) {
+        return i < (target.length as number);
+      }
     }
     return key in target;
   }
@@ -752,6 +767,21 @@ function proxyDeletePlain(o: any, k: string | symbol): boolean {
     panic(
       "TypeError: deleting a symbol-keyed property of this value through `any` is not supported yet (#823)",
     );
+  }
+  // Velt's arrays have no holes: an element past the end is not there, and the last one goes
+  // (as `pop`, `shift` and `splice` delete it before they shorten the array).
+  if (Array.isArray(o)) {
+    const i = proxyIndex(k as string);
+    if (i >= 0) {
+      const n = o.length as number;
+      if (i >= n) {
+        return true;
+      }
+      if (i == n - 1) {
+        o.length = i;
+        return true;
+      }
+    }
   }
   return __intrinsic_any_delete(o, k as string);
 }
