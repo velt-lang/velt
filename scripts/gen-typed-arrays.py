@@ -127,7 +127,9 @@ export function layout(
     // The same kind: the bytes, copied.
     const o = arg.off as i64;
     const bytes = arg.buf.bytes.slice(o, o + ((arg.len * size) as i64));
-    return { buf: ArrayBuffer.adopt(bytes), off: 0, len: arg.len, values: null };
+    // The length of what was copied, not `arg.len`: `__kind` is a method a subclass may
+    // override, and a view's elements must lie in its buffer (typed_array/buffer `element*`).
+    return { buf: ArrayBuffer.adopt(bytes), off: 0, len: (bytes.length as usize) / size, values: null };
   }
   const xs = elementsOf(arg);
   const n = xs.length as usize;
