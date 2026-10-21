@@ -274,11 +274,13 @@ impl Types {
         let m = |s: &mut Self, x: TyId| s.without_error_types(x);
         let nk = match k {
             TyKind::Promise(v, _) => TyKind::Promise(m(self, v), error),
-            TyKind::FnPtr { params, ret, .. } => TyKind::FnPtr {
+            TyKind::FnPtr {
+                params, ret, rest, ..
+            } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: error,
-                rest: false,
+                rest,
             },
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),

@@ -90,7 +90,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
-                    rest: false,
+                    rest,
                 });
                 (trial, found)
             }
@@ -106,7 +106,7 @@ impl FnCx<'_, '_> {
                     params,
                     ret,
                     throws,
-                    rest: false,
+                    rest,
                 });
                 (trial, h.ty)
             }
