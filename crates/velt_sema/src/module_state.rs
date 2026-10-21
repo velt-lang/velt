@@ -189,6 +189,15 @@ fn evaluates(module: &crate::SourceModule, spec: &str) -> bool {
     })
 }
 
+/// Does `e` read a module `let` directly?
+pub(crate) fn reads_state(cx: &Ctx, e: &hir::Expr) -> bool {
+    let mut found = false;
+    reads(e, &mut |d, _| {
+        found |= cx.global(d).is_some_and(|g| g.mutable);
+    });
+    found
+}
+
 /// Every module global `e` reads directly.
 fn reads(e: &hir::Expr, f: &mut dyn FnMut(DefId, velt_common::Span)) {
     let mut e = e.clone();

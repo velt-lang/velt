@@ -185,6 +185,15 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
     let mut stored = mutable || kept;
+    // A top-level constant that reads a module `let` (or a property of `globalThis`) holds
+    // the value it had when Node evaluated the constant, once: evaluated at each use, it would
+    // see later writes. Kept in the module state, it is evaluated in Node's order instead.
+    if let (Some(i), false) = (&init, stored) {
+        let top_level = owner.is_none() && !cx.modules[module].is_std;
+        if top_level && ty != cx.ty.error && crate::module_state::reads_state(cx, i) {
+            stored = true;
+        }
+    }
     if let (Some(i), false) = (&init, stored) {
         let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
         let cycles = cx.global_cycles;
