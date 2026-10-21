@@ -268,10 +268,13 @@ impl<'a> Expander<'a> {
             {
                 Ok(())
             }
-            Some(_) => Err((
-                f.span,
-                format!("field `{}` has another type in another part", f.name.name),
-            )),
+            Some(g) => {
+                let why = match (type_key(&g.ty), type_key(&f.ty)) {
+                    (Some(_), Some(_)) => "has another type in another part",
+                    _ => "is in two parts, and its types can't be compared",
+                };
+                Err((f.span, format!("field `{}` {why}", f.name.name)))
+            }
         }
     }
 }
@@ -293,6 +296,22 @@ fn type_key(t: &ast::TypeExpr) -> Option<String> {
         K::Tuple(ts) => format!("[{}]", all(ts, ",")?),
         K::Union(ts) => format!("({})", all(ts, "|")?),
         K::Intersection(ts) => format!("({})", all(ts, "&")?),
+        K::Function {
+            params,
+            ret,
+            throws,
+            rest,
+        } => {
+            let th = match throws {
+                Some(t) => type_key(t)?,
+                None => String::new(),
+            };
+            format!(
+                "({}{rest})=>{} throws {th}",
+                all(params, ",")?,
+                type_key(ret)?
+            )
+        }
         K::Literal(l) => format!("{l:?}"),
         K::Null => "null".into(),
         K::Undefined => "undefined".into(),
@@ -314,9 +333,9 @@ fn type_key(t: &ast::TypeExpr) -> Option<String> {
 /// The type aliases among `items` on a cycle of aliases naming each other (or themselves), by
 /// the cycle: Tarjan's strongly connected components, without recursion, in time linear in the
 /// aliases and the names they mention (an alias's own type parameters are not names of
-/// aliases). Only cycles of aliases that are object types, intersections or names of other
-/// types count: one through a union (`type Json = string | Json[]`) is
-/// `recursive_unions`'s, and stays so.
+/// aliases). An object or intersection alias that names itself counts; another alias only on
+/// a cycle of aliases that are object types, intersections or names of other types: one
+/// through a union (`type Json = string | Json[]`) is `recursive_unions`'s, and stays so.
 fn cyclic_aliases(items: &[ast::Item]) -> FxHashMap<&str, usize> {
     let aliases: Vec<&ast::TypeAlias> = items
         .iter()
@@ -392,12 +411,20 @@ fn cyclic_aliases(items: &[ast::Item]) -> FxHashMap<&str, usize> {
                     }
                 }
                 let cycle = component.len() > 1 || edges[v].contains(&v);
-                if cycle && component.iter().all(|&w| object(aliases[w])) {
-                    cyclic.extend(
-                        component
-                            .iter()
-                            .map(|&w| (aliases[w].name.name.as_str(), v)),
-                    );
+                let objects = component.iter().all(|&w| object(aliases[w]));
+                // An object alias naming itself counts whatever else its cycle holds (a
+                // `Visitor = (t: Tree) => void`); the others only on a cycle of object aliases.
+                let names_itself = |w: usize| {
+                    matches!(
+                        aliases[w].ty.kind,
+                        ast::TypeExprKind::Object(_) | ast::TypeExprKind::Intersection(_)
+                    ) && edges[w].contains(&w)
+                };
+                for &w in component
+                    .iter()
+                    .filter(|&&w| cycle && (objects || names_itself(w)))
+                {
+                    cyclic.insert(aliases[w].name.name.as_str(), v);
                 }
             }
         }
