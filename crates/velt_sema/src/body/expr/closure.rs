@@ -197,6 +197,9 @@ impl FnCx<'_, '_> {
         } else if let Some(h) = self.declared_member_callback(e, exp) {
             return h;
         }
+        if let Some(h) = self.rest_shape_callback(e, exp) {
+            return h;
+        }
         let await_body = self.await_body == Some(e.span) && *is_async;
         if await_body {
             self.await_body = None;
@@ -212,7 +215,14 @@ impl FnCx<'_, '_> {
             throws: exp_throws,
             rest: exp_rest,
         } = self.expected_fn(exp, is_async);
-        let Some(rest) = self.closure_rest(params, exp_params.as_deref(), exp_rest) else {
+        let rest = match self.packed_rest == Some(span) {
+            true => {
+                self.packed_rest = None;
+                Some(false)
+            }
+            false => self.closure_rest(params, exp_params.as_deref(), exp_rest),
+        };
+        let Some(rest) = rest else {
             return self.error_expr(span);
         };
         let declared_err = match throws {
