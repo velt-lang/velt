@@ -269,7 +269,7 @@ impl Loader<'_, '_> {
                 .declared(parsed.ambient, file, parsed.is_module);
             parsed.module
         };
-        import_meta::fill(&mut ast, path, canonical == "main");
+        import_meta::fill(&mut ast, path);
         let index = self.modules.len();
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {

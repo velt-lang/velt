@@ -1,7 +1,0 @@
-dirname,filename,main,resolve,url
-true false true function
-true
-true
-node:fs file:///abs/x.js
-true
-true true

@@ -22,16 +22,10 @@
   only; using one as a value is an error. Types are compile-time only either way, so this
   changes no code, as in TypeScript.
 - `import "…";` loads a module without binding names.
-- `import.meta` describes the module, as in Node, with Node's keys in Node's order:
-  `import.meta.dirname` is the source file's directory, `import.meta.filename` its absolute
-  path, `import.meta.main` is `true` in the program's root module (the file `velt run` or
-  `velt build` is given) and `false` in the others, `import.meta.resolve(specifier)` resolves a
-  specifier against the module's URL, and `import.meta.url` is the file's `file:` URL. They are
-  fixed while compiling, so they name the source file, not the built program, wherever it runs.
-  `resolve` returns a URL (`node:fs`) as it is and joins a relative or absolute path
-  (`./data.json`, `/etc/hosts`) to the module's directory, without checking that the file
-  exists, as Node does; a package name throws (`Cannot find package 'x' imported from …`),
-  since packages are compiled into the program rather than looked up while it runs. `import.meta` used as a value of its own (`const m = import.meta`,
+- `import.meta` describes the module, as in Node: `import.meta.url` is its source file's
+  `file:` URL, `import.meta.filename` the file's absolute path and `import.meta.dirname` its
+  directory. They are fixed while compiling, so they name the source file, not the built
+  program, wherever it runs. `import.meta` used as a value of its own (`const m = import.meta`,
   `return import.meta`) is a copy of the object. Its fields are read-only, also through a
   copy (`m.url = "x"` is an error, as `import.meta.url = "x"` is).
 - A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with

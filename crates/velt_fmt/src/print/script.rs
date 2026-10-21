@@ -33,11 +33,6 @@ pub(super) fn entries(module: &Module) -> Vec<Top<'_>> {
             ItemKind::Var(v)
                 if matches!(&v.pattern.kind, PatternKind::Ident(n)
                     if n.name == velt_syntax::ast::IMPORT_META) => {}
-            // And the import of the function its `resolve` calls.
-            ItemKind::Import(i)
-                if i.from == velt_syntax::ast::IMPORT_META_MODULE
-                    && matches!(i.names.as_slice(), [n]
-                        if n.name.name == velt_syntax::ast::IMPORT_META_RESOLVE_FN) => {}
             _ => out.push(Top::Item(item)),
         }
     }

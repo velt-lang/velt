@@ -233,19 +233,6 @@ mod tests {
         assert_eq!(entries[1].path, root.join("fs.vlt"));
     }
 
-    /// The real std: modules marked internal, such as the one the parser imports for
-    /// `import.meta.resolve`, are not offered.
-    #[test]
-    fn std_internal_modules_are_not_offered() {
-        let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
-        let entries = std_module_entries(&std_root);
-        let specs: Vec<&str> = entries.iter().map(|e| e.spec.as_str()).collect();
-        assert!(specs.contains(&"velt:fs"), "{specs:?}");
-        for internal in ["velt:import_meta", "velt:net_bytes"] {
-            assert!(!specs.contains(&internal), "{internal} offered: {specs:?}");
-        }
-    }
-
     #[test]
     fn lists_dependency_modules() {
         let tmp = tempfile::tempdir().unwrap();
