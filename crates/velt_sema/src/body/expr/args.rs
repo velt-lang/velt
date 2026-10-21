@@ -94,6 +94,9 @@ impl FnCx<'_, '_> {
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
         let weak_key = std::mem::take(&mut self.weak_key_args);
+        let explicit = std::mem::take(&mut self.explicit_type_spans)
+            .filter(|(at, _)| *at == span)
+            .map_or_else(Vec::new, |(_, s)| s);
         let expanded;
         let args = match self.expand_spreads(c, args, span) {
             Ok(Some(a)) => {
@@ -149,8 +152,14 @@ impl FnCx<'_, '_> {
         // error about inferring them.
         let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
         self.default_slots(c, &mut slots);
-        let sites: Vec<super::constraints::ArgSite> = (c.params.iter().zip(&checked))
-            .map(|(p, h)| (p.ty, h.ty, h.span))
+        // An explicit type argument is where its slot's bound is checked; then the arguments.
+        let typed = explicit.iter().filter_map(|&(k, s)| {
+            let t = slots.get(k).copied().flatten()?;
+            Some((self.cx.ty.param(k as u32), t, s))
+        });
+        let typed: Vec<super::constraints::ArgSite> = typed.collect();
+        let sites: Vec<super::constraints::ArgSite> = (typed.into_iter())
+            .chain((c.params.iter().zip(&checked)).map(|(p, h)| (p.ty, h.ty, h.span)))
             .collect();
         let type_args = self.solve_slots(c, &slots, quiet, span, &sites);
         let before = self.cx.diags.len();

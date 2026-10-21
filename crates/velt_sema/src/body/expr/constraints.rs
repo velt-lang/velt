@@ -72,8 +72,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Report when type argument `t` of slot `k` of `c` breaks the slot's type bound (false),
-    /// at the first argument of a parameter `Param(k)` whose own type breaks it (the `"w"` of
-    /// `swap(p, "x", "w")`), else at the call.
+    /// at the explicit type argument, else the first argument of a parameter `T` (or `t?: T`)
+    /// whose own type breaks it (the `"w"` of `swap(p, "x", "w")`), else at the call.
     fn check_constraint(
         &mut self,
         c: &Callable,
@@ -90,10 +90,9 @@ impl FnCx<'_, '_> {
         if self.constraint_holds(t, bound) {
             return true;
         }
-        let at = sites.iter().find(|&&(p, a, _)| {
-            matches!(self.cx.ty.kind(p), TyKind::Param(j) if *j as usize == k)
-                && !self.constraint_holds(a, bound)
-        });
+        let at = sites
+            .iter()
+            .find(|&&(p, a, _)| self.slot_param(p) == Some(k) && !self.constraint_holds(a, bound));
         let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
         let tn = self.cx.display(t);
         let bn = self.cx.display(bound);
@@ -139,7 +138,7 @@ impl FnCx<'_, '_> {
 
     /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
     /// of the known ones (`sites`: each argument's parameter type, type and span). A slot whose
-    /// type bound is broken is an error type.
+    /// bound (an interface or a type) is broken is an error type.
     pub(super) fn solve_slots(
         &mut self,
         c: &Callable,
@@ -152,17 +151,23 @@ impl FnCx<'_, '_> {
         if !quiet {
             self.report_uninferred(c, slots, span);
         }
-        for (k, s) in slots.iter().enumerate() {
+        // A broken slot is an error type in the bounds of the later ones too (no `keyof f64`
+        // from `K extends keyof T` once `T extends object` failed).
+        let mut known = slots.to_vec();
+        let slots = &mut known;
+        for k in 0..slots.len() {
+            let s = slots[k];
             let name = c
                 .slot_names
                 .get(k)
                 .cloned()
                 .unwrap_or_else(|| format!("T{k}"));
-            let Some(t) = *s else {
+            let Some(t) = s else {
                 out.push(self.cx.ty.error);
                 continue;
             };
             let bounds = c.bounds.get(k).cloned().unwrap_or_default();
+            let mut ok = true;
             for b in bounds {
                 let b = Bound {
                     iface: b.iface,
@@ -174,6 +179,13 @@ impl FnCx<'_, '_> {
                 };
                 let in_scope = self.bounds.clone();
                 if !self.cx.satisfies(t, &b, &in_scope) {
+                    ok = false;
+                    // At the first argument (or explicit type argument) of the slot that
+                    // breaks the bound, as `tsc` reports `getA(5, "x")` at `5`.
+                    let at = sites.iter().find(|&&(p, a, _)| {
+                        self.slot_param(p) == Some(k) && !self.cx.satisfies(a, &b, &in_scope)
+                    });
+                    let (t, span) = at.map_or((t, span), |&(_, a, s)| (a, s));
                     let tn = self.cx.display(t);
                     let bn = self
                         .cx
@@ -203,13 +215,26 @@ impl FnCx<'_, '_> {
                     self.cx.error(d);
                 }
             }
-            // A call breaking a constraint is not instantiated (no errors from its body).
-            match self.check_constraint(c, k, t, (slots, sites), &name, span) {
+            // A call breaking a bound is not instantiated (no errors from its body or from the
+            // types of its signature).
+            match ok && self.check_constraint(c, k, t, (slots, sites), &name, span) {
                 true => out.push(t),
-                false => out.push(self.cx.ty.error),
+                false => {
+                    out.push(self.cx.ty.error);
+                    slots[k] = Some(self.cx.ty.error);
+                }
             }
         }
         out
+    }
+
+    /// The slot of a parameter of type `T` or `T | undefined` (`t?: T`).
+    fn slot_param(&self, p: TyId) -> Option<usize> {
+        let p = self.cx.ty.opt_payload(p).unwrap_or(p);
+        match *self.cx.ty.kind(p) {
+            TyKind::Param(j) => Some(j as usize),
+            _ => None,
+        }
     }
 
     /// Does `t` satisfy type bound `bound`? A type parameter of the function being checked
