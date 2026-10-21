@@ -1,0 +1,34 @@
+// A type predicate whose type no member of the tested union is or can hold (sigx's
+// `isComputed(children)` on a `JSXChild`): TypeScript narrows to the intersection, which none
+// of these members can be, so the guarded code type-checks (`c.value`) and never runs here.
+interface Computed<T> {
+  readonly value: T;
+}
+
+const computed: unknown[] = [];
+
+function isComputed(value: unknown): value is Computed<unknown> {
+  return computed.indexOf(value) >= 0;
+}
+
+type VNode = { type: string; children: VNode[] };
+type Child = VNode | string | number | boolean | null | undefined | Child[];
+
+function norm(c: Child): string {
+  if (c == null || c === false || c === true) {
+    return "-";
+  }
+  if (isComputed(c)) {
+    return "computed:" + norm(c.value as Child);
+  }
+  if (typeof c === "string" || typeof c === "number") {
+    return String(c);
+  }
+  if (Array.isArray(c)) {
+    return "[" + c.map(norm).join(",") + "]";
+  }
+  return "<" + (c as VNode).type + ">";
+}
+
+console.log(norm(["a", 1, [true, null], { type: "div", children: [] }]));
+console.log(norm(undefined), norm(7));

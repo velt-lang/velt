@@ -117,7 +117,7 @@ impl FnCx<'_, '_> {
                 .filter(|m| m == w || Some(*m) == base)
                 .collect();
             if found.is_empty() {
-                return None;
+                return self.unrelated_predicate_facts(l, nullable, u, target, &parts);
             }
             holds.extend(found);
         }
@@ -137,6 +137,58 @@ impl FnCx<'_, '_> {
             }
         }
         Some((t, f))
+    }
+
+    /// Facts of a predicate `v is target` on local `l` (of type `u`, with members `parts`)
+    /// where `target` is an object type no member is or holds (sigx's `isComputed(c)` on a
+    /// `JSXChild`): TypeScript narrows to `u & target`, which none of Velt's closed member
+    /// types can be, so when `true` the local holds none of them (that branch does not run;
+    /// the run-time check makes a lying predicate a `TypeError`), and when `false` it is
+    /// unchanged. `None` (no narrowing) when a member might hold a `target`: an interface
+    /// value, a class instance (a subclass may implement it), or a type that relates to it.
+    fn unrelated_predicate_facts(
+        &mut self,
+        l: LocalId,
+        nullable: bool,
+        u: TyId,
+        target: TyId,
+        parts: &[TyId],
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let object = |cx: &crate::ctx::Ctx, t: TyId| match cx.ty.kind(t) {
+            TyKind::Dyn(..) => cx.dynamic(t).is_none(),
+            // An object type, or an interface with fields only (`Ctx::field_only_of`).
+            TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| {
+                a.kind == crate::hir::AdtKind::Anon || cx.field_only_of.contains_key(d)
+            }),
+            _ => false,
+        };
+        if self.cx.union_def(u).is_none() || !object(self.cx, target) {
+            return None;
+        }
+        for &m in parts {
+            let closed = match self.cx.ty.kind(m) {
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Str
+                | TyKind::Literal(_)
+                | TyKind::Symbol
+                | TyKind::Array(_)
+                | TyKind::Tuple(_) => true,
+                TyKind::Adt(d, _) => self.cx.adt(*d).is_some_and(|a| {
+                    matches!(a.kind, crate::hir::AdtKind::Anon | crate::hir::AdtKind::Struct)
+                }),
+                _ => false,
+            };
+            if !closed || self.cx.satisfies_constraint(m, target) {
+                return None;
+            }
+        }
+        let mut t = vec![Fact::Members(l, vec![])];
+        if nullable {
+            t.push(Fact::NonNull(l));
+        }
+        Some((t, vec![]))
     }
 
     /// The lowered call `call` (at `span`) of a predicate whose result narrows a local in a
