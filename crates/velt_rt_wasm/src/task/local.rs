@@ -283,10 +283,12 @@ unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 unsafe extern "C" fn started_drop(f: *mut VeltFut) {
+    // An error a timer or microtask callback threw (`velt_rt_uncaught_now`) is reported now.
+    let now = NOW.with(|c| c.get().is_some());
     let (done, delivered, result_drop) = {
         let mut s = shared(f).borrow_mut();
         s.detached = true;
-        if s.watched {
+        if s.watched && !(now && s.done) {
             return; // the checkpoint disposes of it (`flush_unhandled`)
         }
         (s.done, s.delivered, s.result_drop)

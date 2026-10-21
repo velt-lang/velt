@@ -316,7 +316,7 @@ declare function velt_rt_uncaught_now();
 // Reports `e` as uncaught and exits 1 at once, as Node does for an error a timer's callback
 // throws (an uncaught exception): the rejection of a promise nothing awaits, reported when it is
 // dropped (velt_rt_uncaught_now). An async callback's rejection ends the process at once too,
-// where Node first runs the microtasks queued before it (an unhandled rejection).
+// where Node first empties the microtask queue (an unhandled rejection).
 function uncaught<E>(e: E) {
   velt_rt_uncaught_now();
   const p = rethrow(e);

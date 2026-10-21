@@ -13,8 +13,9 @@ code around it, as in Node: what it changes is seen afterwards, and what the cre
 changes after `setTimeout` (`xs.push(2)`, `s = "changed"`) is seen by the callback. An error it
 throws is uncaught, as in Node: it is reported (`Uncaught RangeError: …`) and ends the process
 with exit code 1 at the throw, before the microtasks and timers queued after it run (catch inside
-the callback). An `async` callback's rejection ends the process at once too, where Node first
-runs the microtasks queued before it. The same holds for `queueMicrotask(f)`.
+the callback). The same holds for an error a `queueMicrotask(f)` callback throws. An `async`
+callback's rejection ends the process at once too, where Node first empties the microtask queue
+(an unhandled rejection).
 
 - `setTimeout(task: () => Promise<void>, ms): Timer` (`ms` at least 1, like Node:
   `setTimeout(f, 0)` is `setTimeout(f, 1)`), `clearTimeout(t)`, `delay(ms)` (the same as
