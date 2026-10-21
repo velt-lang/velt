@@ -90,13 +90,20 @@ impl FnCx<'_, '_> {
             true => own.fixed,
             false => own.fixed.min(want.fixed),
         };
-        // A function value is called with every parameter (a call by name fills in defaults).
-        let by_name = match &arg.kind {
-            ast::ExprKind::Ident(id) => !self.is_local_name(&id.name),
+        // A call by name, or of a closure `const`, fills in defaults; another function value
+        // is called with every parameter.
+        let fills_defaults = match &arg.kind {
+            ast::ExprKind::Ident(id) => {
+                !self.is_local_name(&id.name) || self.local_closure_const(&id.name).is_some()
+            }
             ast::ExprKind::Member { .. } => true,
             _ => false,
         };
-        let required = if by_name { sig.required } else { own.fixed };
+        let required = if fills_defaults {
+            sig.required
+        } else {
+            own.fixed
+        };
         let args = plan(want, own, passed, required);
         let read = args.may_be_missing();
         let admits =

@@ -2,7 +2,7 @@
 // allows (#943): named parameters for the rest arguments (each missing one is `undefined`,
 // which its type must admit), a rest parameter for fixed arguments (packed into its array, or
 // into a tuple when they have different types), and a function with fixed parameters where a
-// rest function type is expected.
+// rest function type is expected (a closure `const` among them gets its defaults).
 class Bus {
   handlers: ((...args: any[]) => void)[] = [];
   on(name: string, h: (...args: any[]) => void) {
@@ -17,6 +17,11 @@ class Bus {
 
 function call(f: (...xs: number[]) => number): number {
   return f(4, 5, 6);
+}
+
+function onFirst(cb: (x: number, ...more: number[]) => void) {
+  cb(1);
+  cb(1, 5);
 }
 
 function show(a: any, b?: string): string {
@@ -44,4 +49,7 @@ function main() {
   console.log(top(1), top(1, 2));
   const loose: (...xs: any[]) => string = show;
   console.log(loose(), loose(1), loose(1, "b", 3));
+  // A closure `const` fills in its default when the rest argument is missing.
+  const scaled = (a: number, b: number = 2) => console.log("scaled", a * b);
+  onFirst(scaled);
 }
