@@ -132,18 +132,21 @@ pub(super) fn as_const_tuple(e: &ast::Expr) -> Option<Vec<ast::Expr>> {
         ast::ExprKind::Array(elems) if elems.len() > 1 => elems,
         _ => return None,
     };
-    let names: Vec<&'static str> = elems
-        .iter()
-        .map(|x| match &x.kind {
-            ast::ExprKind::Lit(ast::Lit::Str(_)) => Some("string"),
-            ast::ExprKind::Lit(
-                ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. },
-            ) => Some("number"),
-            ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some("boolean"),
-            _ => None,
-        })
-        .collect::<Option<_>>()?;
+    let names: Vec<&'static str> = elems.iter().map(literal_type).collect::<Option<_>>()?;
     (names.iter().any(|n| *n != names[0])).then(|| elems.clone())
+}
+
+/// The type of literal `x` as an element of a tuple `as const` gives it (`"number"` for `1`),
+/// if `x` is a string, number or boolean literal.
+pub(super) fn literal_type(x: &ast::Expr) -> Option<&'static str> {
+    match &x.kind {
+        ast::ExprKind::Lit(ast::Lit::Str(_)) => Some("string"),
+        ast::ExprKind::Lit(
+            ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. },
+        ) => Some("number"),
+        ast::ExprKind::Lit(ast::Lit::Bool(_)) => Some("boolean"),
+        _ => None,
+    }
 }
 
 /// The elements of `[...]` (in parentheses or not) when it has some and they are all string

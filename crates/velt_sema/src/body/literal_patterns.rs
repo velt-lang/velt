@@ -114,13 +114,14 @@ impl FnCx<'_, '_> {
         let tuple_reads;
         let items = match literal_elems(init) {
             Some(items) => items,
-            // `const c = [2, "y"] as const; [b, t] = c;`: `c[0] as number`, `c[1] as string`.
+            // `const c = [2, "y"] as const; [b, t] = c;`: `c[0]` as a `number`, `c[1]` as a
+            // `string`, each read only as far as the pattern goes.
             None => match self.as_const_reads(init) {
-                Some(reads) => {
+                Some(reads) if reads.len() >= elems.len() => {
                     tuple_reads = reads;
-                    &tuple_reads[..]
+                    &tuple_reads[..elems.len()]
                 }
-                None => return false,
+                _ => return false,
             },
         };
         if items.len() < elems.len() || same_kind_literals(items) {
@@ -289,9 +290,11 @@ enum KeyRead {
 }
 
 impl FnCx<'_, '_> {
-    /// The elements of the literal of literals of different types `as const` that the `const`
-    /// variable `c` holds (`Frame::as_const_tuples`): a local of this function or an enclosing
-    /// one, or a module constant.
+    /// The reads of the elements of the literal of literals of different types `as const` that
+    /// the `const` variable `c` holds (`Frame::as_const_tuples`): a local of this function or an
+    /// enclosing one, or a module constant. Each element is read from the array, as its
+    /// literal's type (`c[0] as unknown as number`): the array may have been written through a
+    /// cast, so a value that is no longer of that type stops with a `TypeError`.
     fn as_const_reads(&mut self, init: &Expr) -> Option<Vec<Expr>> {
         let mut e = init;
         while let E::Paren(x) = &e.kind {
@@ -300,21 +303,61 @@ impl FnCx<'_, '_> {
         let E::Ident(name) = &e.kind else {
             return None;
         };
-        // A `const` holding literals: they are read again, as the literal itself.
-        if let Some(local) = self.local_as_const_tuple(&name.name) {
-            return local.map(<[Expr]>::to_vec);
-        }
-        let d = match self.cx.lookup_item(self.module, &name.name) {
-            Some(crate::ctx::Item::Def(d)) => d,
-            _ => return None,
-        };
-        let init = self.cx.global(d).filter(|g| !g.mutable)?.src.init?;
-        match &init.kind {
-            E::Cast { expr, ty } if super::expr::member::is_as_const(ty) => {
-                super::readonly_arrays::as_const_tuple(expr)
+        let elems = match self.local_as_const_tuple(&name.name) {
+            Some(local) => local?.to_vec(),
+            None => {
+                let d = match self.cx.lookup_item(self.module, &name.name) {
+                    Some(crate::ctx::Item::Def(d)) => d,
+                    _ => return None,
+                };
+                let init = self.cx.global(d).filter(|g| !g.mutable)?.src.init?;
+                match &init.kind {
+                    E::Cast { expr, ty } if super::expr::member::is_as_const(ty) => {
+                        super::readonly_arrays::as_const_tuple(expr)?
+                    }
+                    _ => return None,
+                }
             }
-            _ => None,
-        }
+        };
+        let span = e.span;
+        let named = |n: &str| ast::TypeExpr {
+            kind: ast::TypeExprKind::Named {
+                path: vec![ident(n, span)],
+                args: vec![],
+            },
+            span,
+        };
+        let cast = |expr: Expr, ty: ast::TypeExpr| {
+            mk(
+                E::Cast {
+                    expr: Box::new(expr),
+                    ty,
+                },
+                span,
+            )
+        };
+        elems
+            .iter()
+            .enumerate()
+            .map(|(k, x)| {
+                let ty = super::readonly_arrays::literal_type(x)?;
+                let read = mk(
+                    E::Index {
+                        object: Box::new(e.clone()),
+                        index: Box::new(mk(
+                            E::Lit(ast::Lit::Int {
+                                value: k as u128,
+                                suffix: None,
+                            }),
+                            span,
+                        )),
+                        optional: false,
+                    },
+                    span,
+                );
+                Some(cast(cast(read, named("unknown")), named(ty)))
+            })
+            .collect()
     }
 
     /// How the object pattern key `key` reads its property: a computed key `[k]` naming a

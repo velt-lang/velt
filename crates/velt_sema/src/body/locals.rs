@@ -166,8 +166,8 @@ impl FnCx<'_, '_> {
     /// Is `name` a local of this function's frame (no capture is recorded)?
     /// The literal elements of the mixed `[…] as const` the local `name` holds
     /// (`Frame::as_const_tuples`), in this function or an enclosing one: `Some(None)` for a
-    /// local holding anything else, `None` when no local has that name. Nothing is captured:
-    /// the elements are literals, read again where they are needed.
+    /// local holding anything else, `None` when no local has that name. The literals give the
+    /// element types; the values are read from the array.
     pub(crate) fn local_as_const_tuple(&self, name: &str) -> Option<Option<&[ast::Expr]>> {
         let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
         frames.into_iter().find_map(|f| {

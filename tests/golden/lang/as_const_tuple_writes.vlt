@@ -1,0 +1,52 @@
+// check: no leaks
+// Taking apart a mixed `[…] as const` reads the array, so a write made through a cast is seen,
+// in the declaring function, through a capture and for a module constant; each binding keeps
+// its element's type. Expected output: Node's.
+function run(): string {
+  const e = [1, "s"] as const;
+  (e as unknown as (number | string)[])[0] = 7;
+  const [m] = e;
+  return `${m}${e[0]}`;
+}
+console.log(run());
+
+const c = [1, "s"] as const;
+(c as unknown as (number | string)[])[0] = 7;
+const g = () => {
+  const [n] = c;
+  return n;
+};
+console.log(g(), c[0]);
+
+function reversed(): string {
+  const e = [1, "s", 3] as const;
+  (e as unknown as (number | string)[]).reverse();
+  const [a, b, c] = e;
+  return `${a}${b}${c}`;
+}
+console.log(reversed());
+
+const d = [1, "s", true] as const;
+function assigned(): string {
+  const [a, , b] = d;
+  let x: number = 0;
+  let y: string = "";
+  [x, y] = d;
+  return `${a} ${b} ${x + 1} ${y.toUpperCase()}`;
+}
+console.log(assigned());
+
+function captured(): string {
+  const e = [2, "t"] as const;
+  function inner(): string {
+    const [p, q] = e;
+    return `${p + 1}${q}`;
+  }
+  const arrow = () => () => {
+    const [p] = e;
+    return p;
+  };
+  (e as unknown as (number | string)[])[1] = "u";
+  return inner() + arrow()();
+}
+console.log(captured());

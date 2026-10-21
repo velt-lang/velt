@@ -1,0 +1,11 @@
+// A mixed `[…] as const` whose element was overwritten with a value of another type through a
+// cast: taking it apart checks each element against its literal's type. JavaScript would bind
+// the string; Velt stops with a `TypeError`, as other values a type cannot hold.
+function run(): void {
+  const e = [1, "s"] as const;
+  (e as unknown as (number | string)[])[0] = "bad";
+  console.log("before");
+  const [m] = e;
+  console.log(m + 1);
+}
+run();
