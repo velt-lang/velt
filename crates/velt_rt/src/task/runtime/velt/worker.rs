@@ -10,13 +10,21 @@
 //! busy does, even if it sleeps for a moment between its clients' round trips. CPU time, not
 //! wall time: on a loaded machine a worker the OS takes off the core would otherwise look busy
 //! and spread work it can do alone.
+//!
+//! A task that runs on without returning from its poll (a long computation, a busy loop) would
+//! hold back everything else of its worker. The monitor thread ([`monitor`]) notices a poll
+//! that has run for [`STUCK_TICKS`] ticks and does the worker's other duties for it: a turn of
+//! its reactor (its sockets' events and its due timers) and moving the tasks woken meanwhile,
+//! and anything else in its inbox, to a sleeping worker, which becomes their home. So a timer
+//! of `main` still fires while a spawned task computes, as with tokio's work stealing. The
+//! fast path pays one atomic store per poll; while every worker sleeps, so does the monitor.
 
 use super::spread;
 use super::task::{Ran, Task};
 use super::timer::Timers;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -36,6 +44,12 @@ const BACKLOG: usize = 256;
 /// Tasks between checks whether to wake a helper.
 const HELP_INTERVAL: u32 = 16;
 
+/// A worker's reactor: its `mio` poll and the buffer events are read into.
+struct Reactor {
+    poll: mio::Poll,
+    events: mio::Events,
+}
+
 /// A worker as other threads see it.
 pub(super) struct Shared {
     /// Tasks woken or spawned from other threads.
@@ -49,6 +63,14 @@ pub(super) struct Shared {
     waker: mio::Waker,
     pub(super) registry: mio::Registry,
     pub(super) counters: spread::Counters,
+    /// Its reactor: locked by the worker for a turn, and by the monitor while the worker is
+    /// stuck in a poll.
+    reactor: Mutex<Reactor>,
+    /// Its timers (see [`with_timers`]).
+    timers: Mutex<Timers>,
+    /// The monitor's tick when the worker started its current task poll, plus one (0: not in
+    /// a poll).
+    polling_since: AtomicU64,
 }
 
 static WORKERS: OnceLock<Vec<Shared>> = OnceLock::new();
@@ -118,7 +140,6 @@ struct Local {
     /// Waking tasks for I/O and timers (see `schedule`): they collect in `woken`, in order.
     dispatching: Cell<bool>,
     woken: RefCell<Vec<Arc<Task>>>,
-    timers: RefCell<Timers>,
     /// Task polls so far.
     polls: Cell<u64>,
     /// This worker has a trial of a helper going (see [`spread`]).
@@ -148,10 +169,14 @@ pub(super) fn current() -> Option<usize> {
 
 /// Runs `f` with this worker's timer heap (`None` off the workers).
 pub(super) fn with_timers<R>(f: impl FnOnce(Option<&mut Timers>) -> R) -> R {
-    with_local(|l| match l {
-        Some(l) => f(Some(&mut l.timers.borrow_mut())),
+    match current() {
+        Some(i) => f(Some(&mut lock(&workers()[i].timers))),
         None => f(None),
-    })
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Queues `task` on its home worker: this thread's queue when it is that worker, else the
@@ -196,9 +221,9 @@ fn wake(w: &Shared) {
     }
 }
 
-/// Starts `n` workers; each enters the compat bridge's tokio context for its whole life.
+/// Starts `n` workers, each entering the compat bridge's tokio context for its whole life,
+/// and the monitor.
 pub(super) fn start(n: usize) {
-    let mut polls = Vec::with_capacity(n);
     let mut shared = Vec::with_capacity(n);
     for _ in 0..n {
         let poll = mio::Poll::new().unwrap_or_else(|e| fatal(e));
@@ -213,19 +238,30 @@ pub(super) fn start(n: usize) {
             waker,
             registry,
             counters: spread::Counters::new(),
+            reactor: Mutex::new(Reactor {
+                poll,
+                events: mio::Events::with_capacity(256),
+            }),
+            timers: Mutex::new(Timers::default()),
+            polling_since: AtomicU64::new(0),
         });
-        polls.push(poll);
     }
     if WORKERS.set(shared).is_err() {
         return;
     }
-    for (index, poll) in polls.into_iter().enumerate() {
+    for index in 0..n {
         let started = std::thread::Builder::new()
             .name("velt-worker".into())
-            .spawn(move || run(index, poll));
+            .spawn(move || run(index));
         if let Err(e) = started {
             fatal(e);
         }
+    }
+    let started = std::thread::Builder::new()
+        .name("velt-monitor".into())
+        .spawn(monitor);
+    if let Err(e) = started {
+        fatal(e);
     }
 }
 
@@ -233,7 +269,7 @@ fn fatal(e: impl std::fmt::Display) -> ! {
     crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
 }
 
-fn run(index: usize, mut poll: mio::Poll) {
+fn run(index: usize) {
     let _bridge = super::bridge::handle().enter();
     crate::task::runtime::set_worker(index);
     let local = Local {
@@ -241,7 +277,6 @@ fn run(index: usize, mut poll: mio::Poll) {
         queue: RefCell::new(VecDeque::new()),
         dispatching: Cell::new(false),
         woken: RefCell::new(Vec::new()),
-        timers: RefCell::new(Timers::default()),
         polls: Cell::new(0),
         trialing: Cell::new(false),
         window: Cell::new((Instant::now(), thread_cpu(), 0)),
@@ -250,14 +285,17 @@ fn run(index: usize, mut poll: mio::Poll) {
     };
     LOCAL.with(|l| l.set(&local));
     let me = &workers()[index];
-    let mut events = mio::Events::with_capacity(256);
     let mut tick: u32 = 0;
     let mut since_io: u32 = 0;
     loop {
         take_inbox(me, &local);
         let next = local.queue.borrow_mut().pop_front();
         if let Some(task) = next {
-            if let Ran::Again = task.run() {
+            me.polling_since
+                .store(TICKS.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+            let ran = task.run();
+            me.polling_since.store(0, Ordering::Relaxed);
+            if let Ran::Again = ran {
                 local.queue.borrow_mut().push_back(task);
             }
             local.polls.set(local.polls.get() + 1);
@@ -274,7 +312,7 @@ fn run(index: usize, mut poll: mio::Poll) {
             };
             if since_io >= every {
                 since_io = 0;
-                turn(&mut poll, &mut events, &local, Some(Duration::ZERO));
+                turn(me, &local, Some(Duration::ZERO));
             }
             continue;
         }
@@ -288,13 +326,12 @@ fn run(index: usize, mut poll: mio::Poll) {
             me.parked.store(false, Ordering::SeqCst);
             continue;
         }
-        let timeout = local
-            .timers
-            .borrow()
+        let timeout = lock(&me.timers)
             .next_deadline()
             .map(|d| d.saturating_duration_since(Instant::now()));
-        turn(&mut poll, &mut events, &local, timeout);
+        turn(me, &local, timeout);
         me.parked.store(false, Ordering::SeqCst);
+        kick_monitor();
     }
 }
 
@@ -309,17 +346,21 @@ fn take_inbox(me: &Shared, local: &Local) {
 }
 
 /// One reactor turn: waits up to `timeout` for I/O, wakes what is ready, fires due timers.
-fn turn(poll: &mut mio::Poll, events: &mut mio::Events, local: &Local, timeout: Option<Duration>) {
-    if poll.poll(events, timeout).is_err() {
-        events.clear();
-    }
+fn turn(me: &Shared, local: &Local, timeout: Option<Duration>) {
     local.dispatching.set(true);
-    for ev in events.iter() {
-        if ev.token() != WAKE {
-            super::io::dispatch(local.index, ev);
+    {
+        let mut r = lock(&me.reactor);
+        let Reactor { poll, events } = &mut *r;
+        if poll.poll(events, timeout).is_err() {
+            events.clear();
+        }
+        for ev in events.iter() {
+            if ev.token() != WAKE {
+                super::io::dispatch(local.index, ev);
+            }
         }
     }
-    local.timers.borrow_mut().fire(Instant::now());
+    lock(&me.timers).fire(Instant::now());
     local.dispatching.set(false);
     let mut woken = local.woken.borrow_mut();
     let mut queue = local.queue.borrow_mut();
@@ -429,4 +470,100 @@ fn steal(index: usize, local: &Local) -> bool {
         return true;
     }
     false
+}
+
+/// The monitor's clock: ticks of [`TICK`] while some worker is awake.
+static TICKS: AtomicU64 = AtomicU64::new(0);
+/// The monitor's tick.
+const TICK: Duration = Duration::from_millis(1);
+/// Ticks a task poll may run before the monitor does its worker's other duties (see the
+/// module docs): long enough that ordinary polls never meet it.
+const STUCK_TICKS: u64 = 5;
+
+/// The monitor sleeps (all workers asleep) until a worker wakes it.
+static MONITOR: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::sync::Condvar::new());
+static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
+
+/// Wakes the monitor if it sleeps (a worker woke up: its polls need watching).
+fn kick_monitor() {
+    if MONITOR_ASLEEP.load(Ordering::Relaxed) {
+        let (woken, cv) = &MONITOR;
+        *lock(woken) = true;
+        cv.notify_one();
+    }
+}
+
+fn monitor() {
+    loop {
+        let ws = workers();
+        if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
+            let (woken, cv) = &MONITOR;
+            let mut w = lock(woken);
+            MONITOR_ASLEEP.store(true, Ordering::SeqCst);
+            // A worker that woke between the check and here kicks after this store.
+            if ws.iter().all(|w| w.parked.load(Ordering::SeqCst)) {
+                while !*w {
+                    w = cv.wait(w).unwrap_or_else(|e| e.into_inner());
+                }
+            }
+            *w = false;
+            MONITOR_ASLEEP.store(false, Ordering::SeqCst);
+            continue;
+        }
+        std::thread::sleep(TICK);
+        let now = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
+        for (i, w) in ws.iter().enumerate() {
+            let since = w.polling_since.load(Ordering::Relaxed);
+            if since != 0 && now.saturating_sub(since - 1) >= STUCK_TICKS {
+                rescue(i);
+            }
+        }
+    }
+}
+
+/// Does the duties of worker `i`, stuck in a task poll: a turn of its reactor (I/O and due
+/// timers), then its inbox, the tasks that woke, to a sleeping worker that becomes their home.
+/// Pinned tasks stay.
+fn rescue(i: usize) {
+    let ws = workers();
+    let w = &ws[i];
+    if let Ok(mut r) = w.reactor.try_lock() {
+        let Reactor { poll, events } = &mut *r;
+        if poll.poll(events, Some(Duration::ZERO)).is_err() {
+            events.clear();
+        }
+        for ev in events.iter() {
+            if ev.token() != WAKE {
+                super::io::dispatch(i, ev);
+            }
+        }
+    }
+    lock(&w.timers).fire(Instant::now());
+    if w.inbox_len.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let Some(helper) = sleeping_helper(i).or_else(|| (0..ws.len()).find(|&j| j != i)) else {
+        return;
+    };
+    let moved: Vec<Arc<Task>> = {
+        let mut inbox = lock(&w.inbox);
+        let tasks: Vec<_> = inbox.drain(..).collect();
+        let (pinned, moved): (Vec<_>, Vec<_>) = tasks.into_iter().partition(|t| t.pinned);
+        inbox.extend(pinned);
+        w.inbox_len.store(inbox.len(), Ordering::SeqCst);
+        moved
+    };
+    if moved.is_empty() {
+        return;
+    }
+    let h = &ws[helper];
+    {
+        let mut inbox = lock(&h.inbox);
+        for task in moved {
+            task.home.store(helper, Ordering::Relaxed);
+            inbox.push_back(task);
+        }
+        h.inbox_len.store(inbox.len(), Ordering::SeqCst);
+    }
+    wake(h);
 }

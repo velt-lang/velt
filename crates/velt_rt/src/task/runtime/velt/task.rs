@@ -155,9 +155,10 @@ impl<T> Join<T> {
 }
 
 /// The spawned future: runs `fut` and leaves its output (or its panic) in `join`. Dropped
-/// before finishing (aborted, or the process ends), it leaves `Cancelled`.
+/// before finishing (aborted, or the process ends), it drops `fut` and then leaves `Cancelled`,
+/// so whoever awaits the task sees what `fut` owned released.
 struct Body<F: Future> {
-    fut: F,
+    fut: std::mem::ManuallyDrop<F>,
     join: Arc<Join<F::Output>>,
 }
 
@@ -167,7 +168,7 @@ impl<F: Future> Future for Body<F> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         // SAFETY: structural pinning of `fut`; `join` is never moved out.
         let this = unsafe { self.get_unchecked_mut() };
-        let fut = unsafe { Pin::new_unchecked(&mut this.fut) };
+        let fut = unsafe { Pin::new_unchecked(&mut *this.fut) };
         match catch_unwind(AssertUnwindSafe(|| fut.poll(cx))) {
             Ok(Poll::Pending) => Poll::Pending,
             Ok(Poll::Ready(v)) => {
@@ -184,6 +185,8 @@ impl<F: Future> Future for Body<F> {
 
 impl<F: Future> Drop for Body<F> {
     fn drop(&mut self) {
+        // SAFETY: dropped once, here; pinned in place (it is never moved out).
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.fut) };
         if !self.join.done.load(Ordering::Acquire) {
             self.join.set(Err(JoinError::Cancelled));
         }
@@ -202,7 +205,7 @@ where
         waiter: AtomicWaker::new(),
     });
     let body = Body {
-        fut,
+        fut: std::mem::ManuallyDrop::new(fut),
         join: join.clone(),
     };
     let task = Task::new(Box::pin(body), home, pinned);
