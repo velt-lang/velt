@@ -47,6 +47,9 @@ pub(crate) enum Arg {
     Index(usize),
     /// The wrapper's rest arguments from `k` on, spread (`...#args.slice(k)`).
     SpreadFrom(usize),
+    /// An array of these: the wrapped function's own rest parameter as an ordinary parameter
+    /// (`[#arg1, ...#args]`).
+    Pack(Vec<Arg>),
 }
 
 /// How a wrapper calls the function it wraps: with the arguments of `arms[j]` when it got at
@@ -186,6 +189,10 @@ fn arg_expr(a: &Arg, span: Span) -> ast::Expr {
             span,
         ),
         Arg::SpreadFrom(k) => spread(rest_call("slice", *k, span)),
+        Arg::Pack(xs) => synth(
+            ast::ExprKind::Array(xs.iter().map(|x| arg_expr(x, span)).collect()),
+            span,
+        ),
     }
 }
 
