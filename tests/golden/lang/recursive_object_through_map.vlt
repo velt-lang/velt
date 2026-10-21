@@ -1,0 +1,86 @@
+// An object type that holds itself both through a class's type argument (`Map<string, G>`,
+// `Set<A>`) and inline (`G | undefined`, a tuple) is stored behind a pointer, as one that holds
+// itself only inline is (#1391).
+
+interface G {
+  edges: Map<string, G>;
+  next: G | undefined;
+}
+
+type A = { kids: Set<A>; parent: A | null; label: string };
+
+interface W {
+  id: number;
+}
+
+type N = W & { edges: Map<string, N>; next: N | undefined };
+type T = { by: Map<T, number>; pair: [T, number] | null };
+
+interface E {
+  list: Map<string, E[]>;
+  up?: E;
+}
+
+function run() {
+  const g: G = { edges: new Map(), next: undefined };
+  g.edges.set("self", g);
+  const g2: G = { edges: new Map(), next: g };
+  console.log(g.edges.size, g.next === undefined, g2.next === g, g.edges.get("self") === g);
+  const root: A = { kids: new Set(), parent: null, label: "root" };
+  const kid: A = { kids: new Set(), parent: root, label: "kid" };
+  root.kids.add(kid);
+  for (const k of root.kids) {
+    console.log(k.label, k.parent?.label);
+  }
+  const n: N = { id: 1, edges: new Map(), next: undefined };
+  const n2: N = { id: 2, edges: new Map([["back", n]]), next: n };
+  n.next = n2;
+  console.log(n.next.id, n2.edges.get("back")!.id, n.next.next!.id);
+  const t: T = { by: new Map(), pair: null };
+  t.by.set(t, 3);
+  t.pair = [t, 4];
+  console.log(t.by.get(t), t.pair[1], t.pair[0] === t);
+  const e: E = { list: new Map() };
+  const c: E = { list: new Map(), up: e };
+  e.list.set("c", [c, c]);
+  console.log(e.list.get("c")!.length, c.up === e, e.up === undefined);
+}
+
+interface GG<T> {
+  m: Map<string, GG<T>>;
+  next: GG<T> | undefined;
+  v: T;
+}
+
+interface R {
+  kids: Record<string, R>;
+  up: R | null;
+}
+
+interface Q {
+  p: Promise<Q> | null;
+  self: [Q, number] | undefined;
+  n: number;
+}
+
+type UU = { m: Map<string, UU> } & { next?: UU; n: number };
+
+function generic(): void {
+  const g: GG<number> = { m: new Map(), next: undefined, v: 1 };
+  g.m.set("s", g);
+  g.next = { m: new Map(), next: undefined, v: 2 };
+  console.log(g.m.get("s")!.v, g.next.v);
+  const r: R = { kids: {}, up: null };
+  r.kids["a"] = { kids: {}, up: r };
+  console.log(Object.keys(r.kids).length, r.kids["a"]!.up === r);
+  const q: Q = { p: null, self: undefined, n: 3 };
+  q.self = [q, 4];
+  console.log(q.self[0].n, q.self[1]);
+  const u: UU = { m: new Map(), n: 5 };
+  u.next = u;
+  u.m.set("x", u);
+  console.log(u.next.n, u.m.get("x")!.n);
+}
+
+run();
+generic();

@@ -129,9 +129,11 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut FxHashSet<TyId
     }
     match hir.types.kind(t) {
         TyKind::Adt(d, args) => {
+            // A class's type arguments are behind its pointer (`Map<string, G>`): not walked,
+            // so `seen` holds only types reached inline.
             *d == target
-                || args.iter().any(|a| reaches(hir, *a, target, seen))
-                    && matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                || matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                    && args.iter().any(|a| reaches(hir, *a, target, seen))
                 || fields_of(hir, *d)
                     .into_iter()
                     .any(|f| reaches(hir, f, target, seen))
