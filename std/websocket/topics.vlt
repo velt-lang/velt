@@ -1,8 +1,11 @@
 // std/websocket/topics (std-internal): publish/subscribe. Not part of the public API.
 //
-// A publish encodes the frame once and appends the same bytes to every subscriber's queue (its
-// flusher sends it with whatever else is queued), so a message to many sockets costs one
-// encode and one queue append per socket. A subscriber with more than `PUBLISH_LIMIT` bytes
+// A publish encodes the frame once and appends the same bytes to every subscriber's queue, so a
+// message to many sockets costs one encode and one queue append per socket. An idle
+// subscriber's queue is then written from the publishing task (`writeDirect`): a socket nearly
+// always takes a frame at once, and a task per subscriber would cost more than the write (on
+// several threads each one wakes another worker). Only a socket that does not take it all gets
+// a flusher. A subscriber with more than `PUBLISH_LIMIT` bytes
 // already queued is skipped for that message, so one slow reader cannot grow the server's
 // memory without bound (a direct `send` waits instead). Topics are process-wide (one registry,
 // a runtime slot, rt_abi_async.md §2.2); a connection leaves all of them when it is closed.
@@ -12,7 +15,7 @@
 import { Channel } from "velt:channel";
 import { TcpStream } from "velt:net";
 import { START } from "velt:websocket/queue";
-import { Tx, flush } from "velt:websocket/writer";
+import { Tx, writeDirect } from "velt:websocket/writer";
 
 class Sub {
   /** The connection's stream handle. */
@@ -146,7 +149,7 @@ export function publish(topic: string, frame: u8[], payloadAt: i64, except: u64)
   if (t == null) {
     return 0;
   }
-  // The idle connections it was queued for: their flushers are started outside the locks.
+  // The idle connections it was queued for: written outside the locks.
   const ids: u64[] = [];
   const queues: Tx[] = [];
   const sent = t.with((s) => {
@@ -169,7 +172,7 @@ export function publish(topic: string, frame: u8[], payloadAt: i64, except: u64)
     return n;
   });
   for (let i = 0; i < ids.length; i++) {
-    spawn(flush(TcpStream { handle: ids[i] }, queues[i].clone()));
+    writeDirect(TcpStream { handle: ids[i] }, queues[i]);
   }
   return sent;
 }
