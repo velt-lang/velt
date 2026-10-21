@@ -286,8 +286,7 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
         "velt_rt_bytes_set"
         | "velt_rt_bytes_write_str"
         | "velt_rt_bytes_copy_within"
-        | "velt_rt_bytes_fill"
-        | "velt_rt_bytes_xor_mask" => 0,
+        | "velt_rt_bytes_fill" => 0,
         "velt_rt_regex_exec" => 3,
         // `readInto(buf)` reads into the buffer's bytes.
         "velt_rt_tcp_try_read_into" => 1,
