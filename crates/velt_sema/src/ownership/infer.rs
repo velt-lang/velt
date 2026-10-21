@@ -350,12 +350,12 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 return false;
             }
             // A function computed at each use is shared as it is; any other constant taken over
-            // is the one object the module state keeps (`crate::module_state::keep`).
+            // is the one object the module state keeps (`crate::kept_consts::keep`).
             let shared_fn = crate::body::pure_init::shares_on_move(cx, *d);
             let kept = !shared_fn
                 && !cx.is_copy(ty)
                 && ty != cx.ty.str_
-                && crate::module_state::keep(cx, *d);
+                && crate::kept_consts::keep(cx, *d);
             if mutable || shared_fn || kept {
                 // A function computed at each use, or a module-level `let` the module state
                 // keeps: another reference to it is owned.

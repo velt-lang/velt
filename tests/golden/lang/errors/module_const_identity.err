@@ -1,2 +1,3 @@
-module_const_identity.vlt:12:15: error: `Geo.ORIGIN` is evaluated at each use, so comparing it by identity is always false
+module_const_identity.vlt:13:15: error: `Geo.ORIGIN` is evaluated at each use, so comparing it by identity is always false
 copy it into a local first (`const c = Geo.ORIGIN;`) and compare that, or compare a field that identifies it
+module_const_identity.vlt:14:15: error: `Geo.BOX` is evaluated at each use, so comparing it by identity is always false

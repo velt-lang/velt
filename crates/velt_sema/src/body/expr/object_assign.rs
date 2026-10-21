@@ -123,6 +123,11 @@ impl FnCx<'_, '_> {
             self.check_args_loose(sources);
             return self.error_expr(span);
         }
+        // Writes into a module constant go to the one object the module state keeps
+        // (`crate::kept_consts::keep`), as `K.n = 1` does.
+        if matches!(crate::body::places::root_expr(&t).kind, H::Global(_)) {
+            self.require_mutable(&t, "assign to a property of");
+        }
         let tty = t.ty;
         let record = self.record_args(tty).is_some();
         // A record whose values can't be `undefined` takes only defined values.
@@ -573,7 +578,8 @@ pub(super) fn is_place(e: &ast::Expr) -> bool {
 /// Does `e` read a variable, or a field or array element of one (no getter, no call)?
 pub(super) fn reads_place(e: &hir::Expr) -> bool {
     match &e.kind {
-        H::Local(..) => true,
+        // A module constant written into is module state (`require_mutable`): its slot.
+        H::Local(..) | H::Global(_) => true,
         H::Field { base, .. } | H::Index { base, .. } => reads_place(base),
         _ => false,
     }

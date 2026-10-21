@@ -220,29 +220,27 @@ function main() {
   task that started it, and every holder gets the same result (an object result is the same
   object, as everything reached through module state is shared by the tasks).
 - A `Mutex` `with` callback cannot use module state, including a constant kept there by a use
-  elsewhere in the program, directly or through a function it calls
-  (``the function passed to `with` may use module state``). Code that runs without a call
-  counts too: field initializers at `new`, and the `toString()`, `toJSON()` and
-  `[Symbol.dispose]()` methods of the values the callback handles, which `join`, a template,
-  `JSON.stringify`, `using` and the end of a scope call. So does a call of a function value
-  whose body the compiler cannot see, also one the callback hands to the standard library
-  (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with` blocks the thread while it waits for the
-  lock, and a task holds the module lock for its code between `await`s, so two tasks could
-  wait for each other. Read what the callback needs before `with`, and store what it returns
-  after.
+  elsewhere in the program, directly or through a function it calls (``the function passed to `with`
+  may use module state``). Code that runs without a call counts too: field initializers at `new`,
+  and the `toString()`, `toJSON()` and `[Symbol.dispose]()` methods of the values the callback
+  handles, which `join`, a template, `JSON.stringify`, `using` and the end of a scope call. So does
+  a call of a function value whose body the compiler cannot see, also one the callback hands to the
+  standard library (`a.sort(cmps[0])`; a closure or a function name written there is fine). `with`
+  blocks the thread while it waits for the lock, and a task holds the module lock for its code
+  between `await`s, so two tasks could wait for each other. Read what the callback needs before
+  `with`, and store what it returns after.
 - In a root file with top-level statements, a `let` that only those statements use is a local
   of the generated `main` ([Scripts](modules.md#scripts-top-level-statements)); one that a
   function uses is module state, and its initializer runs before the first statement.
-- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so
-  does a task that never uses it. Each read or write of a module-level `let`, or of a constant
-  kept as module state, is a call into the runtime that returns the state (a constant only read
-  is not: one use that keeps it makes every use of it pay that). A task takes the lock at its first use and at the start
-  of each later run between `await`s (one uncontended atomic operation when no other task
-  holds it). Tasks on other cores that use module state at the same moment wait for each
-  other, so keep long computations that many tasks run in parallel out of the code between
-  their `await`s that uses module state, or give them `shared(...)` state instead. A task that
-  blocks on a `Mutex` keeps the module lock while it waits (the `Mutex`'s holder never needs
-  it, see above).
+- <a id="module-state-cost"></a>Cost: a program without module state pays nothing, and so does a
+  task that never uses it. Each read or write of a module-level `let`, or of a constant kept as
+  module state, is a call into the runtime that returns the state (a constant only read is not: one
+  use that keeps it makes every use of it pay that). A task takes the lock at its first use and at
+  the start of each later run between `await`s (one uncontended atomic operation when no other task
+  holds it). Tasks on other cores that use module state at the same moment wait for each other, so
+  keep long computations that many tasks run in parallel out of the code between their `await`s that
+  uses module state, or give them `shared(...)` state instead. A task that blocks on a `Mutex` keeps
+  the module lock while it waits (the `Mutex`'s holder never needs it, see above).
 - `velt dev`: code swapped into a running program starts its module state over, as after a
   restart ([hot reload](../tooling/dev.md)).
 

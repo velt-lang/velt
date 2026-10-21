@@ -217,7 +217,7 @@ pub(crate) struct Ctx<'m> {
     /// Memoized purity of functions that initialize module constants (`body::pure_init`).
     pub pure_fns: crate::body::pure_init::PurityMemo,
     /// Module constants kept in the module state because of how the program uses them, in the
-    /// order `crate::module_state::keep` kept them (a rolled-back check undoes its own).
+    /// order `crate::kept_consts::keep` kept them (a rolled-back check undoes its own).
     pub kept_consts: Vec<DefId>,
     /// The member names symbols give (`crate::symbols`).
     pub symbol_keys: crate::symbols::KeyNames,

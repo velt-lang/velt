@@ -393,7 +393,7 @@ impl FnCx<'_, '_> {
         // A constant whose value is taken over is the one object Node evaluates once.
         let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
         let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);
-        if mutable || (taken && !shared_fn && crate::module_state::keep(self.cx, d)) {
+        if mutable || (taken && !shared_fn && crate::kept_consts::keep(self.cx, d)) {
             let read = self.mk(H::Global(d), ty, span);
             if want == Want::Move && !self.cx.is_copy(ty) {
                 // Another reference to the value the module state keeps, as JS aliases it.

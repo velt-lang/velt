@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
         if let H::Global(d) = e.kind {
             let table = crate::body::pure_init::is_table(self.cx, d);
             let object = table || crate::body::pure_init::mutable_identity(self.cx, e.ty);
-            let kept = object && crate::module_state::keep(self.cx, d);
+            let kept = object && crate::kept_consts::keep(self.cx, d);
             if kept {
                 // Another reference to the object the module state keeps, as `global_read` makes
                 // for `const v = K`: without it the type may be stored inline, and the binding
@@ -141,7 +141,7 @@ impl FnCx<'_, '_> {
             // Assigning a constant itself stays an error; what it holds may be modified, as in
             // Node, once it is the one object the module state keeps.
             let rebinds = matches!(e.kind, H::Global(_)) && what == "assign to";
-            if stored || (!rebinds && crate::module_state::keep(self.cx, d)) {
+            if stored || (!rebinds && crate::kept_consts::keep(self.cx, d)) {
                 if matches!(e.kind, H::Global(_)) && !mutable && what == "assign to" {
                     self.cx.err(
                         format!("cannot assign to `{name}`, a module `const`"),

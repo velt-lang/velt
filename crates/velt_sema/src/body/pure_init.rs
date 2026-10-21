@@ -4,7 +4,7 @@
 //! effects, bounded, cannot throw, reads no constant the program changes) and its result is a
 //! value, so this module checks both. Where "a new value at each use" would show (a comparison
 //! by identity, a change through another name), the constant is kept in the module state
-//! instead (`crate::module_state::keep`).
+//! instead (`crate::kept_consts::keep`).
 
 use rustc_hash::FxHashMap;
 
@@ -113,7 +113,7 @@ pub(crate) fn has_call(e: &Expr) -> bool {
 }
 
 /// Is module constant `d` a table (an array literal stored once as read-only data)? Not once it
-/// is module state (`crate::module_state::keep`).
+/// is module state (`crate::kept_consts::keep`).
 pub(crate) fn is_table(cx: &Ctx, d: DefId) -> bool {
     cx.global(d)
         .filter(|g| !g.stored)
@@ -133,7 +133,7 @@ pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) ->
 /// functions, and interface values made from object literals (whose fields can't be written
 /// through the interface: [`value_ty`]): a struct or object constant moved into a variable
 /// would be a copy that the constant doesn't see changes to (TypeScript aliases it), so those
-/// are kept in the module state instead (`crate::module_state::keep`).
+/// are kept in the module state instead (`crate::kept_consts::keep`).
 pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
     let Some(g) = cx.global(d) else { return false };
     let ty = g.ty;
@@ -458,13 +458,13 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     if let Some(imp) = walk.found {
         return Err(imp);
     }
-    // A constant kept in the module state may change while the program runs; Node evaluated
-    // the initializer once, before it did.
-    if let Some(&(_, span)) = walk
+    // Module state (a module-level `let`, a kept constant) may change while the program runs;
+    // Node evaluated the initializer once, before it did.
+    let changing = walk
         .globals
         .iter()
-        .find(|(g, _)| cx.kept_consts.contains(g))
-    {
+        .find(|(g, _)| crate::kept_consts::changes(cx, *g));
+    if let Some(&(_, span)) = changing {
         return at("reads module state that the program changes", span);
     }
     for (c, span) in walk.closures {
@@ -690,36 +690,31 @@ fn identity_compared(cx: &Ctx, t: TyId, depth: u32) -> bool {
     }
 }
 
-/// `===` / `!==` with an operand that is directly a module constant compared by identity: the
-/// constant is kept in the module state (`crate::module_state::keep`), or, where it can't be,
-/// is a new value at each use, so the comparison would always be false.
+/// `===`, `!==` or `Object.is` with an operand that is a module constant, or a part of one,
+/// compared by identity: the constant is kept in the module state (`crate::kept_consts::keep`),
+/// or, where it can't be, is a new value at each use, so the comparison would always be false.
 pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
     for e in operands {
         let mut x = e;
         while let H::Upcast(i) | H::WrapSome(i) | H::Cast(i) = &x.kind {
             x = i;
         }
-        // A part of a constant (`K.inner === x`) is the part of the one object Node evaluates.
-        if let H::Field { .. } = x.kind {
-            if let H::Global(d) = crate::body::places::root_expr(x).kind {
-                if identity_compared(cx, x.ty, 0) {
-                    crate::module_state::keep(cx, d);
-                }
-            }
+        // A part of a constant (`K.inner === x`) is a part of the one object Node evaluates.
+        let part = matches!(x.kind, H::Field { .. });
+        let H::Global(d) = crate::body::places::root_expr(x).kind else {
             continue;
-        }
-        let H::Global(d) = x.kind else { continue };
+        };
         let Some(g) = cx.global(d) else { continue };
         let fresh = g
             .init
             .as_ref()
             .is_some_and(|i| !matches!(i.kind, H::Lit(_) | H::FnRef(..)));
-        if !fresh || g.stored || !identity_compared(cx, g.ty, 0) {
+        if !fresh || g.stored || !identity_compared(cx, x.ty, 0) {
             continue;
         }
         let name = g.name.clone();
         // The one object Node evaluates once, kept in the module state.
-        if crate::module_state::keep(cx, d) {
+        if crate::kept_consts::keep(cx, d) {
             continue;
         }
         cx.error(
@@ -728,9 +723,10 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
                 x.span,
             )
             .with_note("module constants are not stored: each use of one computes a new value")
-            .with_note(match cx.global(d).is_some_and(|g| matches!(cx.ty.kind(g.ty), TyKind::Array(_))) {
-                true => format!("compare the elements, or copy it once (`const c = {name}.slice();`) and compare that copy"),
-                false => format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it"),
+            .with_note(match (part, cx.global(d).is_some_and(|g| matches!(cx.ty.kind(g.ty), TyKind::Array(_)))) {
+                (true, _) => "compare a field that identifies it".to_string(),
+                (false, true) => format!("compare the elements, or copy it once (`const c = {name}.slice();`) and compare that copy"),
+                (false, false) => format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it"),
             }),
         );
         return;

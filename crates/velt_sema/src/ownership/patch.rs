@@ -302,7 +302,7 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
 /// Tables passed to a callee whose parameter modes are not known (a function value): it may
 /// modify them, and they are read-only data.
 /// A module constant passed to such a callee, which may modify it, is the one object the module
-/// state keeps (`crate::module_state::keep`); a table that can't be kept is an error.
+/// state keeps (`crate::kept_consts::keep`); a table that can't be kept is an error.
 fn table_args(cx: &mut Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
     for a in args {
         let table = table_arg(cx, a);
@@ -411,10 +411,10 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
 }
 
 /// Is place `e` rooted at module state: a module-level `let`, or a module constant kept there
-/// from now on (`crate::module_state::keep`)?
+/// from now on (`crate::kept_consts::keep`)?
 fn keep_root(cx: &mut Ctx, e: &Expr) -> bool {
     match &e.kind {
-        E::Global(d) => crate::module_state::keep(cx, *d),
+        E::Global(d) => crate::kept_consts::keep(cx, *d),
         E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)

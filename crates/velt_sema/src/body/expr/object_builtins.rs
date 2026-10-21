@@ -341,6 +341,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return self.error_expr(span);
         }
+        crate::body::pure_init::check_identity(self.cx, [&l, &r]);
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = self.nullable_operands(l, r);
         let (l, r) = self.union_operands(l, r);

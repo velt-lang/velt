@@ -1,7 +1,7 @@
-// A module constant taken over by reference (#1383) is the one object Node evaluates once, kept
-// in the module state: through a namespace import (`m.CONFIG`), `K!`, a part of it
-// (`K.inner`, also returned), a function value that modifies it, or compared by a part
-// (`K.inner === x`). A module `let` or a constant already in the module state taken over
+// A module constant taken over by reference (#1383) is the one object Node evaluates once, kept in
+// the module state: through a namespace import (`m.CONFIG`), `K!`, a part of it (`K.inner`, also
+// returned), a function value that modifies it, or compared by a part (`K.inner === x`), or the
+// target of `Object.assign`. A module `let` or a constant already in the module state taken over
 // through a namespace import refers to it too.
 import * as m from "./_module_const_by_reference_lib";
 
@@ -9,6 +9,8 @@ type Inner = { v: number };
 
 const K = { inner: { v: 1 } as Inner, n: 0 };
 const OBJ = { n: 1 };
+const TARGET = { n: 0, m: 0 };
+const BOUND = { n: 0, m: 0 };
 const PARTS = { inner: { v: 1 } as Inner };
 
 function part(): Inner {
@@ -40,4 +42,8 @@ function main() {
   const made = m.MADE;
   made.n = 6;
   console.log(m.COUNTER.n, m.MADE.n);
+  Object.assign(TARGET, { n: 1 });
+  const bound = Object.assign(BOUND, { m: 2 });
+  bound.n = 3;
+  console.log(TARGET.n, BOUND.n, BOUND.m, bound === BOUND);
 }
