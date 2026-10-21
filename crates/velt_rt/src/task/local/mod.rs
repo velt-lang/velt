@@ -6,8 +6,9 @@
 //! makes the task's local set current (a thread-local pointer, valid only during the poll) and
 //! first polls the local promises that were woken. A task that never starts a promise has no set
 //! and pays two thread-local writes per poll. When the root finishes while local promises are
-//! still running, the set moves to an *orphan* task that drives them to completion and keeps the
-//! process alive meanwhile (a JS program also waits for its pending work).
+//! still running, the set moves to an *orphan* task that drives them to completion. Like every
+//! task, it keeps the process alive while it can still make progress (task/quiet.rs), as a JS
+//! program waits for its pending work but not for promises nothing can settle.
 //!
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
@@ -337,32 +338,14 @@ impl Locals {
     }
 }
 
-/// Local promises that outlived their task's root: driven to completion by a task of their own,
-/// which keeps the process alive meanwhile, unless only timers are left (a ref'd timer keeps it
-/// alive by itself, an `unref()`'d one must not).
+/// Local promises that outlived their task's root: driven to completion by a task of their own.
 struct Orphan {
     set: SetPtr,
-    /// Holds a keep-alive reference.
-    held: bool,
 }
 
 impl Orphan {
     fn spawn(set: SetPtr) {
-        let mut o = Orphan { set, held: false };
-        o.hold();
-        super::runtime::spawn(o);
-    }
-
-    /// Holds a keep-alive reference while promises other than timers are unfinished.
-    fn hold(&mut self) {
-        // SAFETY: null or a live set owned by `self`.
-        let want = unsafe { self.set.0.as_ref() }.is_some_and(LocalSet::has_work);
-        if want && !self.held {
-            super::runtime::keep_alive_acquire();
-        } else if !want && self.held {
-            super::runtime::keep_alive_release();
-        }
-        self.held = want;
+        super::runtime::spawn(Orphan { set });
     }
 }
 
@@ -377,17 +360,7 @@ impl Future for Orphan {
         if this.set.is_idle() {
             Poll::Ready(())
         } else {
-            this.hold();
             Poll::Pending
-        }
-    }
-}
-
-impl Drop for Orphan {
-    fn drop(&mut self) {
-        drop(std::mem::replace(&mut self.set, SetPtr::NONE));
-        if self.held {
-            super::runtime::keep_alive_release();
         }
     }
 }

@@ -101,16 +101,20 @@ Promises behave like JavaScript's, at Rust's cost:
   callbacks do, whichever task created them: they run in Node's order, one list per delay
   ([velt:timers](../std/timers.md)).
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
-  completion (its result is dropped), and the program waits for it before exiting, like Node
-  waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
+  completion (its result is dropped), and the program waits for it before exiting while it can
+  still make progress, like Node waits for pending work. A synchronous `main` that starts promises, timers or microtasks runs
   on a task like an `async main`, so they run as in Node: up to their first `await` when
   created, and what they queued once `main` returns. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
-- After `main` returns, the process also waits for *handles*, as in Node: a listening
-  [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
-  `setInterval`) unless it is `unref()`ed. A spawned task is not a handle: tasks still running
-  when nothing else keeps the process alive end with it. `process.exit()` and an uncaught error
-  end the process at once.
+- After `main` returns (a synchronous one, an `async` one, or the top level), the process runs
+  while something can still happen, as in Node: a listening [server](../std/http.md), a pending
+  [timer](../std/timers.md) (`setTimeout`, `setInterval`) unless it is `unref()`ed, and tasks
+  and promises that run or wait for a timer or I/O (`sleep`, a socket, a file, a child
+  process). Spawned tasks are waited for like that too. What waits only for other promises or
+  tasks that can never settle it (a `resolve` nobody calls any more, a channel nobody sends on)
+  does not keep the process alive: once nothing else is left, the program ends with exit code
+  0, also when `async main` itself waits for such a promise. `process.exit()` and an uncaught
+  error end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame.
@@ -729,9 +733,8 @@ type.
 - A value settled from another task is transferred (moved, or copied while that task still uses
   it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
-  JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
-  keeps the process alive (#147) after `main` returns, but not after it fails (an uncaught
-  error or a nonzero exit code ends the process at once, like an uncaught exception in Node).
+  JS: it can lose a `Promise.race`, and awaiting it otherwise waits until nothing else can
+  happen, when the program ends, as Node's does ([Promises](#promises)).
 
 A one-shot reply to a request handled on another task, without a channel per request:
 

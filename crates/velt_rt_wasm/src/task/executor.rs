@@ -2,8 +2,8 @@
 //!
 //! Tasks are heap `VeltFut`s. A waker is just a task id (0 = the `block_on` root) that `wake`
 //! pushes onto the ready queue once. When nothing is ready, the executor sleeps until the
-//! earliest timer; if there is no timer either, no task can ever be woken again and the
-//! program is deadlocked, which is reported as a panic (the native runtime would hang).
+//! earliest timer; if there is no timer either, no task can ever be woken again and the program
+//! ends, as Node exits with promises pending (and as the native runtime does, task/quiet.rs).
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{Ordering, Reverse};
@@ -685,7 +685,8 @@ fn wait_for_timers() -> bool {
 
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
 /// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
-/// held. Spawned tasks still running afterwards are abandoned.
+/// held, or until nothing can wake any of them (the program ends then, with exit code 0 when the
+/// root never finished). Spawned tasks still running afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
@@ -711,9 +712,13 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
             next_ready()
         }) else {
             if !wait_for_timers() {
-                crate::panic::fatal(
-                    "deadlock: the main task is waiting, but no task or timer can wake it",
-                );
+                // Nothing can wake a task any more: the end, as in Node.
+                if !root_done {
+                    crate::panic::velt_rt_exit(0);
+                }
+                with_exec(|e| e.running = false);
+                set_running_word(false);
+                return;
             }
             continue;
         };

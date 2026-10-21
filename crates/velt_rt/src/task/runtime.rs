@@ -2,9 +2,9 @@
 //!
 //! One multi-thread runtime is created lazily on first use and lives until the process exits
 //! (there is no shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the
-//! process alive after `main` returns while something holds a keep-alive reference (a listening
-//! HTTP server, a ref'd timer, started promises that outlived their task); otherwise `main`
-//! returning ends the process and outstanding tasks are dropped. Worker count = `VELT_THREADS`
+//! process alive after `main` returns while something can still happen: a keep-alive reference
+//! (a listening HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O
+//! (quiet.rs, which also ends an `async main` that can never finish). Worker count = `VELT_THREADS`
 //! if set to a positive integer, else the number of available cores. Workers flush buffered
 //! stdout whenever they go idle, so a server logging to a pipe shows its output promptly.
 //!
@@ -30,14 +30,12 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::task::{Context, Poll};
 use tokio::runtime::{Handle, Runtime};
-use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-/// Keep-alive references (Node's "ref'd handles"): while > 0, the process outlives `async main`.
+/// Keep-alive references (Node's "ref'd handles"): while > 0, the process outlives `main`.
 static KEEP_ALIVE: AtomicUsize = AtomicUsize::new(0);
-static KEEP_ALIVE_RELEASED: Notify = Notify::const_new();
 
 /// Take a keep-alive reference (e.g. a server started listening).
 pub fn keep_alive_acquire() {
@@ -52,7 +50,10 @@ pub fn keep_alive_acquire() {
 pub fn keep_alive_release() {
     crate::io::publish_before_handoff();
     if KEEP_ALIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
-        KEEP_ALIVE_RELEASED.notify_waiters();
+        // Released outside a worker (which signals when it goes idle): the end may be here.
+        if current_worker().is_none() {
+            super::quiet::signal();
+        }
     }
 }
 
@@ -70,26 +71,51 @@ pub extern "C" fn velt_rt_keep_alive_release() {
     keep_alive_release();
 }
 
-/// Program exit (after `main` returns): like Node, block while servers are still listening or
-/// ref'd timers are pending.
-/// Does nothing — and never starts the runtime — when no keep-alive reference exists.
-pub fn wait_for_keep_alive() {
-    if KEEP_ALIVE.load(Ordering::SeqCst) == 0 {
+/// Program exit (after `main` returns): like Node, block while something can still happen: a
+/// server is listening, a ref'd timer is pending, or a task runs or waits for a timer or I/O
+/// (quiet.rs). Returns at once, and never starts the runtime, when nothing is held and no task is
+/// alive.
+pub fn wait_for_the_end() {
+    if KEEP_ALIVE.load(Ordering::SeqCst) == 0 && alive_tasks() == 0 {
         return;
     }
     crate::io::flush_stdout();
-    runtime().block_on(keep_alive_drained());
+    super::quiet::wait(&QUIET, || false);
 }
 
-/// Wait until no keep-alive references remain.
-async fn keep_alive_drained() {
-    loop {
-        let released = KEEP_ALIVE_RELEASED.notified();
-        if KEEP_ALIVE.load(Ordering::SeqCst) == 0 {
-            return;
-        }
-        released.await;
+/// Whether a task may still run (for the leak counters, which wait for tasks that free blocks).
+pub(crate) fn tasks_may_run() -> bool {
+    alive_tasks() > 0 && !super::quiet::is_quiet(&QUIET)
+}
+
+fn keep_alive_count() -> usize {
+    KEEP_ALIVE.load(Ordering::SeqCst)
+}
+
+/// What quiet.rs reads of the runtime.
+static QUIET: super::quiet::Runtime<'static> = super::quiet::Runtime {
+    keep_alive: &keep_alive_count,
+    alive_tasks: &alive_tasks,
+    queued: &queued_tasks,
+};
+
+/// Tasks waiting in the runtime's global queues (spawned from outside a worker, or woken there).
+fn queued_tasks() -> usize {
+    if let Some(Some(workers)) = PER_CORE.get() {
+        return workers
+            .iter()
+            .map(|w| w.handle.metrics().global_queue_depth())
+            .sum();
     }
+    RUNTIME
+        .get()
+        .map_or(0, |rt| rt.handle().metrics().global_queue_depth())
+}
+
+/// The park hook of every worker: publish its output, then count it idle (quiet.rs).
+fn parked() {
+    crate::io::flush_idle();
+    super::quiet::parked();
 }
 
 /// Environment variable overriding the worker-thread count.
@@ -222,6 +248,7 @@ fn start_workers() -> Vec<Worker> {
 /// `n` per-core workers, started in parallel. Never blocks on a runtime, so it works from any
 /// context (also inside another runtime, where `block_on` would panic).
 fn start_n_workers(n: usize) -> Vec<Worker> {
+    super::quiet::add_workers(n);
     let (marked, ready) = std::sync::mpsc::channel();
     let handles: Vec<Handle> = (0..n)
         .map(|i| {
@@ -235,7 +262,8 @@ fn start_n_workers(n: usize) -> Vec<Worker> {
                 .worker_threads(1)
                 .thread_name("velt-worker")
                 .enable_all()
-                .on_thread_park(crate::io::flush_idle)
+                .on_thread_park(parked)
+                .on_thread_unpark(super::quiet::unparked)
                 .build()
                 .unwrap_or_else(|e| {
                     crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
@@ -364,11 +392,14 @@ fn build() -> Runtime {
                 crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
             });
     }
+    let n = worker_count();
+    super::quiet::add_workers(n);
     tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_count())
+        .worker_threads(n)
         .thread_name("velt-worker")
         .enable_all()
-        .on_thread_park(crate::io::flush_idle)
+        .on_thread_park(parked)
+        .on_thread_unpark(super::quiet::unparked)
         .build()
         .unwrap_or_else(|e| crate::panic::fatal(&format!("cannot start the async runtime: {e}")))
 }
@@ -408,7 +439,9 @@ unsafe extern "C" fn never_dropped(_: *mut u8) {}
 /// Run the compiled future `(poll, state)` to completion on the runtime's workers and return when
 /// it is `READY`; the result is then at offset 0 of `state`, which stays owned by the caller.
 /// Must not be called from inside a task. Spawned tasks still running afterwards keep running on
-/// the workers until the process exits.
+/// the workers (the program's exit waits for them, entry.rs). When the future can never finish
+/// (it waits for a promise nobody can settle any more, and nothing else can happen: quiet.rs),
+/// the program ends here, as Node exits with `main`'s promise pending.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // The module state initialized before `main` is the tasks' from now on.
@@ -418,10 +451,18 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
     // The worker that finished it hands over where its error (if any) was thrown: the caller
     // reports it on this thread.
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let finished = done.clone();
     let join = spawn(async move {
         root.await;
+        finished.store(true, Ordering::SeqCst);
+        // Its worker may not go idle soon (another task runs there): wake the wait now.
+        super::quiet::signal();
         ThrowLoc::current()
     });
+    if !super::quiet::wait(&QUIET, || done.load(Ordering::SeqCst)) {
+        crate::entry::exit_unfinished();
+    }
     match rt.block_on(join) {
         Ok(loc) => loc.restore(),
         Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),

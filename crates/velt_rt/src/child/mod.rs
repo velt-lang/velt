@@ -93,7 +93,10 @@ fn start(spec: &VeltCommand) -> Result<ChildObj, VeltErr> {
         status: rx,
         kill: kill.clone(),
     };
+    // A running child keeps the process alive, as in Node.
+    let pending = crate::task::quiet::Pending::new();
     crate::task::runtime::spawn(async move {
+        let _pending = pending;
         let status = loop {
             let killed = {
                 let wait = std::pin::pin!(child.wait());

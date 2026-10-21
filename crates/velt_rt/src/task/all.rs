@@ -26,7 +26,7 @@
 //! buffer, which nobody else knows is (partly) initialized. `velt_rt_all_with_drop` takes a drop
 //! function for one result and runs it on exactly those slots when the join is dropped early.
 
-use super::leaf::new_leaf;
+use super::leaf::new_inner_leaf;
 use super::{raw_cx, SendPtr, VeltFut, FUT_RESULT_OFFSET, READY};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::future::Future;
@@ -220,7 +220,7 @@ unsafe fn new_join<const REJECT: bool>(
         },
         complete: false,
     };
-    new_leaf(async move {
+    new_inner_leaf(async move {
         let mut set = set;
         while let Some(i) = set.next().await {
             // SAFETY: child `i` just wrote its result slot; byte 0 is the `Result` tag. (Only
@@ -250,6 +250,7 @@ mod tests {
     //! quadratic join directly observable (the ABI tests use the shared multi-thread runtime).
 
     use super::*;
+    use crate::task::leaf::new_leaf;
     use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, PENDING};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;

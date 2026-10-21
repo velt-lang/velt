@@ -11,7 +11,7 @@ use std::task::{Context, Poll, Waker};
 
 use parking_lot::Mutex;
 
-use super::leaf::new_leaf;
+use super::leaf::new_inner_leaf;
 use super::local::ticket_pending;
 use super::VeltFut;
 use crate::handle::Handle;
@@ -142,7 +142,7 @@ impl Drop for Wait {
 /// `h` must be a live latch handle.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
-    new_leaf(Wait {
+    new_inner_leaf(Wait {
         latch: h.clone_arc(),
         id: 0,
     })
