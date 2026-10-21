@@ -81,10 +81,10 @@ async function main() {
   const items = shared([new Item("a"), new Item("b")]);
   console.log(names(items), items.length);
 
-  // Fields and `for...of`, also on other tasks; a variable bound to a part holds a copy.
+  // Fields and `for...of`, also on other tasks; a copy of a part can be changed.
   const cfg = shared<Cfg>({ name: "db", ports: [5432, 5433], owner: new Item("ops") });
   console.log(await spawn(portSum(cfg)), cfg.name, cfg.ports[1], cfg.owner.name);
-  const ports = cfg.ports;
+  const ports = cfg.ports.slice();
   ports.push(1);
   console.log(ports.length, cfg.ports.length);
   let chars = "";

@@ -260,10 +260,10 @@ impl Ctx<'_> {
     /// objects other threads read, as a side effect of reading. A `shared` inside is fine: it
     /// counts atomically.
     pub fn frozen_readable(&mut self, t: TyId) -> bool {
-        self.frozen_readable_in(t, &mut std::collections::HashSet::new())
+        self.frozen_readable_in(t, &mut rustc_hash::FxHashSet::default())
     }
 
-    fn frozen_readable_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    fn frozen_readable_in(&mut self, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return true;
         }

@@ -219,6 +219,31 @@ fn changing_loop_elements_of_it_is_an_error() {
 }
 
 #[test]
+fn changing_a_variable_bound_to_a_part_is_an_error() {
+    let class = "class Cfg { ports: number[] = [1, 2]; c: C = new C(); } class C { n: number = 0; bump(): C { this.n += 1; return this; } }";
+    for body in [
+        "const s = shared(new Cfg()); const ps = s.ports; ps.push(3);",
+        "const s = shared(new Cfg()); let { ports: ys } = s; ys.push(1);",
+        "const s = shared(new Cfg()); const c = s.c; c.bump();",
+        "const s = shared([[1], [2]]); const xs = s[0]; xs[0] = 5;",
+    ] {
+        let r = err_src(&format!(
+            "{class} let G = shared(new Cfg()); function main() {{ {body} }}"
+        ));
+        assert!(r.contains("this changes"), "{body}: {r}");
+    }
+    let r = err_src(&format!(
+        "{class} let G = shared(new Cfg()); function main() {{ let {{ ports: ys }} = G; ys.push(1); }}"
+    ));
+    assert!(r.contains("this changes"), "{r}");
+    // Reading it, or changing a copy, is fine.
+    ok_src(&format!(
+        "{class} function main() {{ const s = shared(new Cfg()); const ps = s.ports; const [a, b] = s.ports; \
+         const mine = s.ports.slice(); mine.push(3); console.log(ps.length, a + b, mine.length); }}"
+    ));
+}
+
+#[test]
 fn views_of_a_shared_typed_array_are_errors() {
     for src in [
         "function main() { const u = shared(new Uint8Array(3)); u.subarray(0, 2).fill(3); }",

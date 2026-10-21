@@ -130,7 +130,7 @@ pub(crate) struct Ctx<'m> {
     pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Declarations of the `for…of` bindings over a value read out of a `shared` (or what a
     /// method of one returns): the ownership pass refuses changing them
-    /// (`ownership::finish::frozen_loop_elements`).
+    /// (`ownership::finish::frozen_bindings`).
     pub frozen_elems: FxHashSet<Span>,
     /// Some body reads a `shared` like its `T` (`Intrinsic::SharedRead`): only then does the
     /// ownership pass track `FnInfo::modified_params`.

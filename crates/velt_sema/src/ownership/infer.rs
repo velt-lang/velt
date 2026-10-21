@@ -60,7 +60,7 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
         with_body(cx, d, |cx, f| {
             super::finish::reassigned_fixed_params(cx, d, f);
             super::finish::soft_args(cx, d, f);
-            super::finish::frozen_loop_elements(cx, f);
+            super::finish::frozen_bindings(cx, f);
             sync_params(cx, d, f);
             false
         });

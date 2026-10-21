@@ -603,8 +603,8 @@ refused as it is for an array. Sema rejects every write through it (`require_mut
 `use_mutably`) and every call that may modify it: a `BorrowMut` argument after inference, an
 `Owned` receiver the method modifies all the same (`FnInfo::modified_params`: a method
 returning the `this` it changes, such as `fill`, or calling one on `this`), a change to a
-`for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`,
-`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
+`for…of` element of it or of what a method of it returns (`Ctx::frozen_elems`) or of a
+variable bound to a part of it (`ownership/finish.rs`), `subarray()` and `buffer` of a typed array in it
 (`FnCx::frozen_buffer_view`), an
 argument of a call through a function value or next to one that may modify its arguments
 (`ownership/patch.rs`). Other threads read the same value at the same time, so lowering must
