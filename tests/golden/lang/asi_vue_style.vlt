@@ -1,0 +1,62 @@
+// Code formatted the way Vue's sources are (Prettier with `semi: false`, single quotes, arrow
+// functions): no semicolons, and a `;` only in front of a line that starts with `(` or `[`.
+// Output compared with Node (`--experimental-transform-types`, for the enum).
+
+export enum TrackOpTypes {
+  GET = 'get',
+  HAS = 'has',
+}
+
+export interface Subscriber {
+  name: string
+  notify(): void
+}
+
+type Effect = () => void
+
+const isObject = (val: unknown): boolean =>
+  val !== null && typeof val === 'object'
+
+export class Dep {
+  version = 0
+  subs: Subscriber[] = []
+
+  track(sub: Subscriber): void {
+    if (this.subs.indexOf(sub) >= 0) return
+    this.subs.push(sub)
+  }
+
+  trigger(): void {
+    this.version++
+    for (const sub of this.subs) {
+      sub.notify()
+    }
+  }
+}
+
+export function effect(fn: Effect, name = 'effect'): Subscriber {
+  const sub: Subscriber = {
+    name,
+    notify: () => {
+      fn()
+    },
+  }
+  return sub
+}
+
+function main() {
+  const dep = new Dep()
+  let runs = 0
+  const e = effect(() => {
+    runs++
+  })
+  dep.track(e)
+  dep.track(e)
+  dep.trigger()
+  dep.trigger()
+  console.log(runs, dep.version, dep.subs.length, TrackOpTypes.GET)
+  const parts: string[] = []
+  ;['a', 'b'].forEach(p => parts.push(p.toUpperCase()))
+  ;(() => parts.push('iife'))()
+  console.log(parts.join(' '), isObject(parts), isObject(null))
+}

@@ -1,0 +1,14 @@
+// Restricted productions that TypeScript rejects: a line break after `throw` and before `=>`.
+
+function fail(): void {
+  throw
+  new Error("x")
+}
+
+const f = (a: number)
+  => a + 1
+
+function main() {
+  fail()
+  console.log(f(1))
+}

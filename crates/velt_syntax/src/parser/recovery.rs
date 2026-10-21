@@ -64,9 +64,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Statement-level recovery: skip past the next `;`, or up to a `}` or a statement keyword
-    /// (once at least one token past `stmt_start` has been consumed).
+    /// Statement-level recovery: skip past the next `;`, or up to a `}`, a statement keyword or,
+    /// outside parentheses and brackets, a line break before a token that can start a statement
+    /// (where automatic semicolon insertion would have ended it), once at least one token past
+    /// `stmt_start` has been consumed.
     pub(super) fn sync_stmt(&mut self, stmt_start: usize) {
+        let mut depth = 0i32;
         loop {
             match self.peek() {
                 Tok::Eof | Tok::RBrace => return,
@@ -76,8 +79,28 @@ impl<'a> Parser<'a> {
                 }
                 Tok::LBrace => self.skip_balanced_braces(),
                 _ if self.pos > stmt_start && self.at_stmt_keyword() => return,
-                _ => self.bump(),
+                t if depth == 0
+                    && self.pos > stmt_start
+                    && Self::can_start_expr(t)
+                    && !matches!(t, Tok::LParen | Tok::LBracket | Tok::Plus | Tok::Minus)
+                    && self.line_break_before() =>
+                {
+                    return
+                }
+                t => {
+                    depth += Self::paren_delta(t);
+                    self.bump();
+                }
             }
+        }
+    }
+
+    /// +1 for `(` and `[`, -1 for `)` and `]`: the nesting recovery keeps track of.
+    fn paren_delta(t: Tok) -> i32 {
+        match t {
+            Tok::LParen | Tok::LBracket => 1,
+            Tok::RParen | Tok::RBracket => -1,
+            _ => 0,
         }
     }
 
@@ -100,9 +123,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Member-level recovery (class/struct/interface/enum bodies): skip past `;`/`,`, past a
-    /// balanced `{...}` (a method body), or up to the closing `}`.
-    pub(super) fn sync_member(&mut self) {
+    /// balanced `{...}` (a method body), up to the closing `}`, or, outside parentheses and
+    /// brackets, up to a line break (a member ends there, as with automatic semicolon
+    /// insertion) once the member consumed a token (it started at `member_start`).
+    pub(super) fn sync_member(&mut self, member_start: usize) {
+        let start = member_start;
+        let mut depth = 0i32;
         loop {
+            if depth == 0 && self.pos > start && self.line_break_before() {
+                return;
+            }
+            depth += Self::paren_delta(self.peek());
             match self.peek() {
                 Tok::Eof | Tok::RBrace => return,
                 Tok::Semi | Tok::Comma => {
@@ -124,7 +155,10 @@ impl<'a> Parser<'a> {
         f: impl FnOnce(&mut Self) -> super::PResult<T>,
     ) -> Option<T> {
         let start = self.pos;
-        match f(self) {
+        let outer = self.begin_statement();
+        let result = f(self);
+        self.end_statement(outer);
+        match result {
             Ok(v) => {
                 // A member ends at a line break, so one that consumed nothing could return
                 // `Ok` forever: always move on.
@@ -134,7 +168,7 @@ impl<'a> Parser<'a> {
                 Some(v)
             }
             Err(_) => {
-                self.sync_member();
+                self.sync_member(start);
                 if self.pos == start {
                     self.bump();
                 }
