@@ -321,7 +321,7 @@ fn is_handle(cx: &mut Ctx, s: &Summaries, t: crate::hir::TyId, depth: u32) -> bo
     }
     match cx.ty.kind(t).clone() {
         TyKind::Shared(_) => true,
-        TyKind::Option(e) => is_handle(cx, s, e, depth + 1),
+        TyKind::Option(e, _) => is_handle(cx, s, e, depth + 1),
         TyKind::Adt(d, args)
             if Some(d) != cx.mutex_ty() && cx.class_of(t).is_none() && !s.assigned.contains(&d) =>
         {
