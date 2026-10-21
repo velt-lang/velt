@@ -39,14 +39,13 @@ use velt_syntax::ast;
 
 use super::callback::synth;
 use super::callback_wrap::{wrapper, Shape};
+use super::iface_adapt_slots::{adapter_method, AdapterParts};
 use crate::any::Dynamic;
-use crate::body::{FnCx, Frame, LocalKind, Want};
+use crate::body::{FnCx, LocalKind};
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo, FnKind, ParamSig, ThisSig, ThrowSrc};
-use crate::hir::{
-    self, Callee, Def, DefId, ExprKind as H, ImplDef, PassMode, TyId, TyKind, UseMode,
-};
-use crate::resolve::TyEnv;
+use crate::defs::ParamSig;
+use crate::hir::{self, Def, DefId, ExprKind as H, ImplDef, TyId, TyKind};
+use crate::iface_writes::SetterSrc;
 
 /// The interface, the value's type arguments and the expected ones.
 pub(crate) type AdapterKey = (DefId, Vec<TyId>, Vec<TyId>);
@@ -60,10 +59,10 @@ pub(crate) struct Adapter {
 
 /// One slot of the interface: its name, parameters and result, in terms of the interface's
 /// type parameters.
-struct SlotSig {
-    name: String,
-    params: Vec<ParamSig>,
-    ret: TyId,
+pub(super) struct SlotSig {
+    pub name: String,
+    pub params: Vec<ParamSig>,
+    pub ret: TyId,
 }
 
 /// The slots of `iface` in table order (methods, then the getters of its fields), or `None`
@@ -103,7 +102,7 @@ fn open(cx: &Ctx, t: TyId) -> bool {
 /// after the call (std/prelude/zzz_adapt.vlt): `unknown[]`, `Map<unknown, unknown>` and
 /// `Set<unknown>`, the shapes of a serializer's handler table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Container {
+pub(super) enum Container {
     Array,
     Map,
     Set,
@@ -111,7 +110,7 @@ enum Container {
 
 impl Container {
     /// The prelude helpers making the copy and writing it back.
-    fn helpers(self) -> (&'static str, &'static str) {
+    pub(super) fn helpers(self) -> (&'static str, &'static str) {
         match self {
             Container::Array => ("__unknownArrayIn", "__unknownArrayOut"),
             Container::Map => ("__unknownMapIn", "__unknownMapOut"),
@@ -121,7 +120,7 @@ impl Container {
 }
 
 /// Is `t` one of the [`Container`] types?
-fn container(cx: &Ctx, t: TyId) -> Option<Container> {
+pub(super) fn container(cx: &Ctx, t: TyId) -> Option<Container> {
     let unknown = |x: TyId| cx.dynamic(x) == Some(Dynamic::Unknown);
     match cx.ty.kind(t) {
         TyKind::Array(e) if unknown(*e) => Some(Container::Array),
@@ -210,7 +209,11 @@ fn adaptable(
     let (mut fa, mut ta) = (from.to_vec(), to.to_vec());
     fa.push(unknown);
     ta.push(unknown);
+    let own = from.len() as u32;
     sigs.iter().all(|s| {
+        if unresolved_slot(cx, s, own, &fa, &ta) {
+            return true;
+        }
         let (rf, rt) = (cx.subst(s.ret, &fa), cx.subst(s.ret, &ta));
         value_ok(cx, rf, rt, false, seen, why)
             && s.params.iter().all(|p| {
@@ -220,9 +223,36 @@ fn adaptable(
     })
 }
 
+/// Is slot `s` one whose type could not be resolved, in the interface (a generic function type)
+/// or at these type arguments (`keyof any` in a mapped type)? Its error was reported where the
+/// type is written: refusing the conversion too would add an error at every conversion site
+/// for the same cause. A slot mentioning the implementor's own type parameter (`own`) is
+/// decided as usual.
+fn unresolved_slot(cx: &mut Ctx, s: &SlotSig, own: u32, fa: &[TyId], ta: &[TyId]) -> bool {
+    let tys: Vec<TyId> = s
+        .params
+        .iter()
+        .map(|p| p.ty)
+        .chain(std::iter::once(s.ret))
+        .collect();
+    let mut mentions_own = false;
+    for &t in &tys {
+        cx.ty.visit(t, &mut |k| {
+            mentions_own |= matches!(k, TyKind::Param(p) if *p == own)
+        });
+    }
+    if mentions_own {
+        return false;
+    }
+    tys.iter().any(|&t| {
+        let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
+        cx.ty.has_error(f) || cx.ty.has_error(g)
+    })
+}
+
 /// Does a value of type `from` convert to `to` inside an adapter? `param` when it is a
 /// parameter of the slot itself, where a [`Container`] is passed as a copy.
-fn value_ok(
+pub(super) fn value_ok(
     cx: &mut Ctx,
     from: TyId,
     to: TyId,
@@ -422,269 +452,33 @@ impl FnCx<'_, '_> {
             iname,
             from: from.to_vec(),
             to: to.to_vec(),
+            module: self.module,
             span,
         };
         let methods = sigs
             .iter()
             .enumerate()
-            .map(|(slot, s)| self.adapter_method(&parts, slot as u32, s))
+            .map(|(slot, s)| adapter_method(self.cx, &parts, slot as u32, s, false))
             .collect();
         self.cx.impls[a.impl_index as usize].methods = methods;
+        // Its setters, made once a field of the interface is written through.
+        let fields = self.cx.setter_fields(iface);
+        let srcs = fields
+            .into_iter()
+            .map(|field| SetterSrc::Adapter {
+                parts: Box::new(parts.clone()),
+                field,
+            })
+            .collect();
+        self.cx.note_setters(a.impl_index, srcs);
         // The dispatch groups gain the new methods (`throws/groups.rs`): built again on next use.
         self.cx.groups = None;
         a
     }
 
-    /// The method of the adapter for slot `slot` (signature `s`): calls the slot on the wrapped
-    /// value, converting the arguments and the result.
-    fn adapter_method(&mut self, p: &AdapterParts, slot: u32, s: &SlotSig) -> DefId {
-        let span = p.span;
-        let mut targs = p.to.clone();
-        targs.push(p.self_ty);
-        let mut fargs = p.from.clone();
-        fargs.push(p.inner);
-        let params: Vec<(ParamSig, TyId)> = s
-            .params
-            .iter()
-            .map(|q| {
-                let ty = self.cx.subst(q.ty, &targs);
-                let mode = if self.cx.is_copy(ty) {
-                    PassMode::Copy
-                } else {
-                    PassMode::Borrow
-                };
-                let from = self.cx.subst(q.ty, &fargs);
-                (
-                    ParamSig {
-                        ty,
-                        mode,
-                        ..q.clone()
-                    },
-                    from,
-                )
-            })
-            .collect();
-        let ret = self.cx.subst(s.ret, &targs);
-        let ret_from = self.cx.subst(s.ret, &fargs);
-        let name = format!("{} adapter.{}", p.iname, s.name);
-        let mut info = crate::collect::fn_placeholder(
-            name.clone(),
-            span,
-            span,
-            self.module,
-            FnKind::Method,
-            None,
-        );
-        info.this = Some(ThisSig {
-            ty: p.self_ty,
-            mode: PassMode::Borrow,
-        });
-        info.params = params.iter().map(|(q, _)| q.clone()).collect();
-        info.ret = ret;
-        info.fixed_modes = true;
-        info.state = BodyState::Done;
-        info.owner = Some(p.def);
-        let def = self.cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
-        let env = TyEnv::new(self.module, &[]);
-        let mut g = FnCx::new(
-            self.cx,
-            self.module,
-            env,
-            Frame::new(FnKind::Method, Some(ret)),
-        );
-        g.adapting = true;
-        g.fn_name = name.clone();
-        g.owner = Some(p.def);
-        g.body_def = Some(def);
-        g.cx.checking.push(def);
-        let this = g.new_local("this", p.self_ty, false, span, LocalKind::This);
-        let mut args = vec![hir::Expr {
-            kind: H::Field {
-                base: Box::new(g.mk(H::Local(this, UseMode::Borrow), p.self_ty, span)),
-                index: 0,
-                mode: UseMode::Borrow,
-            },
-            ty: p.inner,
-            span,
-        }];
-        let mut hir_params = vec![hir::Param {
-            local: this,
-            ty: p.self_ty,
-            mode: PassMode::Borrow,
-        }];
-        // A container argument is passed as a copy holding its elements boxed, and the copy is
-        // written back when the call returns (`Container`).
-        let mut stmts = vec![];
-        let mut write_back = vec![];
-        for (k, ((q, from), orig)) in params.iter().zip(&s.params).enumerate() {
-            let l = g.new_local(&q.name, q.ty, false, span, LocalKind::Param);
-            hir_params.push(hir::Param {
-                local: l,
-                ty: q.ty,
-                mode: q.mode,
-            });
-            let boxed = match container(g.cx, *from) {
-                Some(c) if g.cx.dynamic(q.ty).is_some() => Some(c),
-                _ => None,
-            };
-            if let Some(c) = boxed {
-                let (copy_in, copy_out) = c.helpers();
-                let (pname, cname) = (format!("#param{k}"), format!("#copy{k}"));
-                if let Some(scope) = g.f.scopes.last_mut() {
-                    scope.names.insert(pname.clone(), l);
-                }
-                let ident = |n: &str| {
-                    synth(
-                        ast::ExprKind::Ident(ast::Ident {
-                            name: n.to_string(),
-                            span,
-                        }),
-                        span,
-                    )
-                };
-                let call_of = |f: &str, args: Vec<ast::Expr>| {
-                    synth(
-                        ast::ExprKind::Call {
-                            callee: Box::new(ident(f)),
-                            type_args: vec![],
-                            args,
-                            optional: false,
-                        },
-                        span,
-                    )
-                };
-                // The helpers for `Set` are in its own module (std/collections/set.vlt), which
-                // the module converting the value need not import: their calls are checked as
-                // if written there.
-                let helpers_module = match g.cx.ty.kind(*from) {
-                    TyKind::Adt(d, _) if c == Container::Set => {
-                        g.cx.adt(*d).map_or(g.module, |a| a.module)
-                    }
-                    _ => g.module,
-                };
-                let own_module = std::mem::replace(&mut g.module, helpers_module);
-                let init = g.expr(
-                    &call_of(copy_in, vec![ident(&pname)]),
-                    Some(*from),
-                    Want::Move,
-                );
-                g.module = own_module;
-                let ci = ast::Ident {
-                    name: cname.clone(),
-                    span,
-                };
-                let copy = g.declare_local(&ci, *from, LocalKind::Const);
-                stmts.push(hir::Stmt {
-                    kind: hir::StmtKind::Let {
-                        local: copy,
-                        init: Some(init),
-                    },
-                    span,
-                });
-                let read = g.mk(H::Local(copy, UseMode::Borrow), *from, span);
-                args.push(if orig.mode == PassMode::Borrow {
-                    read
-                } else {
-                    g.intrinsic(hir::Intrinsic::Share, vec![read], *from, span)
-                });
-                write_back.push((
-                    helpers_module,
-                    call_of(copy_out, vec![ident(&pname), ident(&cname)]),
-                ));
-                // The helpers read and write through `any` (`Program::dyn_members`).
-                g.cx.note_dyn_members();
-                continue;
-            }
-            let mode = g.use_mode(q.ty, Want::Borrow);
-            let read = g.mk(H::Local(l, mode), q.ty, span);
-            args.push(g.adapt_value(read, *from));
-        }
-        if !g.promise_slot(p.iface, slot) {
-            g.throw_src(ThrowSrc::Slot {
-                iface: p.iface,
-                slot,
-                args: fargs,
-                span,
-            });
-        }
-        let call = g.mk(
-            H::Call {
-                callee: Callee::Dyn { slot },
-                args,
-            },
-            ret_from,
-            span,
-        );
-        let value = g.adapt_value(call, ret);
-        let unit = g.cx.ty.unit;
-        let stmt = |kind| hir::Stmt { kind, span };
-        let result = if ret == unit {
-            stmts.push(stmt(hir::StmtKind::Expr(value)));
-            None
-        } else if write_back.is_empty() {
-            Some(value)
-        } else {
-            // The result is kept while the copies are written back.
-            let r = g.new_local("#result", ret, false, span, LocalKind::Temp);
-            stmts.push(stmt(hir::StmtKind::Let {
-                local: r,
-                init: Some(value),
-            }));
-            let mode = g.use_mode(ret, Want::Move);
-            Some(g.mk(H::Local(r, mode), ret, span))
-        };
-        for (module, w) in &write_back {
-            let own_module = std::mem::replace(&mut g.module, *module);
-            let h = g.expr(w, Some(unit), Want::Move);
-            g.module = own_module;
-            stmts.push(stmt(hir::StmtKind::Expr(h)));
-        }
-        if let Some(v) = result {
-            stmts.push(stmt(hir::StmtKind::Return(Some(v))));
-        }
-        g.cx.checking.pop();
-        let frame = std::mem::replace(&mut g.f, Frame::new(FnKind::Method, None));
-        drop(g);
-        let fndef = hir::FnDef {
-            name,
-            generics: 0,
-            params: hir_params,
-            ret,
-            is_async: false,
-            is_generator: false,
-            self_ty: Some(p.self_ty),
-            captures: vec![],
-            shares_captures: false,
-            body: hir::Body {
-                locals: frame.locals,
-                block: hir::Block {
-                    stmts,
-                    value: None,
-                    span,
-                },
-            },
-            throws: None,
-            span,
-        };
-        self.cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
-        let info = self.cx.fn_info_mut(def);
-        info.local_kinds = frame.kinds;
-        info.throw_srcs = frame.uncaught;
-        def
-    }
-
-    /// Is slot `slot` of `iface` one whose implementations reject a promise instead of throwing
-    /// (`throws/groups.rs`)?
-    fn promise_slot(&mut self, iface: DefId, slot: u32) -> bool {
-        let groups = self.cx.throw_groups();
-        groups
-            .slot_group(iface, slot)
-            .is_some_and(|g| groups.list[g].promise)
-    }
-
     /// `h` converted to `to` inside an adapter's method (`adapting`): unchanged, checked out of
     /// `unknown`, boxed, or wrapped.
-    fn adapt_value(&mut self, h: hir::Expr, to: TyId) -> hir::Expr {
+    pub(super) fn adapt_value(&mut self, h: hir::Expr, to: TyId) -> hir::Expr {
         if h.ty == to {
             return h;
         }
@@ -763,16 +557,4 @@ impl FnCx<'_, '_> {
         };
         Ok(self.mk(H::Block(block), ty, span))
     }
-}
-
-/// What an adapter's methods are made from.
-struct AdapterParts {
-    def: DefId,
-    self_ty: TyId,
-    inner: TyId,
-    iface: DefId,
-    iname: String,
-    from: Vec<TyId>,
-    to: Vec<TyId>,
-    span: Span,
 }

@@ -1,0 +1,49 @@
+// check: no leaks
+// A generic interface value converted to the same interface with `any` arguments (#1185):
+// fields written through the converted value reach the original object, as in Node, where the
+// two are one object. sigx's renderer writes `ctx.renderFn` and `ctx.parent` through a
+// `ComponentSetupContext<any, any, …>` made from a context with concrete arguments.
+interface Ctx<E = string, P = {}> {
+  el: E;
+  props: P;
+  renderFn: (() => string) | null;
+  parent: Ctx<any, any> | null;
+  name(): string;
+}
+
+function setRender(c: Ctx<any, any>, f: () => string): void {
+  c.renderFn = f;
+  c.el = "changed";
+}
+
+function show(c: Ctx<any, any>): string {
+  return c.name() + ":" + String(c.el) + ":" + (c.renderFn ? c.renderFn() : "none");
+}
+
+const root: Ctx<any, {}> = {
+  el: "root",
+  props: {},
+  renderFn: null,
+  parent: null,
+  name(): string {
+    return "root";
+  },
+};
+console.log(show(root));
+setRender(root, () => "rendered");
+console.log(show(root));
+console.log(root.el, root.renderFn !== null);
+
+const child: Ctx<string, { n: number }> = {
+  el: "kid",
+  props: { n: 1 },
+  renderFn: null,
+  parent: null,
+  name(): string {
+    return "child";
+  },
+};
+const asAny: Ctx<any, any> = child;
+asAny.parent = root;
+asAny.props = { n: 2 };
+console.log(show(child), child.parent?.name(), child.props.n);

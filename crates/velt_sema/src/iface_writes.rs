@@ -67,6 +67,12 @@ pub(crate) enum SetterSrc {
         name: String,
         ty: TyId,
     },
+    /// Field `field` of an interface adapter (`body/expr/iface_adapt.rs`): written through the
+    /// wrapped value's own setter, the value converted to its field type.
+    Adapter {
+        parts: Box<crate::body::expr::iface_adapt_slots::AdapterParts>,
+        field: usize,
+    },
     /// An object literal (at `span`) with a getter and no setter for field `name`.
     Missing { span: Span, name: String },
     /// The same for a `readonly` field (of type `ty`; struct `d`, self type `self_ty`): an
@@ -300,6 +306,36 @@ impl Ctx<'_> {
         );
     }
 
+    /// A field written through `iface` that an adapter from another instance of it cannot write
+    /// back (its value does not convert to the wrapped value's field type).
+    fn adapter_unwritable(
+        &mut self,
+        iface: DefId,
+        parts: &crate::body::expr::iface_adapt_slots::AdapterParts,
+        field: usize,
+    ) {
+        let span = self
+            .iface_writes
+            .written
+            .get(&iface)
+            .copied()
+            .unwrap_or(parts.span);
+        let fname = self
+            .iface(iface)
+            .and_then(|i| i.fields.get(field))
+            .map_or(String::new(), |f| f.name.clone());
+        let to = self.ty.intern(TyKind::Dyn(iface, parts.to.clone()));
+        let from = self.ty.intern(TyKind::Dyn(iface, parts.from.clone()));
+        let (t, f) = (self.display(to), self.display(from));
+        self.error(
+            Diagnostic::error(
+                format!("writing `{fname}` through `{t}` is not supported yet: a `{f}` is converted to it here, and the value would not convert back to its field (#1185)"),
+                parts.span,
+            )
+            .with_label(span, format!("`{fname}` is written through `{t}` here")),
+        );
+    }
+
     fn iface_name(&self, iface: DefId) -> String {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
@@ -341,6 +377,16 @@ impl Ctx<'_> {
                     return;
                 }
                 SetterSrc::Method { def, .. } => defs.push(def),
+                SetterSrc::Adapter { parts, field } => {
+                    match crate::body::expr::iface_adapt_slots::adapter_setter(self, &parts, field)
+                    {
+                        Some(def) => defs.push(def),
+                        None => {
+                            self.adapter_unwritable(iface, &parts, field);
+                            return;
+                        }
+                    }
+                }
                 SetterSrc::GetterOnly {
                     d,
                     self_ty,
