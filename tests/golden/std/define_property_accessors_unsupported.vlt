@@ -1,0 +1,37 @@
+// Accessors defined after construction that Velt can't follow yet, or that Node rejects (tsc
+// accepts all).
+interface Cell {
+  get value(): number;
+  set value(v: number);
+}
+
+let n = 0;
+
+// The target is a parameter, not a literal of this function.
+function redefine(c: Cell): void {
+  Object.defineProperty(c, "value", { get: () => n });
+}
+
+// A setter the literal doesn't have.
+interface ReadOnly {
+  get value(): number;
+}
+
+const ro: ReadOnly = {
+  get value() {
+    return n;
+  },
+};
+Object.defineProperty(ro, "value", { set: (v: number) => (n = v) });
+
+// An accessor and a value: Node throws.
+const c: Cell = {
+  get value() {
+    return n;
+  },
+  set value(v) {
+    n = v;
+  },
+};
+Object.defineProperty(c, "value", { get: () => 1, writable: true });
+redefine(c);

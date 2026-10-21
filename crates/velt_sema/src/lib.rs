@@ -40,6 +40,7 @@ mod copy_flow;
 mod copy_types;
 mod creation_notes;
 mod ctx;
+mod defined_accessors;
 mod defined_props;
 mod defs;
 mod discriminants;
@@ -252,6 +253,9 @@ fn check_on_current_thread(
     let (global_props, global_diags, globals) = global_this::rewrite(modules);
     merge_diags.extend(global_diags);
     let modules = globals.as_deref().unwrap_or(modules);
+    let (accessor_diags, accessors) = defined_accessors::rewrite(modules);
+    merge_diags.extend(accessor_diags);
+    let modules = accessors.as_deref().unwrap_or(modules);
     let (brands, branded) = defined_props::rewrite(modules);
     let modules = branded.as_deref().unwrap_or(modules);
     let closures = nested_closures::rewrite(modules);

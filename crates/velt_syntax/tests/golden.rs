@@ -59,6 +59,7 @@ fn golden_m1_files_parse() {
                 | "computed_key_errors.vlt"
                 | "destructure_computed_path.vlt"
                 | "literal_method_names.vlt"
+                | "define_property_accessor_this.vlt"
         ) {
             continue;
         }

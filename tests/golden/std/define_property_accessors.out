@@ -1,0 +1,7 @@
+2 cell
+set b
+a
+30
+1
+TypeError: Cannot redefine property: n
+typed

@@ -1,0 +1,93 @@
+// Accessors defined after construction (#922): `Object.defineProperty(o, "k", { get, set })` on
+// a literal of an interface declaring the accessor replaces its getter or setter, as in Node.
+interface Cell<T> {
+  get value(): T;
+  set value(v: T);
+  readonly label: string;
+}
+
+function cell<T>(initial: T, setter?: (v: T) => void): Cell<T> {
+  let current = initial;
+  const c: Cell<T> = {
+    get value(): T {
+      return current;
+    },
+    set value(v) {
+      current = v;
+    },
+    label: "cell",
+  };
+  if (setter) {
+    Object.defineProperty(c, "value", {
+      get(): T {
+        return current;
+      },
+      set(v: T) {
+        setter(v);
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return c;
+}
+
+const plain = cell(1);
+plain.value = 2;
+console.log(plain.value, plain.label);
+const logged = cell("a", (v) => console.log("set", v));
+logged.value = "b";
+console.log(logged.value);
+
+// A getter only: the setter stays.
+interface Counter {
+  get n(): number;
+  set n(v: number);
+}
+
+function counter(): Counter {
+  let n = 0;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  Object.defineProperty(c, "n", { get: () => n * 10 });
+  return c;
+}
+
+const k = counter();
+k.n = 3;
+console.log(k.n);
+
+// Not configurable: defining it again throws.
+function fixed(times: number): number {
+  let n = 1;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  for (let i = 0; i < times; i++) {
+    Object.defineProperty(c, "n", { get: () => n + i, configurable: false });
+  }
+  return c.n;
+}
+
+console.log(fixed(1));
+try {
+  fixed(2);
+} catch (e) {
+  console.log(String(e));
+}
+
+// An indexed access type reads an interface's getter.
+type Value = Cell<string>["value"];
+const v: Value = "typed";
+console.log(v);

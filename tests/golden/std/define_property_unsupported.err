@@ -1,5 +1,5 @@
 `Object.defineProperty` with the key `[CELL]`, which the program also writes directly, is not supported yet
-an accessor defined with `Object.defineProperty` is not supported yet
+`Object.defineProperty` of an accessor `n` on `counter`, whose object literal has no getter `n`, is not supported yet
 `Object.defineProperty` changing the attributes of `n` is not supported yet
 `Object.defineProperty` of `[MARK]` on a `{ a: f64 }`, which doesn't declare it, is not supported yet
 `Object.defineProperties` is not supported yet

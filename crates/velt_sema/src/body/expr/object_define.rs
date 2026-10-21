@@ -10,8 +10,10 @@
 //! - A string key naming a field `o`'s type declares, with only a `value`: the property keeps its
 //!   attributes in JavaScript, so this is an assignment.
 //!
-//! Accessors (`get` / `set`, #941), other attributes on a declared field, and keys a type doesn't
-//! declare are errors saying they are not supported yet.
+//! Accessors (`get` / `set`) are `crate::defined_accessors`'s, which rewrites the ones it
+//! follows; the others, other attributes on a declared field, and keys a type doesn't declare
+//! are errors saying they are not supported yet. On `globalThis`, the call assigns the
+//! property's variable (`crate::global_this`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -438,9 +440,9 @@ impl FnCx<'_, '_> {
                 }
                 ("get" | "set", _) => {
                     self.not_yet(
-                        "an accessor defined with `Object.defineProperty` is not supported yet",
+                        "an accessor defined with `Object.defineProperty` is not supported yet here",
                         name.span,
-                        "it waits for getters and setters in object literals (#941)",
+                        "Velt supports it as a statement on a `const o: I = { get k() { … } }` of the same function, `I` an interface declaring the accessor: the call replaces the literal's accessors",
                     );
                     return None;
                 }

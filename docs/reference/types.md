@@ -1254,7 +1254,8 @@ const id: UserId = "u-1"; // error: a plain `string` does not convert to it; bra
 
 `T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
 of the fields' types, as in TypeScript: `Person["name"]` is `string`, and an optional field
-`email?: string` gives `string | undefined`. A key that is not a field
+`email?: string` gives `string | undefined`. On an interface with methods it reads a field or
+a getter (`get size(): number` gives `number`). A key that is not a field
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
@@ -1903,8 +1904,49 @@ does is an error saying it is not supported yet, never a quiet difference.
   the same ones. With a string key naming a declared field and only a `value`, it assigns the
   field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
   A brand on a class instance (whose declared field is an own property from construction),
-  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
-  supported yet, and neither is `Object.defineProperties`.
+  other attributes and keys a type doesn't declare are not supported yet, and neither is
+  `Object.defineProperties`.
+- `Object.defineProperty(o, "k", { get, set })`, as a statement, on a `const o: I = { … }` of
+  the same function whose literal has the accessor `get k() { … }` (and `set k(v) { … }` for a
+  setter), with `I` an interface that declares it ([object literals implementing
+  interfaces](#object-literals-implementing-interfaces)), replaces the literal's getter or setter,
+  as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
+  again throws `TypeError: Cannot redefine property: k`. `enumerable` changes nothing Velt shows,
+  since an interface value is not listed by key. Accessors defined on other objects (a
+  parameter, a class instance), with `this` inside them (#941), or that may throw (until #1326),
+  are not supported yet.
+
+```ts
+interface Counter {
+  get n(): number;
+  set n(v: number);
+}
+
+function counter(log: boolean): Counter {
+  let n = 0;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  if (log) {
+    Object.defineProperty(c, "n", {
+      set(v: number) {
+        console.log("n =", v);
+        n = v;
+      },
+    });
+  }
+  return c;
+}
+
+const c = counter(true);
+c.n = 2; // n = 2
+console.log(c.n); // 2
+```
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
 
