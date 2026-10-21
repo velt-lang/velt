@@ -194,7 +194,12 @@ impl FnLower<'_, '_> {
                     }
                     None => {
                         let fty = self.cx.member_ty(ty, index);
-                        self.option_is_some(&fp, fty)
+                        // An optional `any` field holds its own `undefined` when absent.
+                        if self.cx.is_dynamic(fty) {
+                            self.any_defined(&fp)
+                        } else {
+                            self.option_is_some(&fp, fty)
+                        }
                     }
                 };
                 let (yes, no) = (self.new_block(), self.new_block());
