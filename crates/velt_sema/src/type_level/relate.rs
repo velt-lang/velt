@@ -152,29 +152,28 @@ impl Ctx<'_> {
                 TyKind::FnPtr {
                     params: sp,
                     ret: sr,
+                    rest: s_rest,
                     ..
                 },
                 TyKind::FnPtr {
                     params: pp,
                     ret: pr,
+                    rest: p_rest,
                     ..
                 },
             ) => {
-                // Parameters relate contravariantly (`--strict`'s strictFunctionTypes): the
-                // pattern's parameter must be assignable to the subject's. What an `infer X`
-                // in the pattern's parameter finds is a contravariant candidate.
-                sp.len() <= pp.len()
-                    && sp.iter().zip(&pp).all(|(x, y)| {
-                        if self.has_infer(*y) {
-                            slots.flipped = !slots.flipped;
-                            let ok = self.relate(*x, *y, slots);
-                            slots.flipped = !slots.flipped;
-                            ok
-                        } else {
-                            self.relate(*y, *x, &mut Slots::default())
-                        }
-                    })
-                    && self.relate(sr, pr, slots)
+                let ok = match (s_rest, p_rest) {
+                    (false, true) => self.relate_to_rest(&sp, &pp, slots),
+                    (true, _) => self.relate_from_rest(&sp, &pp, p_rest, slots),
+                    (false, false) => {
+                        sp.len() <= pp.len()
+                            && sp
+                                .iter()
+                                .zip(&pp)
+                                .all(|(x, y)| self.relate_param(*x, *y, slots))
+                    }
+                };
+                ok && self.relate(sr, pr, slots)
             }
             (_, TyKind::Adt(..)) if self.record_type_args(p).is_some() => {
                 self.relate_to_record(s, p, slots)
@@ -203,7 +202,104 @@ impl Ctx<'_> {
         matches!(*self.ty.kind(p), TyKind::Param(i) if i >= UNKNOWN)
     }
 
+    /// Parameters relate contravariantly (`--strict`'s strictFunctionTypes): the pattern's
+    /// parameter `p` must be assignable to the subject's `s`. What an `infer X` in the pattern's
+    /// parameter finds is a contravariant candidate.
+    fn relate_param(&mut self, s: TyId, p: TyId, slots: &mut Slots) -> bool {
+        // A pattern's `any` parameter, or `any` / `unknown` rest element, takes any argument.
+        let any = |cx: &Self, t: TyId| {
+            matches!(cx.dynamic(t), Some(Dynamic::Any))
+                || matches!(*cx.ty.kind(t), TyKind::Param(WILDCARD))
+        };
+        let top = |cx: &Self, t: TyId| {
+            any(cx, t)
+                || matches!(cx.dynamic(t), Some(Dynamic::Unknown))
+                || matches!(*cx.ty.kind(t), TyKind::Param(UNKNOWN))
+        };
+        if any(self, p) || self.ty.array_elem(p).is_some_and(|e| top(self, e)) {
+            return true;
+        }
+        if self.has_infer(p) {
+            slots.flipped = !slots.flipped;
+            let ok = self.relate(s, p, slots);
+            slots.flipped = !slots.flipped;
+            ok
+        } else {
+            self.relate(p, s, &mut Slots::default())
+        }
+    }
+
+    /// The parameters `sp` of a function type without a rest parameter against a pattern's
+    /// `pp` ending in one (`(...args: any[]) => any`, `(e: E, ...args: infer A) => void`): the
+    /// subject's parameters from the rest parameter's position on are its elements, or the
+    /// tuple an `infer` there finds (TypeScript's `Parameters<F>`).
+    fn relate_to_rest(&mut self, sp: &[TyId], pp: &[TyId], slots: &mut Slots) -> bool {
+        let Some((&last, fixed)) = pp.split_last() else {
+            return false;
+        };
+        let (head, tail) = sp.split_at(fixed.len().min(sp.len()));
+        if !head
+            .iter()
+            .zip(fixed)
+            .all(|(x, y)| self.relate_param(*x, *y, slots))
+        {
+            return false;
+        }
+        if self.has_infer(last) {
+            let tail = self.ty.intern(TyKind::Tuple(tail.to_vec()));
+            return self.relate_param(tail, last, slots);
+        }
+        match self.ty.array_elem(last) {
+            Some(e) => tail.iter().all(|x| self.relate_param(*x, e, slots)),
+            None => false,
+        }
+    }
+
     /// Does `t` hold an `infer` placeholder?
+    /// The parameters `sp` of a function type ending in a rest parameter against a pattern's
+    /// `pp` (ending in one when `p_rest`): the subject takes any number of arguments from its
+    /// rest parameter's position on, each an element of its rest array. A pattern rest parameter
+    /// that is an `infer` (`(...a: infer A) => R`) finds the subject's rest array when the
+    /// subject has no other parameters past the pattern's fixed ones; with them it would be a
+    /// variadic tuple, which Velt doesn't have.
+    fn relate_from_rest(
+        &mut self,
+        sp: &[TyId],
+        pp: &[TyId],
+        p_rest: bool,
+        slots: &mut Slots,
+    ) -> bool {
+        let Some((&s_last, s_fixed)) = sp.split_last() else {
+            return false;
+        };
+        let Some(s_elem) = self.ty.array_elem(s_last) else {
+            return false;
+        };
+        let (p_fixed, p_last) = match (p_rest, pp.split_last()) {
+            (true, Some((&last, fixed))) => (fixed, Some(last)),
+            _ => (pp, None),
+        };
+        // Each pattern fixed parameter against the subject's at its position, or its element.
+        for (i, &y) in p_fixed.iter().enumerate() {
+            let x = s_fixed.get(i).copied().unwrap_or(s_elem);
+            if !self.relate_param(x, y, slots) {
+                return false;
+            }
+        }
+        let Some(p_last) = p_last else {
+            return true;
+        };
+        let extra = s_fixed.get(p_fixed.len()..).unwrap_or_default();
+        if self.has_infer(p_last) {
+            return extra.is_empty() && self.relate_param(s_last, p_last, slots);
+        }
+        let Some(p_elem) = self.ty.array_elem(p_last) else {
+            return false;
+        };
+        extra.iter().all(|x| self.relate_param(*x, p_elem, slots))
+            && self.relate_param(s_last, p_last, slots)
+    }
+
     fn has_infer(&self, t: TyId) -> bool {
         let mut ps = vec![];
         crate::types::collect_params(&self.ty, t, &mut ps);

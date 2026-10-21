@@ -87,8 +87,9 @@ fn check_impl(
     Some((imp, setters))
 }
 
-/// The class must have every interface field (same type); each gets a getter, and each
-/// writable one a setter source (`crate::iface_writes`).
+/// The class must have every interface field (same type); each gets a getter and a setter
+/// source (`crate::iface_writes`), or the implementation gets none (`None`: a writable field
+/// with a getter and no setter).
 fn field_getters(
     cx: &mut Ctx,
     p: &Pair,
@@ -112,7 +113,7 @@ fn field_getters(
             };
             cache.insert((p.d, i), g);
             getters.push(g);
-            if let Some(setters) = setters.as_mut().filter(|_| !f.readonly) {
+            if let Some(setters) = setters.as_mut() {
                 setters.push(SetterSrc::Field {
                     d: p.d,
                     self_ty: p.self_ty,
@@ -121,14 +122,24 @@ fn field_getters(
                 });
             }
         } else if let Some((g, set)) = accessor_slots(cx, p.d, p.self_ty, &f.name, want) {
-            // A `get` (and `set`) accessor of the class provides the field.
+            // A `get` (and `set`) accessor of the class provides the field. A `readonly` one
+            // without a `set` can't take a changed part back (`iface_writes`).
             getters.push(g);
-            if !f.readonly {
-                setters = setters.zip(set).map(|(mut v, def)| {
-                    v.push(SetterSrc::Method(def));
-                    v
-                });
-            }
+            let src = match set {
+                Some(def) => Some(SetterSrc::Method(def)),
+                None if f.readonly => Some(SetterSrc::Unwritable {
+                    span: p.span,
+                    name: f.name.clone(),
+                    d: p.d,
+                    self_ty: p.self_ty,
+                    ty: want,
+                }),
+                None => None,
+            };
+            setters = setters.zip(src).map(|(mut v, src)| {
+                v.push(src);
+                v
+            });
         } else {
             let tn = cx.display(want);
             let (cname, iname) = (&p.cname, &p.iname);

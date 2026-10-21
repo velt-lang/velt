@@ -113,11 +113,14 @@ impl Ctx<'_> {
             .into_iter()
             .map(|s| s.unwrap_or(self.ty.never))
             .collect();
-        let (names, fields): (Vec<String>, Vec<(String, TyId)>) = {
+        let (names, fields): (Vec<String>, Vec<(String, TyId, bool)>) = {
             let i = self.iface(iface)?;
             (
                 i.methods.iter().map(|m| m.name.clone()).collect(),
-                i.fields.iter().map(|f| (f.name.clone(), f.ty)).collect(),
+                i.fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty, f.readonly))
+                    .collect(),
             )
         };
         let mut methods = vec![];
@@ -132,7 +135,7 @@ impl Ctx<'_> {
         };
         // How each field is stored: a part's implementation's, or `d`'s own field.
         let mut stored: Vec<Option<SetterSrc>> = vec![];
-        for (name, fty) in fields {
+        for (name, fty, readonly) in fields {
             if let Some(m) = self.part_slot(&impls, &name, true) {
                 methods.push(m);
                 stored.push(self.part_setter(&impls, &name));
@@ -146,16 +149,24 @@ impl Ctx<'_> {
                 // A `get` (and `set`) accessor of the class provides the field.
                 let (g, set) = crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;
                 methods.push(g);
-                // Without a `set`, writing the field throws, as in Node.
-                let set = set.map_or_else(
-                    || SetterSrc::GetterOnly {
+                // Without a `set`, writing the field throws, as in Node; a `readonly` one can't
+                // take a changed part back (`iface_writes`).
+                let set = match set {
+                    Some(def) => SetterSrc::Method(def),
+                    None if readonly => SetterSrc::Unwritable {
+                        span: self.adt(d).map_or(velt_common::Span::DUMMY, |a| a.span),
+                        name: name.clone(),
+                        d,
+                        self_ty: own_ty,
+                        ty: want,
+                    },
+                    None => SetterSrc::GetterOnly {
                         d,
                         self_ty: own_ty,
                         name: name.clone(),
                         ty: want,
                     },
-                    SetterSrc::Method,
-                );
+                };
                 stored.push(Some(set));
                 continue;
             };
@@ -169,8 +180,7 @@ impl Ctx<'_> {
                 ty: want,
             }));
         }
-        let writable = self.writable_fields(iface);
-        let setters: Option<Vec<SetterSrc>> = writable.iter().map(|&k| stored[k].clone()).collect();
+        let setters: Option<Vec<SetterSrc>> = stored.into_iter().collect();
         self.impls.push(ImplDef {
             ty: own_ty,
             generics: n as u32,
@@ -200,7 +210,7 @@ impl Ctx<'_> {
         false
     }
 
-    /// How the implementation of the first of `impls` whose interface has writable field
+    /// How the implementation of the first of `impls` whose interface has field
     /// `name` stores it (`crate::iface_writes`).
     fn part_setter(&self, impls: &[(DefId, u32)], name: &str) -> Option<SetterSrc> {
         for &(p, index) in impls {
@@ -208,8 +218,7 @@ impl Ctx<'_> {
             let Some(f) = i.fields.iter().position(|f| f.name == name) else {
                 continue;
             };
-            let k = self.writable_fields(p).iter().position(|&w| w == f)?;
-            return self.setter_sources(index)?.get(k).cloned();
+            return self.setter_sources(index)?.get(f).cloned();
         }
         None
     }
@@ -290,8 +299,7 @@ impl Ctx<'_> {
         slots.extend(bi.fields.iter().map(|f| slot_of(&f.name, true)));
         if self.iface_written(b) {
             let n = ai.methods.len() + ai.fields.len();
-            let writable = self.writable_fields(a);
-            for k in self.writable_fields(b) {
+            for k in self.setter_fields(b) {
                 let name = &self.iface(b).expect("ICE: iface").fields[k].name;
                 let f = self
                     .iface(a)
@@ -299,8 +307,7 @@ impl Ctx<'_> {
                     .fields
                     .iter()
                     .position(|f| &f.name == name);
-                let at = f.and_then(|f| writable.iter().position(|&w| w == f));
-                slots.push(n + at.expect("ICE: an upcast target setter the source lacks"));
+                slots.push(n + f.expect("ICE: an upcast target setter the source lacks"));
             }
         }
         // `b`'s arguments: from the interface types the conversion was checked with, the

@@ -454,6 +454,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
+    /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand
+    /// side with effects.
+    pub held_recheck: Vec<expr::assign_paths::HeldRecheck>,
     /// The span of the call being checked when its function or receiver has effects
     /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
     pub callee_effects: Option<Span>,
@@ -543,6 +547,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             std_callback: None,
             literal_slot: None,
             call_temps: vec![],
+            held_recheck: Vec::new(),
             callee_effects: None,
             void_task: None,
             task_callback: None,

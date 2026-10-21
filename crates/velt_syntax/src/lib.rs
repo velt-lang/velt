@@ -7,6 +7,7 @@
 
 pub mod ast;
 mod ast_names;
+mod js_number;
 mod lexer;
 #[cfg(test)]
 mod linear_tests;
@@ -16,6 +17,8 @@ pub mod visit;
 mod work;
 
 use rustc_hash::FxHashMap;
+
+pub use js_number::js_number;
 
 /// The name of the identifier a hole of an array literal parses as (`[a, , b]`): empty, so it
 /// prints as nothing and no source can name it. Only a destructuring assignment target takes

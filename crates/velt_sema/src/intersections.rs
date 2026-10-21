@@ -250,10 +250,12 @@ impl Ctx<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => TyKind::FnPtr {
                 params: params.iter().map(|a| m(self, *a)).collect(),
                 ret: m(self, ret),
                 throws: m(self, throws),
+                rest,
             },
             _ => return t,
         };

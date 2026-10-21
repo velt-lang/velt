@@ -94,11 +94,13 @@ impl Ctx<'_> {
                     params: pp,
                     ret: pr,
                     throws: pt,
+                    ..
                 },
                 TyKind::FnPtr {
                     params: ap,
                     ret: ar,
                     throws: at,
+                    ..
                 },
             ) => {
                 let x = self.match_all(&pp, &ap, slots);

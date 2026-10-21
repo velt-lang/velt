@@ -20,6 +20,7 @@ impl FnCx<'_, '_> {
             params: vec![],
             ret: unknown,
             throws: unknown,
+            rest: false,
         });
         // A closure literal is only borrowed by the call: it stays non-escaping.
         let mut f = match super::args::as_arrow(arg) {
@@ -52,6 +53,7 @@ impl FnCx<'_, '_> {
                 params,
                 ret,
                 throws,
+                ..
             } if params.is_empty() && self.cx.ty.promise_payload(ret).is_none() => {
                 Some((ret, throws))
             }

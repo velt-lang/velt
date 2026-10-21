@@ -192,12 +192,7 @@ impl FnCx<'_, '_> {
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
         let js_api = self.is_js_api(d);
         let positions = js_numbers && super::numbers::is_simd_method(&f.name);
-        let rest = f.source.is_some_and(|s| {
-            crate::body::defaults::fn_sig_ast(s)
-                .params
-                .last()
-                .is_some_and(|p| p.rest)
-        });
+        let rest = crate::body::defaults::has_rest(self.cx, d);
         let mut c = Callable {
             what,
             params: f.params.clone(),
@@ -322,12 +317,13 @@ impl FnCx<'_, '_> {
                 None => self.error_expr(span),
             };
         }
-        let (params, ret, throws) = match self.cx.ty.kind(f.ty).clone() {
+        let (params, ret, throws, rest) = match self.cx.ty.kind(f.ty).clone() {
             TyKind::FnPtr {
                 params,
                 ret,
                 throws,
-            } => (params, ret, throws),
+                rest,
+            } => (params, ret, throws, rest),
             TyKind::Error | TyKind::Never => {
                 self.check_args_loose(args);
                 return self.error_expr(span);
@@ -360,9 +356,13 @@ impl FnCx<'_, '_> {
             } else {
                 PassMode::Borrow
             };
-            let default = closure
+            let mut default = closure
                 .and_then(|d| self.cx.fn_info(d).params.get(i))
                 .and_then(|p| p.default.clone());
+            // A rest parameter without arguments is the empty array.
+            if rest && i + 1 == params.len() {
+                default = Some(self.mk(H::ArrayLit(vec![]), *ty, span));
+            }
             ps.push(ParamSig {
                 name: format!("arg{i}"),
                 span,
@@ -381,7 +381,7 @@ impl FnCx<'_, '_> {
             js_numbers: false,
             positions: false,
             js_api: false,
-            rest: false,
+            rest,
             defaults: vec![],
         };
         let ck = self.check_call(&c, vec![], args, None, span);

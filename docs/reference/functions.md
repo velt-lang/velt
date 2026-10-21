@@ -58,10 +58,12 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   (TS2370). A rest parameter typed by a type parameter (`...args: A` with
   `A extends unknown[]`, which TypeScript infers as the tuple of the argument types) is not
   supported yet (#943).
-  A module-level constant arrow function or function expression may have one too, typed the
-  same ways: `const total = (...xs: Nums) => …` is the function `function total(...xs: Nums)`
-  (its parameters must be typed). Rest parameters of other arrows and function expressions are
-  not supported yet (see below).
+  An arrow function, a function expression or an object-literal method may have one too (a
+  method of a literal implementing an interface not yet, nor an interface method), typed the
+  same ways: a
+  module-level constant `const total = (...xs: Nums) => …` is the function
+  `function total(...xs: Nums)` (its parameters must be typed), and any other is a closure whose
+  function type ends in the rest parameter (see Function types below).
 
   ```ts
   type Nums = number[];
@@ -895,14 +897,51 @@ async function main() {
   function through a value behaves like calling it directly: an object it keeps or modifies is
   the caller's object. A promise passed through a function value is shared with the function,
   as any object is.
-- **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
-  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`, other than
-  a module-level constant's), generic
-  function types (`<T>(description: string) => Token<T>`, a value each call instantiates)
-  and construct signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value).
-  They parse, and using one is an error saying it is not supported yet. A function type's
-  parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
-  which, like a name, is only for the reader.
+- A function type may end in a **rest parameter**: `(event: string, ...args: T[]) => void`. A
+  call through the value packs the remaining arguments into the array, as a call to a function
+  with a rest parameter does (`emit("tick")` passes `[]`, `emit("tick", ...xs)` spreads), and a
+  function or arrow with the same rest parameter is such a value. An arrow passed where one is
+  expected may leave the rest arguments out (`(event) => …`) or take them as its own rest
+  parameter in the same place (`(event, ...args) => …`); naming them one by one
+  (`(event, a, b) => …`, which TypeScript accepts) is not supported yet. A rest parameter typed
+  by a tuple is that tuple's parameters: `(...args: [string, number]) => R` is
+  `(a: string, b: number) => R`, also when the tuple is a type argument
+  (`type Factory<A extends unknown[], T> = (...args: A) => T`).
+
+  ```ts
+  type Listener = (event: string, ...args: number[]) => void;
+
+  function fire(f: Listener) {
+    f("none");
+    f("two", 1, 2);
+  }
+
+  function main() {
+    fire((event, ...args) => console.log(event, args.length)); // none 0, then two 2
+  }
+  ```
+
+- A named function or a function value passed where a function type with the other kind of
+  parameters is expected is adapted as TypeScript allows. A function with a rest parameter
+  gets every argument the caller passes (`const h: (a: number, b: number) => number = sum`
+  gives `sum` both). A function with fixed parameters, passed where the function type ends
+  in a rest parameter, gets the rest arguments one by one (`call(Math.max)`); a
+  parameter whose argument is missing gets its default, or `undefined`, which its type (or
+  the rest element type) must then admit (`(a: any) => …`, `b?: number`); one of another type
+  is an error. Calling a union of function types where one has a rest parameter, or a
+  function with a rest parameter through `any`, is not supported yet.
+- In type-level code, `F extends (...args: any[]) => any` holds for every function type, and
+  `Parameters<F>` of `(...xs: T[]) => R` is `T[]`, as is `A` in
+  `F extends (...a: infer A) => R ? A : never`. For a function type with fixed parameters before
+  its rest parameter, `Parameters` would be a variadic tuple type
+  (`[e: string, ...xs: number[]]`), which is not supported yet. A generic function whose rest
+  parameter is typed by its type parameter (`wrap<A extends unknown[], R>(f: (...args: A) => R)`)
+  is not supported yet.
+- **Planned** (#943): generic function types (`<T>(description: string) => Token<T>`, a value
+  each call instantiates) and construct signatures (`new (buffer: ArrayBuffer) => View`, a class
+  passed as a value). They parse, and using one is an error saying it is not supported yet.
+- A function type's parameter may be named by a destructuring pattern
+  (`([a, b]: [number, number]) => number`), which, like a name, is only for the reader.
 - A function type's parameter may be **optional** (`(app: App, options?: Options) => void`): its
   type is `Options | undefined`, as for a function's optional parameter, and a required parameter
   cannot follow it (TypeScript's TS1016). A call through such a value passes every argument for

@@ -1,0 +1,2 @@
+enum_member_key_unknown.vlt:9:4: error: `[Flags.NOPE]` is not a member name the compiler knows: `Flags.NOPE` must be a module constant holding a symbol or a string, or an enum member
+enum_member_key_unknown.vlt:10:4: error: `[Other.SKIP]` is not a member name the compiler knows: `Other.SKIP` must be a module constant holding a symbol or a string, or an enum member

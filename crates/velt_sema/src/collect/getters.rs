@@ -5,7 +5,7 @@
 //! a `ParamMethod` / `Dyn` call of slot `methods.len() + field index`.
 //!
 //! An interface the program writes a field through also gets setters ([`field_setter`]), one
-//! per writable field, after the getters (`crate::iface_writes`).
+//! per field, after the getters (`crate::iface_writes`).
 
 use velt_common::Span;
 
@@ -102,7 +102,7 @@ pub(crate) fn field_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
             place: Box::new(place),
             value: Box::new(value),
         };
-        (assign, unit)
+        Some((assign, unit))
     })
 }
 
@@ -129,19 +129,27 @@ pub(crate) fn getter_only_setter(
                 span,
             }],
         };
-        (call, never)
+        Some((call, never))
     })
 }
 
+/// A setter slot of `readonly` field `fname` (type `ty`) for an implementation that cannot be
+/// written through (an object literal's `get f()` without `set f(v)`): it does nothing, and is
+/// never called (a write into a part of the field reports the literal,
+/// `crate::iface_writes`).
+pub(crate) fn unused_setter(cx: &mut Ctx, d: DefId, self_ty: TyId, fname: &str, ty: TyId) -> DefId {
+    setter_def(cx, d, self_ty, fname, ty, |_, _| None)
+}
+
 /// A setter method `<set fname>(v: ty)` of class/struct `d` whose body is the statement
-/// `body(span, ty is Copy)` (its kind and type).
+/// `body(span, ty is Copy)` (its kind and type), or empty for `None`.
 fn setter_def(
     cx: &mut Ctx,
     d: DefId,
     self_ty: TyId,
     fname: &str,
     ty: TyId,
-    body: impl FnOnce(Span, bool) -> (H, TyId),
+    body: impl FnOnce(Span, bool) -> Option<(H, TyId)>,
 ) -> DefId {
     let a = cx.adt(d).expect("ICE: adt");
     let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
@@ -172,12 +180,17 @@ fn setter_def(
     info.local_kinds = vec![crate::body::LocalKind::This, crate::body::LocalKind::Param];
     let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
     let unit = cx.ty.unit;
-    let (kind, ty_of) = body(span, copy);
-    let stmt = hir::Expr {
-        kind,
-        ty: ty_of,
-        span,
-    };
+    let stmts: Vec<hir::Stmt> = body(span, copy)
+        .map(|(kind, ty_of)| hir::Stmt {
+            kind: hir::StmtKind::Expr(hir::Expr {
+                kind,
+                ty: ty_of,
+                span,
+            }),
+            span,
+        })
+        .into_iter()
+        .collect();
     cx.defs[def.0 as usize] = Some(Def::Fn(hir::FnDef {
         name,
         generics: n.len() as u32,
@@ -202,10 +215,7 @@ fn setter_def(
         body: hir::Body {
             locals: vec![local("this", self_ty, span), local("v", ty, span)],
             block: hir::Block {
-                stmts: vec![hir::Stmt {
-                    kind: hir::StmtKind::Expr(stmt),
-                    span,
-                }],
+                stmts,
                 value: None,
                 span,
             },

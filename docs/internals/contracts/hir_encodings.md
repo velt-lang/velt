@@ -267,7 +267,13 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   sema demotes an inferred `BorrowMut` to `Borrow` + `LocalDef::mutable` (direct calls still pass
   `BorrowMut` uses). For every param, `LocalDef::mutable` means the body assigns or modifies it;
   lowering never marks such a param `readonly`.
-- `TyKind::FnPtr` has no mutability information: `{ params, ret }`.
+- `TyKind::FnPtr` has no mutability information: `{ params, ret, throws, rest }`.
+- `TyKind::FnPtr::rest`: the last of `params` is a rest parameter (an array type,
+  `(a: A, ...xs: T[]) => R`). Sema packs a call's remaining arguments into that array (and
+  passes `[]` when there are none), so every call through the value passes `params.len()`
+  values and its ABI is that of the same type with `rest: false`; lowering may ignore the flag.
+  A rest parameter typed by a tuple is never interned: `Types::intern` spreads the tuple into
+  `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
 
 ## Generic methods

@@ -83,17 +83,19 @@ impl Ctx<'_> {
                 params: pw,
                 ret: rw,
                 throws: tw,
+                rest: xw,
             },
             TyKind::FnPtr {
                 params: pn,
                 ret: rn,
                 throws: tn,
+                rest: xn,
             },
         ) = (self.ty.kind(wide).clone(), self.ty.kind(narrow).clone())
         else {
             return false;
         };
-        if pw.len() != pn.len() || rw != rn || tw != tn {
+        if pw.len() != pn.len() || rw != rn || tw != tn || xw != xn {
             return false;
         }
         pw.iter().zip(&pn).all(|(&w, &n)| {
@@ -288,7 +290,7 @@ impl Ctx<'_> {
             .map(|&(k, ty)| crate::collect::getters::field_getter(self, d, self_ty, k, ty))
             .collect();
         let setters = self
-            .writable_fields(iface)
+            .setter_fields(iface)
             .iter()
             .map(|&j| SetterSrc::Field {
                 d,

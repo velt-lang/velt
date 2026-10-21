@@ -23,6 +23,13 @@ pub(crate) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
     }
 }
 
+/// Does function `d` end in a rest parameter (`function f(a: A, ...xs: T[])`)?
+pub(crate) fn has_rest(cx: &Ctx, d: DefId) -> bool {
+    cx.fn_info(d)
+        .source
+        .is_some_and(|s| fn_sig_ast(s).params.last().is_some_and(|p| p.rest))
+}
+
 /// Check the parameter defaults of function `d` (once; later calls return at once).
 pub(crate) fn param_defaults(cx: &mut Ctx, d: DefId) {
     if !cx.defaults_checked.insert(d) {

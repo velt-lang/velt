@@ -577,10 +577,32 @@ impl<'a> Parser<'a> {
     /// A property name that may be quoted, as in TypeScript: `name`, a keyword, or a string
     /// literal (`"content-type"`, `"client:load"`) whose text becomes the name. Used where a
     /// field is named (object types, interface fields, destructuring); object literals take
-    /// quoted keys themselves (`parse_object_prop`).
+    /// quoted keys themselves (`parse_object_prop`). Also a number (`1.5: T`) and a computed
+    /// key ([`Self::member_key_len`], with paths).
     fn parse_prop_key(&mut self) -> PResult<Ident> {
-        if self.at_symbol_key() {
-            return self.parse_symbol_key();
+        self.parse_prop_key_with(true)
+    }
+
+    /// A key in a destructuring pattern: a computed key other than a symbol key (`[k]`,
+    /// `["a"]`, `[1.5]`, `[-1]`; `parse_pattern_computed_key`), a number (`1.5`, through
+    /// `number_key`), or [`Self::parse_prop_key`]'s.
+    fn parse_pattern_key(&mut self) -> PResult<Ident> {
+        match self.peek() {
+            Tok::LBracket if !self.at_symbol_key() => self.parse_pattern_computed_key(),
+            Tok::Int(_) | Tok::Float(_) => self.parse_number_name(),
+            _ => self.parse_prop_key(),
+        }
+    }
+
+    fn parse_prop_key_with(&mut self, paths: bool) -> PResult<Ident> {
+        if self.at_inline_symbol_key() {
+            return Err(self.reject_inline_symbol_key());
+        }
+        if self.member_key_len(0, paths) > 0 {
+            return self.parse_member_key();
+        }
+        if matches!(self.peek(), Tok::Int(_) | Tok::Float(_)) {
+            return self.parse_number_name();
         }
         if let Tok::Str(idx) = self.peek() {
             let key = Ident {

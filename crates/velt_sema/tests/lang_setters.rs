@@ -127,3 +127,21 @@ fn setter_errors() {
     );
     assert!(r.contains("redefines a base class method"), "{r}");
 }
+
+/// A write into a field read through an interface, used as a value on a receiver bound once
+/// (`(qs[n++].t[i] += 1)`), reports an error in its target once: the reads of the target again
+/// after the write do not report it a second time.
+#[test]
+fn interface_part_value_reports_a_target_error_once() {
+    let r = err_src(
+        "interface Q { t: [number, string]; m(): void }
+         function main() {
+           const qs: Q[] = [{ t: [1, \"a\"], m(): void {} }];
+           let n = 0; let i = 0;
+           const v = (qs[n++].t[i] += 1);
+           const w = (qs[0].t[i] = 2);
+         }",
+    );
+    let msg = "tuple index must be an integer literal";
+    assert_eq!(r.matches(msg).count(), 2, "{r}");
+}
