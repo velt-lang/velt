@@ -101,6 +101,10 @@ impl FnCx<'_, '_> {
             defaults: vec![],
         };
         let mut ck = self.check_call(&c, vec![], args, None, span);
+        if ck.args.len() != longest.len() {
+            // The arguments were reported (a short call, a bad spread): no member is called.
+            return Ok(self.error_expr(span));
+        }
         // A member taking fewer parameters ignores the extra arguments, which JS evaluates
         // anyway, in order: when one is left out, every argument that is a value rather than
         // a variable or literal is evaluated into a temporary first, and so is every variable

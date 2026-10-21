@@ -174,9 +174,15 @@ impl FnLower<'_, '_> {
     pub(super) fn wrap_some(&mut self, inner: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let v = self.consume(inner);
-        // A generic `U` into `U | null` at a nullable `U`: the value already is the option.
+        // A generic `U` into `U | null` at a nullable `U`: the value already is the option. It
+        // is owned here (consumed above), so it goes into an owned temporary, which a consumer
+        // takes over; returned as the inner place, a consumer would share it and the moved
+        // value would never be released (#1228).
         if self.sub(inner.ty) == ty {
-            return v;
+            if self.dead() {
+                return v;
+            }
+            return self.own_value(v, ty);
         }
         match self.cx.ty(ty) {
             Ty::Ptr => self.own_value(v, ty),

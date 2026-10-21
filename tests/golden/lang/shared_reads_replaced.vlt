@@ -1,0 +1,109 @@
+// check: no leaks
+// A `shared<T>` read in place reads the box its handle points to. Code that runs meanwhile may
+// give the variable holding the handle another one (a closure kept in a variable and passed to
+// the reader, a function that reassigns a module `let`, an index that calls something, a task
+// resuming after an `await`), which would free the box: the read keeps it alive, so each read
+// sees the value it started with, as in JavaScript. (What would do so where an array is
+// refused, shared_reads_replaced_refused.vlt, is refused too.)
+class Item {
+  v: number;
+  tags: string[];
+  constructor(v: number) {
+    this.v = v;
+    this.tags = [`t${v}`];
+  }
+}
+
+function mk(n: number): number[] {
+  const o: number[] = [];
+  for (let i = 0; i < n; i++) {
+    o.push(i);
+  }
+  return o;
+}
+
+function items(n: number): Item[] {
+  const o: Item[] = [];
+  for (let i = 0; i < n; i++) {
+    o.push(new Item(i));
+  }
+  return o;
+}
+
+function sum(xs: number[], reset: () => void): number {
+  reset();
+  let t = 0;
+  for (let i = 0; i < xs.length; i++) {
+    t += xs[i];
+  }
+  return t;
+}
+
+function sumItems(xs: Item[], reset: () => void): number {
+  reset();
+  let t = 0;
+  for (const x of xs) {
+    t += x.v + x.tags[0].length;
+  }
+  return t;
+}
+
+let G = shared(mk(1000));
+
+function resetG() {
+  G = shared(mk(1));
+}
+
+function last(xs: number[]): number {
+  resetG();
+  return xs[xs.length - 1];
+}
+
+let W = shared(mk(1000));
+
+async function walk(): Promise<number> {
+  let t = 0;
+  for (const x of W) {
+    if (x == 10) {
+      await Promise.resolve(0);
+    }
+    t += x;
+  }
+  return t;
+}
+
+async function main() {
+  // A closure the callee runs assigns the variable.
+  let s = shared(mk(1000));
+  const resetS = () => {
+    s = shared(mk(1));
+    mk(1000);
+  };
+  console.log(sum(s, resetS), s.length);
+  let si = shared(items(100));
+  const resetSi = () => {
+    si = shared(items(1));
+    items(100);
+  };
+  console.log(sumItems(si, resetSi), si.length);
+  // The callee reassigns a module `let`.
+  console.log(last(G), G.length);
+  // A method's callback, kept in a variable, assigns its receiver's variable.
+  let u = shared(mk(5));
+  const twice = (x: number): number => {
+    u = shared([7]);
+    return x * 2;
+  };
+  console.log(u.map(twice).join(","), u.length);
+  // An index that calls something assigns the variable.
+  let v = shared(mk(10));
+  const pick = (): number => {
+    v = shared(mk(1));
+    return 9;
+  };
+  console.log(v[pick()], v.length);
+  // A task iterating a module `let` resumes after main reassigned it.
+  const p = walk();
+  W = shared([1]);
+  console.log(await p, W.length);
+}

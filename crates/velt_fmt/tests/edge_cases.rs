@@ -49,6 +49,17 @@ function f(h: H) {
 }
 
 #[test]
+fn template_computed_keys() {
+    // A template key keeps its brackets: as a bare word `a-b` would not parse, and `0x10`
+    // would read the key \"16\".
+    holds(
+        "const o: any = { [`a-b`]: 1, [`0x10`]: 2 };
+const { [`a-b`]: t1, [`0x10`]: t4, [`x y`]: t8, [\"0x10\"]: q, [`z`]: z, [`\\u0041`]: u } = o;
+function f() { ({ [`a-b`]: t1, [`x`]: x } = o); }",
+    );
+}
+
+#[test]
 fn resource_management() {
     holds(
         "class R { [Symbol.dispose]() {} async   [Symbol.asyncDispose]() {} }
@@ -229,6 +240,28 @@ fn for_in_prints_as_written() {
     console.log(k);
   }
   for (let k of Object.keys(o)) {}
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
+/// A `for...of` / `for...in` over a target declared elsewhere (a hidden loop variable assigned
+/// to the target first in the body) and holes in an array target print back as written.
+#[test]
+fn loop_targets_and_holes_print_as_written() {
+    let src = "function f(xs: number[], m: Map<string, number>) {
+  let x = 0;
+  let k = \"\";
+  for (x of xs) {
+    console.log(x);
+  }
+  for ([k, x] of m) {}
+  for (k in { a: 1 }) {}
+  for ({ a = 9 } of [{ a: 1 }]) {}
+  for ([, x] of [[\"a\", 1]]) {}
+  [x, , k] = [1, 2, \"s\"];
+  ({ x, k = \"d\" } = o);
 }
 ";
     holds(src);

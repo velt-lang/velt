@@ -192,15 +192,13 @@ impl FnCx<'_, '_> {
     /// A read of a place that was built for writing (compound assignment / `++` value).
     fn place_read(&mut self, place: &hir::Expr, want: Want) -> hir::Expr {
         let mut r = place.clone();
-        let m = self.use_mode(r.ty, want);
-        set_place_mode(&mut r, m);
+        set_place_mode(&mut r, self.use_mode(place.ty, want));
         r
     }
 
-    /// An assignment whose value is used (`(line = next()) != null`, `y = (x = 5) + 1`): the
-    /// assignment, then the target read again. Where no value is wanted (`void` expected, e.g.
-    /// an arrow body returning nothing) it stays a statement. Targets that are not plain
-    /// variables or fields of them would be evaluated twice and are not supported as values.
+    /// An assignment whose value is used (`(line = next()) != null`): the assignment, then the
+    /// target read again; a statement where no value is wanted (`void` expected). Other targets
+    /// than variables or fields of them would be evaluated twice: not supported as values.
     pub(crate) fn assign_value(
         &mut self,
         op: Option<ast::BinaryOp>,
@@ -215,13 +213,12 @@ impl FnCx<'_, '_> {
             return a;
         }
         if !is_plain_path(target) {
-            self.cx.err(
-                "an assignment to an element or a computed place cannot be used as a value",
-                span,
-            );
+            self.cx
+                .err(super::assign_pattern::value_use_message(target), span);
             return self.error_expr(span);
         }
         let v = self.expr(target, None, Want::Borrow);
+        let v = self.nullish_assigned_read(op, &a, v, span);
         let ty = v.ty;
         let block = hir::Block {
             stmts: vec![hir::Stmt {
@@ -244,8 +241,8 @@ impl FnCx<'_, '_> {
         self.assign_as(op, target, value, false, span).0
     }
 
-    /// [`Self::assign`]; with `as_value`, a read-modify-write of an accessor also produces the
-    /// assignment's value (returned `true`: the expression is that value).
+    /// [`Self::assign`]; with `as_value`, an accessor's read-modify-write also gives the value
+    /// (returned `true`); a destructuring target is `assign_pattern`'s.
     fn assign_as(
         &mut self,
         op: Option<ast::BinaryOp>,
@@ -254,6 +251,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        if let Some(h) = self.pattern_assign(op, target, value, span) {
+            return (h, false);
+        }
         if let Some(h) = self.keyed_assign(op, target, value, span) {
             return (h, false);
         }

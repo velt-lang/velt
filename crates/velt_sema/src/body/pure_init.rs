@@ -560,7 +560,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         I::Exit => "process.exit",
         I::DateNow => "Date.now",
         I::PerfNow => "performance.now",
-        I::SharedNew | I::SharedAdd | I::SharedGet | I::SharedSet => "shared",
+        I::SharedNew | I::SharedAdd | I::SharedGet | I::SharedSet | I::SharedRead => "shared",
         I::MutexNew | I::MutexWith => "Mutex",
         I::Spawn | I::SpawnHandled => "spawn",
         I::JsonParse => "JSON.parse",

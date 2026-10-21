@@ -1,0 +1,50 @@
+// check: no leaks
+// What takes any value and reads it sees the `T` inside a `shared<T>`, as JavaScript sees the
+// value itself: printing, spreading into an array, `Object.keys`, `JSON.stringify` (also of an
+// object holding one), getters that only read (`size` of a `Map` or `Set`), and `for…of` and
+// indexing over maps, sets and typed arrays.
+class Cfg {
+  name: string = "a";
+  ports: number[] = [1, 2];
+  get first(): number {
+    return this.ports[0];
+  }
+}
+
+function main() {
+  const s = shared([1, 2, 3]);
+  const c = shared(new Cfg());
+  console.log(s);
+  console.log(JSON.stringify<number[]>(s));
+  console.log([...s, 4].length);
+  console.log(Object.keys(c).join(","));
+  console.log(JSON.stringify<Cfg>(c));
+  console.log(c);
+  console.log(JSON.stringify(s), JSON.stringify({ cfg: c, n: 1 }), c.first);
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  const sm = shared(m);
+  const ss = shared(new Set<string>(["x", "y"]));
+  console.log(sm.size, ss.size, sm.get("a"), ss.has("y"));
+  const fa = new Float64Array(3);
+  fa[0] = 1.5;
+  fa[2] = 2.5;
+  const sf = shared(fa);
+  const ub = new Uint8Array(2);
+  ub[1] = 7;
+  const su = shared(ub);
+  let t = 0;
+  for (const [k, v] of sm) {
+    t += v + k.length;
+  }
+  for (const k of ss) {
+    t += k.length;
+  }
+  for (const x of sf) {
+    t += x;
+  }
+  for (const b of su) {
+    t += b;
+  }
+  console.log(t, sf[0] + sf[2], su[1], sf.length);
+}

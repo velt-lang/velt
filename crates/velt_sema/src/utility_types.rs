@@ -140,7 +140,7 @@ impl Ctx<'_> {
             .iter()
             .filter_map(|k| fields.iter().find(|f| &f.name == k))
             // `{ [K in keyof T]: … }[keyof T]` reads the mapped type as TypeScript does too.
-            // An optional field reads as `F | undefined`, as TypeScript reads it.
+            // An optional field is `F | undefined`, as TypeScript reads it (#930).
             .map(|f| match f.optional {
                 false => f.ty,
                 true => match *self.ty.kind(f.ty) {

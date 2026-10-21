@@ -1,0 +1,5 @@
+destructuring_rest_unsupported.vlt:7:7: error: a computed key in a destructuring target must be a name (`[k]`), a string or a number; store the key in a variable first (`const k = f(); ({ [k]: v } = o);`)
+
+destructuring_rest_unsupported.vlt:9:20: error: `...rest` of an `any` value is not supported yet; give the value an array type first
+
+destructuring_rest_unsupported.vlt:11:22: error: `...rest` next to a computed key is not supported yet

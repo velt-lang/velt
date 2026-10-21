@@ -53,7 +53,13 @@ impl FnLower<'_, '_> {
             _ => return v,
         };
         let drop = self.unclaimed_drop_fn(t);
-        self.call_rt(Rt::FutStart, vec![v.clone(), drop], None);
+        // A promise that can reject is watched for a rejection its owner has not claimed by the
+        // next microtask checkpoint, reported then as in Node.
+        let start = match self.cx.promise_error(t) {
+            Some(_) => Rt::FutStartRejecting,
+            None => Rt::FutStart,
+        };
+        self.call_rt(start, vec![v.clone(), drop], None);
         v
     }
 

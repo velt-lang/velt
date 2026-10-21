@@ -2,6 +2,7 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId};
 
+use super::async_fn::BoxHold;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
@@ -43,9 +44,13 @@ impl FnLower<'_, '_> {
             (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
             (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
             (I::FieldAbsent, []) => {
-                // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
+                // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`; an
+                // absent `a?: any` holds the dynamic `undefined`.
                 let t = self.sub(ty);
-                self.none_value(t)
+                match self.cx.hir.any_impl.filter(|_| self.cx.is_dynamic(t)) {
+                    Some(any) => self.dynamic_undefined(any, t),
+                    None => self.none_value(t),
+                }
             }
             (I::FieldPresent, [f]) => {
                 let p = self.place_expr(f);
@@ -59,11 +64,15 @@ impl FnLower<'_, '_> {
             (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
-                let v = self.expr(a);
+                let v = self.projection_base(a, BoxHold::No);
                 self.str_len(v)
             }
             (I::StrCharCodeAt, [s, i]) => {
-                let v = self.expr(s);
+                let hold = match self.may_write(i) {
+                    true => BoxHold::Yes,
+                    false => BoxHold::No,
+                };
+                let v = self.projection_base(s, hold);
                 let i = self.expr(i);
                 self.str_char_code_at(v, i)
             }
@@ -214,6 +223,7 @@ impl FnLower<'_, '_> {
                 | I::DateNow
                 | I::SharedAdd
                 | I::SharedGet
+                | I::SharedRead
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith
@@ -278,5 +288,20 @@ impl FnLower<'_, '_> {
         let d = self.temp(Ty::F64);
         self.call_rt(r, vec![v], Some(Place::local(d)));
         self.cast_to(Operand::Copy(Place::local(d)), Ty::F64, from)
+    }
+
+    /// The dynamic `undefined` as a value of the `any` type `t`: a `boolean | undefined`
+    /// holding nothing, boxed by implementation `any` (as sema boxes `undefined`).
+    fn dynamic_undefined(&mut self, any: u32, t: TyId) -> Operand {
+        let b = self.cx.intern(hir::TyKind::Bool);
+        let opt = self
+            .cx
+            .intern(hir::TyKind::Option(b, hir::Nothing::Undefined));
+        let e = hir::Expr {
+            kind: hir::ExprKind::Lit(hir::Lit::Null),
+            ty: opt,
+            span: velt_common::Span::default(),
+        };
+        self.make_dyn(&e, any, t)
     }
 }

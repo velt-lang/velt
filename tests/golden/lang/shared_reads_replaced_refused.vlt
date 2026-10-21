@@ -1,0 +1,40 @@
+// A `shared<T>` read in place borrows the box its variable holds, as reading an array in place
+// borrows the array: code that gives the variable another handle meanwhile is refused where it
+// is for an array (the body of a loop over it, a closure passed to the same call).
+function mk(n: number): number[] {
+  const o: number[] = [];
+  for (let i = 0; i < n; i++) {
+    o.push(i);
+  }
+  return o;
+}
+
+function sum(xs: number[], reset: () => void): number {
+  reset();
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+function main() {
+  let s = shared(mk(100));
+  let t = 0;
+  for (const x of s) {
+    if (x == 0) {
+      s = shared(mk(3));
+    }
+    t += x;
+  }
+  let a = shared(mk(10));
+  t += sum(a, () => {
+    a = shared(mk(1));
+  });
+  let u = shared(mk(5));
+  const doubled = u.map((x) => {
+    u = shared([7]);
+    return x * 2;
+  });
+  console.log(t, doubled.length);
+}

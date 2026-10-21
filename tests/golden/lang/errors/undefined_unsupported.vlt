@@ -50,7 +50,7 @@ function casts(u: number | undefined, n: string | null) {
   const s = n as string | undefined;
 }
 
-// A default that JavaScript applies to a passed `undefined` too.
+// A default that JavaScript applies to a passed `undefined` too (supported now).
 function withDefault(x: number | undefined = 5): number | undefined {
   return x;
 }
@@ -138,8 +138,8 @@ function toJson(b: Base) {
 
 
 
-// `undefined` given for a parameter with a default (TypeScript accepts it); for an optional
-// parameter or field it is supported now (see lang/optional_undefined).
+// `undefined` given for a parameter with a default (supported now, lang/undefined_param_defaults),
+// and for an optional parameter or field (lang/optional_undefined).
 function withValue(x: number = 5): number {
   return x;
 }

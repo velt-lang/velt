@@ -1,0 +1,86 @@
+// check: no leaks
+// `Map` and `Record` values of a nullable heap type (`number[] | null`, `Foo | null`, both
+// nothings) are released on overwrite, delete, clear and when the map goes, as is a generic
+// `V` pushed into a `(V | null)[]` at a nullable `V` (#1228), and `get` gives another
+// reference without keeping one (#1076). Expected output: Node's.
+class Foo { n: number; constructor(n: number) { this.n = n; } }
+function maps(): void {
+  const m = new Map<string, number[] | null>();
+  m.set("a", [1]);
+  m.set("b", null);
+  m.set("a", [2, 3]);
+  m.set("b", [4]);
+  m.set("c", [5]);
+  console.log(m, m.get("a"), m.get("b"), m.get("z"), m.size);
+  m.delete("c");
+  m.set("a", null);
+  console.log(m);
+  m.clear();
+  m.set("d", [6]);
+  console.log(m);
+  const f = new Map<string, Foo | null>([["x", new Foo(1)], ["y", null]]);
+  const got = f.get("x");
+  f.set("x", new Foo(2));
+  f.set("y", new Foo(3));
+  console.log(f, got, f.get("y"));
+  f.delete("x");
+  f.clear();
+  const u = new Map<string, string[] | undefined>();
+  u.set("a", ["s"]);
+  u.set("a", undefined);
+  u.set("b", ["t"]);
+  console.log(u, [...u.values()]);
+  const t = new Map<string, number[] | null | undefined>();
+  t.set("a", [1]);
+  t.set("b", null);
+  t.set("c", undefined);
+  t.set("a", [7]);
+  console.log(t);
+  t.delete("a");
+}
+function records(): void {
+  const r: Record<string, number[] | null> = { a: [1], b: null };
+  r["a"] = [2];
+  r["b"] = [3];
+  r["c"] = null;
+  console.log(r, Object.keys(r));
+  delete r["a"];
+  console.log(r);
+  const s: Record<string, Foo | null | undefined> = { a: new Foo(1), b: null, c: undefined };
+  s["a"] = new Foo(2);
+  s["c"] = new Foo(3);
+  delete s["b"];
+  console.log(s);
+  const j = JSON.parse('{"a":[1],"b":null}') as Record<string, number[] | null | undefined>;
+  j["a"] = [9];
+  console.log(j, JSON.stringify(j));
+}
+function main1(): void {
+  maps();
+  records();
+}
+function add<V>(xs: (V | null)[], v: V): void {
+  xs.push(v);
+}
+// `get` of a nullable class value, also from a `WeakMap` (#1076).
+class W {
+  n = 1;
+}
+function gets(): void {
+  const b = new W();
+  const m = new Map<string, W | null>();
+  m.set("x", b);
+  const w = new WeakMap<W, W | null>();
+  w.set(b, b);
+  for (let i = 0; i < 3; i++) {
+    console.log(m.get("x") === b, w.get(b) === b);
+  }
+}
+function main(): void {
+  main1();
+  gets();
+  const xs: (number[] | null)[] = [];
+  add<number[] | null>(xs, [1]);
+  add<number[] | null>(xs, null);
+  console.log(xs);
+}

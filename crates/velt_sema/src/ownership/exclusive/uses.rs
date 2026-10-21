@@ -12,7 +12,8 @@ use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Def, DefId, Expr, ExprKind as E, LocalDef, LocalId, PassMode, Stmt, UseMode,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, LocalId, PassMode, Stmt,
+    UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -108,6 +109,16 @@ impl Collector<'_, '_> {
             } => self.place_of(base).map(|(p, _)| (p, *mode)),
             // The same object, seen as a subclass.
             E::Downcast(base) => self.place_of(base),
+            // A `shared<T>` read in place borrows the box its handle points to: whatever gives
+            // the handle's place another value meanwhile (`s = shared(..)` in a closure the
+            // callee runs, in the body of a loop over it) would free what is read.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::SharedRead),
+                args,
+            } => {
+                let (p, _) = self.place_of(args.first()?)?;
+                Some((p, UseMode::Borrow))
+            }
             _ => None,
         }
     }

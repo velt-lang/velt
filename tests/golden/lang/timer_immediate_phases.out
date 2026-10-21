@@ -1,0 +1,8 @@
+main end
+t1 10
+t2 10
+main immediate
+t3 100
+t3 immediate
+timeout from immediate
+nested immediate

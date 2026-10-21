@@ -37,6 +37,7 @@ mod spill;
 mod start;
 mod suspend;
 mod sync;
+pub(in crate::lower) use sync::BoxHold;
 mod tasks;
 mod value;
 mod widen;

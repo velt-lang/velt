@@ -1,0 +1,20 @@
+// bench/async/timers_fire.vlt with timestamps: when `main` returns, the first callback, and every
+// 20k callbacks (where the wall time goes; not in bench/nightly.sh).
+function main() {
+  const n = 100000;
+  const t0 = Date.now();
+  for (let i = 0; i < n; i++) {
+    setTimeout(
+      () => {
+        if (i == 0) {
+          console.log("first callback", Date.now() - t0);
+        }
+        if (i % 20000 == 19999) {
+          console.log("callback", i + 1, Date.now() - t0);
+        }
+      },
+      1,
+    );
+  }
+  console.log("main end", Date.now() - t0);
+}

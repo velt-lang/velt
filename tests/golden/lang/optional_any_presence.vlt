@@ -1,0 +1,59 @@
+// check: no leaks
+// An optional `any` / `unknown` field keeps "absent" apart from a present `undefined` (#1319):
+// `console.log`, `Object.keys`, `in`, spreads, `for...in` and JSON as in Node; destructuring
+// defaults on `any` places apply on `undefined` only. Expected output: Node's.
+interface Q { a?: any; b: number }
+function show(q: Q): void {
+  console.log(q, Object.keys(q), "a" in q, JSON.stringify(q), q.a === undefined);
+  const c = { ...q };
+  console.log(c, Object.keys(c), "a" in c);
+}
+function main1(): void {
+  const p: { a?: any; b: number } = { a: undefined, b: 1 };
+  console.log(p, Object.keys(p));
+  const q: { a?: any; b: number } = { b: 1 };
+  console.log(q, Object.keys(q));
+  show({ a: undefined, b: 2 });
+  show({ b: 3 });
+  show({ a: 5, b: 4 });
+  const u: { a?: unknown; b: number } = { a: undefined, b: 1 };
+  console.log(u, Object.keys(u), "a" in u);
+  const { a = 7 } = q;
+  console.log(a);
+}
+function main2(): void {
+  const xs: any[] = [undefined, null, 3];
+  const [a = 1, b = 2, c = 4, d = 5] = xs;
+  console.log(a, b, c, d);
+  let p: any = 0, q: any = 0;
+  [p = "dp", q = "dq"] = xs;
+  console.log(p, q);
+  const o: { a?: any; b: any } = { b: null };
+  const { a: oa = "x", b: ob = "y" } = o;
+  console.log(oa, ob);
+  let s: any = 0;
+  ({ a: s = "z" } = o);
+  console.log(s);
+}
+
+function main3(): void {
+  const x: Q = { b: 1 };
+  const y: Q = { a: undefined, b: 1 };
+  const m = { ...x, b: 5 };
+  console.log(m, Object.keys(m));
+  const n: Q = { ...y };
+  console.log(n, JSON.stringify(n));
+  const ns = [n];
+  console.log(JSON.stringify(ns));
+  for (const k in x) console.log(k);
+  for (const k in y) console.log(k);
+  const z: Q = { ...y, a: null };
+  console.log(z, JSON.stringify(z));
+  const arr: Q[] = [{ b: 1 }, { a: "s", b: 2 }, { a: undefined, b: 3 }];
+  console.log(arr, arr.map((q) => Object.keys(q).length));
+}
+function main(): void {
+  main1();
+  main2();
+  main3();
+}

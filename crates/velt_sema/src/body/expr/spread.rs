@@ -26,16 +26,19 @@ pub(super) fn has_spread(props: &[ast::ObjectProp]) -> bool {
 
 /// Where a spread field's value comes from.
 #[derive(Clone)]
-struct Src {
+pub(super) struct Src {
     /// The source field is optional (`a?: T`): it may be absent.
-    optional: bool,
+    pub(super) optional: bool,
     /// It keeps "absent" apart from a present `null` (`a?: T | null`, `hir::FieldDef::presence`).
-    presence: bool,
+    pub(super) presence: bool,
     /// A class's optional field: an own property even while unset (holding `undefined`), so
     /// it is always copied (`anon::has_presence`).
-    own: bool,
+    pub(super) own: bool,
     /// The source field as a place, for the presence or null test of an optional one.
-    place: Option<hir::Expr>,
+    pub(super) place: Option<hir::Expr>,
+    /// For a source that may be `undefined` or `null` itself (`...o` with `o: T | undefined`):
+    /// whether the field is there (the source is present, and so is an optional field).
+    pub(super) guard: Option<hir::Expr>,
 }
 
 /// A field value of a spread object literal.
@@ -97,6 +100,7 @@ impl FnCx<'_, '_> {
                             presence: false,
                             own: false,
                             place: None,
+                            guard: None,
                         };
                         let prev = std::mem::replace(
                             &mut slot.1,
@@ -213,6 +217,10 @@ impl FnCx<'_, '_> {
         }
         let seen = crate::object_copies::Seen::Spread;
         self.cx.object_copies.observe(h.ty, e.span, seen);
+        let h = match self.optional_source(h, e.span, lets) {
+            Ok(fields) => return fields,
+            Err(h) => h,
+        };
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let tn = self.cx.display(h.ty);
@@ -267,6 +275,7 @@ impl FnCx<'_, '_> {
                 presence,
                 own: f.optional && kind == crate::hir::AdtKind::Class,
                 place,
+                guard: None,
             };
             out.push((f.name.clone(), read, src));
         }
@@ -274,7 +283,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Field `index` of `base`: copied, moved out (`moves`), or cloned.
-    fn field_read(
+    pub(super) fn field_read(
         &mut self,
         base: &hir::Expr,
         index: u32,
@@ -473,6 +482,7 @@ impl FnCx<'_, '_> {
             Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
                 let guard = match src.place {
+                    _ if src.guard.is_some() => src.guard,
                     Some(p) if src.presence => {
                         let b = self.cx.ty.bool_;
                         Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
@@ -574,6 +584,26 @@ impl FnCx<'_, '_> {
                     }
                     let fail = self.spread_undefined_error(target, span);
                     return self.undefined_keeps(h, fail, span);
+                }
+                if let Some(cond) = src.guard {
+                    // A field of a source that may be missing (`...o`, `o: T | undefined`):
+                    // copied only when it is there; a target field that cannot hold
+                    // `undefined` takes a present one's value.
+                    let then = match keeps_undefined {
+                        true => h,
+                        false => {
+                            let fail = self.spread_undefined_error(target, span);
+                            self.undefined_keeps(h, fail, span)
+                        }
+                    };
+                    let ty = then.ty;
+                    let prev = self.coerce(prev, ty);
+                    let kind = H::If {
+                        cond: Box::new(cond),
+                        then: Box::new(then),
+                        els: Box::new(prev),
+                    };
+                    return self.mk(kind, ty, span);
                 }
                 match src.place {
                     // A present `null` overrides; only an absent field keeps the earlier value.

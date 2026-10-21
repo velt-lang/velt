@@ -37,7 +37,7 @@ impl FnLower<'_, '_> {
         self.own_value(Operand::Copy(out), ty)
     }
 
-    fn any_into(&mut self, v: Operand, t: TyId, ty: TyId, out: &Place) {
+    pub(super) fn any_into(&mut self, v: Operand, t: TyId, ty: TyId, out: &Place) {
         if self.dead() {
             return;
         }
