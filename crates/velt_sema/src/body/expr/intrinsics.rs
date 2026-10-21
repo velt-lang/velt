@@ -59,6 +59,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "promise_any" => I::PromiseAny,
         "chan_send" => I::ChanSend,
         "any_delete" => I::AnyDelete,
+        "proxy_array_depth" => I::ProxyArrayDepth,
+        "proxy_array_hole" => I::ProxyArrayHole,
         "chan_receive" => I::ChanReceive,
         "chan_try_send" => I::ChanTrySend,
         "chan_try_receive" => I::ChanTryReceive,
@@ -266,6 +268,8 @@ impl FnCx<'_, '_> {
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
             I::AnyDelete => (vec![(any_ty, B), (str_, B)], ty.bool_, false),
+            I::ProxyArrayDepth => (vec![(i64_, C)], i64_, false),
+            I::ProxyArrayHole => (vec![(any_ty, B), (i64_, C), (i64_, C)], i64_, false),
             I::SymbolStatic => {
                 let sym = ty.intern(TyKind::Symbol);
                 (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)

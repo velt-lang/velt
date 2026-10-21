@@ -62,6 +62,19 @@ function proxyIndex(s: string): number {
   return __arrayIndex(s) as number;
 }
 
+/**
+ * Is element `i` of the array `a` a hole that an array method running on a proxy made
+ * (velt:proxy/array: Node's holes, which Velt's arrays don't have)?
+ */
+function arrayHole(a: any, i: number): boolean {
+  return __intrinsic_proxy_array_hole(a, i as i64, 0) == 1;
+}
+
+/** Is an array method running on a proxy (`__arrayCall`, velt:proxy/array)? */
+function inArrayCall(): boolean {
+  return __intrinsic_proxy_array_depth(0) > 0;
+}
+
 /** The element of an array that `key` (a string or a number) names, or -1. */
 function arrayElement(key: any): number {
   if (typeof key === "string") {
@@ -584,7 +597,8 @@ export class Reflect {
     }
     // An array element named by its string (`"1"`), as a trap passes it on.
     if (Array.isArray(target) && arrayElement(key) >= 0) {
-      return target[arrayElement(key)];
+      const i = arrayElement(key);
+      return arrayHole(target, i) ? undefined : target[i];
     }
     if (typeof key === "string" && Array.isArray(target)) {
       // `toJSON` (what `JSON.stringify` asks for): an array has none.
@@ -629,15 +643,30 @@ export class Reflect {
     if (Array.isArray(target) && (typeof key === "string" || typeof key === "number")) {
       const i = proxyIndex(proxyKey(key) as string);
       if (i >= 0) {
-        // Velt's arrays have no holes: an element further past the end is not supported (an
-        // array method on a proxy fills the gap before it writes there).
         const n = target.length as number;
         if (i > n) {
-          panic(
-            `TypeError: writing element ${i} past the end of an array of ${n} through \`any\` is not supported yet (#924): Velt's arrays have no holes`,
-          );
+          // Node leaves holes before the element, which `unshift` and `splice` on a proxy fill
+          // right after: Velt's arrays have none, so the gap holds the value meanwhile and is
+          // recorded as holes. Elsewhere they would stay, which is not supported yet.
+          if (!inArrayCall()) {
+            panic(
+              `TypeError: writing element ${i} past the end of an array of ${n} through \`any\` is not supported yet (#924): Velt's arrays have no holes`,
+            );
+          }
+          for (let j = n; j < i; j++) {
+            __intrinsic_proxy_array_hole(target, j as i64, 1);
+            target[j] = value;
+          }
+        } else {
+          __intrinsic_proxy_array_hole(target, i as i64, 2);
         }
         target[i] = value;
+        return true;
+      }
+      if (key === "length") {
+        target.length = value;
+        // A shorter length cuts holes off.
+        __intrinsic_proxy_array_hole(target, (target.length as number) as i64, 3);
         return true;
       }
     }
@@ -663,7 +692,8 @@ export class Reflect {
     }
     // An array element named by its string (`"1"`), as a `has` trap passes it on.
     if (Array.isArray(target) && arrayElement(key) >= 0) {
-      return arrayElement(key) < (target.length as number);
+      const i = arrayElement(key);
+      return i < (target.length as number) && !arrayHole(target, i);
     }
     return key in target;
   }
@@ -678,11 +708,18 @@ export class Reflect {
       return target.__ownKeys();
     }
     const out: (string | symbol)[] = [];
+    if (Array.isArray(target)) {
+      const n = target.length as number;
+      for (let i = 0; i < n; i++) {
+        if (!arrayHole(target, i)) {
+          out.push(`${i}`);
+        }
+      }
+      out.push("length");
+      return out;
+    }
     for (const k of Object.keys(target)) {
       out.push(k);
-    }
-    if (Array.isArray(target)) {
-      out.push("length");
     }
     return out;
   }
@@ -694,16 +731,17 @@ export class Reflect {
       return target.__deleteProperty(key);
     }
     if (Array.isArray(target) && arrayElement(key) >= 0) {
-      // Velt's arrays have no holes: the last element goes (as `pop`, `shift` and `splice`
-      // delete it before they write the shorter length, which an array method on a proxy
-      // keeps: velt:proxy/array); another one would leave a hole.
+      // Node leaves a hole and keeps the length. Velt's arrays have no holes: while an array
+      // method runs on a proxy (`pop`, `shift` and `splice` delete the last elements before they
+      // write the shorter length) the element stays and is recorded as one; elsewhere a hole
+      // is not supported yet.
       const i = arrayElement(key);
       const n = target.length as number;
-      if (i >= n) {
+      if (i >= n || arrayHole(target, i)) {
         return true;
       }
-      if (i == n - 1) {
-        target.length = i;
+      if (inArrayCall()) {
+        __intrinsic_proxy_array_hole(target, i as i64, 1);
         return true;
       }
     }
@@ -727,6 +765,13 @@ export class Reflect {
     const s = k as string;
     if (Array.isArray(target) && s === "length") {
       return { value: target.length, writable: true, enumerable: false, configurable: false };
+    }
+    if (Array.isArray(target) && arrayElement(s) >= 0) {
+      const i = arrayElement(s);
+      if (i >= (target.length as number) || arrayHole(target, i)) {
+        return undefined;
+      }
+      return { value: target[i], writable: true, enumerable: true, configurable: true };
     }
     if (!Object.hasOwn(target, s)) {
       return undefined;

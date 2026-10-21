@@ -1,5 +1,5 @@
 // A sigx-like reactive proxy of an array (sigx's signal.ts): its `set` trap compares the value
-// read before `Reflect.set` with the new one, so `pop`, `shift` and `splice` must keep the
+// and the length before and after `Reflect.set`, so `pop`, `shift` and `splice` must keep the
 // length until they write `length`, and its `deleteProperty` trap sees the element go.
 function isIndex(k: string | symbol): boolean {
   return typeof k === "string" && `${Number(k as string)}` === k;
@@ -15,9 +15,12 @@ function track(log: string[]): ProxyHandler<any> {
       if (!hadKey) {
         log.push(`add ${String(prop)}`);
       } else if (oldValue !== v) {
-        log.push(`set ${String(prop)} -> ${v}`);
+        log.push(`set ${String(prop)} ${oldValue} -> ${v}`);
       } else {
         log.push(`same ${String(prop)}`);
+      }
+      if (prop !== "length" && (obj.length as number) !== oldLength) {
+        log.push(`length ${oldLength} -> ${obj.length}`);
       }
       return ok;
     },
@@ -28,7 +31,7 @@ function track(log: string[]): ProxyHandler<any> {
       const there = Reflect.has(obj, prop);
       const d = Reflect.getOwnPropertyDescriptor(obj, prop);
       log.push(
-        `delete ${String(prop)} had ${had} ok ${ok} own ${still} has ${there} desc ${d === undefined} get ${Reflect.get(obj, prop)}`,
+        `delete ${String(prop)} had ${had} ok ${ok} own ${still} has ${there} desc ${d === undefined} get ${Reflect.get(obj, prop)} length ${obj.length}`,
       );
       log.push(`  keys ${Reflect.ownKeys(obj).join(",")}`);
       return ok;

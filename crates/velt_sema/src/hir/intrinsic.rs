@@ -392,6 +392,15 @@ pub enum Intrinsic {
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
+    /// std only: `(delta: i64) -> i64`, the number of array methods running on proxies on this
+    /// thread (velt:proxy/array) changed by `delta`, the new number; at 0 their holes go
+    /// (rt_abi.md "Array methods on a proxy").
+    ProxyArrayDepth,
+    /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
+    /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
+    /// records it, 2 forgets it, 3 forgets those from `index` on, 4 gives the first below
+    /// `index` (or -1) (`velt_rt_proxy_array_hole`).
+    ProxyArrayHole,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
     /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the

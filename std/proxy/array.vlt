@@ -61,51 +61,8 @@ function arrayInt(v: any): number {
 
 /** `Set(O, key, v, true)` through the proxy `p`: a trap answering `false` is Node's `TypeError`. */
 function arraySet(p: Proxy, o: any, key: string, v: any): void {
-  const t = arrayTarget(p);
-  const i = __arrayIndex(key) as number;
-  if (t !== null && i > (t.length as number)) {
-    // Node leaves holes before an element written past the end, which `unshift` and `splice`
-    // fill right after; Velt's arrays have none, so the gap is filled with the value first.
-    while ((t.length as number) < i) {
-      t[t.length] = v;
-    }
-  }
   if (!p.__set(key, v, o)) {
     panic(`TypeError: 'set' on proxy: trap returned falsish for property '${key}'`);
-  }
-}
-
-/**
- * The target of the proxy `p` when it is a plain array, whose length the steps below keep as
- * Node's (else `null`: a proxy target's own traps keep it).
- */
-function arrayTarget(p: Proxy): any {
-  const t = p.__target();
-  return !(t instanceof Proxy) && Array.isArray(t) ? t : null;
-}
-
-/**
- * `DeletePropertyOrThrow(O, key)` of a trailing element: Node leaves a hole until the method
- * writes the shorter `length`, so the array keeps its length. Velt's arrays have no holes, and
- * the trap's `Reflect.deleteProperty` removes the last element; it is kept in `kept` and put
- * back before the `length` write (`arrayRestore`), so a `set` trap sees the length change.
- */
-function arrayDeleteLast(p: Proxy, key: string, kept: any[]): void {
-  const t = arrayTarget(p);
-  const n = t === null ? 0 : (t.length as number);
-  const i = __arrayIndex(key) as number;
-  const last = t !== null && i == n - 1 ? t[i] : undefined;
-  p.__delete(key);
-  if (t !== null && i == n - 1 && (t.length as number) == i) {
-    kept.push(last);
-  }
-}
-
-/** Puts back the elements `arrayDeleteLast` kept (the last one deleted first). */
-function arrayRestore(p: Proxy, kept: any[]): void {
-  const t = arrayTarget(p);
-  for (let j = (kept.length as number) - 1; j >= 0; j--) {
-    t[t.length] = kept[j];
   }
 }
 
@@ -125,7 +82,12 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
 export function __proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
-  return proxyArrayCall(p, name, args, o);
+  // While it runs, `Reflect` records the holes Node's algorithm makes in the target (and
+  // forgets them when the last such method returns): velt_rt's `proxy_array`.
+  __intrinsic_proxy_array_depth(1);
+  const r = proxyArrayCall(p, name, args, o);
+  __intrinsic_proxy_array_depth(-1);
+  return r;
 }
 
 function proxyArrayCall(p: Proxy, name: string, args: any[], o: any): any {
@@ -183,7 +145,6 @@ function proxySplice(
     p.__get("constructor", o);
   }
   const removed: any[] = [];
-  const kept: any[] = [];
   for (let k = 0; k < count; k++) {
     const key = `${start + k}`;
     removed.push(!splice || p.__has(key) ? p.__get(key, o) : undefined);
@@ -193,7 +154,7 @@ function proxySplice(
       arrayMove(p, o, k + count, k + n);
     }
     for (let k = len; k > len - count + n; k--) {
-      arrayDeleteLast(p, `${k - 1}`, kept);
+      p.__delete(`${k - 1}`);
     }
   }
   for (let k = len - count; k > start && n > count; k--) {
@@ -202,15 +163,17 @@ function proxySplice(
   for (let i = 0; i < n; i++) {
     arraySet(p, o, `${start + i}`, items[i + from]);
   }
-  arrayRestore(p, kept);
   const to = len - count + n;
   arraySet(p, o, "length", to);
-  const t = arrayTarget(p);
-  if ((kept.length as number) > 0 && (t.length as number) > to) {
-    // The `set` trap didn't write the shorter length: Node keeps the holes.
-    panic(
-      `TypeError: an array method on a proxy left holes at ${to} to ${(t.length as number) - 1} (#823): Velt's arrays have no holes`,
-    );
+  const t = p.__target();
+  if (!(t instanceof Proxy) && Array.isArray(t)) {
+    const h = __intrinsic_proxy_array_hole(t, (t.length as number) as i64, 4);
+    if (h >= 0) {
+      // The `set` trap didn't write the shorter length: Node keeps the holes.
+      panic(
+        `TypeError: an array method on a proxy left holes at ${h} to ${(t.length as number) - 1} (#823): Velt's arrays have no holes`,
+      );
+    }
   }
   return removed;
 }

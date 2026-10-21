@@ -2541,16 +2541,17 @@ refuses throws Node's `TypeError`. A trap that forwards with `Reflect` reaches t
 function to `typeof` and `console.log` (`[Function: push]`; `Reflect.get(a, "constructor")` is
 `[Function: Array]`), so a reactive `get` trap that wraps only objects passes it through and a
 nested reactive array runs it. Each read gives a new one, so two reads are not `===` as in
-Node, and called other than on a proxy it is a `TypeError` naming #924. Velt's arrays have no
-holes, and the algorithms keep what a `set` trap sees as in Node: `pop`, `shift` and `splice`
-delete the last elements (the trap's `Reflect.deleteProperty(t, k)` removes them, so
-`Object.hasOwn` and `Reflect.has` see them gone) and put them back before they write the shorter
-`length`, so the array has its old length when the `set` trap compares it, and `unshift` and
-`splice` fill the gap before an element they write past the end with that value (Node: holes,
-read as `undefined`). A trap that doesn't write the shorter `length` is a `TypeError` naming
-#823. Elsewhere `Reflect.deleteProperty(a, k)` of the last element removes it (Node leaves a
-hole and keeps the length); `delete a[i]` through `any` of an element that is not past the end
-and `Reflect.set(a, i, v)` further past the end are `TypeError`s naming #823 and #924. `const hasOwn = Object.prototype.hasOwnProperty`
+Node, and called other than on a proxy it is a `TypeError` naming #924. While such an algorithm
+runs, the holes it makes behave as in Node: `pop`, `shift` and `splice` delete the last elements
+(`Reflect.deleteProperty(t, k)`) before they write the shorter `length`, and `unshift` and
+`splice` write an element past the end before they fill the gap. The array keeps its length and
+its elements (Velt's arrays have no holes; a gap holds the value written after it), and
+`Reflect.get`, `Reflect.has`, `Reflect.ownKeys`, `Reflect.getOwnPropertyDescriptor`,
+`Object.hasOwn` and `hasOwnProperty.call` see those elements as absent until the algorithm fills
+them or writes the shorter `length`. A trap that doesn't write it, so that holes would stay, is a
+`TypeError` naming #823. Elsewhere, deleting an element that is not past the end (`delete a[i]`
+through `any`, `Reflect.deleteProperty(a, i)`, the last element too) and `Reflect.set(a, i, v)`
+further past the end are `TypeError`s naming #823 and #924. `const hasOwn = Object.prototype.hasOwnProperty`
 reads a value whose `hasOwn.call(o, k)` is `Object.hasOwn(o, k)`.
 
 The handler is a `ProxyHandler<T>`: its traps' parameters take their types from it, as in
