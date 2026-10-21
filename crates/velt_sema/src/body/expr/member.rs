@@ -401,6 +401,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.keyed_read(object, index, want, span) {
             return h;
         }
+        if let Some(h) = self.generic_key_index(object, index, want, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = match self.checked_array_read(r.recv, index, exp, want, span) {
@@ -525,14 +528,12 @@ impl FnCx<'_, '_> {
                 }
                 self.member_of(obj, &prop, want, span)
             }
+            // `obj(os)[key(ks, 0)]` in a generic body: a key known only per instantiation.
+            TyKind::Param(_) if want != Want::BorrowMut && literal_key(index).is_none() => {
+                self.param_key_read(obj, index, span)
+            }
             _ => {
-                let tn = self.cx.display(t);
-                let mut d =
-                    Diagnostic::error(format!("cannot index a value of type `{tn}`"), obj.span);
-                if self.cx.class_of(t).is_some() {
-                    d = d.with_note("use a method such as `m.get(key)`");
-                }
-                self.cx.error(d);
+                self.cannot_index(&obj);
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
             }

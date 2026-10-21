@@ -27,4 +27,5 @@ function main() {
   const maybe: Record<string, string | null> = {};
   maybe["m"] += "!";
   console.log(maybe);
+  console.log(Object.entries({}));
 }

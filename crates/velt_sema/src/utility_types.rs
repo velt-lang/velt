@@ -52,6 +52,21 @@ impl Ctx<'_> {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
             _ => None,
         };
+        // `Pick` / `Omit` of an interface with methods: an interface with those members
+        // (`crate::synth_ifaces`).
+        if matches!(name, "Pick" | "Omit") && self.is_method_iface(tys[0]) {
+            let Some(keys) = self.literal_strings(tys[1]) else {
+                let shown = self.display(tys[1]);
+                self.err(
+                    format!(
+                        "`{name}` takes the member names as a string literal type; found `{shown}`"
+                    ),
+                    args[1].span,
+                );
+                return self.ty.error;
+            };
+            return self.pick_iface(tys[0], keys, name == "Omit", env.module, t.span);
+        }
         let Some(mut fields) = self.object_fields(name, tys[0], written, args[0].span) else {
             return self.ty.error;
         };

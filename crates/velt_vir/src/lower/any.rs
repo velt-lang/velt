@@ -402,6 +402,9 @@ impl FnLower<'_, '_> {
     pub(super) fn any_to(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
         let from = self.sub(a.ty);
         let ty = self.sub(ty);
+        if let Some(v) = self.unboxed_own(a, ty) {
+            return v;
+        }
         let v = self.consume(a);
         if self.dead() {
             let vt = self.cx.ty(ty);

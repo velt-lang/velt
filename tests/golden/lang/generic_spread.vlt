@@ -1,0 +1,44 @@
+// check: no leaks
+// Spreads of a type parameter's value in generic bodies (#350): `{ ...t }` and `{ ...t, tag }` with
+// `t: T` build a new object per instantiation, as Node copies own enumerable properties:
+// nested objects and arrays are shared, a later field overrides, `$set` closures and
+// `undefined`-holding optional fields carry over. Expected output: Node's.
+type Tagged<T> = T & { tag: string };
+type Signal<T> = T & { $set: (v: T) => void };
+
+function addTag<T extends object>(t: T): Tagged<T> {
+  return { ...t, tag: "x" };
+}
+function copy<T extends object>(t: T): T {
+  return { ...t };
+}
+function withSet<T extends object>(t: T, log: string[]): Signal<T> {
+  return {
+    ...t,
+    $set: (v: T) => {
+      log.push(JSON.stringify(v));
+    },
+  };
+}
+function retag<T extends object>(t: Tagged<T>): Tagged<T> {
+  return { ...t, tag: t.tag + "!" };
+}
+
+const o = { a: 2, list: [1, 2] };
+const w = addTag(o);
+console.log(w, o);
+w.a = 5;
+w.list.push(3);
+console.log(w.a, o.a, o.list, w.list === o.list);
+const c = copy(o);
+c.a = 9;
+console.log(c, o);
+const log: string[] = [];
+const s = withSet({ n: 1, name: "s" }, log);
+s.$set({ n: 2, name: "t" });
+s.n = 4;
+console.log(s.n, s.name, log);
+const r = retag(retag(w));
+console.log(r.tag, w.tag, r.a);
+const p = copy({ id: 7, opt: undefined as string | undefined });
+console.log(p, JSON.stringify(p));

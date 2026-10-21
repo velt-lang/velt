@@ -153,6 +153,13 @@ impl super::Cx<'_> {
             let mut args: Vec<TyId> = iface_args.iter().map(|&a| self.subst(a, &targs)).collect();
             args.push(implementor);
             (method, args)
+        } else if targs.is_empty() && self.fn_def(method).generics > 0 {
+            // A method of a generic class in an implementation for one instance of it (sema's
+            // `synth_ifaces`): the class's arguments, as its own table has them.
+            match self.fn_def(method).self_ty.map(|t| self.kind(t)) {
+                Some(TyKind::Adt(..)) => (method, self.method_targs(method, implementor)),
+                _ => (method, targs),
+            }
         } else {
             (method, targs)
         }

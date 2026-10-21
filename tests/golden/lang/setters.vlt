@@ -52,6 +52,11 @@ class Clamped {
 }
 
 class Capped extends Clamped {
+  // Both accessors: a setter-only override would hide the getter (reads give `undefined`).
+  override get level(): i64 {
+    return this.value;
+  }
+
   override set level(v: i64) {
     this.value = v > 10 ? 10 : v < 0 ? 0 : v;
   }

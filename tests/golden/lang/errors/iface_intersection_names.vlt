@@ -1,0 +1,12 @@
+// A clash between the parts of an intersection with a generic interface names the type
+// parameters as written (`G<T>`).
+interface G<T> {
+  get(): T;
+}
+interface M {
+  get(): number;
+}
+function f<T>(x: G<T> & M): number {
+  return x.get();
+}
+console.log(1);

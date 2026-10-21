@@ -1,0 +1,12 @@
+// A spread in a generic body whose source is an interface value at an instantiation (#350): a
+// spread copies an object's own properties, which include its methods for an object literal
+// but not for a class instance, and an interface value can be either: an error there.
+interface I {
+  a: number;
+  f(): number;
+}
+function copy<T extends object>(x: T): T {
+  return { ...x };
+}
+const i: I = { a: 1, f() { return 1; } };
+console.log(copy(i).a);

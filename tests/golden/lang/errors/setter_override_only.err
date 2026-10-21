@@ -1,0 +1,3 @@
+setter_override_only.vlt:10:16: error: `set n` overrides only the setter of the base class's `get n`/`set n` pair
+  = note: in JavaScript a setter-only accessor replaces the whole property, so reading it would give `undefined`
+  = note: override the getter too (`override get n()`)

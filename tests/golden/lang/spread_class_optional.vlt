@@ -1,0 +1,21 @@
+// check: no leaks
+// A class's optional field is an own property even while unset (holding `undefined`), so a
+// spread always copies it, as JavaScript does (#350): over an earlier value of a field that
+// can hold `undefined` it overrides with its `undefined`, in a concrete spread and in a
+// generic one alike.
+class C { n?: number; s = "c"; }
+type V = { n?: number; s: string };
+function both<A extends object, B extends object>(a: A, b: B) { return { ...a, ...b }; }
+const v: V = { n: 1, s: "a" };
+const c = new C();
+const t: V = { ...v, ...c };
+console.log(JSON.stringify(t), t.n, "n" in t);
+const g = both(v, c);
+console.log(JSON.stringify(g), g.n, "n" in g);
+const w = { ...v, ...c };
+console.log(JSON.stringify(w), w.n);
+const set = new C();
+set.n = 2;
+const t2: V = { ...v, ...set };
+const g2 = both(v, set);
+console.log(t2.n, g2.n, both({ n: 1, s: "a" }, set).n);
