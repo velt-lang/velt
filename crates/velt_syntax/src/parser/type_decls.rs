@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
         }
         let span = self.cur_span();
         self.bump();
-        let base = self.parse_type_no_union()?;
+        let base = self.parse_heritage_type()?;
         if self.at(Tok::Comma) {
             let span = self.cur_span();
             self.error(
@@ -150,11 +150,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A type in `extends` / `implements`, an expression with type arguments in TypeScript: its
+    /// type arguments may start on the next line (`extends Base` / `<T>`).
+    fn parse_heritage_type(&mut self) -> PResult<TypeExpr> {
+        self.type_args_any_line = true;
+        let ty = self.parse_type_no_union();
+        self.type_args_any_line = false;
+        ty
+    }
+
     /// `A, B<T>, C` (no unions).
     fn parse_type_list(&mut self) -> PResult<Vec<TypeExpr>> {
-        let mut out = vec![self.parse_type_no_union()?];
+        let mut out = vec![self.parse_heritage_type()?];
         while self.eat(Tok::Comma) {
-            out.push(self.parse_type_no_union()?);
+            out.push(self.parse_heritage_type()?);
         }
         Ok(out)
     }

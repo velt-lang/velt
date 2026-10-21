@@ -154,3 +154,20 @@ fn literal_names_are_for_fields_not_methods() {
         );
     }
 }
+
+#[test]
+fn type_arguments_after_new_and_in_heritage_clauses_may_follow_a_line_break() {
+    // These are expressions with type arguments in TypeScript, with no line restriction.
+    let src = "class Base<T> { v: number = 4; }\ninterface I<T> { v: number }\nclass C extends Base\n<number> implements I\n<string> {}\ninterface J extends I\n<number> {}\nfunction f() {\n  const m = new Map\n  <string, number>();\n}";
+    let (m, d) = parse(src);
+    assert!(
+        d.is_empty(),
+        "{:?}",
+        d.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    let ItemKind::Class(c) = &m.items[2].kind else {
+        panic!("{:?}", m.items[2].kind)
+    };
+    assert_eq!(ty(c.extends.as_ref().unwrap()), "Base<number>");
+    assert_eq!(ty(&c.implements[0]), "I<string>");
+}

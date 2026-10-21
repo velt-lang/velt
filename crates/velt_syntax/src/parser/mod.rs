@@ -119,6 +119,10 @@ pub(crate) struct Parser<'a> {
     /// The block parsed next is a function body (`parse_fn_body`): a `var` may be declared
     /// directly in it.
     fn_body_next: bool,
+    /// The next type reference is an expression's (`new Map<K, V>()`) or a heritage clause's
+    /// (`extends Base<T>`): its type arguments may start on the next line
+    /// (`parse_named_type_with`).
+    type_args_any_line: bool,
     /// The statement parsed next is directly in a function body or at the top level, where
     /// `var` declares what `let` does (`var_stmt`). Taken by the statement it is set for.
     var_ok: bool,
@@ -170,6 +174,7 @@ impl<'a> Parser<'a> {
             fn_in_object: false,
             first_this_param: None,
             fn_body_next: false,
+            type_args_any_line: false,
             var_ok: false,
             computed_keys: BTreeSet::new(),
             no_in: false,
