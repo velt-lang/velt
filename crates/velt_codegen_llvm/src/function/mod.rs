@@ -20,6 +20,7 @@ use velt_vir::vir::{self, Ty};
 use crate::debug::{DebugInfo, FnDebug};
 use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
 use crate::target::Target;
+use crate::tbaa::Access;
 use crate::types::{global_name, scalar_type, size_align};
 use crate::CodegenResult;
 
@@ -36,6 +37,8 @@ enum Loc {
         /// The local whose alloca this is, when no pointer was dereferenced on the way (two
         /// places with different roots cannot overlap).
         root: Option<u32>,
+        /// The alias tag of a scalar read or written here (tbaa.rs).
+        tbaa: Option<Access>,
     },
     Unit,
 }
@@ -45,6 +48,13 @@ impl Loc {
         match self {
             Loc::Mem { ty, .. } => *ty,
             Loc::Unit => Ty::Unit,
+        }
+    }
+
+    fn tbaa(&self) -> Option<Access> {
+        match self {
+            Loc::Mem { tbaa, .. } => *tbaa,
+            Loc::Unit => None,
         }
     }
 }
@@ -78,6 +88,10 @@ struct Emitter<'a> {
     rounds_by_conversion: bool,
     /// What the SIMD helpers depend on of the target.
     simd: crate::simd::Arch,
+    /// The program's array header aggregate (tbaa.rs).
+    array: Option<vir::AggId>,
+    /// Per local: it only ever points into an array's data buffer (`tbaa::element_pointers`).
+    element_pointers: Vec<bool>,
     /// The program uses SIMD (it declares a `velt_simd_*` extern): on WebAssembly every
     /// function then asks for the SIMD instructions, the ones without vectors too, because a
     /// vector is passed differently with and without them.
@@ -112,6 +126,12 @@ pub(crate) fn emit_function(
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
+        array: crate::tbaa::array_agg(program),
+        element_pointers: crate::tbaa::element_pointers(
+            program,
+            function,
+            crate::tbaa::array_agg(program),
+        ),
         uses_simd: program
             .externs
             .iter()

@@ -3,6 +3,8 @@
 
 use velt_vir::vir::{AggId, Place, Proj, Ty};
 
+use crate::tbaa::Access;
+
 use super::{Emitter, Loc, Val};
 use crate::types::{aggregate, offset_align, size_align};
 use crate::CodegenResult;
@@ -21,15 +23,19 @@ impl Emitter<'_> {
                 base_align: size_align(self.program, ty)?.1,
                 ty,
                 root: Some(p.local.0),
+                tbaa: None,
             },
         };
-        for proj in &p.proj {
-            loc = self.project(loc, proj)?;
+        for (i, proj) in p.proj.iter().enumerate() {
+            // A scalar read through a pointer into an array's data buffer, straight from the
+            // local that holds it (tbaa.rs).
+            let element = i == 0 && self.element_pointers[index];
+            loc = self.project(loc, proj, element)?;
         }
         Ok(loc)
     }
 
-    fn project(&mut self, loc: Loc, proj: &Proj) -> CodegenResult<Loc> {
+    fn project(&mut self, loc: Loc, proj: &Proj, element: bool) -> CodegenResult<Loc> {
         Ok(match (proj, loc) {
             (
                 Proj::Field(n),
@@ -39,6 +45,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: Ty::Agg(id),
                     root,
+                    ..
                 },
             ) => {
                 let (field_ty, field_offset) = self.field(id, *n)?;
@@ -48,6 +55,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: field_ty,
                     root,
+                    tbaa: (Some(id) == self.array).then_some(Access::Header),
                 }
             }
             (Proj::Deref(pointee), l) if l.ty() == Ty::Ptr => {
@@ -63,6 +71,7 @@ impl Emitter<'_> {
                     base_align: align,
                     ty: *pointee,
                     root: None,
+                    tbaa: (element && pointee.is_scalar()).then_some(Access::Element),
                 }
             }
             (
@@ -82,6 +91,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: Ty::Agg(*id),
                     root,
+                    tbaa: None,
                 }
             }
             (proj, l) => bail!(
@@ -131,7 +141,8 @@ impl Emitter<'_> {
             scalar => {
                 let (ptr, align) = self.address(&loc)?;
                 let t = self.memory_type(scalar);
-                let v = self.inst(format!("load {t}, ptr {ptr}, align {align}"));
+                let tag = loc.tbaa().map_or("", Access::suffix);
+                let v = self.inst(format!("load {t}, ptr {ptr}, align {align}{tag}"));
                 Val::Scalar(self.narrow_after_load(v, scalar))
             }
         })
@@ -145,7 +156,8 @@ impl Emitter<'_> {
                 let t = self.memory_type(*ty);
                 let x = self.widen_for_store(&x, *ty);
                 let (ptr, align) = self.address(&loc)?;
-                self.line(format!("store {t} {x}, ptr {ptr}, align {align}"));
+                let tag = loc.tbaa().map_or("", Access::suffix);
+                self.line(format!("store {t} {x}, ptr {ptr}, align {align}{tag}"));
             }
             (l, _) => bail!("value/place kind mismatch for a place of type {:?}", l.ty()),
         }

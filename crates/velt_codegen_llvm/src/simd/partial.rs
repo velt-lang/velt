@@ -16,10 +16,16 @@ pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     let big = b.inst(format!("icmp ugt i64 {c}, 8"));
     b.lines
         .push_str(&format!("  br i1 {big}, label %big, label %notbig\nbig:\n"));
-    let lo8 = b.inst(format!("load i64, ptr {p}, align 1"));
+    let lo8 = b.inst(format!(
+        "load i64, ptr {p}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
     let end = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {c}"));
     let q = b.inst(format!("getelementptr inbounds i8, ptr {end}, i64 -8"));
-    let hi = b.inst(format!("load i64, ptr {q}, align 1"));
+    let hi = b.inst(format!(
+        "load i64, ptr {q}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
     // The bytes past the first eight are the top `c - 8` of `hi`.
     let missing = b.inst(format!("sub i64 16, {c}"));
     let shift = b.inst(format!("shl i64 {missing}, 3"));
@@ -29,10 +35,16 @@ pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     b.lines.push_str(&format!(
         "  br i1 {four}, label %four, label %small\nfour:\n"
     ));
-    let a = b.inst(format!("load i32, ptr {p}, align 1"));
+    let a = b.inst(format!(
+        "load i32, ptr {p}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
     let end4 = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {c}"));
     let q4 = b.inst(format!("getelementptr inbounds i8, ptr {end4}, i64 -4"));
-    let z = b.inst(format!("load i32, ptr {q4}, align 1"));
+    let z = b.inst(format!(
+        "load i32, ptr {q4}, align 1{}",
+        super::ELEMENT.suffix()
+    ));
     let a64 = b.inst(format!("zext i32 {a} to i64"));
     let z64 = b.inst(format!("zext i32 {z} to i64"));
     // Bytes 4 to `c - 1` are the top `c - 4` bytes of `z`.
@@ -51,7 +63,10 @@ pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     let mut word = String::new();
     for (k, at) in ["0", half.as_str(), last.as_str()].into_iter().enumerate() {
         let ptr = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {at}"));
-        let byte = b.inst(format!("load i8, ptr {ptr}, align 1"));
+        let byte = b.inst(format!(
+            "load i8, ptr {ptr}, align 1{}",
+            super::ELEMENT.suffix()
+        ));
         let wide = b.inst(format!("zext i8 {byte} to i64"));
         let bits = b.inst(format!("shl i64 {at}, 3"));
         let moved = b.inst(format!("shl i64 {wide}, {bits}"));
@@ -85,8 +100,10 @@ pub(super) fn store(b: &mut Body, lanes: Lanes) {
     let big = b.inst(format!("icmp ugt i64 {c}, 8"));
     b.lines
         .push_str(&format!("  br i1 {big}, label %big, label %notbig\nbig:\n"));
-    b.lines
-        .push_str(&format!("  store i64 {lo}, ptr {p}, align 1\n"));
+    b.lines.push_str(&format!(
+        "  store i64 {lo}, ptr {p}, align 1{}\n",
+        super::ELEMENT.suffix()
+    ));
     // Bytes `c - 8` to `c - 1` of the vector: `k = c - 8` is 1 to 7.
     let k = b.inst(format!("sub i64 {c}, 8"));
     let kbits = b.inst(format!("shl i64 {k}, 3"));
@@ -96,22 +113,26 @@ pub(super) fn store(b: &mut Body, lanes: Lanes) {
     let tail = b.inst(format!("or i64 {down}, {up}"));
     let q = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {k}"));
     b.lines.push_str(&format!(
-        "  store i64 {tail}, ptr {q}, align 1\n  br label %done\nnotbig:\n"
+        "  store i64 {tail}, ptr {q}, align 1{}\n  br label %done\nnotbig:\n",
+        super::ELEMENT.suffix()
     ));
     let four = b.inst(format!("icmp uge i64 {c}, 4"));
     b.lines.push_str(&format!(
         "  br i1 {four}, label %four, label %small\nfour:\n"
     ));
     let a = b.inst(format!("trunc i64 {lo} to i32"));
-    b.lines
-        .push_str(&format!("  store i32 {a}, ptr {p}, align 1\n"));
+    b.lines.push_str(&format!(
+        "  store i32 {a}, ptr {p}, align 1{}\n",
+        super::ELEMENT.suffix()
+    ));
     let k4 = b.inst(format!("sub i64 {c}, 4"));
     let k4bits = b.inst(format!("shl i64 {k4}, 3"));
     let down4 = b.inst(format!("lshr i64 {lo}, {k4bits}"));
     let z = b.inst(format!("trunc i64 {down4} to i32"));
     let q4 = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {k4}"));
     b.lines.push_str(&format!(
-        "  store i32 {z}, ptr {q4}, align 1\n  br label %done\nsmall:\n"
+        "  store i32 {z}, ptr {q4}, align 1{}\n  br label %done\nsmall:\n",
+        super::ELEMENT.suffix()
     ));
     let none = b.inst(format!("icmp eq i64 {c}, 0"));
     b.lines.push_str(&format!(
@@ -124,8 +145,10 @@ pub(super) fn store(b: &mut Body, lanes: Lanes) {
         let moved = b.inst(format!("lshr i64 {lo}, {bits}"));
         let byte = b.inst(format!("trunc i64 {moved} to i8"));
         let ptr = b.inst(format!("getelementptr inbounds i8, ptr {p}, i64 {at}"));
-        b.lines
-            .push_str(&format!("  store i8 {byte}, ptr {ptr}, align 1\n"));
+        b.lines.push_str(&format!(
+            "  store i8 {byte}, ptr {ptr}, align 1{}\n",
+            super::ELEMENT.suffix()
+        ));
     }
     b.lines.push_str("  br label %done\ndone:\n");
 }
