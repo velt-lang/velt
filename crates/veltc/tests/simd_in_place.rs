@@ -38,7 +38,10 @@ fn simd_loads_read_the_header_in_place() {
             .lines()
             .filter(|l| l.trim_start().starts_with('_') && l.ends_with(&copy))
             .collect();
-        assert!(copies.is_empty(), "header copies {copies:?} in\nfn#{function}");
+        assert!(
+            copies.is_empty(),
+            "header copies {copies:?} in\nfn#{function}"
+        );
     }
     assert!(loads > 0, "no SIMD load in\n{vir}");
 }
