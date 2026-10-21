@@ -63,8 +63,19 @@ alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivi
    `/index.ts`, `/index.tsx`). A `velt` target is tried first, then the target Node loads, then
    the `types` target, wherever each is written: with `{ "types": "./dist/index.d.ts", "node":
    "./dist/index.node.js" }`, Velt compiles `src/index.node.ts`, as Node runs its build, and
-   `"types"` still finds `src/index.ts` when the JavaScript bundle has another name. A package without TypeScript sources is an error that
-   names the file Node loads and says what was looked for.
+   `"types"` still finds `src/index.ts` when the JavaScript bundle has another name.
+4. **The root's fallback.** When none of the targets of the package's root (`import "sigx"`,
+   not a subpath such as `sigx/internals`) has a source, Velt compiles `src/index.ts` (or
+   `src/index.tsx`). Packages built with Rollup need it, Vue's among them: `main` and Node's
+   `default` name a CommonJS shim (`index.js`, `module.exports = require("./dist/…")`), and
+   `types` a declaration file rolled up from all of `src/` and named after the package
+   (`dist/runtime-dom.d.ts`), none of which says where the source is. It applies only when no
+   target of the root under any condition has a source, those Velt never matches included
+   (`browser`, `require`, `default` after `node`): with `{ "node": "./dist/server.js",
+   "default": "./dist/client.js" }` and a `src/client.ts`, the package has a source per
+   environment, and `src/index.ts` may be the client's entry, so a missing `src/server.ts` stays
+   an error. A subpath is mapped only as step 3 says. A package without TypeScript sources is an error that names the file Node
+   loads and says what was looked for.
 
 The package's modules then compile like the program's own, and their `env.d.ts` constants come
 from [`define`](manifest.md#define). A Velt dependency of the same name wins over an npm

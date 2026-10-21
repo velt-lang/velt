@@ -102,13 +102,13 @@ fn what_a_finally_takes_is_gone_where_its_exit_goes() {
 }
 
 #[test]
-fn a_promise_returned_in_a_try_is_gone_in_its_finally() {
-    let err = common::programs::err_src(
+fn a_promise_returned_in_a_try_is_shared_with_its_finally() {
+    // A promise is a shared value (#212): the `finally` takes another holder of it.
+    common::programs::ok_src(
         "async function one(): Promise<i64> { return 1; }
          function f(): Promise<i64> { const p = one(); try { return p; } finally { const q = p; } }
          async function main() { console.log(await f()); }",
     );
-    assert!(err.contains("use of moved value `p`"), "{err}");
 }
 
 #[test]

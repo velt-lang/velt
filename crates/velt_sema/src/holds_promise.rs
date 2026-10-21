@@ -1,5 +1,6 @@
-//! Which types hold a promise (`Ctx::holds_promise`): promises have one owner, so values that
-//! hold one are moved rather than shared.
+//! Which types hold a promise (`Ctx::holds_promise`): the `Mutex` checks
+//! (`ownership/locked`) look for promises a `with` callback makes from the locked value, which
+//! would run after the lock is released.
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;

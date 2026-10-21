@@ -891,9 +891,8 @@ async function main() {
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
   throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
   function through a value behaves like calling it directly: an object it keeps or modifies is
-  the caller's object. A function whose parameter takes ownership of a promise (one owner)
-  cannot be a value, and neither can a generic function that keeps a parameter whose type is a
-  promise at the value's type arguments or still depends on a type parameter.
+  the caller's object. A promise passed through a function value is shared with the function,
+  as any object is.
 - **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
   and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`, other than
   a module-level constant's), generic

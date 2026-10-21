@@ -557,13 +557,13 @@ impl<'m> Ctx<'m> {
 
     /// Semantics stage 2: a non-Copy value that is *shared* — another reference to the same
     /// value — where its place stays in use or cannot be moved from, instead of being moved
-    /// (strings, objects, arrays, maps, closures). Promises have one owner (`await` takes the
-    /// result out), so values that hold one are moved as before.
+    /// (strings, objects, arrays, maps, closures, promises: another holder of the same
+    /// promise, #212): every type that is not Copy.
     pub fn is_shared_value(&mut self, t: TyId) -> bool {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
+        let b = !self.is_copy(t);
         self.shared_memo.insert(t, b);
         b
     }

@@ -125,7 +125,7 @@ unsafe extern "C" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
             }
         };
         for _ in 0..st.marks {
-            velt_rt_fut_transfer(st.fut, tag);
+            velt_rt_fut_transfer(st.fut, Some(tag));
         }
         let id = match st.make {
             Make::Started(id, _) | Make::Race(id, _) => id,
@@ -258,7 +258,7 @@ unsafe extern "C" fn glue_starts_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
         let f = started_job(501, 10);
-        velt_rt_fut_transfer(f, start_job_and_tag);
+        velt_rt_fut_transfer(f, Some(start_job_and_tag));
         st[1] = f as i64;
     }
     let f = st[1] as *mut VeltFut;

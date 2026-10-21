@@ -109,15 +109,33 @@ Promises behave like JavaScript's, at Rust's cost:
   end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
-  outlive the caller's frame. A promise has one owner: using a promise variable after handing
-  it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
-  In a collection, a promise is replaced in place (`arr[i] = p`) and taken out with `pop()` or
-  `splice(i, 1)`, or awaited with the others by `Promise.all(arr)`. TypeScript lets several
-  places hold the same promise; Velt doesn't, so reading a promise element (`arr[i]`) and the
-  methods that copy values out (`m.get(k)`, `m.values()`, `arr.at(i)`, `arr.slice()`, …) are
-  compile-time errors for promises and for values that copy one (a struct with a promise
-  field); a class instance holding a promise is shared, so reading it out works. Shared
-  promises, which would make these reads work as in TypeScript, are planned (#212).
+  outlive the caller's frame.
+- **A promise is a shared value**, as in JavaScript: `const q = p`, storing a promise in a
+  `Map`, an array or a field and reading it out (`m.get(k)`, `arr[i]`, `entry.p`), and handing
+  it to `then` while keeping it, all give other holders of the same promise. Every holder may
+  await it, and each gets the result: an object result is the same object for every awaiter
+  (`(await p) === (await q)`), a string or a number is copied. A rejection reaches every
+  awaiter. The awaiters of a pending promise resume in the order they started waiting, as in
+  Node. Dropping a holder never cancels the promise; it is reported as an unhandled rejection
+  only when every holder dropped it without awaiting it. A promise that is never shared costs
+  what it did before; a shared one costs a small side record and one share of the result per
+  `await`. A shared promise is driven on the task that shares it:
+  - A promise passed as an argument of a spawned call (`spawn(f(p))`) moves to the new task, so
+    using it afterwards is an error; pass another holder (`const q = p; spawn(f(q))`) to await
+    it on both tasks.
+  - Another holder of a shared promise that goes to another task (`const q = p; spawn(f(q))`,
+    `spawn(q)`, a promise read from a `Map`, `ch.send(q)`, a [timer](../std/timers.md) callback
+    capturing it, which runs as a task of its own, a `Promise.all` or `Promise.race` over it) is
+    awaited there through a copy. So is one inside a value that goes there while it is still
+    used here (an object, an array or a closure passed to a spawned call or sent over a
+    channel): the task gets a copy of the value, whose promises are other holders. The promise
+    still runs on its own task, and the other task gets the result transferred like a `spawn`
+    argument (moved, or copied while the first task still uses it), so `(await p) === (await q)`
+    holds only on one task. On the other task the holder is a promise of that task: it may be
+    shared again there, and handed on to a third task in turn.
+  - The holders of a pending promise are queued when it settles, in the order they started
+    waiting, as Node queues a promise's reactions: a `Promise.race` over a holder takes it before
+    a promise that settles later.
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited
@@ -210,8 +228,8 @@ as uncaught.
 
 ## `then`, `catch` and `finally`
 
-Promises have JavaScript's callback methods. Each takes the promise (it has one owner) and
-returns a new promise, which starts at once like any stored promise:
+Promises have JavaScript's callback methods. Each returns a new promise, which starts at once
+like any stored promise:
 
 - `p.then(f)`: `f(value)` once `p` fulfills; a rejection passes through to the new promise.
 - `p.then(f, g)`: `g(reason)` when `p` rejects (both callbacks give the same type).
@@ -236,11 +254,8 @@ in synchronous code (a synchronous `main`, or top-level code without an `await`)
 starts only when awaited or spawned, like any [dropped promise](#promises), so a chain kept as a
 statement there and `queueMicrotask` never run (**Planned**: run them as Node does, #846).
 
-A promise has one consumer, as everywhere in Velt: `then`, `catch`, `finally`, `await` and the
-combinators each take it. TypeScript lets several consumers share a promise (`p.then(f);
-p.then(g);`, or `p.then(f)` and later `await p`); in Velt the second use is ``use of moved
-value``, with a note: chain the calls, or keep the promise `then` returns (**Planned**: shared
-promises, #212).
+A promise may have several consumers, as in JavaScript: `p.then(f); p.then(g); await p` runs
+`f`, then `g`, then the code after the `await`, each with the value (see [Promises](#promises)).
 
 Callbacks run in Node's order: after the code that is running, in the order they were queued
 (each task has a microtask queue), and before timers and I/O: a `setTimeout` callback never
@@ -259,7 +274,8 @@ before it closes the body), except for calls queued behind a running one: such a
 step later than in Node, and the code after an `await` of an earlier call can run after it
 rather than before (so a queued `return()` may run its `finally` blocks first). A promise settled from another task resumes its waiters at that
 task's next step (the tasks run in parallel; there is no order between them). On WebAssembly, a
-`resolve` called later resumes its waiters at the executor's next step.
+`resolve` called later resumes its waiters at the executor's next step, and so does a shared promise
+that settles (its other awaiters can run after callbacks queued later than in Node).
 
 ```ts
 class Failed extends Error {}

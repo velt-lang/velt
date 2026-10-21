@@ -33,5 +33,8 @@ Invalid base64 character at offset 2
 Invalid hex: odd length
 Invalid hex character at offset 1
 Invalid hex character at offset 0
+Invalid hex character at offset 0
+Invalid hex character at offset 1
+Invalid hex character at offset 7
 Invalid UTF-8 at offset 2
 Invalid UTF-8 at offset 0

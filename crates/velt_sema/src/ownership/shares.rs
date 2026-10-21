@@ -31,6 +31,7 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
             continue;
         };
         let disposed = disposed_places(&mut f);
+        let spawned = spawned_promises(cx, &mut f);
         // A `using` variable is disposed at the end of its block: moving it out stays an
         // error (`crate::moves`) instead of sharing a value about to be disposed.
         let kinds = cx.fn_info(d).local_kinds.clone();
@@ -41,6 +42,7 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
         let mut spans = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
             _ if disposed.contains(&e.span) || (is_moved_place(e) && using(e)) => {}
+            _ if spawned.contains(&e.span) => {}
             _ if is_moved_place(e) && cx.is_shared_value(e.ty) => spans.push(e.span),
             E::Closure(c) if !shared_captures(cx, *c).is_empty() => spans.push(e.span),
             _ => {}
@@ -48,6 +50,37 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         cx.fn_info_mut(d).soft_moves.extend(spans);
     }
+}
+
+/// Spans of the places holding a promise that are arguments of a spawned call
+/// (`spawn(f(p))`): they move to the task, as a shared promise is awaited on one task (#212).
+fn spawned_promises(cx: &mut Ctx, f: &mut crate::hir::FnDef) -> Vec<velt_common::Span> {
+    let mut places = vec![];
+    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        let E::Call {
+            callee:
+                crate::hir::Callee::Intrinsic(
+                    crate::hir::Intrinsic::Spawn | crate::hir::Intrinsic::SpawnHandled,
+                ),
+            args,
+        } = &e.kind
+        else {
+            return;
+        };
+        let mut calls = vec![];
+        if let Some(p) = args.first() {
+            crate::body::expr::tasks::spawned_calls(p, &mut calls);
+        }
+        for a in calls.into_iter().flatten() {
+            let (place, _) = crate::body::expr::tasks::arg_place(a);
+            places.push((place.span, place.ty));
+        }
+    });
+    places
+        .into_iter()
+        .filter(|&(_, t)| crate::body::expr::spawn_promises::direct_promise(cx, t))
+        .map(|(s, _)| s)
+        .collect()
 }
 
 /// Spans of the places an explicit `x[Symbol.dispose]()` moves into its `<disposed>` temporary

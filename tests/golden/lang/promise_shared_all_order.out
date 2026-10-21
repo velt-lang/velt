@@ -1,0 +1,24 @@
+settle p0
+d waits
+then p0 p0
+settle p2
+c waits
+e waits
+f waits
+d got p2
+b waits
+c got p0
+e got p0
+d done
+a waits
+b got p0
+c done
+settle p1
+a got p0
+b done
+then p1 p1
+f got p1
+e done
+a done
+f done
+a,b,c,d,e,f

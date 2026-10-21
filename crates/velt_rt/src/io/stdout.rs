@@ -164,6 +164,14 @@ pub fn append(f: impl FnOnce(&mut Vec<u8>)) {
     }
 }
 
+/// Decide once, at start-up, whether stdout is a terminal (line buffering). Asking the OS can
+/// take tens of milliseconds on Windows when stdout is a pipe or a file, and a task asking at
+/// its first `console.log` held up its thread that long, so output another task printed
+/// meanwhile came first.
+pub fn init_mode() {
+    line_buffered();
+}
+
 /// Publish this thread's buffered output into the shared buffer (end of a task poll).
 pub fn publish_local() {
     let _ = LOCAL.try_with(|l| {
