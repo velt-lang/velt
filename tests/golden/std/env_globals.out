@@ -6,3 +6,5 @@ ReferenceError: window is not defined
 undefined undefined undefined undefined undefined
 object undefined undefined function
 ReferenceError: __dirname is not defined
+object function function function function
+no frames

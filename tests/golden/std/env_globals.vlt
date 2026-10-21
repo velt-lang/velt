@@ -1,13 +1,23 @@
 // Environment checks as Node 22 answers them (#922).
 class Widget {}
+
 const isServer = typeof window === "undefined";
 console.log(isServer, typeof document, typeof HTMLElement, typeof globalThis);
 console.log(typeof URL, typeof Widget, typeof navigator, typeof Event, typeof Math, typeof Map);
-console.log(typeof window !== "undefined", typeof URL !== "undefined", typeof requestAnimationFrame === "function");
+console.log(
+  typeof window !== "undefined",
+  typeof URL !== "undefined",
+  typeof requestAnimationFrame === "function",
+);
+
 function boundaries(): string {
-  return typeof window !== "undefined" ? String((window as unknown as { name: string }).name) : "server";
+  return typeof window !== "undefined"
+    ? String((window as unknown as { name: string }).name)
+    : "server";
 }
+
 console.log(boundaries());
+
 function readWindow(): string {
   try {
     return String(window);
@@ -15,12 +25,14 @@ function readWindow(): string {
     return `${(e as Error).name}: ${(e as Error).message}`;
   }
 }
+
 console.log(readWindow());
 // CommonJS's globals are not in an ES module, which a Velt module is (Node runs this file as one
 // when it is named `.mts`), nor other runtimes' (#1299).
 console.log(typeof require, typeof module, typeof exports, typeof __dirname, typeof __filename);
 // @ts-ignore: Deno's and Bun's globals are not declared for Node.
 console.log(typeof global, typeof Deno, typeof Bun, typeof structuredClone);
+
 function readDirname(): string {
   try {
     return String(__dirname);
@@ -28,4 +40,17 @@ function readDirname(): string {
     return `${(e as Error).name}: ${(e as Error).message}`;
   }
 }
+
 console.log(readDirname());
+console.log(typeof Intl, typeof BigInt, typeof AbortController, typeof Headers, typeof atob);
+
+// A browser-only call behind its guard compiles (#1299).
+function schedule(cb: () => void): string {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(cb);
+    return "frame";
+  }
+  return "no frames";
+}
+
+console.log(schedule(() => {}));

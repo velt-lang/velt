@@ -1961,10 +1961,11 @@ The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not
 `typeof` of a global the program doesn't declare is what Node 22 gives in an ES module:
 `"undefined"` for the browser's globals (`window`, `document`, `HTMLElement`, ...), other
 runtimes' (`Deno`, `Bun`) and CommonJS's (`require`, `module`, `exports`, `__dirname`,
-`__filename`), `"object"` or `"function"` for Node's (`globalThis`, `global`, `navigator`, `URL`,
-...), and `"function"` for a class's or a function's name, so `typeof window === "undefined"`
-tells the server from the browser. Reading one of the absent globals throws Node's
-`ReferenceError` (`window is not defined`), so code that only runs elsewhere still compiles.
+`__filename`), `"object"` or `"function"` for Node's (`globalThis`, `global`, `navigator`, `URL`, `Intl`,
+`BigInt`, `AbortController`, `Headers`, `atob`, ...), and `"function"` for
+a class's or a function's name, so `typeof window === "undefined"` tells the server from the
+browser. Reading or calling one of the absent globals throws Node's `ReferenceError` (`window
+is not defined`), so code that only runs elsewhere still compiles.
 
 ```ts
 class Point {

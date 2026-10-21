@@ -59,7 +59,7 @@ const ABSENT: [&str; 30] = [
 
 /// Node 22's own globals and what `typeof` gives for them, for names Velt may not have as values
 /// (`typeof process`, `typeof navigator`).
-pub(crate) const NODE_GLOBALS: [(&str, &str); 37] = [
+pub(crate) const NODE_GLOBALS: [(&str, &str); 52] = [
     ("globalThis", "object"),
     ("global", "object"),
     ("process", "object"),
@@ -97,6 +97,21 @@ pub(crate) const NODE_GLOBALS: [(&str, &str); 37] = [
     ("queueMicrotask", "function"),
     ("setTimeout", "function"),
     ("Proxy", "function"),
+    ("Intl", "object"),
+    ("BigInt", "function"),
+    ("AbortController", "function"),
+    ("AbortSignal", "function"),
+    ("Response", "function"),
+    ("Request", "function"),
+    ("Headers", "function"),
+    ("FormData", "function"),
+    ("Blob", "function"),
+    ("WebSocket", "function"),
+    ("atob", "function"),
+    ("btoa", "function"),
+    ("setInterval", "function"),
+    ("clearTimeout", "function"),
+    ("setImmediate", "function"),
 ];
 
 impl FnCx<'_, '_> {
@@ -117,6 +132,11 @@ impl FnCx<'_, '_> {
             // A function, generic or not.
             Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], DefInfo::Fn(_)) => {
                 Some("function")
+            }
+            // The standard library's interface for a Node global (`AbortController`).
+            Some(Item::Def(d)) if self.cx.adt(d).is_none() => {
+                let m = self.cx.iface(d)?.module;
+                self.cx.scopes[m].is_std.then_some(node).flatten()
             }
             Some(Item::Def(d)) => {
                 let a = self.cx.adt(d)?;

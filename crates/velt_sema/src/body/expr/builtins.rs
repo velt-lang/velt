@@ -64,6 +64,12 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             _ => {
+                // Calling another environment's global (`requestAnimationFrame(cb)`) throws
+                // Node's `ReferenceError` before the arguments are evaluated.
+                if let Some(h) = self.browser_global_read(id) {
+                    self.check_args_loose(args);
+                    return h;
+                }
                 if !self.unknown_namespace_member(name, id.span)
                     && !self.fn_expr_self_ref(name, id.span)
                 {
