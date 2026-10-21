@@ -647,7 +647,7 @@ impl<'m> Ctx<'m> {
                 // A function type written without `throws`, as written (`throws::fn_types`).
                 let promise_var =
                     matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.is_err_var(*e));
-                if self.fn_sites.inferred.contains(&t) || self.is_err_var(*throws) || promise_var {
+                if self.ty.inferred_fns.contains(&t) || self.is_err_var(*throws) || promise_var {
                     let ret = match self.ty.kind(*ret) {
                         TyKind::Promise(v, _) => {
                             format!("Promise<{}>", self.display_in(*v, names))

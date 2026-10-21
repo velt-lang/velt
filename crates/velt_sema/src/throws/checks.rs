@@ -136,7 +136,7 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         // is checked again with this one's errors (`fn_types`), which drops this report.
         let site = cx.closure_site(d);
         let matched = own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site));
-        let inferred = cx.fn_sites.inferred.contains(&used_as);
+        let inferred = cx.ty.inferred_fns.contains(&used_as);
         // As written: error-set variables (`vars`) allow nothing.
         let never = cx.ty.never;
         let allowed = allowed.map(|t| cx.plain_type(t)).filter(|t| *t != never);

@@ -17,6 +17,9 @@ pub(crate) struct Types {
     pub f64: TyId,
     /// The program names the type `bigint` (`never` until `BigInt` values exist, #1088).
     pub bigint_named: bool,
+    /// The function types of sites resolved with an inferred error type, and the types made
+    /// from them by substitution: shown as written, without it (`throws::fn_types`).
+    pub inferred_fns: rustc_hash::FxHashSet<TyId>,
 }
 
 impl Types {
@@ -45,6 +48,7 @@ impl Types {
             usize,
             f64,
             bigint_named: false,
+            inferred_fns: Default::default(),
         }
     }
 
@@ -56,6 +60,15 @@ impl Types {
 
     pub fn intern(&mut self, k: TyKind) -> TyId {
         self.table.intern(k)
+    }
+
+    /// `to`, a function type made from `from` by replacing its parts, is shown as written when
+    /// `from` is ([`Types::inferred_fns`]).
+    pub fn inferred_like(&mut self, from: TyId, to: TyId) -> TyId {
+        if from != to && !self.inferred_fns.is_empty() && self.inferred_fns.contains(&from) {
+            self.inferred_fns.insert(to);
+        }
+        to
     }
 
     pub fn kind(&self, t: TyId) -> &TyKind {
@@ -298,7 +311,8 @@ impl Types {
             },
             other => return self.intern(other),
         };
-        self.intern(nk)
+        let out = self.intern(nk);
+        self.inferred_like(t, out)
     }
 
     /// Resolve a primitive type name (`i64`, `number`, `string`, ...).

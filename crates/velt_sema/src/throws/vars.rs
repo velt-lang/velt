@@ -180,6 +180,88 @@ impl Ctx<'_> {
         false
     }
 
+    /// Could a mismatch between `a` and `b` come from a variable in a field of an anonymous
+    /// object type, which the comparisons don't see yet? Only when one of them has such a field
+    /// and the two have one shape but for their error types: an object type converted to an
+    /// interface it does not implement, or to an object type with other fields, is a mismatch
+    /// without variables too.
+    pub(crate) fn anon_vars_may_mismatch(&mut self, a: TyId, b: TyId) -> bool {
+        (self.anon_fields_hold_vars(a) || self.anon_fields_hold_vars(b))
+            && self.same_but_errors(a, b, 0)
+    }
+
+    /// Are `a` and `b` one type but for their error types (what function types throw, what
+    /// promises reject with), field by field for anonymous object types? True where that is not
+    /// known (deferred types, unions, interface values a type may implement).
+    fn same_but_errors(&mut self, a: TyId, b: TyId, depth: u32) -> bool {
+        if a == b || depth > 32 {
+            return true;
+        }
+        let same = |cx: &mut Self, x: &[TyId], y: &[TyId]| {
+            x.len() == y.len()
+                && x.iter()
+                    .zip(y)
+                    .all(|(p, q)| cx.same_but_errors(*p, *q, depth + 1))
+        };
+        if self.union_def(a).is_some() || self.union_def(b).is_some() {
+            return true;
+        }
+        let anon = |cx: &Self, d: crate::hir::DefId| {
+            cx.adt(d)
+                .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
+        };
+        match (self.ty.kind(a).clone(), self.ty.kind(b).clone()) {
+            (TyKind::Op(..), _) | (_, TyKind::Op(..)) | (TyKind::Error, _) | (_, TyKind::Error) => {
+                true
+            }
+            (
+                TyKind::FnPtr {
+                    params: p, ret: r, ..
+                },
+                TyKind::FnPtr {
+                    params: q, ret: s, ..
+                },
+            ) => same(self, &p, &q) && same(self, &[r], &[s]),
+            (TyKind::Promise(x, _), TyKind::Promise(y, _))
+            | (TyKind::Array(x), TyKind::Array(y))
+            | (TyKind::Shared(x), TyKind::Shared(y)) => same(self, &[x], &[y]),
+            (TyKind::Option(x, n), TyKind::Option(y, m)) => n == m && same(self, &[x], &[y]),
+            (TyKind::Map(x, y), TyKind::Map(z, w))
+            | (TyKind::Result(x, y), TyKind::Result(z, w)) => same(self, &[x, y], &[z, w]),
+            (TyKind::Tuple(xs), TyKind::Tuple(ys)) => same(self, &xs, &ys),
+            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if d == e => same(self, &xs, &ys),
+            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if anon(self, d) && anon(self, e) => {
+                let fields = |cx: &Self, d| {
+                    cx.adt(d)
+                        .map(|a| {
+                            a.fields
+                                .iter()
+                                .map(|f| (f.name.clone(), f.optional, f.ty))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                };
+                let (fa, fb) = (fields(self, d), fields(self, e));
+                if fa.len() != fb.len() || fa.iter().zip(&fb).any(|(x, y)| x.0 != y.0 || x.1 != y.1)
+                {
+                    return false;
+                }
+                let ta: Vec<TyId> = fa.iter().map(|f| self.subst(f.2, &xs)).collect();
+                let tb: Vec<TyId> = fb.iter().map(|f| self.subst(f.2, &ys)).collect();
+                same(self, &ta, &tb)
+            }
+            // A class instance converted to an object type is copied field by field.
+            (TyKind::Adt(..), TyKind::Adt(..)) => true,
+            // An object type is converted to an interface only by an implementation, which an
+            // anonymous object type does not have.
+            (TyKind::Dyn(..), TyKind::Adt(d, _)) | (TyKind::Adt(d, _), TyKind::Dyn(..)) => {
+                !anon(self, d)
+            }
+            (TyKind::Dyn(..), _) | (_, TyKind::Dyn(..)) => true,
+            _ => false,
+        }
+    }
+
     /// `t` with every variable replaced by `never`: the type as written.
     pub(crate) fn plain_type(&mut self, t: TyId) -> TyId {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {

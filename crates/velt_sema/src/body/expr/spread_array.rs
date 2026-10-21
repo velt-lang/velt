@@ -86,7 +86,19 @@ impl FnCx<'_, '_> {
             // literal, fresh ones too (#268).
             let fits = match is_array {
                 true => self.spread_fits(et, elem),
-                false => et == elem || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some()),
+                // Function types that differ only in their error-set variables are one
+                // (`throws::vars`).
+                false => {
+                    let fits = et == elem
+                        || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
+                        || self.cx.unify_err_vars(et, elem);
+                    if !fits {
+                        // With the sets written in: the source's errors are added to the sites
+                        // of the element type, and the program is checked again with them.
+                        self.cx.fn_throws_differ(et, elem);
+                    }
+                    fits
+                }
             };
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));

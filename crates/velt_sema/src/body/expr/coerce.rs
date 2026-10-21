@@ -385,7 +385,7 @@ impl FnCx<'_, '_> {
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
         // The comparisons don't see variables in the fields of anonymous object types yet
         // (`throws::vars`): such a mismatch may come from them.
-        if self.cx.anon_fields_hold_vars(expected) || self.cx.anon_fields_hold_vars(found.ty) {
+        if self.cx.anon_vars_may_mismatch(expected, found.ty) {
             self.cx.fn_sites.set_doubt();
         }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {

@@ -74,8 +74,6 @@ pub(crate) struct FnSites {
     pub(super) flows: HashMap<Span, Vec<Span>>,
     /// How many errors were added to `found`.
     pub added: usize,
-    /// The site types resolved with an inferred error type: shown as written, without it.
-    pub inferred: HashSet<TyId>,
     last: bool,
     /// Sites get an error-set variable (`TyOp::ErrSite`) instead of a seeded set.
     pub use_vars: bool,
@@ -208,7 +206,7 @@ impl Ctx<'_> {
             self.fn_sites.var_sets.note_written(t, plain);
         }
         if inferred {
-            self.fn_sites.inferred.insert(t);
+            self.ty.inferred_fns.insert(t);
         }
         t
     }
@@ -247,7 +245,7 @@ impl Ctx<'_> {
             throws,
         });
         self.record_fn_site(span, module, s);
-        self.fn_sites.inferred.insert(s);
+        self.ty.inferred_fns.insert(s);
         s
     }
 
@@ -334,6 +332,13 @@ impl Ctx<'_> {
     pub(crate) fn indirect_error(&mut self, t: TyId, site: Option<Span>) -> Option<TyId> {
         if self.fn_sites.found.sites.is_empty() {
             return None;
+        }
+        // A function returning a promise rejects with what is stored into its sites (its type
+        // has those errors from the next check on); a call does not throw them.
+        if let TyKind::FnPtr { ret, .. } = self.ty.kind(t) {
+            if matches!(self.ty.kind(*ret), TyKind::Promise(..)) {
+                return None;
+            }
         }
         if let Some(s) = site {
             return self.site_set(s);

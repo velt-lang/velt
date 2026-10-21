@@ -171,6 +171,7 @@ impl Ctx<'_> {
             }
         };
         let mut out = self.ty.intern(k);
+        out = self.ty.inferred_like(t, out);
         if let TyKind::Adt(d, args) = self.ty.kind(out).clone() {
             if let Some(r) = self.canon_anon(d, &args, depth) {
                 out = r;
