@@ -150,6 +150,36 @@ impl Ctx<'_> {
         m
     }
 
+    /// Does an anonymous object type in `t` have a field type with a variable? The
+    /// comparisons don't look into such fields (`plain_type`, `unify_parts`).
+    pub(crate) fn anon_fields_hold_vars(&mut self, t: TyId) -> bool {
+        if !self.fn_sites.use_vars || self.fn_sites.vars.is_empty() {
+            return false;
+        }
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) || seen.len() > 4096 {
+                continue;
+            }
+            let k = self.ty.kind(t).clone();
+            stack.extend(crate::types::children(&k));
+            if let TyKind::Adt(d, _) = k {
+                if self
+                    .adt(d)
+                    .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
+                {
+                    let fs = self.anon_field_tys(d);
+                    if fs.iter().any(|f| self.mentions_err_var(*f)) {
+                        return true;
+                    }
+                    stack.extend(fs);
+                }
+            }
+        }
+        false
+    }
+
     /// `t` with every variable replaced by `never`: the type as written.
     pub(crate) fn plain_type(&mut self, t: TyId) -> TyId {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {
