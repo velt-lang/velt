@@ -124,7 +124,7 @@ impl FnLower<'_, '_> {
         let never = self.cx.is_never(x.ret);
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
         let argv = match foreign {
-            true => self.foreign_args(&x.params, args),
+            true => self.foreign_args(&x.params, args, false),
             false => self.lower_args(args, &modes, false),
         };
         self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
@@ -142,7 +142,11 @@ impl FnLower<'_, '_> {
                 s => Some(s),
             })
             .collect();
-        let mut argv = self.foreign_args(&x.params, args);
+        // The SIMD helpers are inlined, synchronous, and only read an array's header: they get
+        // the header where it is instead of a copy, so after inlining nothing reads the copy
+        // (which LLVM would redo after every element store, tbaa.rs in velt_codegen_llvm).
+        let in_place = x.symbol.starts_with("velt_simd_");
+        let mut argv = self.foreign_args(&x.params, args, in_place);
         let fret = self.cx.foreign_ty(x.ret);
         let ret = match fret {
             Ty::Agg(_) => Ty::Unit,
@@ -166,7 +170,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership).
-    fn foreign_args(&mut self, params: &[TyId], args: &[hir::Expr]) -> Vec<Operand> {
+    /// `in_place`: an array is passed as its own header rather than a copy of it.
+    fn foreign_args(
+        &mut self,
+        params: &[TyId],
+        args: &[hir::Expr],
+        in_place: bool,
+    ) -> Vec<Operand> {
         let mut argv = vec![];
         for (&p, a) in params.iter().zip(args) {
             let v = self.expr(a);
@@ -175,7 +185,10 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     let vt = self.cx.ty(p);
                     let place = self.operand_place(v, vt);
-                    let view = self.foreign_view(&place, p);
+                    let view = match in_place && matches!(self.cx.kind(p), TyKind::Array(_)) {
+                        true => self.content(&place, p),
+                        false => self.foreign_view(&place, p),
+                    };
                     argv.push(self.addr(view));
                 }
                 _ => argv.push(v),
