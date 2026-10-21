@@ -64,6 +64,7 @@ impl<'h> Cx<'h> {
             anon: Default::default(),
             cur_def: None,
             cur_mode: super::LkMode::Plain,
+            cur_own: false,
             nothing_clashes: vec![],
             map_fields: 0,
         }
@@ -134,6 +135,15 @@ impl<'h> Cx<'h> {
         self.func_in(work, mode)
     }
 
+    /// The function for `read` callback literal `work` that code outside read mode calls
+    /// (`Work::ReadOwn`).
+    pub(super) fn func_read_own(&mut self, work: Work) -> FuncId {
+        match self.has_lock_set() {
+            true => self.func_in(Work::ReadOwn(Box::new(work)), super::LkMode::Plain),
+            false => self.func_in(work, super::LkMode::Read),
+        }
+    }
+
     fn func_in(&mut self, work: Work, mode: super::LkMode) -> FuncId {
         use super::LkMode as M;
         // Without a lock set every function counts the same way: one version.
@@ -141,6 +151,7 @@ impl<'h> Cx<'h> {
             work,
             Work::Checked(_)
                 | Work::Read(_)
+                | Work::ReadOwn(_)
                 | Work::Main
                 | Work::ModuleInit
                 | Work::ArrayGrow
@@ -171,13 +182,16 @@ impl<'h> Cx<'h> {
         self.cur_def = work_def(work).or(outer);
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let func = match work {
-            Work::Checked(w) | Work::Read(w) => {
+            Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) => {
                 let (mode, suffix) = match work {
                     Work::Read(_) => (super::LkMode::Read, "_R"),
+                    Work::ReadOwn(_) => (super::LkMode::Read, "_O"),
                     _ => (super::LkMode::Checked, "_K"),
                 };
                 self.cur_mode = mode;
+                self.cur_own = matches!(work, Work::ReadOwn(_));
                 let mut f = super::FnLower::build(self, w);
+                self.cur_own = false;
                 // `_K` / `_R` follow no mangled name or suffix the plain version has.
                 f.symbol.push_str(suffix);
                 f
@@ -293,7 +307,7 @@ impl<'h> Cx<'h> {
 /// The function `work` builds an instance (or a part) of.
 fn work_def(work: &Work) -> Option<DefId> {
     match work {
-        Work::Checked(w) | Work::Read(w) => work_def(w),
+        Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) => work_def(w),
         Work::Fn(d, _)
         | Work::Thunk(_, d, _)
         | Work::EnvDrop(d, _)

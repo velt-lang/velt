@@ -124,7 +124,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // function's mode; one a call borrows runs during the call, but the callee may call it
         // in a `read` callback, so plain code's asks (in a program with a lock set); any other
         // closure may run anywhere.
-        let mode = match std::mem::take(&mut self.lock_callback) {
+        let callback = std::mem::take(&mut self.lock_callback);
+        // A `read` callback plain code calls captures that code's variables only.
+        let own =
+            matches!(callback, Some((d, LkMode::Read)) if d == def) && self.mode == LkMode::Plain;
+        let mode = match callback {
             Some((d, m)) if d == def => m,
             _ if in_frame && !borrowed => self.mode,
             _ if borrowed || in_frame => match self.mode {
@@ -146,6 +150,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let frozen = self.frozen_captures(def);
         let code = match frozen {
+            0 if own => self.cx.func_read_own(Work::Fn(def, targs.clone())),
             0 => self.cx.func_direct(Work::Fn(def, targs.clone()), mode),
             mask => self
                 .cx

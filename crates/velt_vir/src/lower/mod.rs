@@ -263,6 +263,9 @@ enum Work {
     /// `Work` reached only by direct calls from a `read` callback literal: it always runs in read
     /// mode, so it counts lock-set objects by read mode's rules without asking.
     Read(Box<Work>),
+    /// A `read` callback literal that code outside read mode calls: `Read`, and what it
+    /// captured is that code's, never a store's object (`FnLower::own_captures`).
+    ReadOwn(Box<Work>),
     /// A function instance whose params in the mask (bit `i`: `params[i]`, captures first)
     /// borrow a value other threads read at the same time (frozen.rs), caller-tracking for
     /// the call site when it is given, and given closure literals for some function params:
@@ -394,6 +397,8 @@ struct Cx<'h> {
     cur_def: Option<DefId>,
     /// The read mode of the function being built (`Work::Checked`, `Work::Read`).
     cur_mode: LkMode,
+    /// Whether the function being built is a `Work::ReadOwn`.
+    cur_own: bool,
     /// Functions whose instances made an option of an option with another nothing (`T | null`
     /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
     /// represent (issue #930): reported, not lowered silently.
@@ -544,6 +549,9 @@ struct FnLower<'c, 'h> {
     rw_reader: Option<Local>,
     /// Whether this function runs in read mode (`Work::Checked`, `Work::Read`).
     mode: LkMode,
+    /// A `read` callback that code outside read mode calls (`Work::ReadOwn`): the caller's
+    /// variables it captured hold none of a store's objects.
+    own_captures: bool,
     /// The closure literal a `with`, `write` or `read` is about to call, and the read mode its
     /// code runs in.
     lock_callback: Option<(DefId, LkMode)>,

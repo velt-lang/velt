@@ -398,13 +398,17 @@ impl FnLower<'_, '_> {
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let bp = self.place_expr_with(base, pre);
-                self.target_barrier(&bp, bty);
+                if !self.captured_root(base) {
+                    self.target_barrier(&bp, bty);
+                }
                 self.field_place(&bp, bty, *index)
             }
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
-                self.target_barrier(&arr, bty);
+                if !self.captured_root(base) {
+                    self.target_barrier(&arr, bty);
+                }
                 let arr = self.content(&arr, bty);
                 let i = match pre.pop_front() {
                     Some(i) => i,
@@ -522,7 +526,7 @@ impl FnLower<'_, '_> {
         let outside = match &place.kind {
             hir::ExprKind::Field { base, .. } | hir::ExprKind::Index { base, .. } => {
                 let bty = self.sub(base.ty);
-                !self.cx.lock_counted(bty)
+                !self.cx.lock_counted(bty) || self.captured_root(place)
             }
             _ => false,
         };

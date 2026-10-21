@@ -642,7 +642,10 @@ until it is written: a reader names the lock in a slot of its own thread (a cach
 thread writes, velt_rt `hazard.rs`) and checks that no writer came, so readers on many threads
 write nothing they share. A writer *revokes* the bias: it sets the lock's state and waits for the
 slots naming the lock to clear, then takes the lock's underlying reader-writer lock (parking_lot's
-`RawRwLock`) exclusively. From then on readers take the underlying lock shared, so they still
+`RawRwLock`) exclusively. It never waits for the slots while holding the underlying lock: a
+reader in a slot may be nested in a read of another lock whose writer waits for this writer's
+readers. A reader that biased the lock again before the writer took it (its revocation was old
+enough) makes the writer let the underlying lock go and revoke once more. From then on readers take the underlying lock shared, so they still
 run at once and a lock written often costs about what a `Mutex` does, until a reader holding it
 finds the revocation old enough and biases the lock again. A writer blocked on the underlying
 lock holds new outermost readers back, so writers don't starve, while a read nested in another
@@ -653,8 +656,9 @@ bias before it lasted (at most 10 ms). The lock words are the underlying lock, t
 
 A thread waiting for the underlying lock backs off exponentially between tries (about 0.5 µs
 doubling to 35 µs, yielding each time, blocking after about 0.7 ms): a waiter that tries takes
-the line from the holder, so short callbacks taking turns run several in a row on one core. Generated code passes each lock call the reader state an earlier one in
-the same call of the function returned, so the common reads and writes run without a
+the line from the holder, so short callbacks taking turns run several in a row on one core.
+Generated code passes each lock call the reader state an earlier one in the same call of the
+function returned, so the common reads and writes run without a
 thread-local lookup or a call.
 
 ## 10. Output with many tasks

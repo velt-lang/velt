@@ -544,8 +544,8 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   value holds). A `read` callback cannot change the value: one that may (it assigns to it, or
   passes it to a function that changes it) is an error ("the function passed to `read` modifies
   the locked value"), so `read` takes a function literal or a named function, whose body the
-  compiler checks, not a function value. Readers share the value without copying or counting it, also what they
-  keep while the callback runs (a sorted listing of its objects, a value a method returns); a
+  compiler checks, not a function value. Readers share the value without copying or counting
+  it, also what they keep while the callback runs (a sorted listing of its objects, a value a method returns); a
   write to it through such a reference stops the program (``panic: cannot modify a value an
   `RwLock` holds inside its `read` callback …``). What a `read` returns is a copy of what it
   shares with the value (an element, a `slice()`, a `Map.get`), never the value's object
@@ -557,9 +557,13 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
   need and lock after `read`, or count with a `shared<i64>` (`.add(n)`). Nor can it start a
   promise or task, which would outlive it (that stops the program too). A function value the
   callback calls is checked as it runs (a write to the value through it stops the program).
-  Inside the callback, an object of a type the value holds can be changed only when the
-  callback made it: read mode cannot tell another one (the caller's array of the same type)
-  from the value's own, so a write to it stops the program too.
+  Inside the callback, an object of a type the value holds can be changed when the callback
+  made it, or when it is the caller's: a variable the callback literal captured from code
+  outside any `read` callback, and what that variable holds (`out.push(x)`, `seen.set(k, x)`,
+  `mine.v = x`). What the callback stores there is a copy of what it shares with the value.
+  Any other object of such a type (one reached through a function value the callback calls,
+  or captured by a closure made inside the callback) cannot be told from the value's own, so
+  a write to it stops the program too.
   Reads of other `RwLock`s nest, in any order. A value that holds function
   or interface values, objects of a class hierarchy, weak references or promises is read under
   the exclusive lock instead.

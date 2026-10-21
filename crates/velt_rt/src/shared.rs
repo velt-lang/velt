@@ -381,10 +381,16 @@ fn lock_slow(lock: &RawRwLock, take: Take) {
 /// A reader holding `lock` of a revoked `RwLock`: after `until`, bias it again (true).
 fn rebias(w: &Words) -> bool {
     let now = now_ns();
-    if now < w.until.load(Ordering::Relaxed) {
+    let until = w.until.load(Ordering::Relaxed);
+    // `u64::MAX`: a writer is revoking. A writer that starts revoking after this claims
+    // `until` finds the lock biased again once it holds `lock`, and revokes once more.
+    if now < until
+        || w.until
+            .compare_exchange(until, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
         return false;
     }
-    w.until.store(now, Ordering::Relaxed);
     w.state.store(0, Ordering::Release);
     true
 }
@@ -508,22 +514,45 @@ pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
         write_in_read(p, &*r);
     }
     let w = &*(p as *const Words);
-    // The bias is revoked before `lock` is taken: a writer holding it while it waits for the
-    // readers' slots would wait for a reader whose nested read of another lock waits for that
-    // lock's writer, which may be waiting for this writer's readers in turn.
-    if w.state.load(Ordering::Relaxed) == 0 {
-        revoke(p, w);
-    }
+    // Fast: `lock` is free, and the bias is revoked once this holds it (no reader biases it
+    // again then).
     if !w.lock.try_lock_exclusive() {
-        lock_slow(&w.lock, Take::Exclusive);
-    }
-    // A reader that raced the revocation may have biased the lock again before `lock` was
-    // taken; holding it, no reader can now (rare).
-    if w.state.load(Ordering::Relaxed) == 0 {
-        revoke(p, w);
+        write_slow(p, w);
+    } else if w.state.load(Ordering::Relaxed) == 0 {
+        // Biased: let `lock` go to revoke the bias.
+        w.lock.unlock_exclusive();
+        write_slow(p, w);
     }
     crate::task::local::mutex_locked();
     r as u64
+}
+
+/// `velt_rt_rwlock_write` past its fast path, not holding `lock`. The bias is revoked before `lock` is taken, and never while it is held: a writer
+/// holding it while it waits for the readers' slots would wait for a reader whose nested read
+/// of another lock waits for that lock's writer, which may be waiting for this writer's readers
+/// in turn. `until` stays `u64::MAX` (no reader biases the lock again) until `lock` is held.
+#[cold]
+#[inline(never)]
+fn write_slow(p: *mut u64, w: &Words) {
+    let mut until = None;
+    loop {
+        if w.state.load(Ordering::Relaxed) == 0 {
+            until = Some(revoke(p, w));
+        }
+        if !w.lock.try_lock_exclusive() {
+            lock_slow(&w.lock, Take::Exclusive);
+        }
+        if w.state.load(Ordering::Relaxed) != 0 {
+            break;
+        }
+        // A reader that raced the revocation biased the lock again first: let `lock` go and
+        // revoke again (rare).
+        // SAFETY: this thread took `lock` exclusively just above.
+        unsafe { w.lock.unlock_exclusive() };
+    }
+    if let Some(u) = until {
+        w.until.store(u, Ordering::Relaxed);
+    }
 }
 
 #[cold]
@@ -535,12 +564,13 @@ fn write_in_read(p: *mut u64, r: &crate::hazard::Reader) -> ! {
     unreachable!("ICE: a write inside a read went on")
 }
 
-/// A writer about to take `lock` of a biased `RwLock` (or holding it, when a reader biased it
-/// again meanwhile): readers take `lock` from now on; wait for the ones in slots, and keep the
-/// bias revoked for a while.
+/// A writer about to take `lock` of a biased `RwLock`: readers take `lock` from now on; wait for
+/// the ones in slots. Returns until when the bias stays revoked, which the writer stores once
+/// it holds `lock`.
 #[cold]
-fn revoke(p: *mut u64, w: &Words) {
-    // No reader biases the lock again while this waits (`rebias` waits for `until`).
+fn revoke(p: *mut u64, w: &Words) -> u64 {
+    // No reader biases the lock again until the writer holds `lock` (`rebias` waits for
+    // `until`); the writer stores the returned time then.
     let until = w.until.swap(u64::MAX, Ordering::Relaxed);
     w.state.store(MUTEX, Ordering::SeqCst);
     let t0 = now_ns();
@@ -565,7 +595,7 @@ fn revoke(p: *mut u64, w: &Words) {
     }
     .max(floor);
     w.inhibit.store(inhibit, Ordering::Relaxed);
-    w.until.store(t1 + inhibit, Ordering::Relaxed);
+    t1 + inhibit
 }
 
 /// Release the lock this thread took with `velt_rt_rwlock_write`.

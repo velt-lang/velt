@@ -119,6 +119,22 @@ impl FnLower<'_, '_> {
         self.changed.as_ref().is_some_and(|c| c.contains(&l))
     }
 
+    /// Is the place `e` part of what this `read` callback captured from code outside read mode
+    /// (`Work::ReadOwn`: the caller's variable, never a store's object, since what a reader
+    /// stores there is a copy)?
+    pub(super) fn captured_root(&mut self, e: &hir::Expr) -> bool {
+        if !self.own_captures {
+            return false;
+        }
+        let Some(root) = place_root(e) else {
+            return false;
+        };
+        match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+            Some(hir::Def::Fn(f)) => f.captures.iter().any(|c| c.inner == root),
+            _ => false,
+        }
+    }
+
     /// The frozen value `e` read in place: its own use borrowed whatever its HIR mode, since
     /// moving out of one would leave the all-zero value where other threads read it, and moving
     /// out of a counted part shares it.

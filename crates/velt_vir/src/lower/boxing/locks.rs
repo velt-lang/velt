@@ -25,12 +25,16 @@ impl Cx<'_> {
         next.lock_values
             .extend(self.facts.lock_values.iter().copied());
         let values: Vec<TyId> = next.lock_values.iter().copied().collect();
-        // Every class hierarchy, array and object type a shared read's value reaches is counted,
-        // also one nothing aliases: read mode tells the store's objects from a reader's own by
-        // their count word (the write barrier, `LOCAL`), and a function value the callback calls
-        // may write any of them.
-        for &v in &values {
-            self.count_reached(next, v);
+        // Where code in read mode calls a function value, every class hierarchy, array and
+        // object type a shared read's value reaches is counted, also one nothing aliases: read
+        // mode tells the store's objects from a reader's own by their count word (the write
+        // barrier, `LOCAL`), and the function value may write any of them, which sema cannot
+        // see. Elsewhere sema rejects the writes, and only what is shared is counted.
+        next.read_indirect |= self.facts.read_indirect;
+        if next.read_indirect {
+            for &v in &values {
+                self.count_reached(next, v);
+            }
         }
         for v in values {
             let mut roots = FxHashSet::default();
@@ -165,9 +169,17 @@ impl Cx<'_> {
         true
     }
 
-    /// Does the program have a lock set (an `RwLock` whose readers run at once)?
+    /// Does the program have a lock set (an `RwLock` whose readers run at once, also one whose
+    /// value holds nothing counted yet: its readers' code is built in read mode, which tells
+    /// whether they call a function value, `Boxing::read_indirect`)?
     pub(in crate::lower) fn has_lock_set(&self) -> bool {
-        !self.boxing.lock_roots.is_empty() || !self.boxing.lock_boxes.is_empty()
+        !self.boxing.lock_roots.is_empty()
+            || !self.boxing.lock_boxes.is_empty()
+            || self
+                .boxing
+                .lock_values
+                .iter()
+                .any(|v| !self.boxing.lock_exclusive.contains(v))
     }
 
     /// Is `t` in the lock set: are its counts and writes read-mode aware (module docs)?

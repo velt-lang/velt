@@ -91,6 +91,9 @@ pub(super) struct Boxing {
     pub(super) lock_roots: FxHashSet<DefId>,
     pub(super) lock_boxes: FxHashSet<TyId>,
     pub(super) lock_exclusive: FxHashSet<TyId>,
+    /// Code that runs in a `read` callback calls a function value (or another function through
+    /// a pointer): every type a shared read reaches is counted (locks.rs `count_reached`).
+    pub(super) read_indirect: bool,
 }
 
 impl Boxing {
@@ -213,6 +216,8 @@ pub(super) struct Facts {
     pub(super) unmet: bool,
     /// Value types of the `RwLock`s made or locked (locks.rs).
     pub(super) lock_values: FxHashSet<TyId>,
+    /// Code in read mode called a function through a pointer (`Boxing::read_indirect`).
+    pub(super) read_indirect: bool,
 }
 
 impl Cx<'_> {

@@ -6,7 +6,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::{ice, unit, FnLower, Work};
+use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -74,7 +74,13 @@ impl FnLower<'_, '_> {
                 Work::Frozen(def, targs.clone(), mask, at, fns)
             }
         };
-        let fid = self.cx.func_direct(work, self.mode);
+        // A method of what a closure captured (the caller's `push`, `set`, `add`) runs by the
+        // counts outside read mode: what a reader stores there is a copy, never the store's.
+        let mode = match f.self_ty.is_some() && pre.is_empty() {
+            true if args.first().is_some_and(|a| self.captured_root(a)) => LkMode::Plain,
+            _ => self.mode,
+        };
+        let fid = self.cx.func_direct(work, mode);
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
