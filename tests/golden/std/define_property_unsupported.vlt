@@ -30,3 +30,7 @@ class Tile {
 }
 const tile = new Tile();
 Object.defineProperty(tile, MARK, { value: true });
+const SHOWN: unique symbol = Symbol("shown");
+const shown: Flag = { on: false };
+Object.defineProperty(shown, SHOWN, { value: 1, enumerable: true });
+Object.assign({ on: true }, shown);

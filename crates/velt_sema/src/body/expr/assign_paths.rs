@@ -1,13 +1,61 @@
-//! Assignment targets that can be read again without an effect (`assign.rs`).
+//! Assignment targets (`assign.rs`): those that can be read again without an effect, and
+//! writes to readonly fields.
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, ExprKind as H, TyKind, UseMode};
+use crate::hir::{self, ExprKind as H, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
+    pub(super) fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
+        let H::Field { base, index, .. } = &place.kind else {
+            return;
+        };
+        let Some((d, _)) = self.adt_of(base.ty) else {
+            return;
+        };
+        let readonly = self
+            .cx
+            .adt(d)
+            .and_then(|a| a.fields.get(*index as usize))
+            .is_some_and(|f| f.readonly);
+        if readonly && self.is_import_meta_type(base.ty) {
+            // `import.meta.url = …` is a write to the module constant, and so is one through
+            // another reference to it (`const m = import.meta; m.url = …`).
+            self.cx.err(
+                format!(
+                    "cannot assign to a field of module-level constant `{}`",
+                    ast::IMPORT_META
+                ),
+                place.span,
+            );
+            return;
+        }
+        let in_ctor = self.f.kind == crate::defs::FnKind::Ctor
+            && matches!(base.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This);
+        if readonly && !in_ctor {
+            self.cx.err(
+                format!("cannot assign to `{}`: it is a readonly field", prop.name),
+                prop.span,
+            );
+        }
+    }
+
+    /// Is `ty` the type of this module's `import.meta` (`ast::IMPORT_META`)?
+    fn is_import_meta_type(&mut self, ty: TyId) -> bool {
+        let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, ast::IMPORT_META)
+        else {
+            return false;
+        };
+        if !matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)) {
+            return false;
+        }
+        crate::body::driver::ensure_global(self.cx, d);
+        self.cx.global(d).is_some_and(|g| g.ty == ty)
+    }
+
     /// The target `v` read again after assignment `a` (`assign_value`): after `x ??= d` with a
     /// `d` that is not null, `x` is not either, also a module-level variable, which is not
     /// narrowed (`(xs ??= []).push(f)`).

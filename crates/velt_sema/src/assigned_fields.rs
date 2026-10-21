@@ -25,6 +25,8 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
         });
         cx.defs[i] = Some(Def::Fn(f));
     }
+    // `x[k] = v` in a generic body, at each instantiation (`Intrinsic::KeyWrite`).
+    out.extend(cx.type_level.inline.written.iter().copied());
     // Anonymous object types are structural: `{ a: U }` at `U = string` and a written
     // `{ a: string }` are different defs holding the same values (`crate::anon`, and `velt_vir`
     // lays them out as one). Defs with the same field names must therefore agree, or the two

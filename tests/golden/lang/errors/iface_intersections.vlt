@@ -1,0 +1,18 @@
+// Intersections and `Pick`s of interfaces with methods that Velt rejects (#350): a member a
+// `Pick` names that the interface lacks, methods of one name with different signatures, and
+// an interface value where its object part is expected (a copy, another object).
+interface Base {
+  refresh(): number;
+}
+interface Other {
+  refresh(): string;
+}
+type Missing = Pick<Base, "nope">;
+type Clash = Base & Other;
+type Wide = Base & { errors: number };
+
+function main() {
+  const w: Wide = { refresh: () => 1, errors: 2 };
+  const fields: { errors: number } = w;
+  console.log(fields.errors);
+}

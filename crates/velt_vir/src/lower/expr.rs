@@ -15,8 +15,11 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
             let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
-            self.cx.note_proxy_cast(from, to);
-            return self.consume(inner);
+            // An interface upcast builds a new interface value (`expr`, below).
+            if self.upcast_slot(from, to).is_none() {
+                self.cx.note_proxy_cast(from, to);
+                return self.consume(inner);
+            }
         }
         if let K::Downcast(inner) = &e.kind {
             let v = self.consume(inner);
@@ -211,6 +214,10 @@ impl FnLower<'_, '_> {
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => {
                 let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
+                if let Some(slot) = self.upcast_slot(from, to) {
+                    let v = self.consume(inner);
+                    return self.upcast_value(v, from, to, slot);
+                }
                 self.cx.note_proxy_cast(from, to);
                 self.expr(inner)
             }

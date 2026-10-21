@@ -27,6 +27,7 @@
 pub mod hir;
 
 mod absent_fields;
+mod alias_expand;
 mod anon;
 mod any;
 mod assigned_fields;
@@ -40,6 +41,7 @@ mod copy_flow;
 mod copy_types;
 mod creation_notes;
 mod ctx;
+mod defined_accessors;
 mod defined_props;
 mod defs;
 mod discriminants;
@@ -51,6 +53,8 @@ mod flow;
 mod fn_types;
 mod fresh_returns;
 mod generic_arrows;
+mod generic_spread;
+mod global_this;
 mod holds_promise;
 mod hooks;
 pub mod ide;
@@ -86,6 +90,7 @@ mod replaced_holders;
 mod resolve;
 mod suggest;
 mod symbols;
+mod synth_ifaces;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
@@ -248,6 +253,12 @@ fn check_on_current_thread(
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let (rewritten, alias_blocked) = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
+    let (global_props, global_diags, globals) = global_this::rewrite(modules);
+    merge_diags.extend(global_diags);
+    let modules = globals.as_deref().unwrap_or(modules);
+    let (accessor_diags, accessors) = defined_accessors::rewrite(modules);
+    merge_diags.extend(accessor_diags);
+    let modules = accessors.as_deref().unwrap_or(modules);
     let (brands, branded) = defined_props::rewrite(modules);
     let modules = branded.as_deref().unwrap_or(modules);
     let closures = nested_closures::rewrite(modules);
@@ -276,6 +287,7 @@ fn check_on_current_thread(
         }
         cx.objects.null_proto_records = null_proto;
         cx.objects.brands = brands.clone();
+        cx.global_props = global_props.clone();
         cx.recovered = (recovered.iter())
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();
@@ -306,6 +318,7 @@ fn check_on_current_thread(
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
+    let (upcasts, upcast_impls) = cx.upcast_tables();
     let ctx::Ctx {
         ty,
         defs,
@@ -342,6 +355,8 @@ fn check_on_current_thread(
         dyn_members: dyn_members.map(|m| m.into_iter().collect()),
         generator_throw: gen_throw,
         super_calls: super_calls.into_iter().collect(),
+        upcasts,
+        upcast_impls,
         cpu_targets: cpu_targets.into_iter().collect(),
     };
     (Some(program), diags)
@@ -377,7 +392,9 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
+    global_this::declare(cx);
     body::check_bodies(cx);
+    global_this::check_sites(cx);
     module_scripts::declare(cx);
     absent_fields::check(cx);
     fresh_returns::check(cx);

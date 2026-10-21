@@ -75,6 +75,20 @@ pub enum Intrinsic {
     /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
+    /// `(parts: borrow P0, P1, …) -> TyOp::Spread(P0, P1, …)`: an object literal with a spread
+    /// whose fields are known only per instantiation (#350). Each part is an object value: a
+    /// spread source (a place, borrowed) or a one-field object literal holding an explicit
+    /// property (owned). Lowering builds the reduced object type, each field shared from the
+    /// last part that has it (an optional field only while present, as JavaScript copies only
+    /// the keys an object has).
+    SpreadObject,
+    /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
+    /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
+    /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
+    KeyRead,
+    /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
+    /// generic body, as for `KeyRead`; lowering writes that field.
+    KeyWrite,
     /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
     /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
     FieldAbsent,

@@ -549,7 +549,12 @@ impl FnCx<'_, '_> {
         let Some(a) = d.and_then(|d| self.cx.adt(d)) else {
             return self.not_an_object(t, span);
         };
-        if a.kind != AdtKind::Anon && self.cx.scopes[a.module].is_std {
+        // A std class's fields are its internals, except those of `import.meta`'s class, whose
+        // fields are Node's keys of `import.meta`.
+        if a.kind != AdtKind::Anon
+            && self.cx.scopes[a.module].is_std
+            && self.cx.modules[a.module].path != "std/import_meta"
+        {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;

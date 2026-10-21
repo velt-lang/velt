@@ -1,0 +1,14 @@
+// A call whose key argument is no key of the object (#350) is one error, at that argument, as
+// tsc reports it; the call is not instantiated, so its body reports nothing.
+function swap<T extends object, K extends keyof T>(o: T, a: K, b: K): void {
+  const t = o[a];
+  o[a] = o[b];
+  o[b] = t;
+}
+function get<T extends object, K extends keyof T>(o: T, k: K): T[K] {
+  return o[k];
+}
+type Pt = { x: number; y: number };
+const p: Pt = { x: 1, y: 2 };
+swap(p, "x", "w");
+console.log(get(p, "w"));

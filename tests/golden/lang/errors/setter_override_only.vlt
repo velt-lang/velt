@@ -1,0 +1,23 @@
+// Overriding only the setter of a base class's `get`/`set` pair is an error (#350): in
+// JavaScript the setter-only accessor replaces the whole property, so reads through it give
+// `undefined`, which the getter's type can't hold. Overriding both is fine.
+class P {
+  _n = 3;
+  get n(): number { return this._n; }
+  set n(v: number) { this._n = v + 100; }
+}
+class S extends P {
+  override set n(v: number) { this._n = v; }
+}
+class T extends P {
+  override get n(): number { return this._n; }
+  override set n(v: number) { this._n = v; }
+}
+
+function main() {
+  const p: P = new S();
+  p.n = 5;
+  const t: P = new T();
+  t.n = 6;
+  console.log(p.n, t.n);
+}

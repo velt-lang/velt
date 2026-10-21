@@ -1,14 +1,16 @@
-//! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with empty string fields
+//! `import.meta` (`ast::IMPORT_META`): the parser adds a module constant with placeholder fields
 //! to a module that mentions it, and the loader, which knows the module's file, fills them in as
 //! Node does: `url` is the file's `file:` URL, `filename` its absolute path and `dirname` its
-//! directory. They name the source file, fixed while compiling.
+//! directory, `main` is true in the program's root module (`resolve` is std's, velt:import_meta).
+//! They name the source file, fixed while compiling.
 
 use std::path::Path;
 
 use velt_syntax::ast;
 
-/// Fills in the fields of `module`'s `import.meta` constant, if it has one, for the file `path`.
-pub(super) fn fill(module: &mut ast::Module, path: &Path) {
+/// Fills in the fields of `module`'s `import.meta` constant, if it has one, for the file `path`
+/// (the program's root module if `main`).
+pub(super) fn fill(module: &mut ast::Module, path: &Path, main: bool) {
     let Some(init) = module
         .items
         .iter_mut()
@@ -28,14 +30,19 @@ pub(super) fn fill(module: &mut ast::Module, path: &Path) {
     else {
         return;
     };
-    let values = meta_values(path);
-    let ast::ExprKind::Object(props) = &mut init.kind else {
+    let [url, filename, dirname] = meta_values(path);
+    // `new __ImportMeta(dirname, filename, main, url)`.
+    let ast::ExprKind::New { args, .. } = &mut init.kind else {
         return;
     };
-    for (p, v) in props.iter_mut().zip(values) {
-        if let ast::ObjectProp::KeyValue(_, e) = p {
-            e.kind = ast::ExprKind::Lit(ast::Lit::Str(v));
-        }
+    let values = [
+        ast::Lit::Str(dirname),
+        ast::Lit::Str(filename),
+        ast::Lit::Bool(main),
+        ast::Lit::Str(url),
+    ];
+    for (arg, value) in args.iter_mut().zip(values) {
+        arg.kind = ast::ExprKind::Lit(value);
     }
 }
 

@@ -50,6 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
+    /// Interfaces made for intersections and `Pick`s of interfaces with methods.
+    pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
     pub(crate) any: Option<crate::any::AnyDefs>,
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
@@ -103,6 +105,8 @@ pub(crate) struct Ctx<'m> {
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    /// The properties of `globalThis` the program uses (`crate::global_this`).
+    pub global_props: crate::global_this::GlobalProps,
     /// Module constants found to depend on themselves so far (`body::driver::ensure_global`).
     pub global_cycles: u32,
     /// Union enums by canonical member list (`crate::unions`).
@@ -112,6 +116,9 @@ pub(crate) struct Ctx<'m> {
     pub alias_names: FxHashMap<TyId, String>,
     /// (class, method key) of every `override` of a generic method (no vtable slot).
     pub generic_overrides: Vec<(DefId, String)>,
+    /// The throwing setters a getter-only override gets (`collect::classes`): a write through
+    /// the class itself is a type error, as in TypeScript, one through a base class throws.
+    pub getter_only_setters: FxHashSet<DefId>,
     /// Names of `Param(i)` in the definition being checked (for messages).
     pub display_params: Vec<String>,
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
@@ -301,6 +308,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             iface_writes: Default::default(),
             part_ifaces: Default::default(),
+            synth_ifaces: Default::default(),
             any: None,
             impl_index: Default::default(),
             anon: FxHashMap::default(),
@@ -325,11 +333,13 @@ impl<'m> Ctx<'m> {
             module_slots: Vec::new(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            global_props: Default::default(),
             global_cycles: 0,
             unions: FxHashMap::default(),
             recursive_unions: FxHashMap::default(),
             alias_names: FxHashMap::default(),
             generic_overrides: vec![],
+            getter_only_setters: FxHashSet::default(),
             display_params: vec![],
             defaults_checked: FxHashSet::default(),
             hook_adapters: FxHashMap::default(),
@@ -631,6 +641,10 @@ impl<'m> Ctx<'m> {
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
             // `undefined` alone is an option of `never` (`Types::undefined`).
             TyKind::Option(t, n) if *t == self.ty.never => n.suffix()[3..].to_string(),
+            // `(() => T) | undefined`, not the function type `() => T | undefined`.
+            TyKind::Option(t, n) if matches!(self.ty.kind(*t), TyKind::FnPtr { .. }) => {
+                format!("({}){}", self.display_in(*t, names), n.suffix())
+            }
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
@@ -696,6 +710,9 @@ impl<'m> Ctx<'m> {
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
+            TyKind::Dyn(d, args) if self.synth_display(*d, args, names).is_some() => {
+                self.synth_display(*d, args, names).unwrap_or_default()
+            }
             TyKind::Dyn(d, args) => match self.iface(*d) {
                 Some(i) => with_args(self, &i.name, args),
                 None => "unknown".into(),

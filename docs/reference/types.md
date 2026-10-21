@@ -277,7 +277,8 @@ whose type is a type parameter that is `symbol` or a union holding a symbol (`` 
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
-initialized with `Symbol("...")` or `Symbol.for("...")` (TypeScript's `unique symbol`;
+initialized with `Symbol("...")` (the description a string literal or a string constant) or
+`Symbol.for("...")` (TypeScript's `unique symbol`;
 `const KEY: unique symbol = Symbol("k")` declares the same), or with another such constant, and
 may be imported. Velt objects have fixed fields, so the compiler resolves these members while
 compiling: reading `o[KEY]` costs what reading a named field does. A symbol key known only at
@@ -388,10 +389,10 @@ function check() {
 A module constant initialized with `Symbol(...)` or `Symbol.for("...")` is one symbol for the
 whole program, made while compiling (module constants are otherwise evaluated at each use), so
 reading it costs no call; `Symbol.for(k)` at run time gives that same symbol for its key. A symbol `Symbol(...)` makes at run time lives
-until the program ends. **Planned**: a symbol brand added with `Object.defineProperty(o, KEY,
-…)` as an optional symbol-keyed field of `o`'s type
-([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
-for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+until the program ends. A symbol brand added with `Object.defineProperty(o, KEY, …)` is an
+optional symbol-keyed field of `o`'s type ([`Object` built-ins](#object-built-ins)).
+**Planned**: `PropertyKey` (`string | symbol`) for `Reflect` and proxies
+([#823](https://github.com/velt-lang/velt/issues/823)).
 
 ## SIMD vectors
 
@@ -679,7 +680,10 @@ nothings alike:
 - An optional field of a class without an initializer is an own property holding `undefined`,
   as in Node with ES2022 class fields: `console.log` shows `a: undefined`, `JSON.stringify`
   leaves it out, and `"a" in o` is `true`. It can be set to `null` only when declared
-  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`.
+  `a?: T | null`; it then prints `null` and `JSON.stringify` writes `null`. A spread always
+  copies it, set or not (in a generic function too): over an earlier value of a field that can
+  hold `undefined` its `undefined` overrides, as in Node, and over a required field (`{ ...u,
+  ...c }` with `u.n: number`) an unset one stops the program with the `TypeError` below.
 - An optional field of an object type or of an interface with only fields keeps an absent key
   apart from a key holding `undefined`, as Node does. An absent field is not printed by
   `console.log`, and `"a" in o` is `false`; `{ a: undefined }` is allowed, prints
@@ -690,7 +694,9 @@ nothings alike:
   Where the target field is required and cannot hold `undefined` (a `Partial<U>` spread back into
   a `U`), a source that lacks the field keeps the earlier value, and one that holds `undefined`
   stops the program with a `TypeError` (``a spread copies `undefined` into a field of type
-  `string` ``): Node would copy the `undefined`, which the field's type can't hold.
+  `string` ``): Node would copy the `undefined`, which the field's type can't hold. Without a
+  target type the field has the earlier part's type, as TypeScript types it (`{ ...u, ...p }`
+  with `u.n: number` and `p.n?: number` has `n: number`), so the same holds there.
 - An object literal may leave out an optional field (`{ port: i64; host?: string }` accepts
   `{ port: 80 }`). A field of an object type declared `a: T | null` may be left out too, and is
   then `null`.
@@ -1158,7 +1164,88 @@ implementation returning `Signal<T & object>`), and a value of `T & object` (or 
 intersection with such a part) is an `object`, so it can be a `WeakMap` key. So is an
 intersection with a part that is an object type and no part that is a type parameter
 (`{ value: T } & { $set(v: T): void }`): it satisfies `T extends object`. `T & { __brand: "Id" }`
-with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`). `x as T & object`, for an `x` of a type parameter `T` without an
+with an unbounded `T` is not an `object` (at `T = string` it is a branded `string`).
+
+**Type-level forms and keys in generic code.** A mapped type, `T[K]`, `keyof T` or a utility
+type over a type parameter (`Partial<T>`, `Pick<T, K>`, …) may be written in a generic function's
+signature or body, not only in an alias: it is evaluated at every instantiation, as TypeScript
+evaluates it there. A key parameter `K extends keyof T` is inferred as the literal key the call
+passes (the union of the keys when several arguments pass one: `swap(o, "x", "y")` has
+`K = "x" | "y"`), and `x[k]` reads or writes that field of `x: T`, the field itself (an array
+read through it is `===` to the original; a write reaches the object, a value a call returned
+too: `first(os)[key()] = v`). The object and the key may be any expressions, each evaluated
+once, in order. An optional field reads as `F | undefined`, and `typeof`, `=== undefined` and
+`== null` on a `T[K]` value test the instantiation's value (`typeof o[k]` is `"undefined"` for an
+absent optional field, `"number"` for a present one). A key type of several keys reads or
+writes the field the key holds when those fields have one type (`k: "x" | "y"` on
+`{ x: number; y: number }`); keys whose fields have different types are not supported yet, an
+error at that instantiation. An error at an instantiation is reported in the generic function,
+where the failing form is, with the call that instantiates it and the type arguments (and each
+call on the way, when another generic function's body makes the call). A call whose argument
+breaks a type parameter's constraint (`get(p, "w")`, a key `p` lacks) is one error, at that
+argument, as in TypeScript, and is not instantiated. An alias
+declared in a generic function's body may name the function's type parameters.
+
+```ts
+function get<T extends object, K extends keyof T>(source: T, key: K): T[K] {
+  return source[key];
+}
+function set<T extends object, K extends keyof T>(target: T, key: K, v: T[K]): void {
+  target[key] = v;
+}
+function update<T extends object>(x: T, patch: Partial<T>): T {
+  return { ...x, ...patch };
+}
+
+const st = { count: 0, name: "a" };
+set(st, "count", get(st, "count") + 2);
+console.log(st.count, JSON.stringify(update(st, { name: "b" }))); // 2 {"count":2,"name":"b"}
+```
+
+**Spreads in generic code.** `{ ...t }` and `{ ...t, tag: "x" }` with `t: T` build a new object
+at each instantiation, as Node copies an object's own properties: the fields of `T`'s type
+argument, then the explicit ones (a later field overrides an earlier one and keeps its position),
+with nested objects and arrays shared rather than copied. The literal is a `T`, or a
+`T & { tag: string }`, as in TypeScript, so explicit properties are checked against the expected
+type (`$set: (v) => …` gets its parameter type from `Signal<T>`). An instantiation whose `T` is
+not an object type (`{ ...t }` at `T = number`) is an error there. An optional field of a later
+part overrides an earlier value of it only while present, as in Node: an absent `name` keeps the
+earlier one. A field required in an earlier part keeps its type under a later optional one
+(`n: number`, as TypeScript types it; both parts must give the field one type), so, as for a
+concrete spread, a present `undefined` over it is a `TypeError`: Node keeps `undefined` in a
+field typed `number`, which Velt can't represent. A spread used directly as a `T`
+(`return { ...x, ...patch }` from a function returning `T`) is built as `T` the same way. A source
+whose type argument is an interface with methods is an error at that instantiation: a spread
+copies an object's own properties, which are its methods for an object literal but not for a
+class instance, and an interface value may be either. A source of a concrete type that may be
+`undefined` or `null` (`...v` with `v: V | undefined`) spreads nothing while missing, as in Node;
+one whose type has a type parameter (`x: T | undefined`) is not supported yet (#350): test it
+first (`x === undefined ? {} : { ...x }`).
+
+```ts
+type Signal<T> = T & { $set: (v: T) => void };
+
+function withSet<T extends object>(t: T, log: string[]): Signal<T> {
+  return {
+    ...t,
+    $set: (v) => {
+      log.push(JSON.stringify(v));
+    },
+  };
+}
+
+const log: string[] = [];
+const s = withSet({ n: 1 }, log);
+s.$set({ n: 2 });
+console.log(s.n, log); // 1 [ '{"n":2}' ]
+```
+
+A value of a generic body used as one of its parts (`s: T & { tag: string }` returned as a `T` or
+passed as a `{ tag: string }`, `{ ...t }` returned as a `T`) is the same value. TypeScript always
+passes the same object; Velt's object types have fixed layouts, so this is allowed only at
+instantiations where both are one object type (a `T` that already has `tag`, or `{ ...t }` at any
+object type), and an instantiation where they differ (`T = { a: number }`, whose values would
+have to be copied, losing identity and writes) is an error at the generic function. `x as T & object`, for an `x` of a type parameter `T` without an
 `object` bound, is checked at run time: the value itself (not a copy) when it is an object, a
 `TypeError` when it is a primitive, `null` or `undefined` (TypeScript keeps such a value; write the cast after a test
 that rules primitives out, as sigx's `signal` does). A generic alias used at
@@ -1204,9 +1291,31 @@ Differences from TypeScript, each a compile error with a note on what to write i
   discriminants), TypeScript makes the type, or the field, `never`; Velt reports
   ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
 - Classes and structs are not parts (Velt classes are nominal, not structural): use
-  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays (also `Signal<T>` at
-  an array `T`, reported at the call) and function types (overloads) are not parts either;
-  `T extends A & B` stays a bound on two interfaces.
+  `Pick<C, …>` or a field-only interface. Arrays (also `Signal<T>` at an array `T`, reported at
+  the call) and function types (overloads) are not parts either; `T extends A & B` stays a
+  bound on two interfaces.
+- An interface with methods is a part: `I & { errors: number }` (and `A & B`, or `T & { … }` at
+  an interface `T`) is an interface with every part's members, one whatever the order of the
+  parts (`A & B` is `B & A`). An object literal implements it, a class that implements each
+  interface part, itself or through a base class (and has the object parts' fields, or `get`/`set`
+  accessors for them, which reads and writes through it run), converts to
+  it as the same object, generic classes too, and a field written through it reaches the class's
+  field. Writing through it a field that a class has only a `get` for stops the program with
+  Node's `TypeError: Cannot set property n of #<C> which has only a getter` (what strict code
+  gets), also when a subclass overrides only the getter of its base's pair. Changing a part of such a
+  field through the interface (`x.o.v += 1`) is an error for now (#350): Node changes the object
+  the getter returns in place, and Velt would change a copy and write it back through the setter. A generic class's
+  field provides a part's field at the instance's type arguments (`val: T` of `Cell<string>` for
+  `{ val: string }`). Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
+  and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`
+  convert to the same way; in general an interface value converts to any interface whose members
+  it has (an interface it extends, a structurally equal one, in both directions). Methods of one
+  name with different signatures in two parts (overloads in TypeScript) are an error, and so is a
+  field in one part with a method of that name in another (no value has both), and converting
+  such a value to its object part (`{ errors: number }`), which would copy it. For the same
+  reason, a value of an interface that extends a field-only interface `B` does not convert to
+  `B`: `B` is an object type with a fixed layout, and TypeScript keeps the same object. `T & object` at an interface or class
+  `T` is `T`: `t as T & object` is the same value.
 - In generic code, a value of an intersection with a type parameter part (`x: T & { id: string }`)
   is passed on and returned as it is, and the members of its object parts are read (also with
   `?.` and destructuring), written and called on the value itself (`x.id = "b"`, `s.$set(v)` for
@@ -1254,7 +1363,8 @@ const id: UserId = "u-1"; // error: a plain `string` does not convert to it; bra
 
 `T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
 of the fields' types, as in TypeScript: `Person["name"]` is `string`, and an optional field
-`email?: string` gives `string | undefined`. A key that is not a field
+`email?: string` gives `string | undefined`. On an interface with methods it reads a field or
+a getter (`get size(): number` gives `number`). A key that is not a field
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
@@ -1333,8 +1443,8 @@ the result is an ordinary object type, union or literal type.
   otherwise; `-?` also removes `undefined` from the field's type. `as N` renames a key, and a key
   renamed to `never` is dropped; keys renamed alike have the union of the values. A number literal
   key stays a number. With `keyof T` for a type parameter `T`, a union argument gives the union of
-  each member's mapped type. Inside these forms, `T[K]` of an optional field is
-  `F | undefined`, as TypeScript reads it.
+  each member's mapped type. `T[K]` of an optional field is `F | undefined`, as TypeScript
+  reads it (inside these forms and outside them).
 - **Template literal types** `` `on${K}` ``: the union of the strings they spell, with
   `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize`; after `extends` they are patterns
   (`` K extends `model:${string}` ``, `` S extends `${infer F}${infer R}` ``). A `boolean` hole
@@ -1860,8 +1970,10 @@ does is an error saying it is not supported yet, never a quiet difference.
 - `Object.assign(target, ...sources)` writes each source's own fields to `target`, in order
   (through its setters, as JavaScript's assignment does; an absent optional field is not copied,
   and one holding `undefined` where the target can't hold it is a `TypeError`)
-  and returns `target` itself. A `Record` target takes any keys; an object or class target only
-  fields its type declares (adding one is not supported yet). `Object.assign(fn, { … })` onto a
+  and returns `target` itself, copying enumerable symbol-keyed fields too (a brand
+  `defineProperty` made with `enumerable: true`, below). A `Record` target takes any keys; an
+  object, interface or class target only fields its type declares (adding one is not supported
+  yet). `Object.assign(fn, { … })` onto a
   function makes a [function with properties](functions.md#functions-with-properties).
   Assigning from a value that may hold another class is not supported yet.
 - `Object.freeze({ ... })` of a new object literal returns it with every field readonly, so
@@ -1892,28 +2004,77 @@ does is an error saying it is not supported yet, never a quiet difference.
 
 - `Object.defineProperty(o, KEY, { value })` with a symbol constant `KEY` adds a brand: the
   compiler adds the optional field `[KEY]?: T` to the interface or object type `o` is declared
-  with (`const cell: Cell = { ... }`, or `{ ... } as Cell`; `T` is the type of the literal value),
+  with (`const cell: Cell = { ... }`, `{ ... } as Cell`, or a parameter `cell: Cell`; `T` is the
+  type of the literal value),
   so `KEY in v` tests any `Cell` for it, as Node finds the property on the objects that have it.
   Unless the descriptor says `enumerable: true`, it is hidden from `console.log` and spreads, as a
   non-enumerable property is; a property with that symbol written directly anywhere (`{ [KEY]: v
-  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws.
+  }`, `o[KEY] = v`) is an error, since it would be enumerable, or written where Node throws,
+  unless the descriptors say `enumerable: true, writable: true`.
   Defining a brand again with another value throws Node's `TypeError: Cannot redefine property:
   Symbol(k)` (values compared as `Object.is` does) unless the descriptors say `writable: true` or
   `configurable: true`; Velt keeps these attributes per symbol, so every call with one key gives
   the same ones. With a string key naming a declared field and only a `value`, it assigns the
   field. The object is written in place and is the result (`Object.defineProperty(o, ...) === o`).
   A brand on a class instance (whose declared field is an own property from construction),
-  accessors (`get` / `set`, #941), other attributes and keys a type doesn't declare are not
-  supported yet, and neither is `Object.defineProperties`.
+  other attributes and keys a type doesn't declare are not supported yet, and neither is
+  `Object.defineProperties`.
+- `Object.defineProperty(o, "k", { get, set })`, as a statement, on a `const o: I = { … }` of
+  the same function whose literal has the accessor `get k() { … }` (and `set k(v) { … }` for a
+  setter), with `I` an interface that declares it ([object literals implementing
+  interfaces](#object-literals-implementing-interfaces)), replaces the literal's getter or setter,
+  as in Node: one the descriptor leaves out stays, and after `configurable: false` defining it
+  again throws `TypeError: Cannot redefine property: k`. A shorthand descriptor (`{ get }`) is
+  `{ get: get }`. `enumerable` changes nothing Velt shows, since an interface value is not
+  listed by key. Not supported yet: accessors defined on other objects (a parameter, a class
+  instance, a loop variable named like the literal), in a module that binds the name `Object`
+  anywhere (its `Object.defineProperty` may be its own), with `this` inside them (#941), that may
+  throw (until #1326), that are `undefined` (the property would read `undefined`), and a
+  function not written in the call where the property may already be defined with
+  `configurable: false` (Node compares the functions).
+
+```ts
+interface Counter {
+  get n(): number;
+  set n(v: number);
+}
+
+function counter(log: boolean): Counter {
+  let n = 0;
+  const c: Counter = {
+    get n() {
+      return n;
+    },
+    set n(v) {
+      n = v;
+    },
+  };
+  if (log) {
+    Object.defineProperty(c, "n", {
+      set(v: number) {
+        console.log("n =", v);
+        n = v;
+      },
+    });
+  }
+  return c;
+}
+
+const c = counter(true);
+c.n = 2; // n = 2
+console.log(c.n); // 2
+```
 
 The other `Object` functions (`seal`, `isFrozen`, `setPrototypeOf`, ...) are not supported yet.
 
-`typeof` of a global the program doesn't declare is what Node 22 gives: `"undefined"` for the
-browser's globals (`window`, `document`, `HTMLElement`, ...), `"object"` or `"function"` for
-Node's (`globalThis`, `navigator`, `URL`, ...), and `"function"` for a class's name, so
-`typeof window === "undefined"` tells the server from the browser. Reading a browser global
-throws Node's `ReferenceError` (`window is not defined`), so code that only runs in the browser
-still compiles.
+`typeof` of a global the program doesn't declare is what Node 22 gives in an ES module:
+`"undefined"` for the browser's globals (`window`, `document`, `HTMLElement`, ...), other
+runtimes' (`Deno`, `Bun`) and CommonJS's (`require`, `module`, `exports`, `__dirname`,
+`__filename`), `"object"` or `"function"` for Node's (`globalThis`, `global`, `navigator`, `URL`, `Intl`,
+`BigInt`, `AbortController`, `Headers`, `atob`, ...), and `"function"` for
+a class's or a function's name, so `typeof window === "undefined"` tells the server from the
+browser. Reading or calling one of the absent globals throws Node's `ReferenceError` (`window
+is not defined`), so code that only runs elsewhere still compiles.
 
 ```ts
 class Point {
@@ -1937,6 +2098,50 @@ console.log(Object.fromEntries([["a", 1], ["b", 2]])); // { a: 1, b: 2 }
 console.log(counts, "toString" in counts); // [Object: null prototype] { a: 1 } false
 console.log(Object.prototype.toString.call([1])); // [object Array]
 ```
+
+#### `globalThis`
+
+`globalThis` is a bag of typed properties, as libraries use it to share one value between
+modules or copies of themselves: `(globalThis as { K?: T }).K` reads and writes a variable for
+the whole process, which starts out `undefined`, as an unset property of Node's `globalThis`
+does. The key may also be a string constant (`(globalThis as Seam)[KEY]`), the object a constant
+that stands for `globalThis` (`const g = globalThis as Seam;`), and
+`Object.defineProperty(globalThis, "K", { value, writable: true, configurable: true })`
+assigns it. The property's type is `T["K"] | undefined` with `T` the asserted type; the
+assertions of one key must all give it the same type, and a site without one (`globalThis.K`,
+typed for tsc by a `declare global { var K: T }`, or asserted `any`) takes the type the others
+give. A property no site asserts a type for is an error. A Node global Velt has is that global
+(`globalThis.console.log(…)` is `console.log(…)`).
+
+```ts
+interface Hook {
+  events: string[];
+}
+type Seam = { __HOOK__?: Hook };
+
+function emit(e: string): void {
+  (globalThis as Seam).__HOOK__?.events.push(e);
+}
+
+function install(): void {
+  const g = globalThis as Seam;
+  g.__HOOK__ ??= { events: [] };
+}
+
+emit("lost");
+install();
+emit("kept");
+console.log((globalThis as Seam).__HOOK__?.events); // [ 'kept' ]
+```
+
+Not supported yet: `globalThis` as a value of its own (`console.log(globalThis)`,
+`Object.keys(globalThis)`), symbol keys, keys known only at run time, `defineProperty` on it
+without a `value`, neither writable nor configurable, without `writable: true` on a property
+the program also assigns (Node throws there), or with other `writable` and `configurable` than
+another call with the same key (an attribute a call leaves out is `false` on the property it
+makes, so whether Node throws depends on which runs first), and using the result of
+`defineProperty` on it.
+`enumerable` changes nothing Velt shows, since the keys of `globalThis` are not listed.
 
 ### The `in` operator
 

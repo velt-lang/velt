@@ -499,6 +499,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub weak_key_args: bool,
     /// Checking the `Object.keys(x)` inside `__proxyKeys(x) ?? Object.keys(x)` (`proxy.rs`).
     pub proxy_keys_inner: bool,
+    /// The explicit type arguments of the call about to be checked (at the first span): the
+    /// slot each fills and its span, where a type bound it breaks is reported (`tsc` TS2344).
+    pub explicit_type_spans: Option<(Span, Vec<(usize, Span)>)>,
     /// Where a value is given for an optional parameter (or one with a default) or an optional
     /// field: an `undefined` there is a limit of this phase of #930, not a type error
     /// (`expr/lit.rs` `optional_slot_error`).
@@ -565,6 +568,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             collect_iterable_args: false,
             weak_key_args: false,
             proxy_keys_inner: false,
+            explicit_type_spans: None,
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,

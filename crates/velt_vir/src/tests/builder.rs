@@ -95,6 +95,8 @@ impl PB {
             function: None,
             unknown: None,
             super_calls: Default::default(),
+            upcasts: Default::default(),
+            upcast_impls: Default::default(),
             cpu_targets: Default::default(),
         }
     }

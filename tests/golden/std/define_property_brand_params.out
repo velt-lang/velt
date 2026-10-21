@@ -1,0 +1,2 @@
+true true { n: 1 }
+{ n: 2, [Symbol(w)]: 2 }

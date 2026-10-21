@@ -44,6 +44,14 @@ pub fn computed_key_name(key: &ast::Ident) -> Option<&str> {
 
 use velt_common::{Diagnostics, FileId};
 
+/// Is `import` the one the parser adds for `import.meta` (its class, [`ast::IMPORT_META_CLASS`]),
+/// not one written in the source? Tools that list or place imports skip it.
+pub fn is_synthesized_import(import: &ast::Import) -> bool {
+    import.from == ast::IMPORT_META_MODULE
+        && matches!(import.names.as_slice(), [n]
+            if n.alias.as_ref().is_some_and(|a| a.name == ast::IMPORT_META_CLASS))
+}
+
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level
 /// (bounded by its depth limit); a dedicated thread keeps deeply nested input from overflowing the
 /// caller's stack (1 MB main thread on Windows). The memory is reserved, not committed, until used.

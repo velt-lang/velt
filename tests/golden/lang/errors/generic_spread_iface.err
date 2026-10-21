@@ -1,0 +1,3 @@
+generic_spread_iface.vlt:9:10: error: cannot spread a value of type `I` into an object
+  = note: in this generic function the spread's source is a type parameter; at this instantiation it is not an object type (object spread works on structs, classes and object types)
+  = note: `I` is an interface with methods: a spread copies an object's own properties, which are its methods too for an object literal but not for a class instance, and an interface value can be either; spread a value of an object type, or build the object from the fields (`{ a: x.a }`)

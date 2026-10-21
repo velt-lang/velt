@@ -95,6 +95,11 @@ impl FnCx<'_, '_> {
         };
         self.collect_iterable_args = self.takes_iterable(d);
         self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
+        // A type bound an explicit type argument breaks is reported there (`tsc` TS2344).
+        if let ast::TypeExprKind::Named { args: targs, .. } = &class.kind {
+            let spans = targs.iter().enumerate().map(|(i, t)| (i, t.span));
+            self.explicit_type_spans = Some((span, spans.collect()));
+        }
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if !self.cx.scopes[self.module].is_std {
             // Also for a subclass, whose base class names the key type (`class Cache extends
