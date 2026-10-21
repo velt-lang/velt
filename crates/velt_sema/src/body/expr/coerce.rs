@@ -352,6 +352,9 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if self.throws_where_none_may(expected, found, &e, &f) {
+            return;
+        }
         if self.cx.unfreezes(found.ty, expected) {
             self.cx.error(
                 Diagnostic::error(
@@ -544,5 +547,81 @@ impl FnCx<'_, '_> {
                 .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
         };
         fa == fb && opt(self.cx, da) != opt(self.cx, db)
+    }
+
+    /// A function value that throws where a function type that doesn't is expected (`const r:
+    /// (s: string) => string = import.meta.resolve`): says so, with the two ways out. `true`
+    /// when reported.
+    fn throws_where_none_may(
+        &mut self,
+        expected: TyId,
+        found: &hir::Expr,
+        e: &str,
+        f: &str,
+    ) -> bool {
+        let (
+            TyKind::FnPtr {
+                params: fp,
+                ret: fr,
+                throws: ft,
+            },
+            TyKind::FnPtr {
+                params: ep,
+                ret: er,
+                throws: et,
+            },
+        ) = (
+            self.cx.ty.kind(found.ty).clone(),
+            self.cx.ty.kind(expected).clone(),
+        )
+        else {
+            return false;
+        };
+        let never = self.cx.ty.never;
+        if fp != ep || fr != er || ft == never || et != never {
+            return false;
+        }
+        let thrown = self.cx.display(ft);
+        // `(x: string) => import.meta.resolve(x)`: the arrow that wraps the value.
+        let names: Vec<String> = (0..fp.len())
+            .map(|i| match fp.len() {
+                1 => "x".to_string(),
+                _ => format!("x{i}"),
+            })
+            .collect();
+        let typed: Vec<String> = names
+            .iter()
+            .zip(&fp)
+            .map(|(n, &t)| format!("{n}: {}", self.cx.display(t)))
+            .collect();
+        let callee = self
+            .wrapped_text(found)
+            .filter(|t| !t.starts_with('<'))
+            .unwrap_or_else(|| "f".to_string());
+        let arrow = format!("({}) => {callee}({})", typed.join(", "), names.join(", "));
+        self.cx.error(
+            Diagnostic::error("mismatched types", found.span)
+                .with_note(format!("expected {e}, found {f}"))
+                .with_note(format!(
+                    "the function throws `{thrown}`, and `{e}` cannot throw: write the type with `throws {thrown}`, or wrap it in an arrow, whose type says it throws: `const g = {arrow}`"
+                )),
+        );
+        true
+    }
+
+    /// The source text of a local, a module constant or a field path of one
+    /// (`import.meta.resolve`), for a suggestion.
+    fn wrapped_text(&self, h: &hir::Expr) -> Option<String> {
+        match &h.kind {
+            H::Global(d) => self.cx.global(*d).map(|g| g.name.clone()),
+            H::Field { base, index, .. } => {
+                let TyKind::Adt(d, _) = self.cx.ty.kind(base.ty) else {
+                    return None;
+                };
+                let field = self.cx.adt(*d)?.fields.get(*index as usize)?;
+                Some(format!("{}.{}", self.wrapped_text(base)?, field.name))
+            }
+            _ => self.place_text(h),
+        }
     }
 }

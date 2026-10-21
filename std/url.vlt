@@ -5,8 +5,8 @@
 // `\` as a path separator and dot-segment removal; other schemes keep opaque hosts and paths.
 // Components are percent-encoded with the spec's encode sets. Known gaps: no IDNA/punycode
 // (a non-ASCII host is invalid), IPv6 literals are validated loosely and not compressed
-// (`[0:0::1]` stays as written), and of `file:` URLs' Windows drive-letter rules only two apply:
-// `/x` keeps the base's drive letter and `..` never removes it.
+// (`[0:0::1]` stays as written), and of `file:` URLs' Windows drive-letter rules three apply:
+// `/x` keeps the base's drive letter, `..` never removes it, and a first segment `C|` is `C:`.
 //
 // Mutation: `searchParams` returns a copy; to change the query, edit the copy and assign it
 // back (`const p = u.searchParams; p.set("a", "1"); u.searchParams = p;`). Setters follow JS:

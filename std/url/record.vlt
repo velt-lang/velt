@@ -438,14 +438,15 @@ function applyQueryFragment(r: UrlRecord, s: string, from: i64, special: bool) {
 
 /**
  * Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`. In
- * a `file:` URL (`file`), `..` does not remove a Windows drive letter (`C:`).
+ * a `file:` URL (`file`), a first segment `C|` is the drive letter `C:`, and `..` does not
+ * remove a drive letter.
  */
 export function parsePath(p: string, segs: string[], special: bool, file: bool = false): string {
   const len = p.length as i64;
   if (len == 0 && segs.length == 0) {
     return special ? "/" : "";
   }
-  if (segs.length == 0 && isSerializedPath(p)) {
+  if (segs.length == 0 && !file && isSerializedPath(p)) {
     return p;
   }
   let i: i64 = isSep(p, 0, special) ? 1 : 0;
@@ -464,7 +465,15 @@ export function parsePath(p: string, segs: string[], special: bool, file: bool =
       segs.pop();
     }
     if (dots == 0) {
-      segs.push(encodeSet(p.slice(i, j), PATH));
+      const seg = p.slice(i, j);
+      // A `file:` URL's first segment `C|` is the drive letter `C:`.
+      const drive =
+        file &&
+        segs.length == 0 &&
+        seg.length == 2 &&
+        seg.charCodeAt(1) == 124 &&
+        startsWithDrive(seg, 0);
+      segs.push(drive ? `${seg.slice(0, 1)}:` : encodeSet(seg, PATH));
     } else if (last && (special || !emptied)) {
       segs.push("");
     }

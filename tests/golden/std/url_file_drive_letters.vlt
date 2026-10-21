@@ -1,5 +1,6 @@
 // A `file:` URL keeps its base's Windows drive letter, as Node's URL does on every OS: a path
-// starting with `/` stays on the drive, and `..` stops at it. Output compared with Node.
+// starting with `/` stays on the drive, `..` stops at it, and `C|` is `C:`. Output compared with
+// Node.
 import { URL } from "velt:url";
 
 const b = "file:///C:/p/m.ts";
@@ -11,3 +12,5 @@ console.log(
   new URL("/abs", "file:///p/m.ts").href,
 );
 console.log(new URL("..", "file:///C:/").href, new URL("/q", "http://h/C:/a").href);
+// `C|` as the first segment is the drive letter `C:`.
+console.log(new URL("file:///C|/x").href, new URL("/C|/z", b).href, new URL("file:///a/C|/y").href);

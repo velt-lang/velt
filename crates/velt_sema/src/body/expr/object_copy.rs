@@ -216,10 +216,22 @@ impl FnCx<'_, '_> {
 
     /// For each field of object type `to`, where it comes from in a `from` value; `None` when a
     /// `from` doesn't convert to a `to` this way (module docs).
+    /// Is `t` the class of `import.meta` (std's `ImportMeta`)? It converts to an object type
+    /// with some of its fields as an object type does (`f(import.meta)` for `p: { url: string
+    /// }`), since `import.meta` is an object in TypeScript.
+    fn is_import_meta_class(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(t) else {
+            return false;
+        };
+        self.cx.adt(*d).is_some_and(|a| {
+            a.kind == hir::AdtKind::Class && self.cx.modules[a.module].path == "std/import_meta"
+        })
+    }
+
     fn copy_plan(&mut self, from: TyId, to: TyId, depth: u32) -> Option<Vec<Slot>> {
         if depth > MAX_DEPTH
             || from == to
-            || !self.cx.is_object_type(from)
+            || !(self.cx.is_object_type(from) || self.is_import_meta_class(from))
             || !self.cx.is_object_type(to)
             || self.cx.canon(from) == self.cx.canon(to)
             || self.cx.same_layout(from, to)

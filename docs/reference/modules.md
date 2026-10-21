@@ -34,9 +34,14 @@
   the URL parser normalizes it (`HTTPS://Example.com/a` is `https://example.com/a`), a relative
   or absolute path (`./data.json`, `../a?x=1#h`, `/etc/hosts`, which keeps a Windows drive
   letter) against the module's URL, and one of Node's built-in modules as `node:<name>`
-  (`fs` is `node:fs`). Its type is `(specifier: string) => string`. A package name panics with
-  Node's message (`Cannot find package 'x' imported from <file>`), where Node throws: packages
-  are compiled into the program rather than looked up while it runs.
+  (`fs` is `node:fs`, `_http_agent` is `node:_http_agent`). A package name throws an `Error`
+  with Node's message (`Cannot find package 'x' imported from <file>`): packages are compiled
+  into the program rather than looked up while it runs, so `try` / `catch` around
+  `import.meta.resolve("optional-dep")` takes the `catch`. Its type is therefore
+  `(specifier: string) => string throws Error`, and it can't be used where a function type
+  that cannot throw is expected (`const r: (s: string) => string = import.meta.resolve` is an
+  error): write that type with `throws Error`, or wrap it in an arrow,
+  `const r = (s: string) => import.meta.resolve(s)`, whose type says it throws.
 - `import.meta` used as a value of its own (`const m = import.meta`, `return import.meta`) is
   the same object. Its fields are read-only, also through such a value (`m.url = "x"` is an
   error, as `import.meta.url = "x"` is).

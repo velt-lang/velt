@@ -1,0 +1,3 @@
+import_meta_resolve_type.vlt:3:34: error: mismatched types
+expected (string) => string, found (string) => string throws Error
+const g = (x: string) => import.meta.resolve(x)

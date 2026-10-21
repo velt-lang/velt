@@ -13,14 +13,18 @@ export class ImportMeta {
   readonly dirname: string;
   readonly filename: string;
   readonly main: boolean;
-  readonly resolve: (specifier: string) => string;
+  readonly resolve: (specifier: string) => string throws Error;
   readonly url: string;
 
   constructor(dirname: string, filename: string, main: boolean, url: string) {
     this.dirname = dirname;
     this.filename = filename;
     this.main = main;
-    this.resolve = (specifier: string): string => resolveSpecifier(specifier, url, filename);
+    this.resolve = (specifier: string): string throws Error => resolveSpecifier(
+      specifier,
+      url,
+      filename,
+    );
     this.url = url;
   }
 
@@ -46,11 +50,11 @@ export class ImportMeta {
  * `specifier` resolved against `base` (the module's `file:` URL), as Node's
  * `import.meta.resolve` resolves it: an absolute URL as the URL parser normalizes it, a relative
  * or absolute path (`./x.ts`, `../y?q#h`, `/z`, `//host/p`) against `base`, and the name of one
- * of Node's built-in modules as `node:<name>`. The file need not exist. A package name panics
- * (`Cannot find package '…' imported from <file>`, Node's message): a Velt program's packages
- * are compiled into it, not looked up while it runs, and `resolve`'s type has no `throws`.
+ * of Node's built-in modules as `node:<name>`. The file need not exist. A package name throws
+ * an `Error` with Node's message (`Cannot find package '…' imported from <file>`): a Velt
+ * program's packages are compiled into it, not looked up while it runs.
  */
-function resolveSpecifier(specifier: string, base: string, filename: string): string {
+function resolveSpecifier(specifier: string, base: string, filename: string): string throws Error {
   const path =
     specifier.startsWith("/") ||
     specifier.startsWith("./") ||
@@ -71,8 +75,7 @@ function resolveSpecifier(specifier: string, base: string, filename: string): st
       return `node:${specifier}`;
     }
   }
-  panic(`Cannot find package '${specifier}' imported from ${filename}`);
-  return "";
+  throw new Error(`Cannot find package '${specifier}' imported from ${filename}`);
 }
 
 /** Node's built-in modules that can be named without `node:` (`module.builtinModules`). */
@@ -82,7 +85,9 @@ const NODE_BUILTINS =
   " inspector/promises module net os path path/posix path/win32 perf_hooks process punycode" +
   " querystring readline readline/promises repl stream stream/consumers stream/promises" +
   " stream/web string_decoder sys timers timers/promises tls trace_events tty url util" +
-  " util/types v8 vm wasi worker_threads zlib ";
+  " util/types v8 vm wasi worker_threads zlib _http_agent _http_client _http_common" +
+  " _http_incoming _http_outgoing _http_server _stream_duplex _stream_passthrough" +
+  " _stream_readable _stream_transform _stream_wrap _stream_writable _tls_common _tls_wrap ";
 
 /**
  * `s` as `console.log` quotes a string inside an object: in `'…'`, or in `"…"` or `` `…` `` when

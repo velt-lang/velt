@@ -23,7 +23,7 @@ console.log(shown("HTTPS://Example.com/a"), shown("data:text/plain,x"));
 console.log(import.meta.resolve("/abs/x.js").endsWith(":///abs/x.js") || import.meta.resolve("/abs/x.js").endsWith(":/abs/x.js"));
 const meta = import.meta;
 console.log(meta.resolve("./q") === import.meta.resolve("./q"), meta.main);
-const resolve: (specifier: string) => string = import.meta.resolve;
+const resolve = (specifier: string) => import.meta.resolve(specifier);
 console.log(resolve("./z") === import.meta.resolve("./z"));
 const json = JSON.stringify(import.meta);
 console.log(json.startsWith('{"dirname":'), json.includes('"main":true,"url":'), json.includes("resolve"));
