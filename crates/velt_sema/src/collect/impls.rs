@@ -122,16 +122,16 @@ fn field_getters(
                 });
             }
         } else if let Some((g, set)) = accessor_slots(cx, p.d, p.self_ty, &f.name, want) {
-            // A `get` (and `set`) accessor of the class provides the field. A `readonly` one
-            // without a `set` can't take a changed part back (`iface_writes`).
+            // A `get` (and `set`) accessor of the class provides the field (a `readonly` one
+            // needs no `set`: its setter slot is used only by part writes, an error then).
             getters.push(g);
+            let name = f.name.clone();
             let src = match set {
-                Some(def) => Some(SetterSrc::Method(def)),
-                None if f.readonly => Some(SetterSrc::Unwritable {
-                    span: p.span,
-                    name: f.name.clone(),
+                Some(def) => Some(SetterSrc::Method { def, d: p.d, name }),
+                None if f.readonly => Some(SetterSrc::GetterOnly {
                     d: p.d,
                     self_ty: p.self_ty,
+                    name,
                     ty: want,
                 }),
                 None => None,

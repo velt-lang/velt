@@ -113,14 +113,11 @@ impl Ctx<'_> {
             .into_iter()
             .map(|s| s.unwrap_or(self.ty.never))
             .collect();
-        let (names, fields): (Vec<String>, Vec<(String, TyId, bool)>) = {
+        let (names, fields): (Vec<String>, Vec<(String, TyId)>) = {
             let i = self.iface(iface)?;
             (
                 i.methods.iter().map(|m| m.name.clone()).collect(),
-                i.fields
-                    .iter()
-                    .map(|f| (f.name.clone(), f.ty, f.readonly))
-                    .collect(),
+                i.fields.iter().map(|f| (f.name.clone(), f.ty)).collect(),
             )
         };
         let mut methods = vec![];
@@ -135,7 +132,7 @@ impl Ctx<'_> {
         };
         // How each field is stored: a part's implementation's, or `d`'s own field.
         let mut stored: Vec<Option<SetterSrc>> = vec![];
-        for (name, fty, readonly) in fields {
+        for (name, fty) in fields {
             if let Some(m) = self.part_slot(&impls, &name, true) {
                 methods.push(m);
                 stored.push(self.part_setter(&impls, &name));
@@ -149,16 +146,13 @@ impl Ctx<'_> {
                 // A `get` (and `set`) accessor of the class provides the field.
                 let (g, set) = crate::collect::impls::accessor_slots(self, d, own_ty, &name, want)?;
                 methods.push(g);
-                // Without a `set`, writing the field throws, as in Node; a `readonly` one can't
-                // take a changed part back (`iface_writes`).
+                // Without a `set`, writing the field throws, as in Node (a part write through
+                // a class's accessor is an error, `iface_writes`).
                 let set = match set {
-                    Some(def) => SetterSrc::Method(def),
-                    None if readonly => SetterSrc::Unwritable {
-                        span: self.adt(d).map_or(velt_common::Span::DUMMY, |a| a.span),
-                        name: name.clone(),
+                    Some(def) => SetterSrc::Method {
+                        def,
                         d,
-                        self_ty: own_ty,
-                        ty: want,
+                        name: name.clone(),
                     },
                     None => SetterSrc::GetterOnly {
                         d,

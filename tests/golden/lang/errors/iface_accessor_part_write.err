@@ -1,0 +1,7 @@
+iface_accessor_part_write.vlt:10:7: error: `Pair` provides `o` with a `get` accessor, and a part of `o` is changed through `I`, which is not supported yet (#350)
+  = note: Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter
+  = note: store `o` as a field of `Pair`, or assign the whole value through `I` (`x.o = …`)
+
+iface_accessor_part_write.vlt:25:7: error: `G` provides `t` with a `get` accessor, and a part of `t` is changed through `R`, which is not supported yet (#350)
+  = note: Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter
+  = note: store `t` as a field of `G`, or assign the whole value through `R` (`x.t = …`)

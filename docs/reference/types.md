@@ -1292,7 +1292,9 @@ Differences from TypeScript, each a compile error with a note on what to write i
   it as the same object, generic classes too, and a field written through it reaches the class's
   field. Writing through it a field that a class has only a `get` for stops the program with
   Node's `TypeError: Cannot set property n of #<C> which has only a getter` (what strict code
-  gets), also when a subclass overrides only the getter of its base's pair. A generic class's
+  gets), also when a subclass overrides only the getter of its base's pair. Changing a part of such a
+  field through the interface (`x.o.v += 1`) is an error for now (#350): Node changes the object
+  the getter returns in place, and Velt would change a copy and write it back through the setter. A generic class's
   field provides a part's field at the instance's type arguments (`val: T` of `Cell<string>` for
   `{ val: string }`). Its values convert to each interface part as the same object (`===` holds). `Pick<I, K>`
   and `Omit<I, K>` of such an interface are interfaces with those members, which values of `I`

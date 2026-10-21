@@ -54,10 +54,13 @@ pub(crate) enum SetterSrc {
         fn_ty: TyId,
         param: TyId,
     },
-    /// A class's `set f(v)` (or the trampoline dispatching to it): the setter slot itself.
-    Method(DefId),
+    /// Class `d`'s `set name(v)` (or the trampoline dispatching to it): the setter slot itself.
+    /// Only for writes of the whole field: a part write through a class's accessor is an error
+    /// ([`Ctx::accessor_part`]).
+    Method { def: DefId, d: DefId, name: String },
     /// A class `d` with a `get` accessor and no `set` for field `name` (of type `ty`): its
-    /// setter slot stops with Node's `TypeError` (`collect::getters::getter_only_setter`).
+    /// setter slot stops with Node's `TypeError` (`collect::getters::getter_only_setter`), and
+    /// a part write through it is an error, as for [`SetterSrc::Method`].
     GetterOnly {
         d: DefId,
         self_ty: TyId,
@@ -144,9 +147,10 @@ impl Ctx<'_> {
         (field < i.fields.len()).then_some((i.methods.len() + i.fields.len() + field) as u32)
     }
 
-    /// A part of `readonly` field `field` of `iface` is written through the interface at
-    /// `span` (its setter writes the changed part back). Reports the object literals that
-    /// cannot take it (a getter without a setter) and returns false then.
+    /// A part of field `field` of `iface` is written through the interface at `span` (its
+    /// setter writes the changed part back). Reports the implementations that cannot take it
+    /// (an object literal's getter without a setter for a `readonly` field, a class's `get`
+    /// accessor) and returns false then.
     pub(crate) fn mark_part_written(&mut self, iface: DefId, field: usize, span: Span) -> bool {
         if !self.mark_iface_written(iface, span) {
             return false;
@@ -159,16 +163,50 @@ impl Ctx<'_> {
             if self.impls[i as usize].iface != iface {
                 continue;
             }
-            if let Some(SetterSrc::Unwritable { span, name, .. }) = srcs.get(field) {
-                found.push((*span, name.clone()));
+            match srcs.get(field) {
+                Some(SetterSrc::Unwritable { span, name, .. }) => {
+                    found.push((*span, name.clone(), None));
+                }
+                Some(SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }) => {
+                    let at = self.adt(*d).map_or(Span::DUMMY, |a| a.span);
+                    found.push((at, name.clone(), Some(*d)));
+                }
+                _ => {}
             }
         }
-        found.sort_by_key(|(s, _)| (s.file, s.lo, s.hi));
+        found.sort_by_key(|(s, _, _)| (s.file, s.lo, s.hi));
         let ok = found.is_empty();
-        for (span, name) in found {
-            self.part_unwritable(iface, span, &name);
+        for (at, name, class) in found {
+            match class {
+                Some(d) => self.accessor_part(iface, d, &name, Some(span)),
+                None => self.part_unwritable(iface, at, &name),
+            }
         }
         ok
+    }
+
+    /// A part of field `name` of `iface` is changed through it (at `write`, when known) and
+    /// class `d` provides the field with a `get` accessor: Node changes the object the getter
+    /// returns in place, while Velt would change a copy and write it back through a setter
+    /// Node never calls, so this is an error.
+    fn accessor_part(&mut self, iface: DefId, d: DefId, name: &str, write: Option<Span>) {
+        let iname = self.iface_name(iface);
+        let (cname, at) = self
+            .adt(d)
+            .map_or((String::new(), Span::DUMMY), |a| (a.name.clone(), a.span));
+        let mut e = Diagnostic::error(
+            format!("`{cname}` provides `{name}` with a `get` accessor, and a part of `{name}` is changed through `{iname}`, which is not supported yet (#350)"),
+            at,
+        )
+        .with_note(format!("Node changes the object the getter returns in place and never calls a setter; Velt reads a copy here and would have to write it back through a setter"))
+        .with_note(format!("store `{name}` as a field of `{cname}`, or assign the whole value through `{iname}` (`x.{name} = …`)"));
+        if let Some(w) = write {
+            e = e.with_label(
+                w,
+                format!("a part of `{name}` is changed through `{iname}` here"),
+            );
+        }
+        self.error(e);
     }
 
     fn part_unwritable(&mut self, iface: DefId, span: Span, name: &str) {
@@ -271,7 +309,13 @@ impl Ctx<'_> {
                     fn_ty,
                     param,
                 } => defs.push(self.literal_setter(d, self_ty, (index, fn_ty), param)),
-                SetterSrc::Method(def) => defs.push(def),
+                SetterSrc::Method { d, name, .. } | SetterSrc::GetterOnly { d, name, .. }
+                    if self.iface_writes.parts.contains(&(iface, k)) =>
+                {
+                    self.accessor_part(iface, d, &name, None);
+                    return;
+                }
+                SetterSrc::Method { def, .. } => defs.push(def),
                 SetterSrc::GetterOnly {
                     d,
                     self_ty,
